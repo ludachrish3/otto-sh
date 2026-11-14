@@ -77,6 +77,7 @@ if TYPE_CHECKING:
     from otto.host.exec_route import ExecRoute
     from otto.host.limitation import Limitation
     from otto.host.session import RouteRecord
+    from otto.result import CommandResult
     from tests.conformance._resolved import ResolvedCell
 
 PAGE_PATH = CHECKOUT_ROOT / "docs" / "architecture" / "support-matrix.md"
@@ -99,14 +100,16 @@ so a declaration edited without regenerating this page reds. It carries no
 date and no measurement, which is what makes a byte comparison meaningful.
 """
 
-COMMAND_CONTRACT_PATH = CHECKOUT_ROOT / "docs" / "command-contract.md"
-"""The rendered command contract page.
+COMMAND_CONTRACTS_DIR = CHECKOUT_ROOT / "docs" / "command-contracts"
+"""The rendered command contract pages: ``index.md``, the overview, and one page per command.
 
-COMMITTED, for the reason :data:`FAMILIES_PAGE_PATH` is: its sources are the
-tree's own declarations (the ``entries`` marker on each command contract, and
-every :class:`~otto.host.limitation.Limitation` on a built-in frame or exec
-route), it carries no date and no measurement, and
-``tests/unit/test_support_matrix.py`` compares it byte for byte.
+The pages are :func:`render_command_contracts`' answer; which entry goes on
+which page is :data:`ENTRY_VOICE`. COMMITTED, for the reason
+:data:`FAMILIES_PAGE_PATH` is: their sources are the tree's own declarations
+(the ``entries`` marker on each command contract, and every
+:class:`~otto.host.limitation.Limitation` on a built-in frame, exec route or
+console setting), they carry no date and no measurement, and
+``tests/unit/test_support_matrix.py`` compares them byte for byte.
 """
 
 
@@ -338,7 +341,8 @@ VOICE: "dict[str, Voice]" = {
             "process, so there is no command a signal can kill there"
         ),
         reader_entry_narrowed=(
-            "on every other host `exec` types the command into otto's own shell session, "
+            "on every other host `exec` types the command into a shell session (the "
+            "`pooled-shell` or `default-session` route), "
             "and a killed command would take that session down with it, so otto does not "
             "check it there yet"
         ),
@@ -2119,7 +2123,7 @@ def render_families() -> str:
         "host class **declares** in its `capabilities` object. What a run **measured**",
         "against real hardware, cell by cell, is in {doc}`../../architecture/support-matrix`.",
         "What a command's exit code, output and timeout mean on each kind of host is on",
-        "{ref}`the command contract page <command-contract>`.",
+        "{ref}`Command contracts <command-contracts>`.",
         "",
         "A class registered from your own repository must declare one too:",
         "`register_host_class` refuses a class without it.",
@@ -2186,13 +2190,35 @@ class ContractRow:
     capability: str
     contract: str
     entries: "list[str]"
-    not_checked: "list[str]"
-    """Where the promise is NOT checked, in a reader's words: the kinds of host
-    outside the contract's domain, and each declared entry's ineligible hosts.
-    Empty only when every host the suite reaches is checked through every entry."""
+    notes: "list[NotChecked]" = dataclass_field(default_factory=list)
+    """Where the promise is NOT checked: the kinds of host outside the contract's
+    domain (for every entry), and each declared entry's ineligible hosts (for that
+    entry). Empty only when every host the suite reaches is checked through every entry."""
 
-    not_checked_short: "list[str]" = dataclass_field(default_factory=list)
-    """The same places, one entry per :attr:`not_checked` note, in the table's few words."""
+    @property
+    def not_checked(self) -> "list[str]":
+        """Each of :attr:`notes`' full sentences, in a reader's words."""
+        return [note.text for note in self.notes]
+
+    @property
+    def not_checked_short(self) -> "list[str]":
+        """The same places, one per :attr:`not_checked` note, in the table's few words."""
+        return [note.short for note in self.notes]
+
+    def notes_for(self, entry: str) -> "list[NotChecked]":
+        """Return the notes that apply to *entry*: the domain's, and *entry*'s own.
+
+        A "not on" note is left out when one of *entry*'s "only on" notes
+        already rules its hosts out: a reader told `exec-shell` runs only on
+        SSH hosts needs no note that it skips a Zephyr board.
+        """
+        mine = [note for note in self.notes if note.entry in (None, entry)]
+        only = [note.hosts for note in mine if note.only]
+        return [
+            note
+            for note in mine
+            if note.only or not any(not (note.hosts & hosts) for hosts in only)
+        ]
 
 
 #: The kinds of host the conformance suite reaches, as a reader names them. Keyed
@@ -2256,6 +2282,16 @@ class NotChecked:
     text: str
     """The note's full sentence, with the reason."""
 
+    entry: "str | None" = None
+    """The one entry this note is about; ``None`` for a domain note, which holds for every entry."""
+
+    hosts: "frozenset[tuple[str, str]]" = frozenset()
+    """The ``(kind, term)`` pairs the note names: where it is checked for an
+    :attr:`only` note, else where it is not."""
+
+    only: bool = False
+    """Whether the note says where the promise IS checked ("Checked only on ...")."""
+
 
 def collected_cells(
     contract: str,
@@ -2315,6 +2351,7 @@ def not_checked_notes(
         names += [_host_phrase(*pair) for pair in partly]
         notes.append(
             NotChecked(
+                hosts=frozenset(every - domain),
                 short=f"not on {_join(names)}",
                 text=(
                     f"Not checked on {_join(names)}, so not promised there: "
@@ -2346,7 +2383,12 @@ def _entry_note(
     left_out: "set[tuple[str, str]]",
     reason: "str | None",
 ) -> NotChecked:
-    """Say that *entry* is checked on *among* and not on *left_out*, by the shorter list."""
+    """Say that *entry* is checked on *among* and not on *left_out*, by the shorter list.
+
+    The note sits in *entry*'s own table, so it does not name the entry. An
+    "only on" list is named in the note alone, and the table cell says "only on
+    some hosts" beside its number: a list of hosts appears once on a page.
+    """
     order = list(HOST_KIND_VOICE)
     only = bool(among) and len(among) <= len(left_out)
     pairs = among if only else left_out
@@ -2354,11 +2396,17 @@ def _entry_note(
         _host_phrase(*pair) for pair in sorted(pairs, key=lambda p: (order.index(p[0]), p[1]))
     ]
     text, short = (
-        (f"`{entry}` is checked only on {_join(phrases)}", f"`{entry}` only on {_join(phrases)}")
+        (f"Checked only on {_join(phrases)}", "only on some hosts")
         if only
-        else (f"`{entry}` is not checked on {_join(phrases)}", f"`{entry}` not on {_join(phrases)}")
+        else (f"Not checked on {_join(phrases)}", f"not on {_join(phrases)}")
     )
-    return NotChecked(short=short, text=f"{text}{f': {reason}' if reason else ''}.")
+    return NotChecked(
+        short=short,
+        text=f"{text}{f': {reason}' if reason else ''}.",
+        entry=entry,
+        hosts=frozenset(pairs),
+        only=only,
+    )
 
 
 def contract_rows(cells: "list[ResolvedCell] | None" = None) -> "list[ContractRow]":
@@ -2375,8 +2423,7 @@ def contract_rows(cells: "list[ResolvedCell] | None" = None) -> "list[ContractRo
             capability=VOICE[surface.id].capability,
             contract=surface.contract,
             entries=entries,
-            not_checked=[note.text for note in notes],
-            not_checked_short=[note.short for note in notes],
+            notes=notes,
         )
         for surface in SURFACES
         if (entries := entries_declared(surface.contract))
@@ -2418,7 +2465,7 @@ class DeclaredLimitation:
                 parts.append(f"the {_join(_code(names))} {noun}{plural}")
         if self.consoles:
             settings = _join(_code([f"console_options.{name}" for name in self.consoles]))
-            parts.append(f"a console whose lab entry sets {settings}")
+            parts.append(f"a console whose host record sets {settings}")
         return _join(parts)
 
 
@@ -2490,19 +2537,17 @@ def exception_title(item: DeclaredLimitation) -> str:
     return f"{_capitalise(item.limitation.affects)}, on {item.where}"
 
 
-def _not_checked_cell(row: ContractRow, notes: "list[str]") -> str:
-    """Say in the table where *row* is not checked: each place in words, then its note.
+def _not_checked_cell(row: ContractRow, entry: str, notes: "list[str]") -> str:
+    """Say in *entry*'s table where *row* is not checked: each place in words, then its note.
 
     "`exec-shell` only on ... (note 2); not on a Zephyr board (note 3)", read off
-    the row's :attr:`ContractRow.not_checked_short`, one per note; "--" for none.
+    :meth:`ContractRow.notes_for` *entry*, numbered by their place in the page's
+    *notes*; "--" for none.
     """
-    if not row.not_checked:
+    own = row.notes_for(entry)
+    if not own:
         return "--"
-    shorts = row.not_checked_short or row.not_checked
-    return "; ".join(
-        f"{short} (note {notes.index(note) + 1})"
-        for short, note in zip(shorts, row.not_checked, strict=True)
-    )
+    return "; ".join(f"{note.short} (note {notes.index(note.text) + 1})" for note in own)
 
 
 def _narrower_promise(
@@ -2527,18 +2572,21 @@ def _narrower_promise(
     item = next((i for i in limitations if i.limitation is declared), None)
     if isinstance(declared, Limitation) and item is not None:
         return (
-            f"On {item.where} (`{surface_id}`): you can "
-            f"{_esc(branch.capability.rstrip('.'))}, except for {declared.affects}: "
-            f"see {{ref}}`{_capitalise(declared.affects)} <{exception_label(item)}>`."
+            f"On {item.where}, `{surface_id}` does not cover {declared.affects}.\n"
+            f"  - Otherwise you can {_esc(branch.capability.rstrip('.'))}.\n"
+            f"  - What is lost: {{ref}}`{_capitalise(declared.affects)} <{exception_label(item)}>`."
         )
     where = _join([HOST_KIND_VOICE[kind] for kind in branch.kinds]) or "some devices"
-    bullet = f"On {where} (`{surface_id}`): you can {_esc(branch_capability(branch).rstrip('.'))}."
+    bullet = (
+        f"On {where}, `{surface_id}` holds in a narrower form.\n"
+        f"  - You can {_esc(branch_capability(branch).rstrip('.'))}."
+    )
     if "bed-zephyr" in branch.kinds:
         sequences = _join(
             [f"`{seq.encode('unicode_escape').decode('ascii')}`" for seq in ZEPHYR_LEVEL_SEQUENCES]
         )
         bullet += (
-            f" The colour codes removed are exactly {sequences}, wherever they occur in "
+            f"\n  - The colour codes removed are exactly {sequences}, wherever they occur in "
             "the output, so a command that writes one of those sequences itself loses it."
         )
     return bullet
@@ -2628,94 +2676,552 @@ def _zephyr_unrecorded(recorded: "ZephyrRecorded | None" = None) -> str:
     )
 
 
-def _timeout_checked_over(rows: "list[ContractRow]", cells: "list[ResolvedCell]") -> "list[str]":
-    """Say which terms the timeout promise IS checked over, from the cells it is collected on.
+@dataclass(frozen=True)
+class EntryVoice:
+    """How one entry reaches the command contract pages: on whose page, in what words."""
 
-    The **Not checked** column says where it is not; this names, per kind of host
-    it does reach, every term it reaches it by, so a console-served device is
-    visibly in or out.
-    """
-    row = next((row for row in rows if row.surface_id == "timeout"), None)
-    if row is None:
-        return []
-    collected = collected_cells(row.contract, cells, applies=_domain_of(row.contract))
-    order = list(HOST_KIND_VOICE)
-    terms: "dict[str, set[str]]" = {}
-    for cell in collected:
-        if cell.cell.term != "local" and cell.kind != "loopback-ssh":
-            terms.setdefault(cell.kind, set()).add(cell.cell.term)
-    phrases = [
-        f"{HOST_KIND_VOICE[kind]} over {_join(_code(sorted(terms[kind])))}"
-        for kind in sorted(terms, key=order.index)
-    ]
-    if not phrases:
-        return []
-    consoles = any("console" in reached for reached in terms.values())
-    return [
-        "",
-        (
-            "Of the devices otto reaches over a term, the timeout promise is checked on "
-            f"{_join(phrases)}"
-            + (": a device reached over its console is checked too." if consoles else ".")
+    page: str
+    """The :data:`COMMAND_PAGES` key whose page carries this entry's promises."""
+
+    lead: str
+    """The words a promise row on that page reads under: "With `exec` you can"."""
+
+    heading: str = ""
+    """The section of the page this entry's table sits under; empty for the page's own command."""
+
+    about: "tuple[str, ...]" = ()
+    """What this entry is, said under :attr:`heading` before its table."""
+
+
+#: Which command page each entry's promises are on: THE entry -> page mapping.
+#: Keyed by the entry vocabulary of ``tests/conformance/_entry.py``
+#: (``ALL_ENTRIES``); :func:`render_command_contracts` raises on an entry with no
+#: line here, so a new entry cannot reach the suite without a page.
+ENTRY_VOICE = {
+    "run": EntryVoice(page="run", lead="With `run` you can"),
+    "exec": EntryVoice(page="exec", lead="With `exec` you can"),
+    "exec-shell": EntryVoice(
+        page="exec",
+        lead="With `exec` sent through a shell session you can",
+        heading="Shell-routed `exec`",
+        about=(
+            "This section is about one case only: an `exec` on a host reached over",
+            "`ssh` that the cases above send through a shell session (`pooled-shell`)",
+            "instead of its own channel. The conformance suite checks that path as an",
+            "entry of its own, `exec-shell`. A host reached over `telnet` or `console`",
+            "always sends `exec` through a shell session: `pooled-shell` over `telnet`,",
+            "`default-session` (the session `run` uses) over `console`. Their `exec`",
+            "promises are listed and checked in the main `exec` table above, and the",
+            "notes on the table below do not apply to them.",
         ),
+    ),
+}
+
+
+@dataclass(frozen=True)
+class CommandPage:
+    """One command's page under ``docs/command-contracts/``: the words only it says."""
+
+    title: str
+    """The page's heading."""
+
+    summary: str
+    """What the command does, in the overview's list of commands."""
+
+    opening: "tuple[str, ...]"
+    """The page's first sentences: what the command is, and how you issue it."""
+
+    routes: "tuple[str, ...]"
+    """The :class:`~otto.host.exec_route.ExecRoute` values this command can take, in
+    :data:`ROUTE_VOICE`; a limitation declared on one of them applies to it."""
+
+    route_rules: "tuple[str, ...]" = ()
+    """When the command takes each of :attr:`routes`, as markdown lines."""
+
+    route_cases: "tuple[RouteCase, ...]" = ()
+    """The same, as one case per line: rendered under their groups after
+    :attr:`route_rules`, and each driven through otto's real route decision by
+    ``tests/unit/host/test_exec_plan.py``, so a routing change fails a test."""
+
+
+@dataclass(frozen=True)
+class RouteCase:
+    """One case a command page lists: when it applies, and the route it takes."""
+
+    id: str
+    """The case's name, the key ``tests/unit/host/test_exec_plan.py`` builds a host by."""
+
+    group: str
+    """The heading line the case sits under on the page."""
+
+    when: str
+    """The case, in a reader's words."""
+
+    route: str
+    """The :class:`~otto.host.exec_route.ExecRoute` value it takes."""
+
+    route_words: str = ""
+    """What to print for the route instead of the bare value (a container's prefix form)."""
+
+    note: str = ""
+    """A sentence printed after the route, such as that the case is not tested."""
+
+
+#: The cases the ``exec`` page lists, each a line of that page and a test case.
+EXEC_ROUTE_CASES = (
+    RouteCase(
+        "ssh",
+        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        "reached over `ssh`, `exec` gets a bare SSH channel of its own, unless a case "
+        "below applies",
+        "ssh-channel",
+    ),
+    RouteCase(
+        "telnet",
+        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        "reached over `telnet`, it goes through a shell session",
+        "pooled-shell",
+    ),
+    RouteCase(
+        "proxied",
+        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        "the host's login is **proxied** (otto logs in as one account and then switches "
+        "to the one it runs as; [Credentials and login proxies]"
+        "(../configuration/host-sources.md#credentials-and-login-proxies)): a shell "
+        "session",
+        "pooled-shell",
+        note=(
+            "No host the suite tests has a proxied login "
+            "({ref}`What is not covered at all <command-contracts-not-covered>`)."
+        ),
+    ),
+    RouteCase(
+        "hook",
+        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        "the host declares a **session-setup hook** (project code otto runs on every "
+        "shell session it opens; {ref}`Session setup <per-host-session-setup>`): a shell "
+        "session",
+        "pooled-shell",
+    ),
+    RouteCase(
+        "needs-shell",
+        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        "the call needs a shell: it passes `expects` (patterns otto answers while the "
+        "command runs, such as a password prompt), `sudo=True`, or a `user` otto cannot "
+        "log in as directly",
+        "pooled-shell",
+    ),
+    RouteCase(
+        "own-ssh-user",
+        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        "`exec(user=...)` over `ssh` for a user with SSH credentials of its own, and no "
+        "`expects` or `sudo`: an SSH connection as that user, even when the login is "
+        "proxied or the host declares a session-setup hook",
+        "ssh-channel",
+    ),
+    RouteCase(
+        "console",
+        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        "reached over `console`, it uses the same session as `run`: a console serves one client",
+        "default-session",
+    ),
+    RouteCase(
+        "embedded",
+        "On other hosts:",
+        "on an embedded host, such as a Zephyr board, its one console session, as `run`",
+        "default-session",
+    ),
+    RouteCase(
+        "local", "On other hosts:", "on the local host, a fresh local process", "local-subprocess"
+    ),
+    RouteCase(
+        "container",
+        "On other hosts:",
+        "in a docker container, `docker exec` through its parent host",
+        "container",
+        route_words="`container/<the parent's route>`",
+    ),
+)
+
+
+def _route_case_lines(cases: "tuple[RouteCase, ...]") -> "list[str]":
+    """*cases* as markdown: each group's heading line, then one bullet per case."""
+    lines: "list[str]" = []
+    group = None
+    for case in cases:
+        if case.group != group:
+            group = case.group
+            lines += ["", group, ""] if lines else [group, ""]
+        route = case.route_words or f"`{case.route}`"
+        lines.append(f"- {_capitalise(case.when)} ({route}).{f' {case.note}' if case.note else ''}")
+    return lines
+
+
+#: Every command with a contract page, in the order the overview lists them. A
+#: command's page carries the entries :data:`ENTRY_VOICE` maps to its key.
+COMMAND_PAGES = {
+    "run": CommandPage(
+        title="`run`: a command in the host's session",
+        summary="sends a command to the host's one persistent shell session",
+        opening=(
+            "`run` sends a command to the host's one persistent shell session, so what",
+            "one command changes there (the working directory, a variable) is still",
+            "there for the next. You call it from Python, as",
+            "{meth}`Host.run <otto.host.host.Host.run>`; the CLI has no `run`.",
+        ),
+        routes=("default-session",),
+        route_rules=(
+            "`run` always uses the host's one persistent shell session, the",
+            "`default-session` route, whatever the host's term. On an embedded host,",
+            "such as a Zephyr board, that session is the board's one console session.",
+            "So `result.route` is `default-session` for every `run`.",
+        ),
+    ),
+    "exec": CommandPage(
+        title="`exec`: a one-off command",
+        summary="runs a one-off command, with no state carried from one call to the next",
+        opening=(
+            "`exec` runs a one-off command: nothing one call changes is carried to the",
+            "next. From the CLI it is `otto host <id> exec` ({doc}`/cli/host/exec`); from",
+            "Python, {meth}`Host.exec <otto.host.host.Host.exec>`.",
+        ),
+        routes=("ssh-channel", "pooled-shell", "default-session", "local-subprocess", "container"),
+        route_cases=EXEC_ROUTE_CASES,
+    ),
+}
+
+#: What each route a command can take is, in a reader's words, in the order the
+#: overview lists them. Keyed by :class:`~otto.host.exec_route.ExecRoute` value.
+ROUTE_VOICE = {
+    "default-session": "the host's one persistent shell session, the one `run` uses",
+    "pooled-shell": "a shell session otto keeps for `exec` beside the one `run` uses",
+    "ssh-channel": "a bare SSH channel of the command's own, with no terminal",
+    "local-subprocess": "a fresh process on the local machine",
+    "container": (
+        "a docker container's command, run as `docker exec` through its parent host; "
+        "its result reports `container/` and the route the parent took"
+    ),
+}
+
+COMMAND_CONTRACTS_LABEL = "command-contracts"
+"""The overview page's label: what another page links to for the general rules."""
+
+
+def command_page_label(command: str) -> str:
+    """Name the label of *command*'s page: ``command-contract-exec``."""
+    return f"command-contract-{command}"
+
+
+def _contract_page_header(source: str) -> "list[str]":
+    """Return the generated-file comment every command contract page opens with."""
+    return [
+        "<!-- GENERATED FILE -- do not edit by hand.",
+        "     scripts/render_support_matrix.py (render_command_contracts) renders this",
+        f"     from {source}.",
+        "     Regenerate with `uv run python -m scripts.render_support_matrix`;",
+        "     edits are overwritten. -->",
+        "",
     ]
 
 
-def render_command_contract(
+def entries_on_page(command: str) -> "list[str]":
+    """Return the entries :data:`ENTRY_VOICE` puts on *command*'s page, in entry order."""
+    from tests.conformance._entry import ALL_ENTRIES
+
+    return [entry for entry in ALL_ENTRIES if ENTRY_VOICE[entry].page == command]
+
+
+def _check_page_mapping() -> None:
+    """Refuse an entry with no page, a page no entry reaches, or a route with no words."""
+    from tests.conformance._entry import ALL_ENTRIES
+
+    problems = [
+        f"entry {e!r} has no line in ENTRY_VOICE" for e in ALL_ENTRIES if e not in ENTRY_VOICE
+    ]
+    problems += [
+        f"entry {entry!r} maps to {voice.page!r}, which COMMAND_PAGES does not hold"
+        for entry, voice in ENTRY_VOICE.items()
+        if voice.page not in COMMAND_PAGES
+    ]
+    problems += [
+        f"command page {command!r} carries no entry"
+        for command in COMMAND_PAGES
+        if not any(voice.page == command for voice in ENTRY_VOICE.values())
+    ]
+    from otto.host.exec_route import ExecRoute
+
+    # Every route a result can report has words, and nothing else does: bare
+    # `container` stands for its `container/<parent route>` form, and
+    # `unsupported` is never reported (an unsupported term raises first).
+    reported = {route.value for route in ExecRoute} - {ExecRoute.UNSUPPORTED.value}
+    if set(ROUTE_VOICE) != reported:
+        problems.append(
+            f"ROUTE_VOICE {sorted(ROUTE_VOICE)} != the ExecRoute values {sorted(reported)}"
+        )
+    problems += [
+        f"command page {command!r} names route {route!r}, which ROUTE_VOICE does not hold"
+        for command, page in COMMAND_PAGES.items()
+        for route in page.routes
+        if route not in ROUTE_VOICE
+    ]
+    if problems:
+        raise ValueError(
+            "the command contract pages cannot be laid out:\n  " + "\n  ".join(problems)
+        )
+
+
+def _applies_to(item: DeclaredLimitation, page: CommandPage) -> bool:
+    """Whether *item* reaches a command taking *page*'s routes.
+
+    A frame's or a console setting's limitation holds on every route that types
+    into the session or reads that console, so on every command; a route's only
+    on the commands that can take that route.
+    """
+    return bool(item.frames or item.consoles or set(item.routes) & set(page.routes))
+
+
+def _narrowed(rows: "list[ContractRow]") -> "list[tuple[str, Branch]]":
+    """Every ``(surface id, arm)`` whose promise is narrower on some device than its row says."""
+    return [
+        (row.surface_id, branch)
+        for row in rows
+        for branch in VOICE[row.surface_id].branches[1:]
+        if branch.capability
+    ]
+
+
+def render_command_contracts(
     *,
     rows: "list[ContractRow] | None" = None,
     limitations: "list[DeclaredLimitation] | None" = None,
     cells: "list[ResolvedCell] | None" = None,
-) -> str:
-    """Render the command contract page: what otto promises about a command's result.
+) -> "dict[str, str]":
+    """Render every page of ``docs/command-contracts/``, keyed by file name.
 
     DECLARED, like :func:`render_families`: read off the ``entries`` marker on
     each command contract (:func:`contract_rows`) and the limitations the
-    built-in frames and exec routes declare (:func:`declared_limitations`).
-    *rows*, *limitations* and *cells* (the suite's cells, which *rows* and
-    the proxied-login sentence are read from) replace a source, for a test.
+    built-in frames, exec routes and console settings declare
+    (:func:`declared_limitations`). ``index.md`` is the overview, holding what
+    every command shares; each :data:`COMMAND_PAGES` key gets a page carrying
+    the entries :data:`ENTRY_VOICE` maps to it. *rows*, *limitations* and
+    *cells* (the suite's cells, which *rows* and the proxied-login sentence are
+    read from) replace a source, for a test.
     """
-    from otto.host.host import DEFAULT_COMMAND_TIMEOUT
-    from otto.host.userland import PTY_TYPED_LINE_MAX
-
+    _check_page_mapping()
     cells = _suite_cells() if cells is None else cells
     rows = contract_rows(cells) if rows is None else rows
     limitations = declared_limitations() if limitations is None else limitations
-    lines = [
-        "<!-- GENERATED FILE -- do not edit by hand.",
-        "     scripts/render_support_matrix.py renders this from the `entries` marker on",
-        "     each command contract and the limitations declared on otto's built-in",
-        "     command frames and exec routes, on every Sphinx build (docs/conf.py,",
-        "     builder-inited). Edits are overwritten. -->",
+    labels = [exception_label(item) for item in limitations]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"two declared limitations share a section label: {labels}")
+    pages = {"index.md": render_contracts_overview(rows, limitations, cells)}
+    for command in COMMAND_PAGES:
+        pages[f"{command}.md"] = render_command_page(command, rows, limitations)
+    return pages
+
+
+#: What each kind of host the suite reaches is, for a first-time reader, and
+#: whether it needs the lab (``True``: on the lab's test bed) or runs on the
+#: machine running the suite (``False``). Keyed as :data:`HOST_KIND_VOICE`;
+#: :func:`render_contracts_overview` raises on a kind with no line here.
+HOST_KIND_GLOSS = {
+    "bed-unix": ("a full Linux system, with the GNU tools and bash", True),
+    "bed-busybox": (
+        "a small Linux system whose commands and shell (ash) all come from BusyBox",
+        True,
+    ),
+    "bed-zephyr": (
+        "a small board running the Zephyr operating system, driven through its own shell",
+        True,
+    ),
+    "local": ("the machine otto itself runs on", False),
+    "loopback-ssh": ("the same machine, reached over SSH as if it were remote", False),
+    "busybox-artifact": (
+        (
+            "BusyBox's commands (its applets) put on the `PATH` of a `run` session on the "
+            "local machine, standing in for a BusyBox device without a lab"
+        ),
+        False,
+    ),
+}
+
+
+def _host_kind_lines(cells: "list[ResolvedCell]") -> "list[str]":
+    """List the overview's kinds of host, glossed and tagged with where each runs.
+
+    Each names the terms the suite reaches it over, read from *cells*.
+    """
+    missing = [kind for kind in HOST_KIND_VOICE if kind not in HOST_KIND_GLOSS]
+    if missing:
+        raise ValueError(f"host kinds with no words in HOST_KIND_GLOSS: {missing}")
+    terms: "dict[str, set[str]]" = {}
+    for cell in cells:
+        if cell.cell.term != "local" and cell.kind != "loopback-ssh":
+            terms.setdefault(cell.kind, set()).add(cell.cell.term)
+    lines = []
+    for needs_lab, place in ((False, "Needing no lab:"), (True, "On the lab's test bed:")):
+        lines += [f"{place}", ""]
+        for kind, words in HOST_KIND_VOICE.items():
+            if HOST_KIND_GLOSS[kind][1] is not needs_lab:
+                continue
+            over = f" Reached over {_join(_code(sorted(terms[kind])))}." if kind in terms else ""
+            lines.append(f"- **{_capitalise(words)}**: {HOST_KIND_GLOSS[kind][0]}.{over}")
+        lines.append("")
+    return lines
+
+
+#: Words the pages use that a newcomer may not know, glossed once on the overview.
+GLOSSARY = {
+    "lab": "the hosts a project describes in its lab file, which otto connects to",
+    "test bed": "the virtual machines and emulated boards otto's own lab tests against",
+    "ash": "BusyBox's shell",
+    "BusyBox applets": "the small commands BusyBox provides, one program standing in for many",
+    "echo": "a terminal sending back each character typed, so it shows on screen",
+    "IAC": (
+        "the telnet byte 0xFF, which starts a telnet command; `escapes_iac` in a "
+        "console's settings says whether its server doubles a 0xFF the command wrote"
+    ),
+    "proxied login": (
+        "otto logs in as one account, then switches to the one it runs as "
+        "([Credentials and login proxies]"
+        "(../configuration/host-sources.md#credentials-and-login-proxies))"
+    ),
+    "session-setup hook": (
+        "project code otto runs on every shell session it opens "
+        "({ref}`Session setup <per-host-session-setup>`)"
+    ),
+}
+
+
+def _reaches_a_container(cells: "list[ResolvedCell]") -> bool:
+    """Whether some cell's command, through some entry it has, reports a container route."""
+    from tests.conformance._entry import entries_of, expected_route, with_entry
+
+    return any(
+        expected_route(with_entry(cell, entry)).startswith("container")
+        for cell in cells
+        for entry in entries_of(cell)
+    )
+
+
+def _signalled() -> "CommandResult":
+    """Build the failed result of a command killed by SIGTERM, as a shell reports it."""
+    import signal as _signal
+
+    from otto.host.exit_status import exit_status_of
+    from otto.result import CommandResult
+    from otto.utils import Status
+
+    # A nonzero exit status means `Failed`: product code has no shared owner for that decision yet.
+    return CommandResult(status=Status.Failed, retcode=exit_status_of(-_signal.SIGTERM))
+
+
+def _timed_out_example() -> "CommandResult":
+    """Build a timed-out result with the one function that builds every one."""
+    from otto.host.exec_route import ExecRoute
+    from otto.host.session import ExecOutput, timed_out_result
+
+    return timed_out_result(
+        cmd="sleep 60", timeout=5.0, output=ExecOutput(), route=ExecRoute.SSH_CHANNEL
+    )
+
+
+def exception_link(item: DeclaredLimitation) -> str:
+    """Link *item*'s section on the overview, with readable text.
+
+    A role's explicit text cannot carry a code span, so the text is the
+    section's title with its backticks dropped.
+    """
+    return f"{{ref}}`{exception_title(item).replace('`', '')} <{exception_label(item)}>`"
+
+
+def _line_budget_link(limitations: "list[DeclaredLimitation]") -> str:
+    """Link the line-length exception's section: the one place its rule is stated."""
+    from otto.host.exec_route import ExecRoute
+    from otto.host.session import EXEC_ROUTES
+
+    budget = EXEC_ROUTES[ExecRoute.POOLED_SHELL].limitations.get("line_budget")
+    item = next((i for i in limitations if i.limitation is budget), None)
+    return exception_link(item) if item else "[Declared exceptions](#declared-exceptions)"
+
+
+def _not_checked_example(rows: "list[ContractRow]") -> str:
+    """Say where one promise is or is not checked, read off the first note in *rows* with hosts.
+
+    An "only on" note is preferred, since it lists where the promise holds.
+    """
+    order = list(HOST_KIND_VOICE)
+    found = [(r, n) for r in rows for n in r.notes if n.hosts]
+    found.sort(key=lambda pair: not pair[1].only)
+    if not found:
+        return "a promise a command's page marks as not checked somewhere."
+    row, note = found[0]
+    pairs = sorted(note.hosts, key=lambda p: (order.index(p[0]), p[1]))
+    where = _join([_host_phrase(*pair) for pair in pairs])
+    through = f" through `{note.entry}`" if note.entry else ""
+    if note.only:
+        return f"`{row.surface_id}` is checked{through} only on {where}."
+    return f"`{row.surface_id}` is not checked{through} on {where}."
+
+
+def render_contracts_overview(
+    rows: "list[ContractRow]",
+    limitations: "list[DeclaredLimitation]",
+    cells: "list[ResolvedCell]",
+) -> str:
+    """Render ``docs/command-contracts/index.md``: what every command's contract shares."""
+    from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+
+    timed_out = _timed_out_example()
+    signalled = _signalled()
+    lines = _contract_page_header(
+        "the `entries` marker on each command contract and the limitations\n"
+        "     declared on otto's built-in command frames, exec routes and console settings"
+    )
+    lines += [
+        f"({COMMAND_CONTRACTS_LABEL})=",
         "",
-        "(command-contract)=",
+        "# Command contracts",
         "",
-        "# Command contract: what a command's result means",
+        "A **command contract** is a promise otto makes about the result of a",
+        "command you run on a host -- its exit code, its output, its timeout --",
+        "together with the test that checks it. This page holds what every command",
+        "shares. Each command's own page, listed below, says which promises are",
+        "checked through it, and where.",
         "",
-        "This page is for anyone who runs a command on a host, from the CLI",
-        "(`otto host <id> exec`) or from Python",
-        "({meth}`Host.run <otto.host.host.Host.run>`,",
-        "{meth}`Host.exec <otto.host.host.Host.exec>`).",
-        "It says what otto promises about the result of a command -- its exit code,",
-        "its output, its timeout -- on each kind of host it is checked on, through",
-        "each way of issuing it that is checked there. Where a promise is not",
-        "checked, it is not promised, and the page says so. Where a device's",
-        "firmware or shell, or a library otto is built on (such as telnetlib3),",
-        "makes a promise impossible, the page lists the",
-        "[declared exception](#declared-exceptions) with its measurements.",
+        "## Three words",
         "",
-        "An **entry** is the way a command is issued: `run` (the host's persistent",
-        "session), `exec` (a one-off command), or `exec-shell` (`exec` on an SSH",
-        "host sent through a shell session instead of a channel of its own, for one",
-        "of the reasons the next section lists).",
-        "A **route** is what carried the command; the next section says which one",
-        "your command takes. A host's **term** is how otto reaches it: `ssh`,",
-        "`telnet` or `console`. Its **lab entry** is the host's entry in the lab's",
-        "host file ({doc}`Host options <configuration/host-options>`).",
+        "| Word | Means | Examples |",
+        "| --- | --- | --- |",
+        "| **term** | how otto reaches the host | `ssh`, `telnet`, `console` |",
+        "| **entry** | which call you made | `run`, `exec`, shell-routed `exec` |",
+        (
+            "| **route** | which path the command then took | listed in "
+            "[Which route your command takes](#which-route-your-command-takes) |"
+        ),
         "",
-        "Every field this page talks about is on the",
-        "{class}`~otto.result.CommandResult` a call hands back, for example",
-        "(the result built here stands for what `await host.exec(...)` returns):",
+        "A host's term is set in its record in the lab file",
+        "({doc}`Host options </configuration/host-options>`). The route follows from",
+        "the term, the entry and the call's arguments; each command's page says how.",
+        "Other words these pages use:",
+        "",
+        *[f"- **{word}**: {meaning}." for word, meaning in GLOSSARY.items()],
+        "",
+        "## What you see",
+        "",
+        "From the CLI, `otto host <id> exec` shows the command's output as it runs and",
+        (
+            f"exits with the command's exit code, or {timed_out.exit_code} when the "
+            "command never finished."
+        ),
+        "A timed-out command prints no message of its own: you see the output it wrote",
+        f"before the budget expired, and the exit code {timed_out.exit_code}",
+        "({doc}`/cli/host/exec`, {ref}`the host exit codes <host-exit-codes>`). From",
+        "Python, `run` and `exec` hand back a {class}`~otto.result.CommandResult` whose",
+        "fields hold the same answers: `retcode` is the command's own return code,",
+        "`exit_code` is what the CLI exits with, and `value` is the output. For",
+        "example (the result built here stands for what `await host.exec(...)`",
+        "returns):",
         "",
         "```{doctest}",
         ">>> from otto.result import CommandResult",
@@ -2727,168 +3233,167 @@ def render_command_contract(
         "('ssh-channel', False, 'hello')",
         "```",
         "",
+        "## The commands covered",
+        "",
+        *[
+            f"- {{doc}}`{command} <{command}>`: {page.summary}."
+            for command, page in COMMAND_PAGES.items()
+        ],
+        "",
+        "A command not listed here has no contract yet: nothing on these pages is",
+        "promised for it.",
+        "",
+        "```{toctree}",
+        ":hidden:",
+        "",
+        *COMMAND_PAGES,
+        "```",
+        "",
+        "(command-contracts-checked)=",
+        "",
+        "## How otto checks a contract",
+        "",
+        "Each promise has a test in otto's conformance suite. The suite runs the test",
+        "once through each entry it declares, on each **kind of host** below. Some",
+        "need no lab and run on the machine running the suite; the rest are on the",
+        "lab's **test bed**, the virtual machines and emulated boards otto's own lab",
+        "tests against.",
+        "",
+        *_host_kind_lines(cells),
+        "Whether a promise held, device by device, is in the",
+        "{doc}`support matrix </architecture/support-matrix>`.",
+        "",
+        "(command-contracts-promise-id)=",
+        "",
+        "Each promise has a **Promise id**: a fixed name, shared by every command's",
+        "page and by the support matrix. The `exec-` at the start of most ids is",
+        "historical; it does not mean the `exec` command.",
+        "",
         "## Which route your command takes",
         "",
-        "otto picks the route for each call from the host's configuration and the",
-        "call's arguments:",
+        "otto picks the route for each call. A command takes one of these:",
         "",
-        "- `run` always uses the host's one persistent shell session, the",
-        "  `default-session` route.",
-        "- `exec` on an SSH host gets a bare SSH channel of its own, the `ssh-channel`",
-        "  route, unless one of the cases below applies.",
-        "- `exec` goes through a shell session instead when:",
-        "  - the host's term is `console`. A console serves one client, so `exec`",
-        "    uses the same session as `run` (`default-session`);",
-        "  - the host's term is `telnet` (`pooled-shell`, a shell session kept for",
-        "    `exec` beside the one `run` uses);",
-        "  - the login is **proxied**: the account otto runs as is reached by logging",
-        "    in as another account first and then becoming it, through the login",
-        "    proxy named in its cred (the credentials entry otto logs in with)",
-        (
-            "    ([Credentials and login proxies]"
-            "(configuration/host-sources.md#credentials-and-login-proxies))"
-        ),
-        "    (`pooled-shell`);",
-        "  - the host declares a **session-setup hook**: project code that runs on",
-        "    every shell session otto opens, before the session is used",
-        "    ({ref}`Session setup <per-host-session-setup>`) (`pooled-shell`);",
-        "  - the call needs a shell: it passes `expects`, `sudo=True`, or a `user`",
-        "    otto cannot log in as directly over SSH (`pooled-shell`).",
-        "- On an SSH host, `exec(user=...)` for a user that has SSH credentials of its",
-        "  own, with no `expects` and no `sudo`, logs in as that user on an SSH",
-        "  connection of its own (`ssh-channel`), even when the host's login is",
-        "  proxied or it declares a session-setup hook.",
-        "- On an embedded host, such as a Zephyr board, `run` and `exec` both use",
-        "  its one console session (`default-session`).",
-        "- On the local host, `exec` runs a fresh local process (`local-subprocess`).",
-        "- A docker container's `exec` runs `docker exec` through its parent host.",
+        *[f"- `{route}`: {words}." for route, words in ROUTE_VOICE.items()],
         "",
-        "Every result carries the answer in its `route` field",
+        "Each command's page says when it takes each. From Python, read the result's",
+        "`route` field",
         (
             "([Which route ran a command]"
-            "(architecture/utilities/results.md#which-route-ran-a-command)):"
+            "(../architecture/utilities/results.md#which-route-ran-a-command));"
         ),
-        "from Python, read `result.route`. `otto host <id> exec` does not print it.",
+        "`otto host <id> exec` does not print it.",
         "",
-        "## What otto promises, and where it is checked",
+        "(command-contracts-not-promised)=",
         "",
-        "Each promise below has a test, and the conformance suite runs it, once",
-        "through each entry the table lists, on these kinds of host:",
+        "## How to read what is not promised",
         "",
-        *[f"- {words}" for words in HOST_KIND_VOICE.values()],
+        "A promise holds where it is checked, unless a declared exception says",
+        "otherwise. Anything else is not promised, in one of three ways:",
         "",
-        "Whether a promise held, device by device, is in the",
-        "{doc}`support matrix <architecture/support-matrix>`, which says how the run",
-        "behind it covers the test bed.",
-        "A promise holds where it is checked, through the entries checked there,",
-        "unless a [declared exception](#declared-exceptions) says otherwise. Where it",
-        "is not checked, it is not promised: the **Not checked** column says where,",
-        "and its [notes](#where-a-promise-is-not-checked) say why. The **Promise id**",
-        "is the name the support matrix uses for the promise.",
+        "1. **Not checked.** The promise exists, but no test covers this kind of host",
+        "   or this entry, so it is not promised there. A command's page says where,",
+        "   beside each promise, with a numbered note saying why. For example,",
+        f"   {_not_checked_example(rows)}",
+        "2. **A declared exception.** The device, or a library otto is built on (such",
+        "   as telnetlib3), makes the promise impossible, and otto says so in its",
+        "   code. Each is listed [below](#declared-exceptions) with its measurements.",
+        "   For example, a long line typed into a terminal is cut.",
+        "3. **Undefined.** There is no promise at all, because no device has been",
+        "   measured behaving this way. Each is listed under",
+        "   [Undefined](#undefined-never-measured-so-not-promised). For example, what",
+        "   a tab looks like on a terminal that turns tabs into spaces.",
         "",
-    ]
-    notes = list(dict.fromkeys(note for row in rows for note in row.not_checked))
-    if rows:
-        lines += [
-            "| You can | Checked through | Not checked | Promise id |",
-            "| --- | --- | --- | --- |",
-        ]
-        lines += [
-            f"| {_esc(row.capability)} | {', '.join(_code(row.entries))} "
-            f"| {_esc(_not_checked_cell(row, notes))} "
-            f"| `{row.surface_id}` |"
-            for row in rows
-        ]
-        narrower = [
-            (row.surface_id, branch)
-            for row in rows
-            for branch in VOICE[row.surface_id].branches[1:]
-            if branch.capability
-        ]
-        if narrower:
-            lines += [
-                "",
-                "### Where a device gets a narrower promise",
-                "",
-                "On these devices the promise a test can check is narrower than the",
-                "table says, and only the narrower one is promised there:",
-                "",
-            ]
-            lines += [
-                f"- {_narrower_promise(surface_id, branch, limitations)}"
-                for surface_id, branch in narrower
-            ]
-    else:
-        lines.append("No promise is checked per entry yet.")
-    lines += [
-        "",
-        "### What the output and timeout promises mean",
+        "## What the output and timeout promises mean",
         "",
         "What a command's output holds, line by line, is defined in",
         "{ref}`What a command's value holds <command-output-contract>`.",
         "",
-        "The time budget is the call's `timeout`, which defaults to",
-        f"{DEFAULT_COMMAND_TIMEOUT:g} seconds",
-        "({data}`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`) for `run` and `exec` alike.",
-        "A command that outlives it does not raise. Its",
-        "{class}`~otto.result.CommandResult` has `timed_out` set to `True`, `status`",
-        "`Status.Error`, `retcode` `-1` (the command never finished, so it has no",
-        "exit code of its own), `exit_code` `255`, and a `value` that starts",
-        "`Command timed out after <timeout>s`; `otto host <id> exec` exits 255",
-        "({ref}`the host exit codes <host-exit-codes>`). `retcode` `-1` also means",
+        f"The time budget is the call's `timeout`: {DEFAULT_COMMAND_TIMEOUT:g} seconds by",
+        "default ({data}`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`), for `run` and",
+        "`exec` alike, and `--timeout` on the CLI. A command that outlives it does",
+        f"not raise. Its result has `timed_out` set to `{timed_out.timed_out}`, `status`",
+        f"`Status.{timed_out.status.name}`, `retcode` `{timed_out.retcode}` (the command",
+        "never finished, so it has no exit code of its own) and `exit_code`",
+        f"`{timed_out.exit_code}`; `otto host <id> exec` exits {timed_out.exit_code}.",
+        "Its `value` begins with the timeout line (for a 5-second budget,",
+        f"`{timed_out.value.splitlines()[0]}`); the rest of its shape is in",
+        "{ref}`Timed out <timed-out-command-result>`. `retcode` `-1` also means",
         "other things, so `timed_out` is the field that tells a timeout apart",
-        "([The Result family](architecture/utilities/results.md#the-result-family)).",
-        *_timeout_checked_over(rows, cells),
+        "([The Result family](../architecture/utilities/results.md#the-result-family)).",
         "",
         "On a Zephyr board a command's `retcode` is the firmware's own return value,",
         "in negative-errno style (`-8` for an unknown command), not a POSIX exit",
         "status, and a failed command's `exit_code` is that same negative value",
-        "([Exit codes](architecture/utilities/results.md#exit-codes) says the one",
+        "([Exit codes](../architecture/utilities/results.md#exit-codes) says the one",
         "value it cannot carry).",
         "",
-        "## Where a promise is not checked",
+        f"A command that fails has `status` `Status.{signalled.status.name}`, and its `exit_code`",
+        "is its `retcode`. One killed by signal N fails the same way, with `retcode`",
+        f"128+N: `kill -TERM` reads `{signalled.retcode}`, and `exit_code`",
+        f"`{signalled.exit_code}`",
+        "({ref}`A command killed, timed out or interrupted <command-ends-abnormally>`).",
         "",
     ]
-    lines += [f"{number}. {note}" for number, note in enumerate(notes, start=1)]
-    if not notes:
-        lines.append("Every promise is checked on every kind of host, through every entry.")
+    narrower = _narrowed(rows)
+    if narrower:
+        lines += [
+            "(command-contracts-narrower)=",
+            "",
+            "## Where a device gets a narrower promise",
+            "",
+            "On these devices the promise a test can check is narrower than a command's",
+            "page says, and only the narrower one is promised there, for every command:",
+            "",
+        ]
+        lines += [
+            f"- {_narrower_promise(surface_id, branch, limitations)}"
+            for surface_id, branch in narrower
+        ]
+        lines.append("")
+    lines += ["(command-contracts-not-covered)=", "", "## What is not covered at all", ""]
     if not any(cell.proxied_login for cell in cells):
         lines += [
-            "",
             "No host the conformance suite reaches has a **proxied** login, so the",
             "route a proxied login takes is covered by unit tests only, and none of",
-            "the promises above is checked through it.",
+            "the promises on these pages is checked through it.",
+            "",
+        ]
+    if not _reaches_a_container(cells):
+        lines += [
+            "A docker container's `exec` is designed to follow its parent host's route",
+            "({ref}`What a command's value holds <command-output-contract>`), but no",
+            "host the conformance suite reaches is a container, so nothing on these",
+            "pages is promised for one.",
+            "",
         ]
     lines += [
-        "",
-        "A docker container's `exec` is designed to follow its parent host's route",
-        "({ref}`What a command's value holds <command-output-contract>`), but commands",
-        "run on the container route are not checked by these tests yet, so nothing on",
-        "this page is promised for them.",
-    ]
-    lines += [
-        "",
         "## Declared exceptions",
         "",
         "Where a device's firmware or shell, or a library otto is built on, makes a",
         "promise impossible, otto declares the exception in its code, next to what",
-        "it applies to. Each one is listed here",
-        "with the reason and the measurements behind it.",
+        "it applies to. Each is described once, here; a command's page links the ones",
+        "that apply to it.",
         "",
     ]
-    labels = [exception_label(item) for item in limitations]
-    if len(set(labels)) != len(labels):
-        raise ValueError(f"two declared limitations share a section label: {labels}")
     if limitations:
+        kinds = list(dict.fromkeys(item.limitation.kind for item in limitations))
+        # A Kind column only while the kinds differ: one kind on every row says nothing.
+        mixed = len(kinds) > 1
         lines += [
-            "| Where | Promise affected | Kind | Why |",
-            "| --- | --- | --- | --- |",
+            "| Exception |" + (" Kind |" if mixed else "") + " In short |",
+            "| --- |" + (" --- |" if mixed else "") + " --- |",
         ]
         lines += [
-            f"| {_capitalise(item.where)} | {_esc(item.limitation.affects)} "
-            f"| {_KIND_VOICE.get(item.limitation.kind, item.limitation.kind)} "
-            f"| {_esc(item.limitation.reason)} |"
+            f"| {exception_link(item)} |"
+            + (f" {_KIND_VOICE.get(item.limitation.kind, item.limitation.kind)} |" if mixed else "")
+            + f" {_esc(item.limitation.summary or item.limitation.reason)} |"
             for item in limitations
+        ]
+        lines += [
+            "",
+            "Each section below gives the exception's **kind**: "
+            + "; ".join(f"{_KIND_VOICE.get(kind, kind)}" for kind in _KIND_VOICE)
+            + ".",
         ]
         for item in limitations:
             lines += [
@@ -2897,7 +3402,14 @@ def render_command_contract(
                 "",
                 f"### {exception_title(item)}",
                 "",
-                "Measured:",
+                (
+                    f"Where: {item.where}. Kind: "
+                    f"{_KIND_VOICE.get(item.limitation.kind, item.limitation.kind)}."
+                ),
+                "",
+                item.limitation.reason,
+                "",
+                "Measured (the lab detail, for the evidence):",
                 "",
             ]
             lines += [f"- {measurement}" for measurement in item.limitation.measured_on]
@@ -2905,32 +3417,36 @@ def render_command_contract(
         lines.append("None declared.")
     lines += [
         "",
+        "(command-contracts-undefined)=",
+        "",
         "## Undefined: never measured, so not promised",
         "",
         "These are not declared exceptions, because no device has been measured",
         "producing them:",
         "",
-        "- A terminal that maps line endings in a way otto cannot undo exactly. The",
-        "  session reports its mapping as `unknown(...)` (`otto host <id> probe` prints",
-        "  it), returns the output as it arrived, and logs a warning once. What a",
-        "  command's output looks like on such a terminal is not promised.",
-        "- A tab a command writes, on a terminal that expands tabs where `stty tab0`",
-        "  did not take (no `stty`, or one that refuses it). The session reports its",
-        "  mapping with `, tabs expanded` after it, logs a warning once, and the tab",
-        "  arrives as spaces.",
-        "- Output after a command changes its own terminal settings (`stty -onlcr`, or",
-        "  a program that leaves the terminal in raw mode) on a shell session, whether",
-        "  `run` or a shell-routed `exec` reached it. The session measured its terminal",
-        "  when it opened and does not measure again until a new session opens",
+        "- A terminal that changes line endings in a way otto cannot undo exactly.",
+        "  The session reports its line-ending mapping as `unknown(...)`",
+        "  (`otto host <id> probe` prints it), returns the output as it arrived, and",
+        "  logs a warning once. What a command's output looks like there is not",
+        "  promised.",
+        "- A tab a command writes, on a terminal that turns tabs into spaces, where",
+        "  otto could not switch that off (with `stty tab0`; the device has no `stty`,",
+        "  or its `stty` refuses). The session reports its mapping with",
+        "  `, tabs expanded` after it, logs a warning once, and the tab arrives as",
+        "  spaces.",
+        "- Output after a command changes its own terminal settings on a shell",
+        "  session, whether `run` or a shell-routed `exec` reached it: for example",
+        "  `stty -onlcr`, which stops the terminal turning a newline into `\\r\\n`, or",
+        "  a program that leaves the terminal in raw mode, passing every byte through",
+        "  unchanged. The session measured its terminal when it opened and does not",
+        "  measure again until a new session opens",
         "  ({ref}`What a command's value holds <command-output-contract>`).",
         _zephyr_unrecorded(),
         "- How long a line the Zephyr shell itself accepts. Its command buffer is a",
         "  firmware build setting (`CONFIG_SHELL_CMD_BUFF_SIZE`) and has never been",
-        "  measured; the line-length measurements above are of BusyBox devices. otto",
-        "  refuses a long line only on an ash shell. Where otto sizes its own lines on",
-        f"  a Zephyr board it uses {PTY_TYPED_LINE_MAX} characters, less what otto adds",
-        "  around the command: that is the Linux terminal's line bound, measured on",
-        "  BusyBox guests, not a measurement of any Zephyr board.",
+        "  measured. Where otto sizes its own lines on a Zephyr board it uses the",
+        f"  Linux terminal's limit ({_line_budget_link(limitations)}), which is not a",
+        "  measurement of any Zephyr board.",
     ]
     if rows:
         lines += [
@@ -2941,7 +3457,118 @@ def render_command_contract(
             "",
         ]
         lines += [f"- `{row.surface_id}`: `{row.contract}`" for row in rows]
+        lines += [
+            "",
+            "The suite checks shell-routed `exec` (the `exec-shell` entry) on an SSH host",
+            "whose `exec` would otherwise get a channel of its own, by declaring a",
+            "session-setup hook that does nothing: declaring any hook sends `exec` to a",
+            "shell session.",
+        ]
     lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _entry_table(entry: str, rows: "list[ContractRow]", notes: "list[str]") -> "list[str]":
+    """*entry*'s promise table: one row per contract checked through it, under its lead-in."""
+    own = [row for row in rows if entry in row.entries]
+    if not own:
+        return [f"No promise is checked through `{entry}` yet."]
+    lines = [
+        (
+            f"| {ENTRY_VOICE[entry].lead} | Not checked "
+            "| {ref}`Promise id <command-contracts-promise-id>` |"
+        ),
+        "| --- | --- | --- |",
+    ]
+    lines += [
+        f"| {_esc(row.capability)} | {_esc(_not_checked_cell(row, entry, notes))} "
+        f"| `{row.surface_id}` |"
+        for row in own
+    ]
+    if _narrowed(own):
+        lines += [
+            "",
+            "On some devices a promise above is narrower: see",
+            "{ref}`Where a device gets a narrower promise <command-contracts-narrower>`.",
+        ]
+    return lines
+
+
+def render_command_page(
+    command: str, rows: "list[ContractRow]", limitations: "list[DeclaredLimitation]"
+) -> str:
+    """Render *command*'s page: its routes, and the promises of each entry mapped to it."""
+    page = COMMAND_PAGES[command]
+    entries = entries_on_page(command)
+    notes = list(
+        dict.fromkeys(
+            note.text
+            for entry in entries
+            for row in rows
+            if entry in row.entries
+            for note in row.notes_for(entry)
+        )
+    )
+    lines = _contract_page_header(
+        f"the `entries` marker on each command contract checked\n     through `{command}`"
+    )
+    lines += [
+        f"({command_page_label(command)})=",
+        "",
+        f"# {page.title}",
+        "",
+        *page.opening,
+        "The rules every command shares -- what a contract is, what its promises",
+        "mean, and how to read what is not promised -- are on",
+        f"{{ref}}`Command contracts <{COMMAND_CONTRACTS_LABEL}>`.",
+        "",
+        f"## Which route `{command}` takes",
+        "",
+        *page.route_rules,
+        *_route_case_lines(page.route_cases),
+        "",
+        f"## What `{command}` promises",
+        "",
+        f"Each promise below is checked through `{command}` on every kind of host the",
+        "conformance suite reaches ({ref}`the list <command-contracts-checked>`), except",
+        "where its **Not checked** column says otherwise; the numbered notes below say why.",
+        "",
+        *_entry_table(command, rows, notes),
+    ]
+    for entry in entries:
+        voice = ENTRY_VOICE[entry]
+        if entry == command:
+            continue
+        lines += [
+            "",
+            f"## {voice.heading}",
+            "",
+            *voice.about,
+            "",
+            *_entry_table(entry, rows, notes),
+        ]
+    lines += ["", "## Where a promise is not checked", ""]
+    lines += [f"{number}. {note}" for number, note in enumerate(notes, start=1)]
+    if not notes:
+        lines.append(
+            "Every promise on this page is checked on every kind of host the suite reaches."
+        )
+    applying = [item for item in limitations if _applies_to(item, page)]
+    lines += [
+        "",
+        "## Declared exceptions and undefined behaviour",
+        "",
+        f"These declared exceptions apply to `{command}`; each is described on",
+        f"{{ref}}`Command contracts <{COMMAND_CONTRACTS_LABEL}>`:",
+        "",
+    ]
+    lines += [f"- {exception_link(item)}" for item in applying] or ["- None declared."]
+    lines += [
+        "",
+        f"What is never measured, so not promised, for `{command}` as for every command:",
+        "{ref}`Undefined <command-contracts-undefined>`.",
+        "",
+    ]
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -2983,7 +3610,7 @@ def render(matrix: dict, *, rendered_on: "dt.date | None" = None) -> str:
         "from *drawn cells*.",
         "",
         "What each command promise means for a command's result, and the declared",
-        "exceptions to it, are on {ref}`the command contract page <command-contract>`.",
+        "exceptions to it, are on {ref}`Command contracts <command-contracts>`.",
         "",
     ]
     lines += _currency_section(matrix, rendered_on)
@@ -3006,7 +3633,7 @@ def main(argv: "list[str]") -> int:
     parser.add_argument("--matrix", type=Path, default=MATRIX_PATH)
     parser.add_argument("--page", type=Path, default=PAGE_PATH)
     parser.add_argument("--families-page", type=Path, default=FAMILIES_PAGE_PATH)
-    parser.add_argument("--contract-page", type=Path, default=COMMAND_CONTRACT_PATH)
+    parser.add_argument("--contracts-dir", type=Path, default=COMMAND_CONTRACTS_DIR)
     parser.add_argument(
         "--check",
         action="store_true",
@@ -3023,7 +3650,7 @@ def main(argv: "list[str]") -> int:
         return 1
     committed = {
         args.families_page: render_families(),
-        args.contract_page: render_command_contract(),
+        **{args.contracts_dir / name: text for name, text in render_command_contracts().items()},
     }
     if args.check:
         # The families and contract pages are COMMITTED, so --check can compare
@@ -3034,6 +3661,9 @@ def main(argv: "list[str]") -> int:
             for path, text in committed.items()
             if not path.exists() or path.read_text(encoding="utf-8") != text
         ]
+        # A page no command generates any more (a renamed or removed one) is stale too.
+        if args.contracts_dir.is_dir():
+            stale += sorted(set(args.contracts_dir.glob("*.md")) - set(committed))
         for path in stale:
             print(
                 f"{path} is not what the tree would generate; "

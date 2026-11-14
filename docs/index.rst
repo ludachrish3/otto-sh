@@ -44,7 +44,7 @@ otto
    cli/index
    configuration/index
    api/index
-   command-contract
+   command-contracts/index
 
 .. toctree::
    :caption: Developing otto

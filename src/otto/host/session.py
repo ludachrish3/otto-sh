@@ -3117,7 +3117,9 @@ _TYPED_LINE_MEASUREMENTS = [
     ),
     (
         "2026-11-13, the same three routes with the `ash` frame declared and the same hook: "
-        f"the line budget read {typed_line_budget(AshFrame(), echoes=True)} and a "
+        "the line budget (the "
+        f"{ASH_ECHOING_LINE_MAX}-character limit less the characters otto adds around "
+        f"the command) read {typed_line_budget(AshFrame(), echoes=True)} and a "
         f"{ASH_ECHOING_LINE_MAX + 1}-character `run` was refused naming {ASH_ECHOING_LINE_MAX}"
     ),
 ]
@@ -3158,23 +3160,32 @@ def _line_budget_limitation() -> Limitation:
     return Limitation(
         kind="device",
         affects="how long one line of a command can be",
+        summary=(
+            "in a shell session (the `pooled-shell` and `default-session` routes), "
+            f"{PTY_TYPED_LINE_MAX} characters per line; {ASH_ECHOING_LINE_MAX} on a "
+            "BusyBox shell whose terminal still echoes"
+        ),
         reason=(
             "On these routes otto types the command into a terminal, and the characters "
-            "otto adds around the command count against the line limit. Through a Linux "
-            f"terminal one line is cut past {PTY_TYPED_LINE_MAX} characters with no error: "
-            "the kernel holds a typed line in a 4096-byte buffer, its newline included "
-            "(measured on BusyBox guests). BusyBox ash's line editor cuts a line at "
-            f"{ASH_ECHOING_LINE_MAX} characters, but only while the terminal echoes. otto "
-            "turns echo off when it opens a session and records whether that took, so an "
-            f"ash shell's limit is {PTY_TYPED_LINE_MAX} where echo is off and "
-            f"{ASH_ECHOING_LINE_MAX} where it is still on (no `stty`, or one that refuses "
-            "it), and for a transfer planned before any session has opened. On an ash "
-            "shell `run` counts each line before typing it and refuses one over that "
-            "limit, with an error naming it. The measurements below show both. A Zephyr "
-            "board's own shell buffer is a separate limit, not measured. "
-            "A local host's session reads the command from a pipe, not a terminal, and is "
-            "not limited this way. `exec` on the `ssh-channel` route, a channel of its "
-            "own, is not limited this way either; its own limit is declared on that route."
+            "otto adds around the command count against the line's length. A Linux "
+            f"terminal cuts a typed line past {PTY_TYPED_LINE_MAX} characters, with no "
+            "error: the kernel holds a typed line in a 4096-byte buffer, its newline "
+            "included (measured on BusyBox guests). BusyBox's shell, ash, cuts a line at "
+            f"{ASH_ECHOING_LINE_MAX} characters, but only while the terminal echoes what "
+            "is typed back. otto turns echo off when it opens a session, so the limit is "
+            f"{PTY_TYPED_LINE_MAX} where that worked and {ASH_ECHOING_LINE_MAX} where it "
+            "did not (the device has no `stty`, or its `stty` refuses). otto also uses "
+            f"{ASH_ECHOING_LINE_MAX} when it sizes a file transfer's lines before it has "
+            "opened any session to the host, since it cannot yet know whether echo is off. "
+            "`otto host <id> probe` prints the terminal mapping it measured, with "
+            "`, echo on` after it where echo stayed on, so the limit there is "
+            f"{ASH_ECHOING_LINE_MAX} on a BusyBox shell.\n\n"
+            "On an ash shell `run` counts each line before typing it, and refuses a line "
+            "over the limit with an error naming it. Elsewhere the terminal cuts it "
+            "without an error.\n\n"
+            "Not limited this way: a local host's session, which reads the command from a "
+            "pipe, not a terminal; and `exec` on the `ssh-channel` route, which has its "
+            "own limit. A Zephyr board's own shell buffer is a separate limit, never measured."
         ),
         measured_on=_TYPED_LINE_MEASUREMENTS,
     )
@@ -3189,6 +3200,10 @@ def _ssh_channel_command_limitation() -> Limitation:
     return Limitation(
         kind="device",
         affects="how long one command can be",
+        summary=(
+            f"{SSH_CHANNEL_COMMAND_MAX} characters ran whole on dropbear 2022.83; other "
+            "ssh servers were not measured"
+        ),
         reason=(
             "On this route the command travels as the ssh exec request itself, and the "
             "ssh server decides how long a request it accepts. On dropbear 2022.83, the "

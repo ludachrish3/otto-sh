@@ -8,6 +8,9 @@ every public name is provisional; :doc:`stability` says what that promises.
 **Internals** documents the rest of otto's modules, for contributors and for
 the links the guides use to explain behaviour. Nothing there is a promise.
 
+What a command's result promises (its exit code, output and timeout) on each kind
+of host is on :ref:`Command contracts <command-contracts>`.
+
 .. toctree::
    :caption: Public API
    :maxdepth: 1

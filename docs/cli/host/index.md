@@ -74,7 +74,7 @@ not the verb: unix switches the session to the named user, containers
 `chown` (files already landed, or the channel opened as that user), and
 embedded and local refuse. {doc}`families` is the authority for exactly
 which family does what — this page does not restate its cells. What a
-command's result means on each family is on {ref}`the command contract page <command-contract>`.
+command's result means on each family is on {ref}`Command contracts <command-contracts>`.
 
 `exec` additionally inherits an enclosing `as_user()`'s identity ambiently,
 when called from Python with no explicit `user=` of its own.
@@ -186,7 +186,7 @@ verb's returned {class}`~otto.result.Result` family, via `Result.exit_code`.
 Command results are ssh-like: the shell's retcode when the command ran,
 255 when it never ran.  (`exec` only — see
 [Persistent and stateless verbs](#persistent-and-stateless-verbs) above.)
-{ref}`The command contract page <command-contract>` says on which kinds of host
+{ref}`The exec contract page <command-contract-exec>` says on which kinds of host
 and routes this exit code, the command's output and its timeout hold, and the
 declared exceptions.
 

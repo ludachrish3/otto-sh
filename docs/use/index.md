@@ -3,7 +3,7 @@
 Drive a project someone else set up: find its labs, hosts and products, run
 its tests, and read its results. Every command is documented in the
 {doc}`CLI reference <../cli/index>`. What a command's exit code, output and
-timeout mean on each kind of host is on {ref}`the command contract page <command-contract>`.
+timeout mean on each kind of host is on {ref}`Command contracts <command-contracts>`.
 
 ```{toctree}
 :maxdepth: 1
