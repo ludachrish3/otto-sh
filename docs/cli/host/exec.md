@@ -56,7 +56,7 @@ A second positional argument is a usage error — `exec` takes one command.
 
 What a timed-out command reports, how its output and exit code come back on
 each kind of host, and how long one command line can be are on
-{ref}`the command contract page <command-contract>`.
+{ref}`the exec contract page <command-contract-exec>`.
 
 ## Upgrading from 0.15.0 (Python callers)
 

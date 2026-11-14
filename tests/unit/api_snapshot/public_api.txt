@@ -942,13 +942,14 @@ name	otto.host.exec_route:ran_route	function
 call	otto.host.exec_route:ran_route	sync	PK:route:-
 name	otto.host.limitation:Limitation	class
 mro	otto.host.limitation:Limitation	-
-call	otto.host.limitation:Limitation	sync	KO:kind:- KO:affects:- KO:reason:- KO:measured_on:-
+call	otto.host.limitation:Limitation	sync	KO:kind:- KO:affects:- KO:reason:- KO:measured_on:- KO:summary:S:""
 member	otto.host.limitation:Limitation.__eq__	method	sync	PK:other:-
 member	otto.host.limitation:Limitation.__hash__	method	sync	-
 member	otto.host.limitation:Limitation.affects	field
 member	otto.host.limitation:Limitation.kind	field
 member	otto.host.limitation:Limitation.measured_on	field
 member	otto.host.limitation:Limitation.reason	field
+member	otto.host.limitation:Limitation.summary	field
 abstract	otto.host.limitation:Limitation	-
 name	otto.host.login_proxy:Cred	class
 mro	otto.host.login_proxy:Cred	-

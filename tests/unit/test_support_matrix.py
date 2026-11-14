@@ -57,9 +57,12 @@ from scripts.render_support_matrix import (
     _UNINTERPRETED,
     _UNWATCHED_STATES,
     AXIS_PHRASE,
-    COMMAND_CONTRACT_PATH,
+    COMMAND_CONTRACTS_DIR,
+    COMMAND_PAGES,
+    ENTRY_VOICE,
     FAMILIES_PAGE_PATH,
     FAMILY_BLURB,
+    HOST_KIND_VOICE,
     PAGE_PATH,
     VOICE,
     Promise,
@@ -69,15 +72,17 @@ from scripts.render_support_matrix import (
     axes_mismatch,
     branch_capability,
     code_spans,
+    collected_cells,
     contract_rows,
     declared_limitations,
     narrowing_mismatch,
     not_checked,
+    not_checked_notes,
     promise_mismatch,
     promise_of,
     reader_narrowed,
     render,
-    render_command_contract,
+    render_command_contracts,
     render_families,
     split_of,
 )
@@ -601,6 +606,31 @@ def test_check_accepts_a_current_families_page(tmp_path, committed, capsys):
     argv = ["--matrix", str(matrix), "--page", str(page), "--families-page", str(families)]
     assert render_main([*argv, "--check"]) == 0
     assert capsys.readouterr().err == ""
+
+
+def test_check_reports_a_stale_or_orphaned_command_contract_page(tmp_path, committed, capsys):
+    """``--check`` sees every command contract page: a stale one, and one nothing generates."""
+    matrix, page, families = _rendered_into(tmp_path, committed)
+    families.write_text(render_families(), encoding="utf-8")
+    contracts = tmp_path / "command-contracts"
+    contracts.mkdir()
+    pages = render_command_contracts()
+    argv = [
+        "--matrix", str(matrix), "--page", str(page), "--families-page", str(families),
+        "--contracts-dir", str(contracts), "--check",
+    ]  # fmt: skip
+    for name, text in pages.items():
+        (contracts / name).write_text(text, encoding="utf-8")
+    assert render_main(argv) == 0, "the positive control: current pages pass"
+    capsys.readouterr()
+    (contracts / "exec.md").write_text("# `exec`\n\nsomething a person typed\n", encoding="utf-8")
+    assert render_main(argv) == 1
+    assert "exec.md is not what the tree would generate" in capsys.readouterr().err
+    (contracts / "exec.md").write_text(pages["exec.md"], encoding="utf-8")
+    (contracts / "removed.md").write_text("# a command no longer covered\n", encoding="utf-8")
+    assert render_main(argv) == 1
+    assert "removed.md is not what the tree would generate" in capsys.readouterr().err
+    assert page.exists() is False, "--check must write nothing"
 
 
 # --------------------------------------------------------------------------
@@ -7330,41 +7360,92 @@ def test_a_branch_naming_a_declaration_that_does_not_resolve_is_reported(committ
         assert bool(reported) is not resolves, (declared_by, reported)
 
 
-def test_the_committed_command_contract_page_is_the_generated_one():
-    assert COMMAND_CONTRACT_PATH.read_text(encoding="utf-8") == render_command_contract(), (
-        f"{COMMAND_CONTRACT_PATH} is stale; re-run "
-        f"`uv run python -m scripts.render_support_matrix` and commit the page"
-    )
+def _overview(**sources) -> str:
+    """The command contracts overview, ``docs/command-contracts/index.md``, as rendered."""
+    return render_command_contracts(**sources)["index.md"]
 
 
-def test_every_contract_that_declares_entries_has_a_row_on_the_contract_page(monkeypatch):
-    page = render_command_contract()
+def _command_page(entry: str, **sources) -> str:
+    """The page *entry*'s promises are on (:data:`ENTRY_VOICE`), as rendered."""
+    return render_command_contracts(**sources)[f"{ENTRY_VOICE[entry].page}.md"]
+
+
+def test_the_committed_command_contract_pages_are_the_generated_ones():
+    pages = render_command_contracts()
+    assert sorted(path.name for path in COMMAND_CONTRACTS_DIR.glob("*.md")) == sorted(pages)
+    for name, text in pages.items():
+        path = COMMAND_CONTRACTS_DIR / name
+        assert path.read_text(encoding="utf-8") == text, (
+            f"{path} is stale; re-run "
+            f"`uv run python -m scripts.render_support_matrix` and commit the pages"
+        )
+
+
+def test_every_entry_has_a_command_page_and_every_page_an_entry(monkeypatch):
+    """The entry -> page mapping covers the suite's entry vocabulary, and is refused when not."""
+    pages = render_command_contracts()
+    assert sorted(pages) == sorted(["index.md", *(f"{command}.md" for command in COMMAND_PAGES)])
+    for entry in _entry.ALL_ENTRIES:
+        assert ENTRY_VOICE[entry].page in COMMAND_PAGES, entry
+    assert ENTRY_VOICE["exec-shell"].page == "exec", "shell-routed exec is a section of exec"
+    for command in COMMAND_PAGES:
+        page = pages[f"{command}.md"]
+        # Each command page links up to the overview for the general rules.
+        assert "{ref}`Command contracts <command-contracts>`" in page.split("\n## ", 1)[0], command
+    dropped = {entry: voice for entry, voice in ENTRY_VOICE.items() if entry != "exec-shell"}
+    monkeypatch.setattr("scripts.render_support_matrix.ENTRY_VOICE", dropped)
+    with pytest.raises(ValueError, match="'exec-shell' has no line in ENTRY_VOICE"):
+        render_command_contracts()
+
+
+def test_every_contract_that_declares_entries_has_a_row_on_its_command_pages(monkeypatch):
+    overview = _overview()
     for surface in SURFACES:
         if _entry.entries_declared(surface.contract):
-            assert f"`{surface.contract}`" in page, surface.id
+            assert f"`{surface.contract}`" in overview, surface.id
     # And with a declaration the tree does not hold yet, through the same reader.
     chosen = SURFACES[0]
     monkeypatch.setattr(
         "scripts.render_support_matrix.entries_declared",
         lambda contract: ["run", "exec"] if contract == chosen.contract else [],
     )
-    page = render_command_contract()
-    # The user table names the promise and its entries; the contributors list
-    # maps the same promise id to its test. Both, once each, for the one row.
-    rows = [line for line in page.splitlines() if VOICE[chosen.id].capability in line]
-    assert len(rows) == 1, page
-    assert "`run`, `exec`" in rows[0], rows[0]
-    assert f"`{chosen.id}`" in rows[0], rows[0]
-    assert f"`{chosen.contract}`" not in rows[0], rows[0]
-    tests = [line for line in page.splitlines() if f"`{chosen.contract}`" in line]
-    assert tests == [f"- `{chosen.id}`: `{chosen.contract}`"], page
-    assert page.index(rows[0]) < page.index("## For contributors") < page.index(tests[0])
+    pages = render_command_contracts()
+    overview = pages["index.md"]
+    # Each entry's table names the promise once, under that entry's lead-in; the
+    # overview's contributors list maps the same promise id to its test, once.
+    for entry in ("run", "exec"):
+        page = pages[f"{ENTRY_VOICE[entry].page}.md"]
+        rows = [line for line in page.splitlines() if VOICE[chosen.id].capability in line]
+        assert len(rows) == 1, page
+        assert rows[0] in _entry_table_lines(page, entry), (entry, rows[0])
+        assert f"`{chosen.id}`" in rows[0], rows[0]
+        assert f"`{chosen.contract}`" not in page, entry
+    assert "No promise is checked through `exec-shell` yet." in pages["exec.md"]
+    tests = [line for line in overview.splitlines() if f"`{chosen.contract}`" in line]
+    assert tests == [f"- `{chosen.id}`: `{chosen.contract}`"], overview
+    assert overview.index("## For contributors") < overview.index(tests[0])
     for surface in SURFACES[1:]:
-        assert f"`{surface.contract}`" not in page, surface.id
+        for page in pages.values():
+            assert f"`{surface.contract}`" not in page, surface.id
 
 
-def _contract_row_line(page: str, surface_id: str) -> str:
-    rows = [line for line in page.splitlines() if line.endswith(f"| `{surface_id}` |")]
+def _entry_table_lines(page: str, entry: str) -> "list[str]":
+    """The body rows of *entry*'s promise table on *page*, found by its lead-in header."""
+    lines = page.splitlines()
+    header = (
+        f"| {ENTRY_VOICE[entry].lead} | Not checked "
+        "| {ref}`Promise id <command-contracts-promise-id>` |"
+    )
+    assert lines.count(header) == 1, (entry, page)
+    start = lines.index(header) + 2
+    end = next((i for i in range(start, len(lines)) if not lines[i].startswith("|")), len(lines))
+    return lines[start:end]
+
+
+def _contract_row_line(page: str, surface_id: str, entry: str) -> str:
+    rows = [
+        line for line in _entry_table_lines(page, entry) if line.endswith(f"| `{surface_id}` |")
+    ]
     assert len(rows) == 1, page
     return rows[0]
 
@@ -7377,9 +7458,20 @@ def test_the_timeout_row_says_it_is_not_checked_on_a_zephyr_board():
         row
     )
     assert reader_narrowed("timeout") in row.not_checked[0]
-    page = render_command_contract()
-    number = _contract_note_number(page, row.not_checked[0])
-    assert str(number) in _contract_row_line(page, "timeout").split("|")[3]
+    _assert_note_in_its_tables(row, row.not_checked[0])
+
+
+def _assert_note_in_its_tables(row, note: str) -> None:
+    """*note* is numbered beside *row* in every entry table that carries it, and every
+    entry table that drops it has an "only on" note ruling its hosts out."""
+    carried = [entry for entry in row.entries if note in [n.text for n in row.notes_for(entry)]]
+    assert carried, (row.surface_id, note)
+    for entry in carried:
+        page = _command_page(entry)
+        number = _contract_note_number(page, note)
+        assert str(number) in _contract_row_line(page, row.surface_id, entry).split("|")[2]
+    for entry in set(row.entries) - set(carried):
+        assert any(n.only for n in row.notes_for(entry)), (row.surface_id, entry)
 
 
 def _contract_note_number(page: str, note: str) -> int:
@@ -7405,10 +7497,9 @@ def test_a_narrowed_contract_cannot_render_without_its_qualifier(monkeypatch):
             (lambda cell: cell.kind != "local") if contract == chosen.contract else real(contract)
         ),
     )
-    page = render_command_contract()
     note = f"Not checked on the local machine, so not promised there: {reader_narrowed(chosen.id)}."
-    number = _contract_note_number(page, note)
-    assert str(number) in _contract_row_line(page, chosen.id).split("|")[3]
+    row = next(row for row in contract_rows() if row.surface_id == chosen.id)
+    _assert_note_in_its_tables(row, note)
     assert reader_narrowed(chosen.id) == VOICE[chosen.id].narrowed
 
 
@@ -7425,6 +7516,7 @@ def test_an_entry_or_host_outside_what_is_collected_never_reads_as_checked():
     for row in contract_rows(cells):
         applies = _domain_of(row.contract)
         text = " ".join(row.not_checked)
+        entry_notes = {note.entry for note in row.notes if note.entry is not None}
         for cell in cells:
             # A domain may read the entry, so it is applied to the cell as each
             # entry reaches it, the way the suite collects it.
@@ -7435,13 +7527,14 @@ def test_an_entry_or_host_outside_what_is_collected_never_reads_as_checked():
                 continue
             for entry in row.entries:
                 if entry not in admitted:
-                    assert f"`{entry}` is" in text, (row.surface_id, entry, cell.kind)
+                    assert entry in entry_notes, (row.surface_id, entry, cell.kind)
     loopback = next(cell for cell in cells if cell.kind == "loopback-ssh")
     telnet = next(cell for cell in cells if cell.kind == "bed-unix" and cell.cell.term == "telnet")
     exec_contract = next(s.contract for s in SURFACES if s.id == "exec-exit-code")
-    notes = not_checked("exec-exit-code", exec_contract, [loopback, telnet], applies=None)
+    notes = not_checked_notes("exec-exit-code", exec_contract, [loopback, telnet], applies=None)
     assert notes, notes
-    assert notes[0].startswith("`exec-shell` is checked only on"), notes
+    assert notes[0].text.startswith("Checked only on"), notes
+    assert (notes[0].entry, notes[0].only) == ("exec-shell", True), notes
     assert not_checked("exec-exit-code", exec_contract, [loopback], applies=None) == []
 
 
@@ -7487,9 +7580,14 @@ def test_a_declared_arm_on_the_contract_page_links_its_declaration(monkeypatch):
         item = next(i for i in declared_limitations() if i.limitation is limitation)
         return exception_label(item)
 
-    page = render_command_contract()
+    pages = render_command_contracts()
+    page = pages["index.md"]
     label = label_of(options.UNESCAPED_IAC)
-    bullets = [line for line in page.splitlines() if f"<{label}>`" in line]
+    bullets = [
+        line
+        for line in page.splitlines()
+        if f"<{label}>`" in line and line.lstrip().startswith("- What is lost: ")
+    ]
     assert len(bullets) == 1, page
     assert options.UNESCAPED_IAC.reason not in bullets[0]
     assert f"{{ref}}`{options.UNESCAPED_IAC.affects[0].upper()}" in bullets[0], bullets[0]
@@ -7497,18 +7595,26 @@ def test_a_declared_arm_on_the_contract_page_links_its_declaration(monkeypatch):
     assert section[1].startswith(options.UNESCAPED_IAC.affects[0].upper()), section[1]
     for measurement in options.UNESCAPED_IAC.measured_on:
         assert f"- {measurement}\n" in section[1], measurement
+    # Each command page links the same section, by its bare label, and restates nothing.
+    for command in COMMAND_PAGES:
+        child = pages[f"{command}.md"]
+        links = [line for line in child.splitlines() if line.endswith(f"<{label}>`")]
+        assert len(links) == 1, command
+        # The link has readable text, not the bare anchor id.
+        assert links[0].startswith("- {ref}`A 0xFF byte in a command's output, on "), links[0]
+        assert options.UNESCAPED_IAC.reason not in child, command
     corrected = _dc.replace(options.UNESCAPED_IAC, affects="a corrected promise")
     monkeypatch.setattr(options, "UNESCAPED_IAC", corrected)
     monkeypatch.setitem(options.ConsoleOptions.declared_limitations, "escapes_iac", corrected)
     label = label_of(corrected)
     assert label.startswith("exception-a-corrected-promise-on-"), label
-    page = render_command_contract()
+    page = _overview()
     assert f"{{ref}}`A corrected promise <{label}>`" in page, page
     assert f"({label})=" in page, page
 
 
 def test_every_declared_limitation_is_on_the_contract_page():
-    page = render_command_contract()
+    page = _overview()
     real = declared_limitations()
     assert real, "no limitation declared; vacuous"
     for item in real:
@@ -7531,11 +7637,33 @@ def test_every_declared_limitation_is_on_the_contract_page():
 
     routes = {ExecRoute.CONTAINER: RouteRecord(implemented_by="docker", limitations={"x": fake})}
     collected = declared_limitations(frames=[_FakeFrame], routes=routes)
-    page = render_command_contract(limitations=collected)
+    page = _overview(limitations=collected)
     for text in ("a reason nobody wrote", "a frame reason", "- m1\n", "- m2\n"):
         assert text in page, page
     assert "None declared." not in page
-    assert "None declared." in render_command_contract(limitations=[])
+    none = render_command_contracts(limitations=[])
+    assert "None declared." in none["index.md"]
+    for command in COMMAND_PAGES:
+        assert "- None declared.\n" in none[f"{command}.md"], command
+
+
+def test_a_route_limitation_is_linked_only_from_the_commands_taking_that_route():
+    """A route's declared exception reaches the pages of the commands that can take the route.
+
+    The `ssh-channel` route's limit is `exec`'s alone; a frame's or a console's
+    reaches every command.
+    """
+    from scripts.render_support_matrix import exception_label
+
+    pages = render_command_contracts()
+    for item in declared_limitations():
+        link = f"<{exception_label(item)}>`\n"
+        for command, page in COMMAND_PAGES.items():
+            reaches = bool(item.frames or item.consoles or set(item.routes) & set(page.routes))
+            assert (link in pages[f"{command}.md"]) is reaches, (command, item.where)
+    ssh_only = next(i for i in declared_limitations() if i.routes == ["ssh-channel"])
+    assert exception_label(ssh_only) not in pages["run.md"]
+    assert exception_label(ssh_only) in pages["exec.md"]
 
 
 def test_a_limitation_declared_on_two_routes_is_one_row():
@@ -7552,13 +7680,18 @@ def test_a_limitation_declared_on_two_routes_is_one_row():
         ["pooled-shell", "default-session"],
         ["ssh-channel"],
     ]
-    page = render_command_contract(limitations=collected)
-    rows = [line for line in page.splitlines() if line.startswith("| The ")]
-    assert rows[0].startswith("| The `pooled-shell` and `default-session` routes |"), rows
+    page = _overview(limitations=collected)
+    rows = [line for line in page.splitlines() if line.startswith("| {ref}`")]
+    assert rows[0].startswith(
+        "| {ref}`A promise, on the pooled-shell and default-session routes <"
+    ), rows
     assert len(rows) == 2, rows
+    assert page.count("Where: the `pooled-shell` and `default-session` routes.") == 1, page
     # And the real tree's one line-budget limitation is one row naming both routes.
-    real = render_command_contract()
-    assert real.count("| The `pooled-shell` and `default-session` routes |") == 1, real
+    real = _overview()
+    table = [line for line in real.splitlines() if line.startswith("| {ref}`")]
+    assert sum("on the pooled-shell and default-session routes <" in line for line in table) == 1
+    assert real.count("Where: the `pooled-shell` and `default-session` routes.") == 1, real
 
 
 def test_the_contract_page_reads_its_frames_from_the_one_builtin_list():
@@ -7578,7 +7711,8 @@ def test_the_contract_page_reads_its_frames_from_the_one_builtin_list():
     # A caller's frame in the registry, even one replacing a built-in, is not otto's.
     command_frame.register_command_frame("bash", _Overwritten, overwrite=True)
     assert command_frame.build_command_frame(type_name="bash").exact_output is not None
-    assert "a user frame" not in render_command_contract()
+    for page in render_command_contracts().values():
+        assert "a user frame" not in page
 
 
 def test_a_malformed_declaration_is_reported_not_raised(committed, monkeypatch):
@@ -7612,31 +7746,50 @@ def test_the_not_checked_cell_says_each_place_in_words_beside_its_note():
     Read off the same notes as the numbered list: every short form sits in the
     row's cell beside the number of the note that explains it.
     """
-    page = render_command_contract()
+    pages = render_command_contracts()
     rows = contract_rows()
     assert any(row.not_checked for row in rows), "no row is narrowed; vacuous"
     for row in rows:
-        cell = _contract_row_line(page, row.surface_id).split("|")[3].strip()
-        if not row.not_checked:
-            assert cell == "--", (row.surface_id, cell)
-            continue
         assert len(row.not_checked_short) == len(row.not_checked), row
-        for short, note in zip(row.not_checked_short, row.not_checked, strict=True):
-            number = _contract_note_number(page, note)
-            assert f"{short} (note {number})" in cell, (row.surface_id, cell)
+        # Every note of the row reaches the table of some entry it is about.
+        placed = [note for entry in row.entries for note in row.notes_for(entry)]
+        # A note no table carries is one an "only on" note of its entry rules out.
+        for note in row.notes:
+            if note not in placed:
+                ruling = [
+                    other
+                    for other in row.notes
+                    if other.only
+                    and other.entry in (note.entry, *row.entries)
+                    and not (other.hosts & note.hosts)
+                ]
+                assert ruling, (row.surface_id, note)
+        for entry in row.entries:
+            page = pages[f"{ENTRY_VOICE[entry].page}.md"]
+            cell = _contract_row_line(page, row.surface_id, entry).split("|")[2].strip()
+            own = row.notes_for(entry)
+            if not own:
+                assert cell == "--", (row.surface_id, entry, cell)
+                continue
+            for note in own:
+                number = _contract_note_number(page, note.text)
+                assert f"{note.short} (note {number})" in cell, (row.surface_id, entry, cell)
+            for note in row.notes:
+                if note not in own:
+                    assert note.short not in cell, (row.surface_id, entry, cell)
 
 
 def test_a_narrower_promise_names_the_device_it_applies_to():
     """Every bullet under the narrower-promise heading starts with where it holds."""
-    page = render_command_contract()
-    section = page.split("### Where a device gets a narrower promise", 1)[1].split("\n### ", 1)[0]
+    page = _overview()
+    section = page.split("## Where a device gets a narrower promise", 1)[1].split("\n## ", 1)[0]
     bullets = [line for line in section.splitlines() if line.startswith("- ")]
     assert bullets, section
     for bullet in bullets:
         assert bullet.startswith("- On "), bullet
-    assert any(bullet.startswith("- On a Zephyr board (") for bullet in bullets), bullets
+    assert any(bullet.startswith("- On a Zephyr board, ") for bullet in bullets), bullets
     assert any(
-        bullet.startswith("- On a console whose lab entry sets `console_options.")
+        bullet.startswith("- On a console whose host record sets `console_options.")
         for bullet in bullets
     ), bullets
 
@@ -7667,13 +7820,18 @@ def test_an_arms_kinds_are_the_kinds_its_marker_was_watched_on(committed):
 def test_the_zephyr_colour_removal_is_with_the_zephyr_promise_not_with_the_unmeasured():
     from otto.host.command_frame import ZEPHYR_LEVEL_SEQUENCES
 
-    page = render_command_contract()
-    narrower = page.split("### Where a device gets a narrower promise", 1)[1].split("\n### ", 1)[0]
+    page = _overview()
+    narrower = page.split("## Where a device gets a narrower promise", 1)[1].split("\n## ", 1)[0]
     undefined = page.split("## Undefined: never measured", 1)[1].split("\n## ", 1)[0]
     for sequence in ZEPHYR_LEVEL_SEQUENCES:
         spelled = f"`{sequence.encode('unicode_escape').decode('ascii')}`"
         assert spelled in narrower, spelled
         assert spelled not in undefined, spelled
+    for command in COMMAND_PAGES:
+        child = render_command_contracts()[f"{command}.md"]
+        assert "{ref}`Where a device gets a narrower promise <command-contracts-narrower>`" in child
+        for sequence in ZEPHYR_LEVEL_SEQUENCES:
+            assert sequence.encode("unicode_escape").decode("ascii") not in child, command
 
 
 def test_the_zephyr_recordings_say_what_the_undefined_bullet_relies_on():
@@ -7689,7 +7847,7 @@ def test_the_zephyr_recordings_say_what_the_undefined_bullet_relies_on():
     assert recorded.empty_on == ["zephyr-2.7"], recorded
     assert recorded.leading_spaces is True
     assert recorded.trailing_spaces is False
-    page = render_command_contract()
+    page = _overview()
     assert "empty output on Zephyr 3.7 and 4.4 (on Zephyr 2.7 a command" in page
     assert "spaces at the end of a line (spaces at the start of a line" in page
 
@@ -7713,22 +7871,152 @@ def test_the_zephyr_undefined_bullet_follows_the_recordings():
     assert "spaces at the start of a line" in bullet, bullet
 
 
-def test_the_timeout_section_says_a_console_served_device_is_checked():
-    """`applicable_cell` drops only Zephyr cells, so console-served BusyBox cells are in."""
-    page = render_command_contract()
-    sentence = next(
-        line for line in page.splitlines() if "the timeout promise is checked on" in line
-    )
-    assert "a BusyBox device over `console`" in sentence, sentence
-    assert "a Zephyr board" not in sentence, sentence
-    assert sentence.endswith("a device reached over its console is checked too."), sentence
+def test_the_timeout_promise_is_said_where_it_is_checked_and_nowhere_narrower():
+    """`applicable_cell` drops only Zephyr cells: every other kind, console-served
+    BusyBox and the no-lab kinds included, is collected, and the pages say exactly that.
+
+    The overview states no host list for the timeout (it is not common to every
+    command); each command's timeout row names only the Zephyr board.
+    """
+    row = next(row for row in contract_rows() if row.surface_id == "timeout")
+    collected = collected_cells(row.contract, _suite_cells(), applies=_domain_of(row.contract))
+    kinds = {cell.kind for cell in collected}
+    assert kinds == set(HOST_KIND_VOICE) - {"bed-zephyr"}, kinds
+    assert any(c.kind == "bed-busybox" and c.cell.term == "console" for c in collected)
+    assert "The timeout promise is checked on" not in _overview()
+    domain = [note for note in row.notes if note.entry is None]
+    assert [note.short for note in domain] == ["not on a Zephyr board"], domain
+    pages = render_command_contracts()
+    run_cell = _contract_row_line(pages["run.md"], "timeout", "run").split("|")[2]
+    assert run_cell.strip().startswith("not on a Zephyr board (note "), run_cell
+    assert ";" not in run_cell, "run's timeout is checked on every other kind of host"
 
 
 def test_the_contract_page_says_what_a_promise_id_is_and_how_zephyr_exit_codes_read():
-    page = render_command_contract()
-    assert "The **Promise id**\nis the name the support matrix uses for the promise." in page
+    pages = render_command_contracts()
+    page = pages["index.md"]
+    assert (
+        "Each promise has a **Promise id**: a fixed name, shared by every command's\n"
+        "page and by the support matrix. The `exec-` at the start of most ids is\n"
+        "historical; it does not mean the `exec` command." in page
+    )
+    for command in COMMAND_PAGES:
+        assert "{ref}`Promise id <command-contracts-promise-id>`" in pages[f"{command}.md"]
+    assert "(command-contracts-promise-id)=" in page
     assert "`-8` for an unknown command" in page
     assert "```{doctest}\n>>> from otto.result import CommandResult" in page
-    for word in ("**term**", "**lab entry**", "cred (the credentials entry"):
+    for word in ("**term**", "**route**", "**entry**", "**kind of host**", "**test bed**"):
         assert word in page, word
-    assert "draws a sample" not in page
+    assert "lab entry" not in page, "entry means only the call you made"
+    assert "`expects` (patterns otto answers while" in pages["exec.md"]
+    assert "**proxied** (otto logs in as one account" in pages["exec.md"]
+    for text in pages.values():
+        assert "draws a sample" not in text
+
+
+def test_a_per_entry_table_names_no_entry_and_drops_a_note_its_only_list_rules_out():
+    """An entry's table does not repeat its entry, nor a note its "only on" note covers.
+
+    The shell-routed `exec` table is checked only on SSH hosts, so the timeout
+    row's Zephyr note, true but already implied, is not in that table.
+    """
+    pages = render_command_contracts()
+    rows = contract_rows()
+    for row in rows:
+        for entry in row.entries:
+            page = pages[f"{ENTRY_VOICE[entry].page}.md"]
+            cell = _contract_row_line(page, row.surface_id, entry).split("|")[2]
+            for other in _entry.ALL_ENTRIES:
+                assert f"`{other}`" not in cell, (row.surface_id, entry, cell)
+    timeout = next(row for row in rows if row.surface_id == "timeout")
+    zephyr = next(note for note in timeout.notes if note.entry is None)
+    assert zephyr.text.startswith("Not checked on a Zephyr board"), zephyr
+    assert zephyr in timeout.notes_for("run")
+    assert zephyr in timeout.notes_for("exec")
+    assert zephyr not in timeout.notes_for("exec-shell")
+    shell = _contract_row_line(pages["exec.md"], "timeout", "exec-shell").split("|")[2]
+    assert "Zephyr" not in shell, shell
+    assert shell.strip().startswith("only on some hosts (note "), shell
+
+
+def test_every_exception_link_on_a_command_page_has_readable_text():
+    from scripts.render_support_matrix import exception_label
+
+    pages = render_command_contracts()
+    for command in COMMAND_PAGES:
+        section = pages[f"{command}.md"].split("## Declared exceptions and undefined", 1)[1]
+        links = [line for line in section.splitlines() if line.startswith("- {ref}`")]
+        assert links, command
+        for item in declared_limitations():
+            assert f"- {{ref}}`{exception_label(item)}`" not in section, (command, item.where)
+        for link in links:
+            text = link.removeprefix("- {ref}`").split(" <", 1)[0]
+            assert text[0].isupper(), link
+            assert " " in text, link
+            assert "`" not in text, link
+
+
+def test_the_timed_out_fields_on_the_overview_come_from_the_one_builder(monkeypatch):
+    """The overview prints what ``timed_out_result`` builds, so changing it changes the page."""
+    import dataclasses as _dc
+
+    from otto.host import session
+
+    page = _overview()
+    real = session.timed_out_result
+    example = real(cmd="x", timeout=5.0, output=session.ExecOutput(), route=ExecRoute.SSH_CHANNEL)
+    assert f"`Status.{example.status.name}`, `retcode` `{example.retcode}`" in page
+    assert f"`{example.value.splitlines()[0]}`" in page
+    monkeypatch.setattr(
+        session, "timed_out_result", lambda **kw: _dc.replace(real(**kw), retcode=-7)
+    )
+    assert "`retcode` `-7`" in _overview()
+
+
+def test_the_container_sentence_follows_the_cells():
+    """Printed while no cell reaches a container route, gone once one does."""
+    import dataclasses as _dc
+
+    from scripts.render_support_matrix import _reaches_a_container
+
+    cells = _suite_cells()
+    assert not _reaches_a_container(cells)
+    assert "no\nhost the conformance suite reaches is a container" in _overview()
+    with pytest.raises(ValueError, match="no expected exec route"):
+        _reaches_a_container([_dc.replace(cells[0], family="container", entry="exec")])
+
+
+def test_route_voice_covers_exactly_the_reported_routes(monkeypatch):
+    from scripts.render_support_matrix import ROUTE_VOICE
+
+    trimmed = {k: v for k, v in ROUTE_VOICE.items() if k != "local-subprocess"}
+    monkeypatch.setattr("scripts.render_support_matrix.ROUTE_VOICE", trimmed)
+    with pytest.raises(ValueError, match="ROUTE_VOICE"):
+        render_command_contracts()
+
+
+def test_an_exception_section_does_not_repeat_its_table_summary():
+    page = _overview()
+    for item in declared_limitations():
+        if not item.limitation.summary:
+            continue
+        assert page.count(_escaped(item.limitation.summary)) == 1, item.where
+
+
+def test_the_overview_names_every_term_each_kind_is_reached_over_and_glosses_its_words():
+    from scripts.render_support_matrix import GLOSSARY
+
+    page = _overview()
+    for cell in _suite_cells():
+        if cell.cell.term == "local" or cell.kind == "loopback-ssh":
+            continue
+        line = next(
+            line
+            for line in page.splitlines()
+            if line.startswith(
+                f"- **{HOST_KIND_VOICE[cell.kind][0].upper()}{HOST_KIND_VOICE[cell.kind][1:]}**"
+            )
+        )
+        assert f"`{cell.cell.term}`" in line, (cell.kind, line)
+    for word in GLOSSARY:
+        assert f"- **{word}**: " in page, word

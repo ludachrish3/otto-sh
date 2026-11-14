@@ -104,7 +104,7 @@ def entries_of_node(node: "ast.FunctionDef | ast.AsyncFunctionDef") -> "list[str
 
 
 #: Why :func:`entries_of` withholds each entry it withholds from some cells, in a
-#: reader's words: the command contract page prints it beside the hosts the entry
+#: reader's words: the command contract pages print it beside the hosts the entry
 #: is not checked on (``scripts/render_support_matrix.py``, ``not_checked``). It
 #: sits next to the rule so a change to one is a change in front of the other.
 ENTRY_REASON = {

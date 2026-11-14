@@ -84,7 +84,7 @@ the idiomatic failure check.  The CLI derives its exit codes from the same
 objects, ssh-style: a failing command's own return code, or 255 when the
 command never ran. What those results promise, which kinds of host each
 promise is checked on, and where a device cannot keep a promise, is on
-{ref}`the command contract page <command-contract>`.
+{ref}`Command contracts <command-contracts>`.
 
 ### Labs
 

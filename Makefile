@@ -2075,7 +2075,7 @@ land: ## (Quality) The landing in one command, from a feature branch: gate-tip, 
 # schemas/support_matrix.json and its renderer are docs inputs like any page:
 # docs/architecture/support-matrix.md is rendered from them at builder-inited, so a
 # re-collated matrix has to re-trigger the build the same way editing a page does.
-# The same renderer writes the command contract page from the conformance
+# The same renderer writes the command contract pages from the conformance
 # contracts' `entries` markers, so tests/conformance/*.py are inputs too.
 # schemas/kmodcov_matrix.json and its renderer are the same shape, for the
 # instrumenting docs' kmodcov-matrix page: without both entries here, a release

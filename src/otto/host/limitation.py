@@ -52,13 +52,19 @@ class Limitation:
     line can be"). Never empty."""
 
     reason: str
-    """Why the promise cannot hold here, in one plain sentence a user can act
-    on. Never empty."""
+    """Why the promise cannot hold here, in plain sentences a user can act on.
+    Never empty."""
 
     measured_on: list[str]
     """The real measurements behind the difference, one short factual entry
     per item (date, device and version, result). Never empty, and never
     "not measured" -- a difference nobody measured is not a limitation."""
+
+    summary: str = ""
+    """The difference in one short line, with its headline number where it has
+    one ("4095 characters per line"). The command contract pages print it in
+    their table of exceptions and :attr:`reason` in the exception's own
+    section; empty, the table prints :attr:`reason`."""
 
     def __post_init__(self) -> None:
         if self.kind not in _KINDS:

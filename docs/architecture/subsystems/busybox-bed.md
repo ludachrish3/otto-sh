@@ -230,7 +230,7 @@ Facts worth knowing before you read a failure:
   so the `console` term ({ref}`console-term`) reaches it by tunnelling into
   `test1`; a direct dial cannot, since the listener is loopback-only. QEMU's
   telnet bridge sends a 0xFF byte from the guest without doubling it, hence
-  `escapes_iac: false`; what that costs is on the {doc}`/command-contract`
+  `escapes_iac: false`; what that costs is on the {doc}`/command-contracts/index`
   page. The builder's guest table has
   a `console_port` column (2450 for `bb1350`, empty for the other four), and
   only a guest with one gets the second getty.

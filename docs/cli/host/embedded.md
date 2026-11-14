@@ -22,7 +22,7 @@ The key differences are:
 - **Output, exit codes and line length.** Which promises about a command's
   output, exit code and timeout hold on a Zephyr board or a BusyBox device,
   and the longest command line each route accepts, are on
-  {ref}`the command contract page <command-contract>`.
+  {ref}`Command contracts <command-contracts>`.
 
 ## Host class taxonomy
 

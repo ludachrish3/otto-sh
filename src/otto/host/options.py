@@ -487,15 +487,20 @@ class TelnetOptions:
 UNESCAPED_IAC = Limitation(
     kind="device",
     affects="a 0xFF byte in a command's output",
+    summary="a 0xFF byte the command writes is lost, and sometimes the bytes after it",
     reason=(
-        "This console's server sends a 0xFF byte the command wrote without doubling it, so "
-        "otto reads it as the start of a telnet command and loses it together with that "
-        "command's bytes: followed by an ordinary byte only the 0xFF is lost, two 0xFF arrive "
-        "as one, followed by 0xF1-0xF9 that byte is lost too, followed by 0xFB-0xFE that byte "
-        "and the next, and followed by 0xFA all output after it, the prompt included, is "
-        "swallowed until a 0xFF 0xF0 arrives, so the command can appear to hang until its "
-        "timeout. When the output must be byte-exact, reach the host over ssh or telnet "
-        "where it has one, or serve its console through a telnet server that doubles 0xFF."
+        "In the telnet protocol a 0xFF byte starts a command to the other end, so a server "
+        "must send a 0xFF the command wrote as two. This console's server sends it as one, "
+        "so otto reads it as the start of a telnet command and loses it, with some of the "
+        "bytes after it:\n\n"
+        "- before an ordinary byte, only the 0xFF is lost;\n"
+        "- two 0xFF arrive as one;\n"
+        "- before a byte from 0xF1 to 0xF9, that byte is lost too;\n"
+        "- before a byte from 0xFB to 0xFE, that byte and the next are lost;\n"
+        "- before 0xFA, all output after it, the prompt included, is lost until a "
+        "0xFF 0xF0 arrives, so the command can seem to hang until its timeout.\n\n"
+        "When the output must be byte-exact, reach the host over ssh or telnet where it "
+        "has one, or serve its console through a telnet server that doubles 0xFF."
     ),
     measured_on=[
         (
@@ -614,7 +619,7 @@ class ConsoleOptions:
 
     declared_limitations: ClassVar[dict[str, Limitation]] = {"escapes_iac": UNESCAPED_IAC}
     """Boolean field name to the limitation a console declares when that field
-    is set to the opposite of its default. The command-contract page lists
+    is set to the opposite of its default. The command contracts overview lists
     these; :attr:`exact_output` reads them."""
 
     @classmethod
@@ -623,7 +628,7 @@ class ConsoleOptions:
 
         The opposite of the field's default: the one answer to "is this field
         at the value that declares", read by :attr:`exact_output` and by the
-        command-contract page's "where" text.
+        command contracts overview's "where" text.
         """
         return not _CONSOLE_DEFAULTS[name]
 
@@ -632,7 +637,7 @@ class ConsoleOptions:
         """``None`` when this console carries every byte; else what it cannot carry.
 
         The one lookup for "is this console limited": the conformance arm and
-        the command-contract page both read :attr:`declared_limitations`
+        the command contracts overview both read :attr:`declared_limitations`
         through it or beside it.
 
         It returns the FIRST declared field's limitation. With one entry in

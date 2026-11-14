@@ -368,3 +368,68 @@ async def test_inside_as_user_the_transfer_budget_reads_the_plan_exec_dispatches
     assert captured["ctx"].exec_line_budget() == h._session_mgr.line_budget(
         route=dispatched[0].route
     )
+
+
+def _route_of_page_case(case_id: str, stack) -> str:
+    """Drive otto's real route decision for one case the ``exec`` contract page lists.
+
+    Each case is built from this module's and its neighbours' existing doubles;
+    nothing here decides a route, so a routing change shows as a mismatch with
+    what the page says.
+    """
+    from otto.host.session import SessionManager
+    from otto.host.session_setup import SessionSetup
+    from tests._fixtures.session_setup_hooks import noop_session_setup
+    from tests.unit.host.test_session_manager_setup import _conn
+
+    def plan(host, user=None, needs_shell=False) -> str:
+        return host._plan_exec(user=user, needs_shell=needs_shell).route.value
+
+    match case_id:
+        case "ssh":
+            return plan(_unix_host(term="ssh"))
+        case "telnet":
+            return plan(_unix_host(term="telnet"))
+        case "proxied":
+            hop = Cred(login="app", proxy="su", via="admin")
+            mgr = SessionManager(
+                connections=_conn(hops=[hop], login_target="app"), name="h", host_id="h"
+            )
+            return mgr.exec_route().value
+        case "hook":
+            name = stack.enter_context(noop_session_setup("page-case-hook"))
+            mgr = SessionManager(
+                connections=_conn(), name="h", host_id="h", session_setup=SessionSetup(name=name)
+            )
+            return mgr.exec_route().value
+        case "needs-shell":
+            return plan(_unix_host(term="ssh"), needs_shell=True)
+        case "own-ssh-user":
+            name = stack.enter_context(noop_session_setup("page-case-own-user"))
+            hooked = _unix_with_users()
+            hooked.session_setup = SessionSetup(name=name)
+            routes = {plan(_unix_with_users(), user="root"), plan(hooked, user="root")}
+            assert len(routes) == 1, routes
+            return routes.pop()
+        case "console":
+            return plan(_unix_console())
+        case "embedded":
+            return plan(_embedded_console())
+        case "local":
+            return plan(LocalHost())
+        case "container":
+            return plan(_make_container())
+    raise AssertionError(f"the exec page lists a case this test cannot build: {case_id!r}")
+
+
+def test_every_route_case_the_exec_page_lists_is_the_route_otto_takes():
+    """``EXEC_ROUTE_CASES`` (rendered on ``docs/command-contracts/exec.md``) against the plan."""
+    import contextlib
+
+    from scripts.render_support_matrix import COMMAND_PAGES, EXEC_ROUTE_CASES
+
+    assert COMMAND_PAGES["exec"].route_cases == EXEC_ROUTE_CASES
+    assert len({case.id for case in EXEC_ROUTE_CASES}) == len(EXEC_ROUTE_CASES)
+    with contextlib.ExitStack() as stack:
+        for case in EXEC_ROUTE_CASES:
+            assert _route_of_page_case(case.id, stack) == case.route, case.id

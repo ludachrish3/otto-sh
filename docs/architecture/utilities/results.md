@@ -20,8 +20,8 @@ are *derived* from results.
   "never ran" on its own — it is shared by "never ran", "timed out", and
   "skipped: cumulative budget exhausted". `timed_out` is how a caller tells a
   timeout apart from an ordinary failure, since `retcode` alone cannot.
-  Everything a timed-out command's result holds is on
-  {ref}`the command contract page <command-contract>`.
+  Everything a timed-out command's result holds is under
+  {ref}`Timed out <timed-out-command-result>` below.
 - {class}`~otto.result.Results` — the aggregate `run()` returns: a `Result`
   that is also a `Sequence[CommandResult]`. Its status is the first non-ok
   entry's status; `only` asserts exactly one command ran and returns it;
@@ -48,7 +48,7 @@ branch must take its failure arm rather than proceed on a fiction.
 ## What a command's `value` holds
 
 Which hosts and routes keep this rule, and the declared exceptions to it, are
-on {ref}`the command contract page <command-contract>`.
+on {ref}`Command contracts <command-contracts>`.
 
 A {class}`~otto.result.CommandResult`'s `value` is the command's output with
 **exactly one trailing newline removed**: nothing stripped, nothing added.
@@ -79,7 +79,7 @@ example frame for Zephyr 2.7) follow the same rule. They remove exactly what
 the Zephyr shell adds — its prompt lines, the `retval` (or 2.7's
 `retCode = <n>`) line, the rejected marker lines, the colour the shell puts
 around each error and warning line (the three sequences are listed on the
-command contract page, [Where the promise is narrower](../../command-contract.md#where-a-device-gets-a-narrower-promise)), and the `\r`
+command contracts overview, [Where a device gets a narrower promise](../../command-contracts/index.md#where-a-device-gets-a-narrower-promise)), and the `\r`
 of each `\r\n` line ending — and keep every byte the command wrote, other
 escape sequences (such as the cursor moves in `help`) and blank lines
 included: a Zephyr command's `value` is its exact output, with the one final
@@ -162,7 +162,7 @@ A command that changes its own terminal (`stty -onlcr`, or a program that puts
 the terminal in raw mode and leaves it that way) changes what later output on
 that session looks like. The session measured its terminal when it opened, and
 it doesn't measure again until a new session opens. What otto leaves
-undefined is listed once, on {ref}`the command contract page <command-contract>`.
+undefined is listed once, on {ref}`Command contracts <command-contracts>`.
 
 The log is a separate view. Live output lines are cleaned for reading, so
 carriage returns are removed and the shell route skips blank lines. `value` is
@@ -208,14 +208,17 @@ and takes no part in equality or hashing, so two results that differ only in
 route compare equal.
 
 Which route a given call takes is decided by the host's configuration and the
-call's arguments; the rule is on the command contract page,
-[Which route your command takes](../../command-contract.md#which-route-your-command-takes).
+call's arguments; the routes are listed in
+[Which route your command takes](../../command-contracts/index.md#which-route-your-command-takes),
+and when each command takes each is on its own page ({ref}`run <command-contract-run>`,
+{ref}`exec <command-contract-exec>`).
 
 ## Exit codes
 
 `Result.exit_code` is `0` when ok, else the status value.
 `CommandResult.exit_code` follows the ssh convention users already know
-(on which hosts it holds is on {ref}`the command contract page <command-contract>`):
+(on which hosts it holds is on each command's page under
+{ref}`Command contracts <command-contracts>`):
 
 | Situation | Exit code |
 | --- | --- |
@@ -260,17 +263,17 @@ itself reports for its command, which is the same `128 + N` on a POSIX shell.
 
 (timed-out-command-result)=
 **Timed out.** A command that is still running when its budget expires gives
-the timed-out result on every route; its fields are defined with the timeout
-promise ([what the output and timeout promises
-mean](../../command-contract.md#what-the-output-and-timeout-promises-mean)). The budget bounds the command,
+the timed-out result on every route: `timed_out` `True`, `status` `Error`,
+`retcode` `-1` and `exit_code` `255`. Where that is checked is on
+{ref}`Command contracts <command-contracts>`. The budget bounds the command,
 not only its output: a command that closes its output and keeps running times
-out too. The `value`'s first line is `Command timed out after <N>s`; then, on
-the next line, comes what the command had written when the budget expired, by
-the same rule as a finished command's value ({ref}`command-output-contract`):
-one final newline removed and nothing else, an unfinished last line included. On a
-shell route nothing the shell printed after otto interrupted the command (the
-echoed `^C`, the next prompt) is in it, and the line is the whole `value` when
-the command had printed nothing. It is built in one place,
+out too. The `value`'s first line is `Command timed out after <N>s`. When the
+command had printed anything, the next line starts what it had written when
+the budget expired, by the same rule as a finished command's value
+({ref}`command-output-contract`): one final newline removed and nothing else,
+an unfinished last line included. When it had printed nothing, that first line
+is the whole `value`. On a shell route nothing the shell printed after otto
+interrupted the command (the echoed `^C`, the next prompt) is in it. It is built in one place,
 {func}`otto.host.session.timed_out_result`; on a shell route the frame says
 what of the unfinished buffer is the command's
 ({meth}`~otto.host.command_frame.CommandFrame.parse_partial_output`).

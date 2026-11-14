@@ -469,7 +469,7 @@ first connect, as a bad `hop` is, not at lab load.
 | `cols`, `rows` | `400`, `24` | Initial terminal size reported to the server. |
 | `encoding` | `false` | Text encoding; `false` is bytes mode. |
 | `echo_negotiation_timeout` | `3.0` | Seconds to wait for the server to stop echoing. |
-| `escapes_iac` | `true` | `console_options` only. Declares whether the console's server doubles a 0xFF byte from the device, as the telnet protocol requires; set `false` for one that does not, such as QEMU's `-serial telnet:` bridge. otto reads the console the same way either way and does not compensate: the field only declares what the server does, which the command contract publishes and the conformance suite checks. What such a console loses is under [Declared exceptions](../command-contract.md#declared-exceptions). |
+| `escapes_iac` | `true` | `console_options` only. Declares whether the console's server doubles a 0xFF byte from the device, as the telnet protocol requires; set `false` for one that does not, such as QEMU's `-serial telnet:` bridge. otto reads the console the same way either way and does not compensate: the field only declares what the server does, which the command contract publishes and the conformance suite checks. What such a console loses is under [Declared exceptions](../command-contracts/index.md#declared-exceptions). |
 | `extra` | `{}` | Passed verbatim to `telnetlib3.open_connection()`. |
 
 **What otto does on connect.** It dials, waits `settle`, then presses
