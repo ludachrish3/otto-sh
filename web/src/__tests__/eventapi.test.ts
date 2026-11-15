@@ -17,7 +17,8 @@ import { SOURCE_TOKEN_HEADER } from "../data/sourceApi";
 import { displayEndMs } from "../data/time";
 import { useUndoHistory } from "../data/undoHistory";
 import { useToastStore } from "../ui/Toast";
-import { snapshotResponse, sourceState, stamp } from "./_sourceState";
+import { deferred } from "./_deferred";
+import { jsonResponse, snapshotResponse, sourceState, stamp } from "./_sourceState";
 
 // minimal.json's first session id — see the fixture; hydrate once per test so
 // the synthetic fragments have a session to land on.
@@ -37,10 +38,6 @@ const record = (id: number, label: string) => ({
   dash: "dash",
 });
 
-function okJson(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
-}
-
 describe("eventApi", () => {
   beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
   afterEach(() => {
@@ -50,7 +47,7 @@ describe("eventApi", () => {
 
   it("createEvent POSTs and upserts the response into the active session", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValue(okJson(record(7, "deploy"), 201));
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(record(7, "deploy"), 201));
     const before = useReviewStore.getState().sessions[0].events.length;
     await createEvent(sid, { label: "deploy" });
     const events = useReviewStore.getState().sessions[0].events;
@@ -64,7 +61,7 @@ describe("eventApi", () => {
 
   it("a duplicate SSE echo of the same record is a no-op (upsert by id)", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValue(okJson(record(7, "deploy"), 201));
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(record(7, "deploy"), 201));
     await createEvent(sid, { label: "deploy" });
     const after = useReviewStore.getState().sessions[0].events.length;
     // the echo the live stream would deliver:
@@ -78,9 +75,9 @@ describe("eventApi", () => {
 
   it("updateEvent replaces the row in place", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy"), 201));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(record(7, "deploy"), 201));
     await createEvent(sid, { label: "deploy" });
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "renamed")));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(record(7, "renamed")));
     await updateEvent(sid, 7, { label: "renamed" });
     const events = useReviewStore.getState().sessions[0].events;
     expect(events.filter((e) => e.id === 7)).toHaveLength(1);
@@ -89,16 +86,16 @@ describe("eventApi", () => {
 
   it("deleteEvent removes the row", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy"), 201));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(record(7, "deploy"), 201));
     await createEvent(sid, { label: "deploy" });
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy")));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(record(7, "deploy")));
     await deleteEvent(sid, 7);
     expect(useReviewStore.getState().sessions[0].events.find((e) => e.id === 7)).toBeUndefined();
   });
 
   it("deleteEvent resolves to the deleted record", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy")));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(record(7, "deploy")));
     expect(await deleteEvent(sid, 7)).toEqual(record(7, "deploy"));
   });
 
@@ -119,7 +116,7 @@ describe("eventApi", () => {
   it("a 409 changed with a deleted event carries current null", async () => {
     const sid = hydrate();
     vi.mocked(fetch).mockResolvedValueOnce(
-      okJson({ error: "changed", code: "changed", current: null }, 409),
+      jsonResponse({ error: "changed", code: "changed", current: null }, 409),
     );
     const err = await revertEvent(sid, 7, record(7, "a"), null).catch((e) => e);
     expect(err).toBeInstanceOf(EventChangedError);
@@ -132,7 +129,7 @@ describe("eventApi", () => {
     const sid = hydrate();
     const { id: _id, ...anonymous } = record(7, "other");
     vi.mocked(fetch).mockResolvedValueOnce(
-      okJson({ error: "changed", code: "changed", current: anonymous }, 409),
+      jsonResponse({ error: "changed", code: "changed", current: anonymous }, 409),
     );
     const err = await revertEvent(sid, 7, record(7, "a"), record(7, "b")).catch((e) => e);
     expect(err).toBeInstanceOf(EventApiError);
@@ -142,7 +139,9 @@ describe("eventApi", () => {
 
   it("a 409 changed without a current key is malformed, not a deletion", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValueOnce(okJson({ error: "changed", code: "changed" }, 409));
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({ error: "changed", code: "changed" }, 409),
+    );
     const err = await revertEvent(sid, 7, record(7, "a"), null).catch((e) => e);
     expect(err).toBeInstanceOf(EventApiError);
     expect(err).not.toBeInstanceOf(EventChangedError);
@@ -151,7 +150,7 @@ describe("eventApi", () => {
 
   it("a 409 busy is a plain EventApiError", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValueOnce(okJson({ error: "locked", code: "busy" }, 409));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ error: "locked", code: "busy" }, 409));
     const err = await revertEvent(sid, 7, record(7, "a"), null).catch((e) => e);
     expect(err).toBeInstanceOf(EventApiError);
     expect(err).not.toBeInstanceOf(EventChangedError);
@@ -169,9 +168,9 @@ describe("eventApi", () => {
 
   it("revertEvent with write null applies a deletion", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy"), 201));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(record(7, "deploy"), 201));
     await createEvent(sid, { label: "deploy" });
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(null));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(null));
     expect(await revertEvent(sid, 7, record(7, "deploy"), null)).toBeNull();
     expect(useReviewStore.getState().sessions[0].events.find((e) => e.id === 7)).toBeUndefined();
     const [path, init] = vi.mocked(fetch).mock.calls.at(-1) as [string, RequestInit];
@@ -198,7 +197,7 @@ describe("eventApi", () => {
   it("a non-2xx surfaces the server's error and applies nothing", async () => {
     const sid = hydrate();
     const before = useReviewStore.getState().sessions[0].events.length;
-    vi.mocked(fetch).mockResolvedValue(okJson({ error: "archive is locked" }, 409));
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: "archive is locked" }, 409));
     await expect(createEvent(sid, { label: "x" })).rejects.toThrow(EventApiError);
     await expect(
       createEvent(sid, { label: "x" }).catch((e) => Promise.reject(e.message)),
@@ -217,7 +216,10 @@ describe("eventApi", () => {
     const sid = hydrate();
     const before = useReviewStore.getState().sessions[0].events.length;
     vi.mocked(fetch).mockResolvedValue(
-      okJson({ detail: [{ loc: ["body", "label"], msg: "Field required", type: "missing" }] }, 422),
+      jsonResponse(
+        { detail: [{ loc: ["body", "label"], msg: "Field required", type: "missing" }] },
+        422,
+      ),
     );
     await expect(
       createEvent(sid, { label: "x" }).catch((e) => Promise.reject(e.message)),
@@ -238,7 +240,7 @@ describe("eventApi", () => {
     const sid = hydrate();
     const before = useReviewStore.getState().sessions[0].events;
     const { id: _id, ...anonymous } = record(7, "x");
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(anonymous));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(anonymous));
     const err = await call(sid).catch((e) => e);
     expect(err).toBeInstanceOf(EventApiError);
     expect(err.message).toMatch("no event id");
@@ -259,10 +261,10 @@ describe("eventApi", () => {
 
   it("endEvent POSTs to the .../end path and upserts the response", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy"), 201));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(record(7, "deploy"), 201));
     await createEvent(sid, { label: "deploy" });
     const ended = { ...record(7, "deploy"), end_timestamp: "2026-07-18T12:05:00+00:00" };
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(ended));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(ended));
     await endEvent(sid, 7);
     const events = useReviewStore.getState().sessions[0].events;
     expect(events.filter((e) => e.id === 7)).toHaveLength(1);
@@ -276,7 +278,9 @@ describe("eventApi", () => {
   it("every mutation sends the source token", async () => {
     const sid = hydrate();
     useReviewStore.setState({ sourceToken: "served-source" });
-    vi.mocked(fetch).mockImplementation(() => Promise.resolve(okJson(record(7, "deploy"), 201)));
+    vi.mocked(fetch).mockImplementation(() =>
+      Promise.resolve(jsonResponse(record(7, "deploy"), 201)),
+    );
     await createEvent(sid, { label: "deploy" });
     await endEvent(sid, 7);
     await updateEvent(sid, 7, { label: "renamed" });
@@ -296,7 +300,7 @@ describe("eventApi", () => {
   // saved event instead of the stale one it sent from.
   describe("a 409 changed applies current (#992)", () => {
     const changed = (current: unknown) =>
-      okJson({ error: "the event was changed elsewhere", code: "changed", current }, 409);
+      jsonResponse({ error: "the event was changed elsewhere", code: "changed", current }, 409);
     const stored = (id: number) =>
       useReviewStore.getState().sessions[0]?.events.find((e) => e.id === id);
     function seed(sid: string): void {
@@ -333,12 +337,8 @@ describe("eventApi", () => {
     it("a 409 that lands after a source switch applies nothing", async () => {
       const sid = hydrate();
       seed(sid);
-      let release!: (r: Response) => void;
-      vi.mocked(fetch).mockReturnValueOnce(
-        new Promise<Response>((res) => {
-          release = res;
-        }),
-      );
+      const { promise, resolve: release } = deferred<Response>();
+      vi.mocked(fetch).mockReturnValueOnce(promise);
       const pending = updateEvent(sid, 7, { color: "#2ca02c" });
       // The imported file carries a session with the same id.
       await importLocalFile(new File([JSON.stringify(minimal)], "minimal.json"));
@@ -390,7 +390,7 @@ describe("eventApi", () => {
 
     it("a response without the header leaves the horizon alone", async () => {
       const sid = hydrate();
-      vi.mocked(fetch).mockResolvedValueOnce(okJson(record(7, "deploy"), 201));
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(record(7, "deploy"), 201));
       await createEvent(sid, { label: "deploy" });
       expect(displayEndMs(useReviewStore.getState().sessions[0])).toBe(T);
     });
@@ -429,7 +429,7 @@ describe("a source_changed refusal", () => {
         return Promise.resolve(snapshotResponse(JSON.stringify(minimal), "B", stamp(3)));
       }
       return Promise.resolve(
-        okJson(
+        jsonResponse(
           { error: "the source changed", code: "source_changed", source_state: served("B", 2) },
           409,
         ),

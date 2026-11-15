@@ -9,6 +9,7 @@ import { installOpenSpanReconciler } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
 import { EventsPanel } from "../shell/EventsPanel";
 import { useUiStore } from "../ui/uiStore";
+import { jsonResponse } from "./_sourceState";
 
 if (typeof CSS === "undefined" || !CSS.escape) {
   // Same polyfill as reviewbar.test.tsx/shell.test.tsx — react-aria portals
@@ -21,10 +22,6 @@ if (typeof CSS === "undefined" || !CSS.escape) {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KITCHEN = readFileSync(join(HERE, "../../fixtures/kitchen-sink.json"), "utf-8");
 const MIN = 60_000;
-
-function okJson(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
-}
 
 // The app installs this once at startup; endOpenSpan leaves the clearing to it.
 let uninstallReconciler: () => void;
@@ -278,7 +275,7 @@ describe("EventsPanel compose row", () => {
     useReviewStore.setState({ mode: "live", editable: true });
     const { session } = load();
     const fetchMock = vi.fn().mockResolvedValue(
-      okJson(
+      jsonResponse(
         {
           id: 50,
           timestamp: "2026-07-01T09:50:00Z",
@@ -310,7 +307,7 @@ describe("EventsPanel compose row", () => {
     useReviewStore.setState({ mode: "live", editable: true });
     const { session } = load();
     const fetchMock = vi.fn().mockResolvedValueOnce(
-      okJson(
+      jsonResponse(
         {
           id: 60,
           timestamp: "2026-07-01T09:50:00Z",
@@ -329,7 +326,7 @@ describe("EventsPanel compose row", () => {
       expect(useUiStore.getState().openSpan).toEqual({ sessionId: session.id, eventId: 60 }),
     );
     fetchMock.mockResolvedValueOnce(
-      okJson({
+      jsonResponse({
         id: 60,
         timestamp: "2026-07-01T09:50:00Z",
         end_timestamp: "2026-07-01T09:55:00Z",
@@ -353,7 +350,10 @@ describe("EventsPanel compose row", () => {
     const user = userEvent.setup();
     useReviewStore.setState({ mode: "live", editable: true });
     load();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okJson({ error: "archive is locked" }, 409)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ error: "archive is locked" }, 409)),
+    );
     await user.type(screen.getByTestId("events-compose-label"), "checkpoint");
     await user.click(screen.getByTestId("events-compose-mark"));
     const errorEl = await screen.findByTestId("events-compose-error");
@@ -418,7 +418,7 @@ describe("EventsPanel row affordances", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        okJson({
+        jsonResponse({
           id: 1,
           timestamp: "2026-07-01T08:20:00Z",
           end_timestamp: "2026-07-01T09:59:00Z",
@@ -441,7 +441,7 @@ describe("EventsPanel row affordances", () => {
     useReviewStore.setState({ mode: "live", editable: true });
     const { session } = load();
     const fetchMock = vi.fn().mockResolvedValue(
-      okJson({
+      jsonResponse({
         id: 1,
         timestamp: "2026-07-01T08:20:00Z",
         end_timestamp: "2026-07-01T09:59:00Z",

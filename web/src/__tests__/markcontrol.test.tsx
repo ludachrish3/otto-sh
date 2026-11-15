@@ -12,6 +12,8 @@ import { useReviewStore } from "../data/reviewStore";
 import { MarkControl } from "../shell/MarkControl";
 import { markGateKey, useMutationGate } from "../shell/useMutationGate";
 import { useUiStore } from "../ui/uiStore";
+import { deferred } from "./_deferred";
+import { jsonResponse, lastRequestBody } from "./_sourceState";
 
 // jsdom lacks CSS.escape; react-aria menus call it (same polyfill as
 // commandmenu.test.tsx/shell.test.tsx — see their comments for the issue).
@@ -43,16 +45,6 @@ const record = (id: number, label: string, endTimestamp: string | null = null) =
   dash: "dash",
   end_timestamp: endTimestamp,
 });
-
-function okJson(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
-}
-
-function lastRequestBody(): unknown {
-  const calls = vi.mocked(fetch).mock.calls;
-  const init = calls.at(-1)?.[1] as RequestInit;
-  return JSON.parse(init.body as string);
-}
 
 afterEach(() => {
   cleanup();
@@ -110,7 +102,7 @@ describe("MarkControl", () => {
   it("typing a label and pressing Enter POSTs to the create route and closes the popover", async () => {
     const user = userEvent.setup();
     const sid = hydrate();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okJson(record(9, "checkpoint"), 201)));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(record(9, "checkpoint"), 201)));
     render(<MarkControl />);
     await user.click(screen.getByTestId("mark-button"));
     const input = await screen.findByTestId("mark-label-input");
@@ -128,7 +120,10 @@ describe("MarkControl", () => {
   it("a rejected fetch shows mark-error with the server message and keeps the popover open", async () => {
     const user = userEvent.setup();
     hydrate();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okJson({ error: "archive is locked" }, 409)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ error: "archive is locked" }, 409)),
+    );
     render(<MarkControl />);
     await user.click(screen.getByTestId("mark-button"));
     const input = await screen.findByTestId("mark-label-input");
@@ -141,7 +136,7 @@ describe("MarkControl", () => {
   it("the menu's Start span… opens the popover in start mode; submitting records openSpan", async () => {
     const user = userEvent.setup();
     const sid = hydrate();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okJson(record(9, "soak"), 201)));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(record(9, "soak"), 201)));
     render(<MarkControl />);
     await user.click(screen.getByTestId("mark-menu"));
     await user.click(await screen.findByTestId("menu-start-span"));
@@ -159,7 +154,7 @@ describe("MarkControl", () => {
   it("End span is disabled until a span is open on this session, then enabled", async () => {
     const user = userEvent.setup();
     hydrate();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okJson(record(9, "soak"), 201)));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(record(9, "soak"), 201)));
     render(<MarkControl />);
 
     await user.click(screen.getByTestId("mark-menu"));
@@ -182,7 +177,7 @@ describe("MarkControl", () => {
   it("End span failure is routed to reviewStore's warnings, not swallowed", async () => {
     const user = userEvent.setup();
     hydrate();
-    const fetchMock = vi.fn().mockResolvedValueOnce(okJson(record(9, "soak"), 201));
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(record(9, "soak"), 201));
     vi.stubGlobal("fetch", fetchMock);
     render(<MarkControl />);
 
@@ -192,7 +187,7 @@ describe("MarkControl", () => {
     await user.click(screen.getByTestId("mark-submit"));
     await waitFor(() => expect(useUiStore.getState().openSpan).not.toBeNull());
 
-    fetchMock.mockResolvedValueOnce(okJson({ error: "archive is locked" }, 409));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: "archive is locked" }, 409));
     await user.click(screen.getByTestId("mark-menu"));
     await user.click(await screen.findByTestId("menu-end-span"));
     await waitFor(() =>
@@ -230,10 +225,7 @@ describe("MarkControl", () => {
 
 describe("MarkControl pending gate (#867)", () => {
   function held() {
-    let release!: (r: Response) => void;
-    const promise = new Promise<Response>((res) => {
-      release = res;
-    });
+    const { promise, resolve: release } = deferred<Response>();
     return { fetchMock: vi.fn().mockReturnValue(promise), release };
   }
 
@@ -305,7 +297,7 @@ describe("MarkControl pending gate (#867)", () => {
     await user.click(screen.getByTestId("mark-submit"));
     await user.click(screen.getByTestId("mark-submit"));
     expect(fetchMock.mock.calls.length).toBe(1);
-    await act(() => Promise.resolve(release(okJson(record(9, "checkpoint"), 201))));
+    await act(() => Promise.resolve(release(jsonResponse(record(9, "checkpoint"), 201))));
     await waitFor(() => expect(screen.queryByTestId("mark-popover")).toBeNull());
     expect(fetchMock.mock.calls.length).toBe(1);
   });
@@ -313,16 +305,13 @@ describe("MarkControl pending gate (#867)", () => {
 
 describe("MarkControl and a late result (#932)", () => {
   function held() {
-    let release!: (r: Response) => void;
-    const promise = new Promise<Response>((res) => {
-      release = res;
-    });
+    const { promise, resolve: release } = deferred<Response>();
     return { fetchMock: vi.fn().mockReturnValue(promise), release };
   }
 
   it.each([
-    { outcome: "success", response: () => okJson(record(9, "checkpoint"), 201) },
-    { outcome: "failure", response: () => okJson({ error: "archive is locked" }, 409) },
+    { outcome: "success", response: () => jsonResponse(record(9, "checkpoint"), 201) },
+    { outcome: "failure", response: () => jsonResponse({ error: "archive is locked" }, 409) },
   ])(
     "a $outcome after dismiss and reopen leaves the reopened popover alone",
     async ({ response }) => {

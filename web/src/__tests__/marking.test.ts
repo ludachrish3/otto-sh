@@ -9,6 +9,7 @@ import { useReviewStore } from "../data/reviewStore";
 import { displayEndMs, liveRange } from "../data/time";
 import { blankDraft, endOpenSpan, markNow, startSpan } from "../shell/marking";
 import { useUiStore } from "../ui/uiStore";
+import { jsonResponse, lastRequestBody } from "./_sourceState";
 
 // minimal.json's first session id — see the fixture; hydrate once per test so
 // the synthetic fragments (and requireActiveSessionId) have a session to
@@ -29,16 +30,6 @@ const record = (id: number, label: string, endTimestamp: string | null = null) =
   dash: "dash",
   end_timestamp: endTimestamp,
 });
-
-function okJson(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
-}
-
-function lastRequestBody(): unknown {
-  const calls = vi.mocked(fetch).mock.calls;
-  const init = calls.at(-1)?.[1] as RequestInit;
-  return JSON.parse(init.body as string);
-}
 
 describe("marking", () => {
   let uninstall: () => void;
@@ -64,7 +55,7 @@ describe("marking", () => {
 
   it("startSpan creates the event and sets openSpan to the created id", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValue(okJson(record(9, "soak"), 201));
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(record(9, "soak"), 201));
     await startSpan("soak");
     expect(useUiStore.getState().openSpan).toEqual({ sessionId: sid, eventId: 9 });
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
@@ -76,9 +67,11 @@ describe("marking", () => {
 
   it("endOpenSpan calls the /end route for the open span's id and clears openSpan", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(9, "soak"), 201));
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(record(9, "soak"), 201));
     await startSpan("soak");
-    vi.mocked(fetch).mockResolvedValueOnce(okJson(record(9, "soak", "2026-07-18T12:05:00+00:00")));
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse(record(9, "soak", "2026-07-18T12:05:00+00:00")),
+    );
     await endOpenSpan();
     expect(useUiStore.getState().openSpan).toBeNull();
     expect(vi.mocked(fetch)).toHaveBeenLastCalledWith(
@@ -94,7 +87,7 @@ describe("marking", () => {
 
   it("markNow posts with no timestamp field", async () => {
     const sid = hydrate();
-    vi.mocked(fetch).mockResolvedValue(okJson(record(11, "checkpoint"), 201));
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(record(11, "checkpoint"), 201));
     await markNow("checkpoint");
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       `/api/session/${encodeURIComponent(sid)}/event`,
@@ -114,7 +107,7 @@ describe("marking", () => {
 
   it("a failed createEvent leaves openSpan untouched and rejects EventApiError upward", async () => {
     hydrate();
-    vi.mocked(fetch).mockResolvedValue(okJson({ error: "archive is locked" }, 409));
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: "archive is locked" }, 409));
     await expect(startSpan("soak")).rejects.toThrow("archive is locked");
     expect(useUiStore.getState().openSpan).toBeNull();
   });

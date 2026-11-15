@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { deferred } from "../../__tests__/_deferred";
 import * as dataModule from "../data";
 import { _resetForTests } from "../data";
 import { makeIndex, Providers } from "../testUtils";
@@ -100,10 +101,7 @@ describe("SearchPalette", () => {
 
   it("a close before the chunks resolve still finishes the load on reopen", async () => {
     const user = userEvent.setup();
-    let resolveSearch!: (chunk: SearchChunk) => void;
-    const pending = new Promise<SearchChunk>((resolve) => {
-      resolveSearch = resolve;
-    });
+    const { promise: pending, resolve: resolveSearch } = deferred<SearchChunk>();
     vi.spyOn(dataModule, "loadSearchChunk").mockReturnValueOnce(pending);
     const index = makeIndex();
     const { rerender } = renderPalette(true, index);

@@ -1,5 +1,6 @@
 // A `/api/mode` answer (MonitorSourceState) and a `/api/monitor_sessions`
-// answer for tests that stub the server.
+// answer for tests that stub the server, the fetch stub that serves them
+// (`stubServer`), and what a stubbed fetch received (`lastRequestBody`).
 
 import { vi } from "vitest";
 
@@ -53,4 +54,37 @@ export function fakeStreamTimers(): void {
  * nothing buffered, the reconnect a dropped connection waits for. */
 export async function runStreamTimer(): Promise<void> {
   await vi.advanceTimersToNextTimerAsync();
+}
+
+/** A JSON response as the server answers it. */
+export function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/** The JSON body of the last request the stubbed fetch received. */
+export function lastRequestBody(): unknown {
+  const calls = vi.mocked(fetch).mock.calls;
+  const init = calls.at(-1)?.[1] as RequestInit;
+  return JSON.parse(init.body as string);
+}
+
+/** One route of `stubServer`: answers a fetch of its URL, given its init. */
+export type Route = (init?: RequestInit) => Promise<Response>;
+
+/** Stubs fetch with a route table, keyed by URL; a route may be replaced
+ * mid-test, and a fetch of any other URL throws. `onFetch` sees each URL
+ * fetched, in order. Returns the fetch mock. */
+export function stubServer(routes: Record<string, Route>, onFetch?: (url: string) => void) {
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    onFetch?.(url);
+    const route = routes[url];
+    if (!route) throw new Error(`unexpected fetch ${url}`);
+    return route(init);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
