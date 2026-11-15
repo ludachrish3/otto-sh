@@ -28,10 +28,10 @@ from typing import Any
 from unittest import mock
 
 import typer
-import typer.testing
 from typer.testing import CliRunner, Result
 
 from tests._fixtures.bootstrapstub import bootstrap_stub
+from tests._fixtures.typer_internals import runner_invokes
 
 
 def _clean_bootstrap() -> SimpleNamespace:
@@ -186,10 +186,9 @@ class DispatchRunner(CliRunner):
                 context_settings={"help_option_names": ["-h", "--help"]},
             )
         with (
-            # CliRunner.invoke's only use of `app` is `_get_command(app)`;
-            # substituting the dispatched command there keeps every other
-            # runner behavior (isolation, stdin, Result) byte-identical.
-            mock.patch.object(typer.testing, "_get_command", return_value=cmd),
+            # Every other runner behavior (isolation, stdin, Result) stays
+            # Typer's own, byte-identical.
+            runner_invokes(cmd),
             mock.patch("otto.bootstrap.bootstrap", _composition_root_for_the_invoke()),
         ):
             return super().invoke(

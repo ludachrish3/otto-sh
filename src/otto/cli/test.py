@@ -655,13 +655,13 @@ def _check_selection(ctx: Any, params: "dict[str, Any]") -> None:
     the run flags is the library's (``RunOptions``), constructed here once
     and stored on the context for the leaf.
     """
-    from typer._click.exceptions import UsageError
-
     from ..params import OptionsValidationError
     from ..suite.run import RUN_OPTIONS_KEY, RunOptions
     from .invoke import usage_error_from
 
     if not params.get("names") and not params.get("markers"):
+        from ..config._typer import UsageError
+
         raise UsageError("otto test needs at least one test name or -m EXPR (see otto test --help)")
     fields = {name: params[name] for name in _RUN_FIELD_NAMES if name in params}
     for name in _PATH_FIELD_NAMES:
@@ -690,8 +690,6 @@ class _OttoTestCommand(TyperCommand):
 
     @override
     def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
-        from typer._click.exceptions import UsageError
-
         rest = super().parse_args(ctx, args)
         if ctx.resilient_parsing:
             return rest
@@ -703,7 +701,13 @@ class _OttoTestCommand(TyperCommand):
                 _print_trees(listing)
                 ctx.exit(listing.exit_code)
             _check_selection(ctx, params)
-        except UsageError as e:
+        except (typer.Exit, typer.Abort):
+            raise  # --list-tests exits through ctx.exit(): not a failure
+        except Exception as e:
+            from ..config._typer import UsageError  # only once something failed
+
+            if not isinstance(e, UsageError):
+                raise
             # Raised with no context, click would print the error panel alone;
             # with this command's, it adds the Usage line and the Try-help hint,
             # exactly as for its own missing-argument error.
@@ -867,8 +871,6 @@ def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typ
     ``OptionsCollisionError`` here, before any test runs. *verb_params*
     replaces the registry's (the completion fast path's cached stubs).
     """
-    from typer._click.globals import get_current_context
-
     from ..params import sensitive_field_names, verb_option_classes
     from .invoke import DRY_RUN_PREVIEW_ATTR, DRY_RUN_SELF_FINISHING_ATTR, SENSITIVE_FIELDS_ATTR
 
@@ -900,6 +902,8 @@ def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typ
         # context is read, not injected, so the signature is exactly the flags.
         # The cast: typer's own commands hand out the vendored click base
         # class under the `typer.Context` alias (see `otto.cli.invoke`).
+        from ..config._typer import get_current_context
+
         ctx = cast("typer.Context", get_current_context())
         names = list(kw.pop("names", None) or [])
         verb_kwargs = {name: kw.pop(name) for name in verb_names}

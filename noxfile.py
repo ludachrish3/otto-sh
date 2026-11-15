@@ -1146,7 +1146,7 @@ def lint(session: nox.Session) -> None:
     session.run("tach", "check", "--exact")
     session.run("python", "scripts/tach_layer_canary.py")
     session.run("python", "scripts/monitor_boundary_tach_canary.py")
-    session.run("ast-grep", "scan", "src/otto", "web/src", "tests")
+    session.run("ast-grep", "scan", "src/otto", "web/src", "tests", "scripts")
     session.run("ast-grep", "test", "--skip-snapshot-tests")
     session.run("python", "scripts/check_duplicate_code.py")
     session.run("python", "scripts/check_api_keywords.py", "--manifest", "api/public.toml")

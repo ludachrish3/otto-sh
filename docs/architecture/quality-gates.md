@@ -112,12 +112,13 @@ with its class, and a new site fails until someone reads it.
 
 ### The ast-grep rules
 
-`.ast-grep/rules/` holds thirty-eight rules (thirty-four Python, four
-TypeScript) — thirty-seven at `severity: error`,
+`.ast-grep/rules/` holds forty rules (thirty-six Python, four
+TypeScript) — thirty-nine at `severity: error`,
 plus one deliberate `severity: warning` review prompt
 (`no-awaited-close-in-finally`, below). The scan roots
-are `src/otto web/src tests` — tests/ joined in the test-infra remediation
-(2026-08-06) so that *test-suite* pattern rules can exist — and the
+are `src/otto web/src tests scripts` — tests/ joined in the test-infra remediation
+(2026-08-06) so that *test-suite* pattern rules can exist, and scripts/ joined
+with `typer-internals-through-adapter` — and the
 discipline that keeps that widening safe is that every rule carries an
 explicit `files:` scope; a rule scoped to `tests/**` must also ignore the
 fixture projects (`tests/project1..project3`, `project_broken`, `project_e2e`) and
@@ -126,6 +127,7 @@ fixture projects (`tests/project1..project3`, `project_broken`, `project_e2e`) a
 | Rule | Scope |
 | --- | --- |
 | `asyncio-subprocess-through-loop-api` | `src/otto/**` — the rule's `message:` says why |
+| `asyncssh-through-host-import` | `src/otto/**` minus `src/otto/host/_asyncssh.py` — every runtime import of asyncssh goes through that module, which holds asyncssh's import-time library lookup to the linker cache, so no command runs gcc and ld to look for liboqs; see [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/asyncssh-through-host-import.yml) |
 | `backend-construction-through-entry` | the orchestration modules that load labs, inventory, creds, reservations and power and build hosts' connections — a built-in backend's constructor is called only inside its registered factory (a function with a parameter annotated `Configured[...]`), so a backend registered over the built-in's name is what gets built; bounded, and the replacement differential is the real guard; see {doc}`subsystems/registries` and [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/backend-construction-through-entry.yml) |
 | `backend-no-name-dispatch` | the modules that dispatched on a configured backend's name, and the five configured seams' registry modules — no `==`, `!=` or `in` against `"json"` or `"none"`: a replacement registered under the name is not the built-in; see [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/backend-no-name-dispatch.yml) |
 | `builtin-registers-by-reference` | `src/otto/**/*.py` — a registration that runs at import must hand the registry a `Ref`, unless the file defines the registry; see {doc}`subsystems/registries` and [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/builtin-registers-by-reference.yml) |
@@ -161,6 +163,7 @@ fixture projects (`tests/project1..project3`, `project_broken`, `project_e2e`) a
 | `registry-overwrite-only-approved` | `src/otto/**/*.py` — no literal `overwrite=True`: otto's own registrations never replace an entry, and a wrapper forwards its caller's flag |
 | `typer-exit-outside-cli` | `src/otto/**` (CLI exempt) |
 | `typer-exit-raises-must-assert-code` | `tests/**` minus fixture projects — a bare `pytest.raises(typer.Exit)` passes on the default exit code 0 ("failed successfully"); the rule forces binding the excinfo, and the bound form's exit-code assert is what actually pins refusal |
+| `typer-internals-through-adapter` | `src/**`, `tests/**` and `scripts/**` minus fixture projects and the two adapters, `src/otto/config/_typer.py` and its test-only twin `tests/_fixtures/typer_internals.py` — no reach into Typer's private internals: a `typer._*` import (`if TYPE_CHECKING:` included), an underscore name of any typer module (imported, as an attribute, or through `getattr`/`setattr` or a patch call), an aliased typer import, or a dotted typer path with a private component in a non-prose string (`"typer.testing._get_command"` as a `mock.patch` target, an `importlib.import_module` argument). Typer may change them in any release (0.29 deleted two that otto imported), so a move breaks one file; see [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/typer-internals-through-adapter.yml) |
 
 Two carry a mechanism worth knowing about.
 

@@ -234,11 +234,11 @@ def world(tmp_path, monkeypatch):
             stored["docker_default_parent_by_lab"],
         )
         import typer
-        from typer._completion_classes import completion_init
 
         from otto.cli.main import app
+        from tests._fixtures.typer_internals import completion_init
 
-        completion_init()  # registers Typer's BashComplete in typer._click.shell_completion
+        completion_init()  # registers Typer's BashComplete in click's completion registry
         yield project, typer.main.get_command(app)
     finally:
         bs._reset()
@@ -273,7 +273,7 @@ def _typer(cli, words: str, cword: int, env: dict[str, str], monkeypatch) -> str
     product behaviour on the Typer side, identical with or without the shim; it is
     swallowed here so it cannot be mistaken for either side's answer.
     """
-    from typer._click.shell_completion import get_completion_class
+    from otto.config._typer import get_completion_class
 
     monkeypatch.delenv("OTTO_LAB", raising=False)
     for key, value in env.items():

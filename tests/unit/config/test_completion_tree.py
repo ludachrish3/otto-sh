@@ -109,10 +109,13 @@ def test_the_serialiser_sees_typers_vendored_click():
     """Typer vendors click; a serialiser written against upstream `click` classifies NOTHING."""
     from typer.core import TyperGroup, TyperOption
 
+    from otto.config._typer import Context
+
     cli = _cli()
     assert isinstance(cli, TyperGroup)
     ctx = type(cli).context_class(cli, info_name="otto", resilient_parsing=True)
-    assert type(ctx).__module__ == "typer._click.core"
+    # The vendored base, exactly: the class otto.config._typer names for annotations.
+    assert type(ctx) is Context
     assert all(isinstance(p, TyperOption) for p in cli.get_params(ctx))
 
 

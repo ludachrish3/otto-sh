@@ -600,9 +600,8 @@ class TestHostExec:
 
     def test_a_two_positional_command_gets_no_quoting_hint(self):
         """Only a verb whose one positional is the command is told to quote it."""
-        from typer._click.exceptions import UsageError
-
         from otto.cli.expose import _synthesize_command
+        from otto.config._typer import UsageError
 
         def two(a: str, b: str) -> None:  # pragma: no cover - never reached
             pass

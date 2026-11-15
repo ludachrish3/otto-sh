@@ -1,5 +1,6 @@
 """Root-group lazy resolution against the CLI command registry."""
 
+import os
 import re
 import sys
 from typing import Annotated
@@ -213,7 +214,7 @@ def test_builtin_specs_match_native_typer_conversion(monkeypatch):
     """
     import typer
 
-    from otto.cli.registry import CLI_COMMANDS, resolve_spec_command
+    from otto.cli.registry import CLI_COMMANDS, command_without_completion, resolve_spec_command
 
     def _surface(cmd):
         if hasattr(cmd, "commands"):
@@ -230,14 +231,10 @@ def test_builtin_specs_match_native_typer_conversion(monkeypatch):
             loader = getattr(importlib.import_module(mod_name), attr)
         if not isinstance(loader, typer.Typer):
             continue
-        # Native reference conversion, with completion suppressed the same way
-        # resolve_spec_command does for the flat case (root owns completion).
-        prev = loader._add_completion
-        loader._add_completion = False
-        try:
-            native = typer.main.get_command(loader)
-        finally:
-            loader._add_completion = prev
+        # Native reference conversion, with completion suppressed by the same
+        # function resolve_spec_command uses for the flat case (root owns
+        # completion).
+        native = command_without_completion(loader)
         resolved = resolve_spec_command(spec)
         assert _surface(resolved) == _surface(native), name
         checked += 1
@@ -498,3 +495,19 @@ def test_option_value_equal_to_help_flag_is_not_sniffed(monkeypatch):
         assert "Usage" not in result.output
     finally:
         CLI_COMMANDS.unregister(name="scratch-help-value-echo")
+
+
+def test_the_quiet_completion_wrap_runs_under_any_program_names_completion_variable(monkeypatch):
+    """Typer names its completion variable after the program, so a renamed
+    executable (``otto-dev`` reads ``_OTTO_DEV_COMPLETE``) still gets its
+    completers' output kept off the shell."""
+    from otto.cli.main import _completion_may_run
+
+    for var in [k for k in os.environ if k.endswith("_COMPLETE")]:
+        monkeypatch.delenv(var)
+    assert not _completion_may_run(None)
+    monkeypatch.setenv("_OTTO_DEV_COMPLETE", "bash_complete")
+    assert _completion_may_run(None)
+    assert not _completion_may_run("_ELSEWHERE")
+    monkeypatch.setenv("_ELSEWHERE", "zsh_complete")
+    assert _completion_may_run("_ELSEWHERE")

@@ -3,7 +3,7 @@
 # scope sensitivity) can express. Policy background:
 # todo/churn-and-design-review-2026-08-03.md §5.
 #
-# Scan roots are `src/otto web/src tests` (Makefile lint-arch + noxfile lint —
+# Scan roots are `src/otto web/src tests scripts` (Makefile lint-arch + noxfile lint —
 # keep both in sync). tests/ joined 2026-08-06 so test-suite pattern rules can
 # exist (todo/test-infra-remediation-plan-2026-08-06.md, gate G0). Discipline
 # that keeps the widening safe: every rule carries an explicit `files:` scope,

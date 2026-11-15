@@ -1,0 +1,127 @@
+id: typer-internals-through-adapter
+language: python
+severity: error
+message: otto reaches Typer's private internals (`typer._click`, `typer._*`, an underscore name of any typer module) in one place, `otto.config._typer`. Take the name from there (`from otto.config._typer import UsageError`, or `from ..config._typer import UsageError` inside otto.cli); a name only tests or scripts need goes in `tests/_fixtures/typer_internals.py`. If Typer publishes a public spelling, use that instead.
+note: >
+  Typer vendors click as `typer._click` and keeps its completion machinery in
+  underscore modules, and upstream says all of it may change in any release
+  without counting as a breaking change (fastapi/typer#1831). Typer 0.29
+  deleted `typer._click.types` and `typer._types`; otto imported both, and
+  every command crashed at import (#1090, #1118).
+
+  With every private name imported in `otto.config._typer`, the next such
+  release breaks that one module, and its import error names the name that
+  moved. The adapter also records, per name, why no public spelling serves,
+  which is the list to raise upstream.
+
+  The rule sees every spelling a reader can see: a `typer._*` import (`if
+  TYPE_CHECKING:` included, since a moved class breaks the type check just as
+  a moved function breaks the import); an underscore name imported from any
+  typer module, in any position of a multi-name import; an attribute such as
+  `typer._click` or `typer.main._x`; a call such as `getattr(typer, "_x")` or
+  `monkeypatch.setattr(typer, "_x", ...)`; an aliased typer import (`import
+  typer.main as tm`), since the alias would hide every later attribute; and a
+  string, f-string included, that is a dotted typer path with a private
+  component (`"typer._click.core"`, `"typer.testing._get_command"`), the form
+  a `mock.patch` target or an `importlib.import_module` call takes. A
+  docstring, a bare string statement, or a string with prose in it is not a
+  path and is not flagged, and a dunder (`__module__`, `__version__`) is
+  public. To patch a private attribute, use the test twin's helper or the
+  module object it exports.
+
+  Beyond this rule: `from typer import testing` binds a submodule under a
+  name the rule cannot tell from `from typer import echo`, and a private
+  attribute of an object Typer handed over (`app._add_completion`,
+  `ctx._protected_args`) or a name computed at runtime
+  (`importlib.import_module("._click", "typer")`) has no static spelling.
+  ruff's SLF001 refuses the attribute forms in src/ and scripts/; the
+  adapter's docstring lists the reaches otto keeps on purpose.
+files:
+- src/**
+- tests/**
+- scripts/**
+ignores:
+# The two import sites: the product's, and the test-only twin.
+- src/otto/config/_typer.py
+- tests/_fixtures/typer_internals.py
+# Fixture projects + firmware: user-example input data, not otto's tests
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/project1/**
+- tests/project2/**
+- tests/project3/**
+- tests/project_broken/**
+- tests/project_e2e/**
+- tests/firmware/**
+rule:
+  any:
+  # import typer._click.termui / import typer._completion_shared as s
+  - kind: import_statement
+    has:
+      any:
+      - kind: dotted_name
+      - kind: aliased_import
+      regex: '^typer\._'
+  # from typer._click.core import Context
+  - kind: import_from_statement
+    has:
+      field: module_name
+      regex: '^typer\._'
+  # from typer import Option, _click / from typer.main import (_x as y)
+  - kind: import_from_statement
+    all:
+    - has:
+        field: module_name
+        regex: '^typer(\.[A-Za-z0-9_]+)*$'
+    - has:
+        any:
+        - kind: dotted_name
+        - kind: aliased_import
+        regex: '^_([^_]|$)'
+  # typer._click.termui / typer.main._x: the innermost attribute only
+  - kind: attribute
+    all:
+    - has:
+        field: object
+        regex: '^typer(\.[A-Za-z0-9_]+)*$'
+    - has:
+        field: attribute
+        regex: '^_([^_]|$)'
+  # getattr(typer, "_x") / monkeypatch.setattr(typer.main, "_x", v)
+  - kind: call
+    all:
+    - has:
+        field: function
+        regex: '^((builtins\.)?(getattr|setattr|hasattr|delattr)|.*\.(setattr|delattr|object))$'
+    - has:
+        field: arguments
+        all:
+        - has:
+            nthChild: 1
+            regex: '^typer(\.[A-Za-z0-9_]+)*$'
+        - has:
+            nthChild: 2
+            kind: string
+            regex: '^[rbufRBUF]*["'']+_([^_]|["''])'
+  # import typer as t / import typer.main as tm: an alias hides every later
+  # attribute from the attribute arm, and otto needs none
+  - kind: import_statement
+    has:
+      kind: aliased_import
+      regex: '^typer(\.[A-Za-z0-9_]+)*\s+as\s'
+  # "typer._click.core", "typer.testing._get_command", f"typer._click.{x}":
+  # a dotted path whose first underscore component is private; prose (a space,
+  # a docstring) is not a path
+  - kind: string_content
+    regex: '^typer(\.[A-Za-z0-9]\w*)*\._([^_.]\w*)?(\.\w*)*$'
+    inside:
+      kind: string
+      all:
+      - not:
+          inside:
+            kind: expression_statement
+      # an f-string's literal pieces are separate nodes: any whitespace in any
+      # of them makes the whole string prose
+      - not:
+          has:
+            kind: string_content
+            regex: '\s'
