@@ -16,20 +16,26 @@ import { snapshotResponse, sourceState, stamp } from "./_sourceState";
 
 interface StreamOpts {
   onOpen?: () => void;
-  onFirstError?: () => void;
+  isServed?: () => Promise<boolean>;
+  onNoServer?: () => void;
   onSource?: (s: MonitorSourceState) => void;
 }
 const stop = vi.fn();
 const reconnect = vi.fn();
 let streamOpts: StreamOpts | null = null;
-// Whether the next stream fails before it ever opens (no otto server).
+// Whether the next stream errors before it ever opens. It then asks
+// `isServed`, and stops as no server unless that answers true, as the real
+// stream does (data/stream.ts).
 let streamFails = false;
 // The stream opens at once (a microtask later), as a real one does once the
 // server subscribes it; a later `streamOpts.onOpen()` is a reconnect.
 const startStream = vi.fn((opts: StreamOpts) => {
   streamOpts = opts;
   const fails = streamFails;
-  queueMicrotask(() => (fails ? opts.onFirstError?.() : opts.onOpen?.()));
+  queueMicrotask(() => {
+    if (!fails) opts.onOpen?.();
+    else void opts.isServed?.().then((served) => served || opts.onNoServer?.());
+  });
   return { stop, reconnect, lost: vi.fn() };
 });
 vi.mock("../data/stream", () => ({ startStream }));
@@ -348,9 +354,12 @@ describe("importLocalFile on a live source", () => {
 
   it("with no server at all, a file chosen is a local load", async () => {
     streamFails = true;
-    const fetchMock = stubServer({});
+    // The one probe after the stream failed: a static server's 404.
+    const fetchMock = stubServer({
+      "/api/mode": () => Promise.resolve(new Response("not found", { status: 404 })),
+    });
     await bootstrapFromServer();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await importLocalFile(kitchenSinkFile());
 

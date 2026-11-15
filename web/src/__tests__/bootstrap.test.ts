@@ -226,15 +226,44 @@ describe("bootstrapFromServer", () => {
     expect(importOffered(useReviewStore.getState())).toBe(true);
   });
 
-  // No otto server answered at all: the stream could not open, nothing was
-  // fetched, and Import loads a file in the tab.
+  // No otto server answered at all: the stream could not open, the one
+  // `/api/mode` probe got no source state (a static server's 404), and
+  // Import loads a file in the tab.
   it("a boot with no server behind it offers Import", async () => {
     FakeEventSource.next = "error";
-    const fetchMock = stubServer({});
+    const fetchMock = stubServer({
+      "/api/mode": () => Promise.resolve(new Response("not found", { status: 404 })),
+    });
     await bootstrapFromServer();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(lastStream().closed).toBe(true);
     expect(importOffered(useReviewStore.getState())).toBe(true);
+  });
+
+  // #1042: a real server that refuses the first stream (a draining 503)
+  // still answers `/api/mode`, so it is a server: Import stays withheld and
+  // the stream retries until it opens, and the boot syncs then.
+  it("an otto server whose first stream fails is retried, not taken for no server", async () => {
+    fakeStreamTimers();
+    FakeEventSource.next = "error";
+    stubServer({
+      "/api/mode": () => Promise.resolve(jsonResponse(sourceState())),
+      "/api/monitor_sessions": () => Promise.resolve(snapshotResponse(MINIMAL)),
+    });
+    const boot = bootstrapFromServer();
+    await vi.waitFor(() => expect(steps).toEqual(["stream", "/api/mode"]));
+    let state = useReviewStore.getState();
+    expect(importOffered(state)).toBe(false);
+    expect(state.sourceKindUnresolved).toBe(true);
+
+    FakeEventSource.next = "open";
+    await runStreamTimer(); // the reconnect's backoff
+    await boot;
+    state = useReviewStore.getState();
+    expect(state.mode).toBe("live");
+    expect(state.sessions).toHaveLength(1);
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(lastStream().closed).toBe(false);
   });
 
   it("a stream that opened whose first mode fails stays open, retries and recovers", async () => {
@@ -263,12 +292,22 @@ describe("bootstrapFromServer", () => {
   it("a static server's stream fails before opening and is stopped with no reconnect", async () => {
     fakeStreamTimers();
     FakeEventSource.next = "error";
-    const fetchMock = stubServer({});
+    // A static server that serves index.html for every path: a 200 whose
+    // body is no source state is still no otto server.
+    const fetchMock = stubServer({
+      "/api/mode": () =>
+        Promise.resolve(
+          new Response("<!doctype html>", {
+            status: 200,
+            headers: { "content-type": "text/html" },
+          }),
+        ),
+    });
     await expect(bootstrapFromServer()).resolves.toBeUndefined();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(lastStream().closed).toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(useReviewStore.getState().mode).toBeNull();
   });
 

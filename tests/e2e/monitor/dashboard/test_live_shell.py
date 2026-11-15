@@ -460,6 +460,25 @@ def _boot_live_with_r1(page: Page, dash: DashboardHarness[FakeCollector]) -> Non
     expect(_tid(page, "mark-button")).to_be_visible()  # live and editable
 
 
+def test_a_refused_first_stream_is_still_a_live_server(
+    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
+) -> None:
+    """A live server that refuses the first ``/api/stream`` (a draining 503)
+    still answers ``/api/mode``, so the boot takes it for a server, not a
+    static shell (#1042): it reconnects, boots live and editable, and never
+    offers Import."""
+    streams: list[str] = []
+    page.on("request", lambda r: streams.append(r.url) if r.url.endswith("/api/stream") else None)
+    page.route("**/api/stream", lambda route: route.fulfill(status=503), times=1)
+
+    _boot_live_with_r1(page, live_stream_dash)
+    assert len(streams) >= 2, streams
+
+    _tid(page, "overflow-menu").click()
+    expect(_tid(page, "menu-theme")).to_be_visible()
+    expect(_tid(page, "menu-import")).to_have_count(0)
+
+
 def test_import_is_not_offered_while_live(
     page: Page, live_stream_dash: DashboardHarness[FakeCollector]
 ) -> None:

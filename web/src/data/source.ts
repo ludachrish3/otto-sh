@@ -25,7 +25,8 @@
 // first answer the URL's source is unresolved, and Import waits: a sync runs
 // only over an open stream, so an otto server is there, and a mode or a
 // snapshot that fails is retried (`retriesSync`), never the end of the
-// boot. Only a stream that never opened means no server (data/bootstrap.ts).
+// boot. Only a stream that never opened, with `/api/mode` answering no
+// source state either, means no server (data/bootstrap.ts).
 //
 // Two syncs of the same source can be in flight at once (a same-token sync
 // does not move the generation): a sync is current only while it owns the
@@ -459,7 +460,8 @@ export function servedSource(s: {
  * tab). A live or `.db` source, installed or only pending (its mode
  * answered, its snapshot not installed), never offers it, and nor does a
  * URL whose source is still unresolved (`sourceKindUnresolved`: no
- * `/api/mode` has answered, and the stream has not failed before opening).
+ * `/api/mode` has answered, and the stream has not stopped for want of a
+ * server, data/bootstrap.ts's `onNoServer`).
  * Every Import entry point (the
  * command, the overflow item, a drop) reads this, and `importLocalFile`
  * re-reads it once the file is read: a picker opened before a live source

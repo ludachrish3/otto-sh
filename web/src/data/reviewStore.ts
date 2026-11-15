@@ -320,7 +320,7 @@ interface ReviewActions {
    * arrived yet, and never comes through here. */
   noteStreamedState: (state: MonitorSourceState) => void;
   /** Sets `sourceKindUnresolved` (data/bootstrap.ts: at the boot's start,
-   * and once its stream fails before opening). */
+   * and once its stream stops for want of a server). */
   setSourceKindUnresolved: (unresolved: boolean) => void;
   /** Append one message to the warnings channel (rendered by
    * DataWarningsBanner) — the surface for mutation failures issued from

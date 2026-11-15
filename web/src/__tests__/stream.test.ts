@@ -106,23 +106,83 @@ describe("startStream", () => {
   });
 
   it("an error before the first open stops the stream: no reconnect", async () => {
-    const onFirstError = vi.fn();
-    startStream({ onFirstError });
+    const onNoServer = vi.fn();
+    startStream({ onNoServer });
     const first = FakeEventSource.last;
     first?.onerror?.();
-    expect(onFirstError).toHaveBeenCalledTimes(1);
+    expect(onNoServer).toHaveBeenCalledTimes(1);
     expect(first?.closed).toBe(true);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(FakeEventSource.last).toBe(first);
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("a constructor that throws is a failure before the first open, not an exception", () => {
+  it("a constructor that throws is no server at once, never asked about, not an exception", () => {
     vi.stubGlobal("EventSource", undefined);
-    const onFirstError = vi.fn();
-    expect(() => startStream({ onFirstError })).not.toThrow();
-    expect(onFirstError).toHaveBeenCalledTimes(1);
+    const onNoServer = vi.fn();
+    const isServed = vi.fn(() => Promise.resolve(true));
+    expect(() => startStream({ isServed, onNoServer })).not.toThrow();
+    expect(onNoServer).toHaveBeenCalledTimes(1);
+    expect(isServed).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  // #1042: an error event before the first open asks whether a server is
+  // there after all.
+  it("an error before the first open that isServed answers false stops: no reconnect", async () => {
+    const onNoServer = vi.fn();
+    const isServed = vi.fn(() => Promise.resolve(false));
+    startStream({ isServed, onNoServer });
+    const first = FakeEventSource.last;
+    first?.onerror?.();
+    expect(first?.closed).toBe(true);
+    await vi.waitFor(() => expect(onNoServer).toHaveBeenCalledTimes(1));
+    expect(isServed).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeEventSource.last).toBe(first);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("an error before the first open that isServed answers true retries with backoff", async () => {
+    const onNoServer = vi.fn();
+    const onOpen = vi.fn(() => undefined);
+    const isServed = vi.fn(() => Promise.resolve(true));
+    startStream({ isServed, onNoServer, onOpen });
+    const first = FakeEventSource.last;
+    first?.onerror?.();
+    await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1));
+    expect(useReviewStore.getState().connection).toBe("disconnected");
+    await vi.advanceTimersByTimeAsync(1000); // first backoff
+    const second = FakeEventSource.last;
+    expect(second).not.toBe(first);
+
+    // A second error before any open retries again, without asking.
+    second?.onerror?.();
+    expect(isServed).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2000); // second backoff
+    expect(FakeEventSource.last).not.toBe(second);
+    FakeEventSource.last?.onopen?.();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onNoServer).not.toHaveBeenCalled();
+  });
+
+  it("a stream stopped while isServed is pending neither retries nor reports no server", async () => {
+    const onNoServer = vi.fn();
+    let answer!: (v: boolean) => void;
+    const isServed = () =>
+      new Promise<boolean>((resolve) => {
+        answer = resolve;
+      });
+    const control = startStream({ isServed, onNoServer });
+    FakeEventSource.last?.onerror?.();
+    control.stop();
+    // False: the branch where a missing `stopped` check would report no
+    // server for a stream already stopped (a true answer's retry checks
+    // `stopped` on its own).
+    answer(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(onNoServer).not.toHaveBeenCalled();
   });
 
   it("source frames are delivered in arrival order between fragments", () => {

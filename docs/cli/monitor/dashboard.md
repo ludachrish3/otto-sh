@@ -15,8 +15,11 @@ topology map populates immediately either way (as do the fleet grid and
 charts once you switch to Hosts). From then on the stream *grows* the loaded
 session in place, appending each fragment as it arrives.
 Served by a bare static file server with no `/api/*` routes at all, the
-dashboard still works: when the stream cannot open, the boot asks nothing
-more and falls back to the same empty Import screen, never a broken page.
+dashboard still works: when the stream cannot open, the boot asks
+`GET /api/mode` once, and when no otto server answers it the page falls back
+to the same empty Import screen, never a broken page. An otto server that
+refuses that first stream (while it shuts down, say) still answers
+`/api/mode`, so the page keeps retrying the stream instead.
 Import waits until the boot knows which it is. Once an otto server's stream
 has opened, the server is there: a request that fails is retried through the
 stream's reconnect, and the page says it is waiting for the server's data
