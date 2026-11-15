@@ -1047,6 +1047,37 @@ def test_delete_asks_and_escape_keeps_the_editor(page: Page, live_stream_dash) -
     assert deletes[0].endswith(f"/event/{event_id}")
 
 
+def test_delete_from_the_events_panel_keeps_focus_in_the_panel(
+    page: Page, live_stream_dash
+) -> None:
+    """A delete removes the row whose Edit button opened the editor, so the
+    editor's close has no opener to restore focus to. Focus lands on the
+    events panel itself, not its label field (a text field would keep Ctrl+Z
+    from undoing the delete): Ctrl+Z undoes it, and Escape closes the panel.
+    An ordinary close still returns focus to the Edit button (#1032)."""
+    event_id = _open_editor_for_seeded_event(page, live_stream_dash, "soak run")
+    edit = _tid(page, f"event-edit-{event_id}")
+    panel = _tid(page, "events-panel")
+
+    page.keyboard.press("Escape")
+    expect(_tid(page, "event-editor")).to_have_count(0)
+    expect(edit).to_be_focused()
+
+    edit.click()
+    _tid(page, "editor-delete").click()
+    _tid(page, "confirm-delete-confirm").click()
+    expect(_tid(page, "event-editor")).to_have_count(0)
+    expect(edit).to_have_count(0)
+    expect(panel).to_be_visible()
+    expect(panel).to_be_focused()
+
+    page.keyboard.press("ControlOrMeta+KeyZ")
+    expect(edit).to_have_count(1)
+    expect(panel).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(panel).to_have_count(0)
+
+
 # --- Visual gate (Task 13 Step 4): span-label legibility, both themes -----
 #
 # Not one of the ten behavior specs above -- legibility can only be judged by
