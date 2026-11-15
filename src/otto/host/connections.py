@@ -362,7 +362,7 @@ def apply_ssh_debug_level() -> None:
             f"{SSH_DEBUG_ENV_VAR}={raw!r} is not an asyncssh debug level (1..3); ignored"
         )
         return
-    import asyncssh
+    from ._asyncssh import asyncssh
 
     asyncssh.set_debug_level(level)
     if level == _SSH_PACKET_DUMP_LEVEL:
@@ -430,9 +430,9 @@ async def ssh_connect(
     """
     install_asyncssh_warning_filters()
     apply_ssh_debug_level()
-    from asyncssh import connect
+    from ._asyncssh import asyncssh
 
-    return await connect(
+    return await asyncssh.connect(
         host,
         password=password.get_secret_value() if password is not None else None,
         passphrase=passphrase.get_secret_value() if passphrase is not None else None,

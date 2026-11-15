@@ -285,7 +285,7 @@ directory listings, link reads, access checks and execs (strace's `%file`
 class plus `getdents64`). The harness runs the command under `strace -f` and
 counts them across the **whole process tree**, child processes included,
 because a program the command starts costs the same round trips: asyncssh's
-import, for example, starts `ldconfig` and `gcc` to look for a library. Only
+import, for example, starts `ldconfig` to look for a library. Only
 the kernel's virtual filesystems (`/proc`, `/sys`, `/dev`) are left out. Every
 other path counts, since the harness cannot know which of your mounts are
 remote. Each surface has two counters:

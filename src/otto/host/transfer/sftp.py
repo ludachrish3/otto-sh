@@ -131,15 +131,14 @@ async def open_sftp_or_attribute(
     # DEFERRED, and not for speed. `tests/unit/host/test_lazy_network_imports.py`
     # holds asyncssh out of the import graph that merely DISCOVERING host classes
     # walks -- it is a runtime dependency, and this module is imported by the
-    # transfer registry on every `otto --help`. A module-level
-    # `from asyncssh.sftp import SFTPConnectionLost` reds that guard. By the time
-    # control is here the library is loaded anyway: `connections.sftp()` cannot
-    # have raised this without it.
-    from asyncssh.sftp import SFTPConnectionLost
+    # transfer registry on every `otto --help`. A module-level import of
+    # asyncssh reds that guard. By the time control is here the library is
+    # loaded anyway: `connections.sftp()` cannot have raised this without it.
+    from .._asyncssh import asyncssh
 
     try:
         return await connections.sftp()
-    except SFTPConnectionLost as exc:
+    except asyncssh.sftp.SFTPConnectionLost as exc:
         refuse_if_gapped(
             "sftp-transfer",
             host=host,

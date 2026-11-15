@@ -246,11 +246,12 @@ class Surface:
     because both sides of the ratio are measured in the same run
     (:func:`check_ratio`); the largest ratio is the one the target must admit.
 
-    The SSH surfaces' ratios include the child processes asyncssh's import
-    starts to probe for liboqs (``ldconfig``, ``gcc``, ``ld``), measured on
-    the aarch64 dev VM. Another architecture's toolchain may cost a different
-    amount; if CI trips on those surfaces alone, re-derive their targets from
-    CI's own measurement."""
+    The SSH surfaces' ratios include the ``ldconfig`` runs asyncssh's import
+    makes to look for liboqs and nettle. ``otto.host._asyncssh`` holds that
+    lookup to the linker cache, so no compiler or linker runs and the count
+    does not depend on the machine's toolchain; a ``gcc`` or ``ld`` in those
+    surfaces' child processes means an import of asyncssh got in ahead of
+    that module."""
 
 
 def surface_by_key(key: str) -> Surface:
@@ -552,9 +553,10 @@ SURFACES: list[Surface] = [
         ssh_lab=True,
         expect_exit=1,
         expect_loaded="asyncssh.connection",
-        # Re-derived once the refusal stopped rendering a traceback: the
-        # largest ratio was 6.978 (3.11), so 7.0 plus 10%.
-        target_ratio=7.7,
+        # Re-derived once asyncssh's import stopped running gcc and ld to
+        # look for liboqs (#659): the largest ratio was 5.531 (3.11), so 5.6
+        # plus 10%.
+        target_ratio=6.16,
     ),
     # THE LOGIN PATH, on the same closed-port host, under a pty as a user's
     # terminal would be. Not the built-in `local` host: `LocalHost` implements
@@ -571,7 +573,7 @@ SURFACES: list[Surface] = [
         ssh_lab=True,
         expect_exit=1,
         expect_loaded="asyncssh.connection",
-        target_ratio=7.7,
+        target_ratio=6.16,
     ),
     # `dispatch_project_warm`'s own sibling, dispatching `local_true` instead of
     # `noop`: `local_true` opens a persistent `LocalHost` session and runs one

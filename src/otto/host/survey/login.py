@@ -116,7 +116,7 @@ def _named_ssh_failure(exc: BaseException, *, who: str) -> "LoginOutcome | None"
     came from asyncssh, so the module is certainly loaded and this import
     costs nothing beyond the attribute lookups below.
     """
-    import asyncssh
+    from .._asyncssh import asyncssh
 
     if isinstance(exc, asyncssh.PermissionDenied):
         return LoginOutcome("login-failed", f"{who}: permission denied")
