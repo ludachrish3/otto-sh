@@ -419,6 +419,8 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                 source=None,
                 token=live_token,
                 editable=True,
+                unsaved=0,
+                revision=0,
                 observed_at=stamp,
             )
         return _review_source().state(stamp)

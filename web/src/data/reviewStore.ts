@@ -610,7 +610,7 @@ export const useReviewStore = create<ReviewState>()((set, get) => {
           lastSourceStamp: raisedStamp(get().lastSourceStamp, state),
         }),
       noteStreamedState: (state) =>
-        set({ covered: raisedCover(get().covered, state.token, state.revision ?? 0) }),
+        set({ covered: raisedCover(get().covered, state.token, state.revision) }),
       setSourceKindUnresolved: (unresolved) => set({ sourceKindUnresolved: unresolved }),
       addWarning: (message) => set({ warnings: [...get().warnings, message] }),
       setConnection: (connection) => set({ connection }),

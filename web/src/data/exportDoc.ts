@@ -20,6 +20,7 @@ import { type EventStyled, normalizeEventStyle, storedEventStyle } from "./event
 import { EXPORT_FORMAT, MONITOR_EXPORT_READ_VERSIONS } from "./exportFormat";
 import { buildIndex, type SeriesIndex, sliceSeries } from "./seriesIndex";
 import { displayEndMs, parseTs } from "./time";
+import { isWireId } from "./wireInteger";
 
 export class ExportParseError extends Error {}
 
@@ -234,7 +235,7 @@ function repeatedIds(events: readonly { id?: number | null }[]): Set<number> {
   const seen = new Set<number>();
   const repeated = new Set<number>();
   for (const e of events) {
-    if (e.id == null) continue;
+    if (!isWireId(e.id)) continue;
     if (seen.has(e.id)) repeated.add(e.id);
     seen.add(e.id);
   }
@@ -242,12 +243,13 @@ function repeatedIds(events: readonly { id?: number | null }[]): Set<number> {
 }
 
 /** The ONE wire-id rule: the id a mutation may address `ev` by, or null for
- * a row that cannot be edited (no id, or an id the session repeats). */
+ * a row that cannot be edited (no id, an id that is no wire id
+ * (`isWireId`), or an id the session repeats). */
 export function editableEventId(
   session: Pick<NormalizedSession, "viewOnlyIds">,
   ev: { id?: number | null },
 ): number | null {
-  return ev.id == null || session.viewOnlyIds.has(ev.id) ? null : ev.id;
+  return !isWireId(ev.id) || session.viewOnlyIds.has(ev.id) ? null : ev.id;
 }
 
 /** The ONE row-id rule for every list of a session's events (the events

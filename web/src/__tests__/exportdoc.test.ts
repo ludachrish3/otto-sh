@@ -584,6 +584,21 @@ describe("the capture stamp, observed_at presence and view-only ids", () => {
     expect(new Set(ids).size).toBe(5);
   });
 
+  // A wire id is an integer from 1 (#1035): a row whose id is a bool, a
+  // fraction, a string or below 1 is view-only, like an id-less one.
+  it.each([
+    ["true", true],
+    ["a fraction", 1.5],
+    ["a string", "1"],
+    ["zero", 0],
+    ["negative", -1],
+  ])("a row whose id is %s is not editable", (_, id) => {
+    const session = { viewOnlyIds: new Set<number>() };
+    const ev = { id: id as unknown as number };
+    expect(editableEventId(session, ev)).toBeNull();
+    expect(editableEventId(session, { id: 1 })).toBe(1);
+  });
+
   it("export keeps repeated-id rows and the legacy colour", () => {
     const [record] = documentFromSessions(parseExportDocument(REPEATED).sessions).sessions;
     expect(record?.events?.map((e) => e.id ?? null)).toEqual([1, 3, 3, null, 9]);

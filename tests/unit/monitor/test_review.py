@@ -55,6 +55,13 @@ def test_non_positive_event_id_is_refused(bad):
         parse_review_json(_doc(1, bad), origin="x.json")
 
 
+@pytest.mark.parametrize("bad", [True, 3.0, "3"], ids=["true", "float", "string"])
+def test_non_integer_event_id_is_refused(bad):
+    """A wire id is a JSON integer (#1035): ``true`` once loaded as id 1."""
+    with pytest.raises(ReviewSourceError, match="valid integer"):
+        parse_review_json(_doc(1, bad), origin="x.json")
+
+
 def test_repeated_ids_fixture_loads_with_view_only_ids():
     document = load_review_document(path=_REPEATED_IDS)
     assert view_only_ids(document.sessions[0]) == frozenset({3})

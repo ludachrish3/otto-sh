@@ -6,6 +6,7 @@
 // tests/unit/models/test_browser_format_mirrors.py holds each pair equal.
 import type { MonitorSourceState, SourceSavedBody } from "../api/export.gen";
 import { errorMessage, networkErrorMessage } from "./eventApiError";
+import { isWireCount } from "./wireInteger";
 
 /** The source's token: answered on every `/api/monitor_sessions`, sent on
  * every event write. */
@@ -23,8 +24,6 @@ export const SOURCE_NAME_HEADER = "X-Otto-Source-Name";
 
 const KINDS: readonly unknown[] = ["live", "db", "json"];
 
-const isCount = (v: unknown): boolean => v === undefined || (Number.isInteger(v) && Number(v) >= 0);
-
 /** Whether `v` is a source state as `/api/mode` answers it. */
 export function isSourceState(v: unknown): v is MonitorSourceState {
   if (typeof v !== "object" || v === null) return false;
@@ -35,8 +34,8 @@ export function isSourceState(v: unknown): v is MonitorSourceState {
     (typeof rec["source"] === "string" || rec["source"] === null) &&
     typeof rec["token"] === "string" &&
     typeof rec["editable"] === "boolean" &&
-    isCount(rec["unsaved"]) &&
-    isCount(rec["revision"]) &&
+    isWireCount(rec["unsaved"]) &&
+    isWireCount(rec["revision"]) &&
     typeof rec["observed_at"] === "string"
   );
 }

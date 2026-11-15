@@ -51,6 +51,7 @@ from pydantic import (
     Field,
     SerializationInfo,
     SerializerFunctionWrapHandler,
+    Strict,
     field_validator,
     model_serializer,
     model_validator,
@@ -179,6 +180,17 @@ legacy capture stored naive is served as UTC throughout and its events stay
 inside its own window; a span's two ends, and a stored event against a write,
 always compare as instants. Optional fields spell ``AwareTimestamp | None``: the optionality
 stays outside the alias."""
+
+WireId = Annotated[int, Strict()]
+"""An event's id on the wire, which is a JSON integer and nothing else.
+
+Never a bool (``true`` would load as id 1), a float (``3.0``) or a numeric
+string, from JSON or from Python. EVERY event id these models carry uses it."""
+
+WireCount = Annotated[int, Strict(), Field(ge=0)]
+"""A source's ``unsaved`` or ``revision`` count on the wire.
+
+A non-negative integer, as strict as :data:`WireId`."""
 
 
 @final
@@ -344,7 +356,7 @@ class EventRecord(RowModel):
     original for export.
     """
 
-    id: int | None = None
+    id: WireId | None = None
     timestamp: AwareTimestamp = Field(validation_alias=AliasChoices("timestamp", "ts"))
     end_timestamp: AwareTimestamp | None = Field(
         default=None, validation_alias=AliasChoices("end_timestamp", "end_ts")
@@ -758,7 +770,7 @@ class MonitorSessionFragment(RowModel):
     metrics: list[MetricRecord] = Field(default_factory=list)
     events: list[EventRecord] = Field(default_factory=list)
     log_events: list[LogEventRecord] = Field(default_factory=list)
-    deleted_event_ids: list[int] = Field(default_factory=list)
+    deleted_event_ids: list[WireId] = Field(default_factory=list)
     chart_map: dict[str, str] = Field(default_factory=dict)
     meta: SessionMeta | None = None
     tunnels: list[TunnelRecord] | None = None
@@ -783,8 +795,8 @@ class MonitorSourceState(OttoModel):
     source: str | None
     token: str
     editable: bool
-    unsaved: int = Field(default=0, ge=0)
-    revision: int = Field(default=0, ge=0)
+    unsaved: WireCount
+    revision: WireCount
     observed_at: AwareTimestamp
 
 
@@ -811,4 +823,4 @@ class SourceSavedBody(OttoModel):
     model_config = ConfigDict(defer_build=False)
 
     token: str
-    revision: int = Field(ge=0)
+    revision: WireCount

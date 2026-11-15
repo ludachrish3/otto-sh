@@ -30,6 +30,7 @@ import { SourceChangedError } from "./sourceChangedError";
 import { isCurrentSource, sourceGeneration } from "./sourceGeneration";
 import { STREAM_FORMAT } from "./streamFormat";
 import { type HistoryEntry, useUndoHistory } from "./undoHistory";
+import { isWireId } from "./wireInteger";
 
 /** What a mutation resolves to when a source switch overtook it: the server
  * may have applied it, but the shell no longer shows that server. */
@@ -240,7 +241,7 @@ type StoredRecord = EventRecord & { id: number };
  * response, refused loudly rather than filed under a made-up id. */
 function storedRecord(body: unknown, res: Response): StoredRecord {
   const id = (body as { id?: unknown } | null)?.id;
-  if (typeof id !== "number") {
+  if (!isWireId(id)) {
     throw new EventApiError("the server's response has no event id", {
       status: res.status,
       observed: observedAt(res),
