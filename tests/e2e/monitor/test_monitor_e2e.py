@@ -30,6 +30,7 @@ import contextlib
 import signal
 import sqlite3
 import subprocess
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -89,20 +90,27 @@ def _start_monitor(
     )
 
 
-def _has_metric_rows(db_path: Path) -> bool:
-    """Return True if the metrics table exists and has at least one row."""
+def _metric_count(
+    db_path: Path, query: str = "SELECT COUNT(*) FROM metrics", params: Sequence[str] = ()
+) -> int:
+    """The count *query* returns (all ``metrics`` rows by default); 0 before the monitor wrote any.
+
+    Never opens a database file the monitor has not created yet (connecting
+    would create an empty one), and a schema not yet written counts no rows.
+    """
     if not db_path.exists():
-        return False
+        return 0
     try:
-        conn = sqlite3.connect(str(db_path))
-        try:
-            rows = conn.execute("SELECT COUNT(*) FROM metrics").fetchone()
-            return rows is not None and rows[0] > 0
-        finally:
-            conn.close()
+        with contextlib.closing(sqlite3.connect(str(db_path))) as conn:
+            return conn.execute(query, params).fetchone()[0]
     except sqlite3.OperationalError:
         # Table doesn't exist yet — DB file created but schema not written.
-        return False
+        return 0
+
+
+def _has_metric_rows(db_path: Path) -> bool:
+    """Return True if the metrics table exists and has at least one row."""
+    return _metric_count(db_path) > 0
 
 
 def _tail(text: str, n: int = 20) -> str:
@@ -123,7 +131,7 @@ class _MonitorRunResult(NamedTuple):
     """Captured stderr, for diagnostics on assertion failure."""
 
     rows_found: bool
-    """Whether ``metrics`` had any rows by the time polling stopped."""
+    """Whether the run's ``landed`` check held by the time polling stopped."""
 
 
 def _run_monitor_briefly(
@@ -131,6 +139,8 @@ def _run_monitor_briefly(
     db_path: Path,
     extra_env: dict[str, str] | None = None,
     interval: int = 1,
+    landed: Callable[[Path], bool] = _has_metric_rows,
+    awaited: str = "a metric row",
 ) -> _MonitorRunResult:
     """Start, tick, and cleanly stop ``otto monitor`` against *host*.
 
@@ -138,8 +148,8 @@ def _run_monitor_briefly(
     ``--live --hosts <host> --interval <interval> --db <db_path>`` (``--live``
     is required since spec 2026-07-12 made ``otto monitor`` require exactly
     one of ``--live``/``<source>`` — bare ``otto monitor <flags>`` is now a
-    usage error, exit 2), poll the DB for the first collection tick, send
-    SIGINT, and wait up to
+    usage error, exit 2), poll the DB until ``landed`` holds for it (by default,
+    the first metric row), send SIGINT, and wait up to
     30 s for a clean exit — failing loudly (never skipping) if the live-bed
     process wedges. Returns the process's exit status and captured output so
     callers apply their own assertions.
@@ -153,8 +163,14 @@ def _run_monitor_briefly(
     dead-last after ``DEFAULT_PARSERS``) must pass a budget large enough for the
     whole batch to finish under CI load — hence the default of 1 s is only safe
     for callers that assert on the fast, early parsers. Raising the budget costs
-    no wall-clock: SIGINT is sent as soon as the first tick's rows land, not
-    after the interval elapses.
+    no wall-clock: SIGINT is sent as soon as ``landed`` holds, not after the
+    interval elapses.
+
+    ``landed`` must be the rows the caller asserts on. The collector commits
+    each point on its own (``MetricsDB.write_point``), so the first row of a
+    tick lands before its last: a caller that waited for any row but asserts
+    on a trailing parser's row could stop the monitor between the two
+    (#1122). ``awaited`` names those rows in the poll's timeout message.
     """
     # `--hosts` FULLY matches the host id. The bed's Unix hosts carry no
     # board, so the id IS the leased element ("test1") — but the wildcard
@@ -192,7 +208,7 @@ def _run_monitor_briefly(
 
     def _rows_landed_or_process_died() -> bool:
         nonlocal rows_found
-        if _has_metric_rows(db_path):
+        if landed(db_path):
             rows_found = True
             return True
         # Also check whether the process has already exited unexpectedly.
@@ -206,7 +222,7 @@ def _run_monitor_briefly(
             poll_budget,
             interval=0.5,
             on_timeout=(
-                f"no metric rows in {db_path} within {poll_budget:g} s "
+                f"{awaited} not in {db_path} within {poll_budget:g} s "
                 f"(collection interval {interval} s; monitor still running)"
             ),
         )
@@ -333,7 +349,7 @@ def test_monitor_collects_and_persists(monitor_host: str, tmp_path: Path) -> Non
 
 
 def _uptime_rows(db_path: Path, host: str) -> int:
-    """Count persisted Uptime points for *host* (schema per ``_has_metric_rows``).
+    """Count persisted Uptime points for *host* (schema per the ``metrics`` table).
 
     Matches ``host`` by substring rather than equality, mirroring
     ``test_monitor_collects_and_persists``'s own ``element in r[0]`` check:
@@ -345,11 +361,16 @@ def _uptime_rows(db_path: Path, host: str) -> int:
     host that has them — a bed host that grows either must not silently stop
     matching.
     """
-    with contextlib.closing(sqlite3.connect(db_path)) as conn:
-        return conn.execute(
-            "SELECT COUNT(*) FROM metrics WHERE host LIKE ? AND label = 'Uptime'",
-            (f"%{host}%",),
-        ).fetchone()[0]
+    return _metric_count(
+        db_path,
+        "SELECT COUNT(*) FROM metrics WHERE host LIKE ? AND label = 'Uptime'",
+        [f"%{host}%"],
+    )
+
+
+def _uptime_landed(host: str) -> Callable[[Path], bool]:
+    """A ``landed`` check for :func:`_run_monitor_briefly`: *host* has an Uptime row."""
+    return lambda db_path: _uptime_rows(db_path, host) > 0
 
 
 def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Path) -> None:
@@ -377,10 +398,15 @@ def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Pa
     # is exhausted before the trailing `cat /proc/uptime` runs, starving it on
     # every tick so no Uptime rows are ever written. A 5 s budget clears the
     # whole batch with margin. (No wall-clock cost: SIGINT fires as soon as the
-    # first tick's rows land — see _run_monitor_briefly.)
+    # host's Uptime row lands — see _run_monitor_briefly's `landed`.)
     db_registered = tmp_path / "registered.db"
     result_registered = _run_monitor_briefly(
-        monitor_host, db_registered, extra_env={"OTTO_E2E_UPTIME_HOST": host_id}, interval=5
+        monitor_host,
+        db_registered,
+        extra_env={"OTTO_E2E_UPTIME_HOST": host_id},
+        interval=5,
+        landed=_uptime_landed(monitor_host),
+        awaited=f"an Uptime row for {monitor_host}",
     )
     assert _uptime_rows(db_registered, monitor_host) > 0, (
         f"host {monitor_host} registered UptimeParser but produced no Uptime rows\n"
