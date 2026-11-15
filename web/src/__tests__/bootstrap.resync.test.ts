@@ -18,12 +18,16 @@ import { admitSource, syncFromServer } from "../data/source";
 import { downloadExport } from "../shell/ImportExport";
 import { startSpan } from "../shell/marking";
 import { useUiStore } from "../ui/uiStore";
+import { deferred } from "./_deferred";
 import {
   fakeStreamTimers,
+  jsonResponse,
+  type Route,
   runStreamTimer,
   snapshotResponse,
   sourceState,
   stamp,
+  stubServer,
 } from "./_sourceState";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -107,21 +111,6 @@ function resetStore() {
   });
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
-  let resolve: (v: T) => void = () => {};
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
-
 interface Server {
   mode: () => Promise<Response>;
   snapshot: () => Promise<Response>;
@@ -133,19 +122,12 @@ async function bootOn(initial: MonitorSourceState = sourceState(), text = MINIMA
     mode: () => Promise.resolve(jsonResponse(initial)),
     snapshot: () => Promise.resolve(snapshotResponse(text, initial.token, stamp(1))),
   };
-  const extra: Record<string, (init?: RequestInit) => Promise<Response>> = {};
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      steps.push(url);
-      if (url === "/api/mode") return server.mode();
-      if (url === "/api/monitor_sessions") return server.snapshot();
-      const route = extra[url];
-      if (route) return route(init);
-      throw new Error(`unexpected fetch ${url}`);
-    }),
-  );
+  // One route table: the test adds further routes to `extra` after the boot.
+  const extra: Record<string, Route> = {
+    "/api/mode": () => server.mode(),
+    "/api/monitor_sessions": () => server.snapshot(),
+  };
+  stubServer(extra, (url) => steps.push(url));
   await bootstrapFromServer();
   expect(useReviewStore.getState().sourceToken).toBe(initial.token);
   return { server, extra };

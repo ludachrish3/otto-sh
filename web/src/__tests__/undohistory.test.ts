@@ -23,6 +23,7 @@ import { useCommands } from "../ui/commands";
 import { useToastStore } from "../ui/Toast";
 import { useUiStore } from "../ui/uiStore";
 import { useGlobalShortcuts } from "../ui/useGlobalShortcuts";
+import { deferred } from "./_deferred";
 
 // A seam between revertEvent resolving and undo's continuation: a hook the
 // import test sets to land a file there. Every other test leaves it null and
@@ -89,14 +90,6 @@ const stored = (id: number) =>
   useReviewStore.getState().sessions[0]?.events.find((e) => e.id === id);
 const history = () => useUndoHistory.getState();
 const toast = () => useToastStore.getState().toast;
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
 
 describe("undo history", () => {
   beforeEach(() => {

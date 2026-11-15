@@ -12,7 +12,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MonitorSourceState } from "../api/export.gen";
-import { snapshotResponse, sourceState, stamp } from "./_sourceState";
+import { type Deferred, deferred } from "./_deferred";
+import {
+  jsonResponse,
+  type Route,
+  snapshotResponse,
+  sourceState,
+  stamp,
+  stubServer,
+} from "./_sourceState";
 
 interface StreamOpts {
   onOpen?: () => void;
@@ -72,47 +80,10 @@ const DRIFT = readFileSync(join(__dir, "../../fixtures/drift.json"), "utf-8");
 
 const kitchenSinkFile = () => new File([KITCHEN], "kitchen-sink.json");
 
-interface Deferred<T> {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-  reject: (err: unknown) => void;
-}
-
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  let reject!: (err: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
 /** A File-shaped stand-in whose text() the test settles by hand. */
 function heldFile(name: string): { file: File; text: Deferred<string> } {
   const text = deferred<string>();
   return { file: { name, text: () => text.promise } as unknown as File, text };
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-type Route = (init?: RequestInit) => Promise<Response>;
-
-/** Stubs fetch with a route table; a route may be replaced mid-test. */
-function stubServer(routes: Record<string, Route>) {
-  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    const route = routes[url];
-    if (!route) throw new Error(`unexpected fetch ${url}`);
-    return route(init);
-  });
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
 }
 
 const liveMode: Route = () => Promise.resolve(jsonResponse(sourceState()));

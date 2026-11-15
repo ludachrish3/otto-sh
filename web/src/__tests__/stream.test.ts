@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useReviewStore } from "../data/reviewStore";
 import { startStream } from "../data/stream";
+import { deferred } from "./_deferred";
 import { synthSession } from "./_synth";
 
 class FakeEventSource {
@@ -168,18 +169,15 @@ describe("startStream", () => {
 
   it("a stream stopped while isServed is pending neither retries nor reports no server", async () => {
     const onNoServer = vi.fn();
-    let answer!: (v: boolean) => void;
-    const isServed = () =>
-      new Promise<boolean>((resolve) => {
-        answer = resolve;
-      });
+    const served = deferred<boolean>();
+    const isServed = () => served.promise;
     const control = startStream({ isServed, onNoServer });
     FakeEventSource.last?.onerror?.();
     control.stop();
     // False: the branch where a missing `stopped` check would report no
     // server for a stream already stopped (a true answer's retry checks
     // `stopped` on its own).
-    answer(false);
+    served.resolve(false);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(vi.getTimerCount()).toBe(0);
     expect(onNoServer).not.toHaveBeenCalled();

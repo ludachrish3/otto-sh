@@ -7,14 +7,7 @@ import {
   runGate,
   useMutationGate,
 } from "../shell/useMutationGate";
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
+import { deferred } from "./_deferred";
 
 describe("useMutationGate", () => {
   it("two runs in one tick call fn once", async () => {

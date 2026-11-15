@@ -20,6 +20,7 @@ import {
   type MeasureText,
 } from "../charts/options";
 import { formatClockTime } from "../data/time";
+import { deferred } from "./_deferred";
 
 /** Every live observer, so a test can `trigger(width)` a resize: jsdom has
  * neither ResizeObserver nor layout, so the trigger stamps `clientWidth` on
@@ -523,10 +524,7 @@ describe("ChartPanel measured label layout (#863)", () => {
   });
 
   it("fonts-ready re-lays out labels", async () => {
-    let resolve: () => void = () => {};
-    const ready = new Promise<void>((r) => {
-      resolve = r;
-    });
+    const { promise: ready, resolve } = deferred();
     Object.defineProperty(document, "fonts", { configurable: true, value: { ready } });
     try {
       render(panel({ series: [] }));
@@ -698,10 +696,7 @@ describe("ChartPanel cluster overflow (#920)", () => {
     // A measurer whose widths change once "fonts" load, as a web font's do.
     let scale = 6;
     const measure: MeasureText = (t) => t.length * scale;
-    let resolve: () => void = () => {};
-    const ready = new Promise<void>((r) => {
-      resolve = r;
-    });
+    const { promise: ready, resolve } = deferred();
     Object.defineProperty(document, "fonts", { configurable: true, value: { ready } });
     try {
       const markers = cluster(1, 1_500_000);

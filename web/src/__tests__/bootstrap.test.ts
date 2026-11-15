@@ -14,12 +14,16 @@ import type { MonitorSourceState } from "../api/export.gen";
 import { bootstrapFromServer } from "../data/bootstrap";
 import { useReviewStore } from "../data/reviewStore";
 import { importOffered } from "../data/source";
+import { deferred } from "./_deferred";
 import {
   fakeStreamTimers,
+  jsonResponse,
+  type Route,
   runStreamTimer,
   snapshotResponse,
   sourceState,
   stamp,
+  stubServer,
 } from "./_sourceState";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -102,34 +106,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-type Route = () => Promise<Response>;
-
-/** Stubs fetch with a route table, recording each fetch in `steps`. */
-function stubServer(routes: Record<string, Route>) {
-  const fetchMock = vi.fn((input: RequestInfo | URL) => {
-    const url = String(input);
-    steps.push(url);
-    const route = routes[url];
-    if (!route) throw new Error(`unexpected fetch ${url}`);
-    return route();
-  });
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
-}
-
-function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
-  let resolve: (v: T) => void = () => {};
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
+/** `stubServer`, recording each fetch in `steps`. */
+function stubRecordedServer(routes: Record<string, Route>) {
+  return stubServer(routes, (url) => steps.push(url));
 }
 
 describe("bootstrapFromServer", () => {
@@ -154,7 +133,7 @@ describe("bootstrapFromServer", () => {
   });
 
   it('mode "live": hydrates from the snapshot over the open stream', async () => {
-    const fetchMock = stubServer({
+    const fetchMock = stubRecordedServer({
       "/api/mode": () => Promise.resolve(jsonResponse(sourceState())),
       "/api/monitor_sessions": () => Promise.resolve(snapshotResponse(MINIMAL)),
     });
@@ -169,7 +148,7 @@ describe("bootstrapFromServer", () => {
 
   it("the stream opens before the mode and the snapshot are fetched", async () => {
     FakeEventSource.next = "manual";
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => Promise.resolve(jsonResponse(sourceState())),
       "/api/monitor_sessions": () => Promise.resolve(snapshotResponse(MINIMAL)),
     });
@@ -188,7 +167,7 @@ describe("bootstrapFromServer", () => {
   it("a live mode whose snapshot 404s keeps the live identity and retries through a reconnect", async () => {
     fakeStreamTimers();
     let snapshot = () => Promise.resolve(new Response(null, { status: 404 }));
-    const fetchMock = stubServer({
+    const fetchMock = stubRecordedServer({
       "/api/mode": () => Promise.resolve(jsonResponse(sourceState())),
       "/api/monitor_sessions": () => snapshot(),
     });
@@ -213,7 +192,7 @@ describe("bootstrapFromServer", () => {
 
   it("Import is withheld until the first /api/mode answers", async () => {
     const mode = deferred<Response>();
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => mode.promise,
       "/api/monitor_sessions": () => Promise.resolve(snapshotResponse(MINIMAL)),
     });
@@ -231,7 +210,7 @@ describe("bootstrapFromServer", () => {
   // Import loads a file in the tab.
   it("a boot with no server behind it offers Import", async () => {
     FakeEventSource.next = "error";
-    const fetchMock = stubServer({
+    const fetchMock = stubRecordedServer({
       "/api/mode": () => Promise.resolve(new Response("not found", { status: 404 })),
     });
     await bootstrapFromServer();
@@ -246,7 +225,7 @@ describe("bootstrapFromServer", () => {
   it("an otto server whose first stream fails is retried, not taken for no server", async () => {
     fakeStreamTimers();
     FakeEventSource.next = "error";
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => Promise.resolve(jsonResponse(sourceState())),
       "/api/monitor_sessions": () => Promise.resolve(snapshotResponse(MINIMAL)),
     });
@@ -269,7 +248,7 @@ describe("bootstrapFromServer", () => {
   it("a stream that opened whose first mode fails stays open, retries and recovers", async () => {
     fakeStreamTimers();
     let mode = () => Promise.resolve(new Response(null, { status: 503 }));
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => mode(),
       "/api/monitor_sessions": () => Promise.resolve(snapshotResponse(MINIMAL)),
     });
@@ -294,7 +273,7 @@ describe("bootstrapFromServer", () => {
     FakeEventSource.next = "error";
     // A static server that serves index.html for every path: a 200 whose
     // body is no source state is still no otto server.
-    const fetchMock = stubServer({
+    const fetchMock = stubRecordedServer({
       "/api/mode": () =>
         Promise.resolve(
           new Response("<!doctype html>", {
@@ -312,7 +291,7 @@ describe("bootstrapFromServer", () => {
   });
 
   it("boot stores the source token", async () => {
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => Promise.resolve(jsonResponse(sourceState({ token: "served-source" }))),
       "/api/monitor_sessions": () => Promise.resolve(snapshotResponse(MINIMAL, "served-source")),
     });
@@ -335,7 +314,7 @@ describe("bootstrapFromServer", () => {
   });
 
   it("mode review + document 200: hydrates the store", async () => {
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () =>
         Promise.resolve(
           jsonResponse(sourceState({ mode: "review", source: "run.sqlite", editable: true })),
@@ -355,7 +334,7 @@ describe("bootstrapFromServer", () => {
   // failure and must NOT be swallowed. It goes through the same load path as
   // a user-chosen file, so the store's importError banner surfaces it.
   it("mode review + document 200 but INVALID: surfaces importError, no throw", async () => {
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () =>
         Promise.resolve(
           jsonResponse(sourceState({ mode: "review", source: "run.db", editable: false })),
@@ -377,7 +356,7 @@ describe("bootstrapFromServer", () => {
     fakeStreamTimers();
     const json = sourceState({ mode: "review", kind: "json", source: "run.json" });
     let snapshot = () => Promise.resolve(snapshotResponse(JSON.stringify({ format: 99 })));
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => Promise.resolve(jsonResponse(json)),
       "/api/monitor_sessions": () => snapshot(),
     });
@@ -395,7 +374,7 @@ describe("bootstrapFromServer", () => {
   });
 
   it("mode review + document 500: store untouched, no throw", async () => {
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () =>
         Promise.resolve(
           jsonResponse(sourceState({ mode: "review", source: "run.sqlite", editable: false })),
@@ -434,7 +413,7 @@ describe("the boot vs source frames and retries", () => {
     const firstSnapshot = deferred<Response>();
     const admittedSnapshot = deferred<Response>();
     let snapshots = 0;
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => Promise.resolve(jsonResponse(stateOf("A", 10))),
       "/api/monitor_sessions": () => {
         snapshots += 1;
@@ -464,7 +443,7 @@ describe("the boot vs source frames and retries", () => {
     let mode = stateOf("A", 10);
     let snapshot: () => Promise<Response> = () =>
       Promise.resolve(snapshotResponse(MINIMAL, "A", stamp(11)));
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => Promise.resolve(jsonResponse(mode)),
       "/api/monitor_sessions": () => snapshot(),
     });
@@ -503,7 +482,7 @@ describe("the boot vs source frames and retries", () => {
     ];
     const later = () => Promise.resolve(jsonResponse(stateOf("A", 30)));
     let snapshotToken = "B";
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => (modes.shift() ?? later)(),
       "/api/monitor_sessions": () =>
         Promise.resolve(snapshotResponse(MINIMAL, snapshotToken, stamp(31))),
@@ -526,7 +505,7 @@ describe("the boot vs source frames and retries", () => {
   it("a boot whose snapshot names another source twice retries through a reconnect", async () => {
     fakeStreamTimers();
     let snapshotToken = "B";
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => Promise.resolve(jsonResponse(stateOf("A", 10))),
       "/api/monitor_sessions": () =>
         Promise.resolve(snapshotResponse(MINIMAL, snapshotToken, stamp(11))),
@@ -563,7 +542,7 @@ describe.each([
 
   async function bootWithHeldSnapshot() {
     const snapshot = deferred<Response>();
-    stubServer({
+    stubRecordedServer({
       "/api/mode": () => Promise.resolve(jsonResponse(mode)),
       "/api/monitor_sessions": () => snapshot.promise,
     });

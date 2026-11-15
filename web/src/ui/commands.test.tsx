@@ -2,6 +2,7 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { deferred } from "../__tests__/_deferred";
 import { installOpenSpanReconciler } from "../data/openSpan";
 import { useReviewStore } from "../data/reviewStore";
 import { type HistoryEntry, useUndoHistory } from "../data/undoHistory";
@@ -335,12 +336,8 @@ describe("useCommands — marking rows (Plan 5c)", () => {
     seedStore("live");
     useReviewStore.setState({ editable: true });
     useUiStore.setState({ openSpan: { sessionId: "s1", eventId: 3 } });
-    let release!: (r: Response) => void;
-    const fetchMock = vi.fn().mockReturnValue(
-      new Promise<Response>((res) => {
-        release = res;
-      }),
-    );
+    const { promise, resolve: release } = deferred<Response>();
+    const fetchMock = vi.fn().mockReturnValue(promise);
     vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() => useCommands());
     await act(() => {

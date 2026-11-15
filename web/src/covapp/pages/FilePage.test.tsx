@@ -10,6 +10,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { deferred } from "../../__tests__/_deferred";
 import type { FocusScope } from "../contexts";
 import * as dataModule from "../data";
 import { _resetForTests, StampMismatchError } from "../data";
@@ -509,13 +510,7 @@ const NODE2: FileNode = {
  * `mockChunkLoad`'s immediately-settled resolve/reject — lets a test hold
  * the page in `status: "loading"` for as long as it needs before deciding
  * the chunk arrives. */
-function deferredChunk() {
-  let resolve!: (chunk: FileChunk) => void;
-  const promise = new Promise<FileChunk>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
+const deferredChunk = () => deferred<FileChunk>();
 
 /** Spies on the real `loadFileChunk` export (not a module-level `vi.mock`,
  * so the last test in this file can leave it un-spied and exercise the

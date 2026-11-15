@@ -19,7 +19,9 @@ import { editorGateKey, useMutationGates } from "../shell/useMutationGate";
 import { calendarDateTimeToMs, msToCalendarDateTime } from "../ui/calendarTime";
 import { useToastStore } from "../ui/Toast";
 import { type EventDraft, useUiStore } from "../ui/uiStore";
+import { deferred } from "./_deferred";
 import { installPlotSurfaceCss } from "./_plotSurfaceCss";
+import { jsonResponse } from "./_sourceState";
 
 // jsdom lacks CSS.escape; react-aria menus/selects call it unconditionally
 // (same polyfill as rangepicker.test.tsx/reviewbar.test.tsx/markcontrol.test.tsx).
@@ -61,10 +63,6 @@ function hydrate(): string {
   const id = useReviewStore.getState().sessions[0]?.id;
   if (!id) throw new Error("fixture has no session");
   return id;
-}
-
-function okJson(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
 }
 
 function record(overrides: Record<string, unknown> = {}) {
@@ -202,7 +200,9 @@ describe("EventEditor", () => {
       dash: "dot",
     });
     useUiStore.getState().actions.openEventEditor({ kind: "draft", draft });
-    const fetchMock = vi.fn().mockResolvedValue(okJson(record({ id: 101, label: "canary" }), 201));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(record({ id: 101, label: "canary" }), 201));
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     await user.click(screen.getByTestId("editor-save"));
@@ -226,7 +226,7 @@ describe("EventEditor", () => {
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 1 });
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(okJson(record({ id: 1, label: "config reload v2" }), 200));
+      .mockResolvedValue(jsonResponse(record({ id: 1, label: "config reload v2" }), 200));
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     const label = screen.getByTestId("editor-label") as HTMLInputElement;
@@ -249,7 +249,7 @@ describe("EventEditor", () => {
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(okJson(record({ id: 2, label: "stress run" }), 200));
+      .mockResolvedValue(jsonResponse(record({ id: 2, label: "stress run" }), 200));
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     await user.click(screen.getByTestId("editor-end-clear"));
@@ -370,7 +370,7 @@ describe("EventEditor", () => {
       .getState()
       .actions.openEventEditor({ kind: "draft", draft: blankDraft(sid, { dash: "dash" }) });
     const fetchMock = vi.fn().mockResolvedValue(
-      okJson(
+      jsonResponse(
         {
           detail: [
             { loc: ["body", "dash"], msg: "dash must be one of [...]", type: "value_error" },
@@ -393,7 +393,7 @@ describe("EventEditor", () => {
     const user = userEvent.setup();
     const sid = hydrate();
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
-    const fetchMock = vi.fn().mockResolvedValue(okJson({ error: "archive is locked" }, 409));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ error: "archive is locked" }, 409));
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     await user.click(screen.getByTestId("editor-delete"));
@@ -455,7 +455,7 @@ describe("EventEditor", () => {
     ): Promise<Record<string, unknown>> {
       const user = userEvent.setup();
       useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 1 });
-      const fetchMock = vi.fn().mockResolvedValue(okJson(record({ id: 1 }), 200));
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(record({ id: 1 }), 200));
       vi.stubGlobal("fetch", fetchMock);
       render(<EventEditor />);
       await user.type(screen.getByTestId("editor-label"), " v2");
@@ -669,10 +669,7 @@ describe("EventEditor", () => {
         it("reopened during a pending Save, Escape on Custom… still restores focus to it", async () => {
           installPlotSurfaceCss();
           const sid = hydrate();
-          let release!: (r: Response) => void;
-          const pending = new Promise<Response>((res) => {
-            release = res;
-          });
+          const { promise: pending, resolve: release } = deferred<Response>();
           vi.stubGlobal("fetch", vi.fn().mockReturnValueOnce(pending));
           // The editor's opener, where its close restores focus (the Events
           // panel's Edit button in the app).
@@ -703,7 +700,7 @@ describe("EventEditor", () => {
           expect(screen.getByTestId("editor-label").hasAttribute("disabled")).toBe(true);
           expect(screen.getByTestId("event-editor").contains(document.activeElement)).toBe(true);
           await act(async () => {
-            release(okJson(record({ id: 2, label: "stress run" }), 200));
+            release(jsonResponse(record({ id: 2, label: "stress run" }), 200));
             await pending;
           });
           // The settled Save gives the fields back.
@@ -754,7 +751,7 @@ describe("EventEditor", () => {
       const user = userEvent.setup();
       const sid = hydrate();
       useUiStore.getState().actions.openEventEditor({ kind: "draft", draft: blankDraft(sid) });
-      const fetchMock = vi.fn().mockResolvedValue(okJson(record(), 201));
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(record(), 201));
       vi.stubGlobal("fetch", fetchMock);
       render(<EventEditor />);
       await user.click(screen.getByTestId("editor-color-custom-open"));
@@ -773,7 +770,7 @@ describe("EventEditor", () => {
       const user = userEvent.setup();
       const sid = hydrate();
       useUiStore.getState().actions.openEventEditor({ kind: "draft", draft: blankDraft(sid) });
-      const fetchMock = vi.fn().mockResolvedValue(okJson(record(), 201));
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(record(), 201));
       vi.stubGlobal("fetch", fetchMock);
       render(<EventEditor />);
       await user.click(screen.getByTestId("editor-save"));
@@ -786,7 +783,7 @@ describe("EventEditor", () => {
     const user = userEvent.setup();
     const sid = hydrate();
     useUiStore.getState().actions.openEventEditor({ kind: "draft", draft: blankDraft(sid) });
-    const fetchMock = vi.fn().mockResolvedValue(okJson(record(), 201));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(record(), 201));
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     // The vendored Select spreads data-testid onto its outer wrapper, not
@@ -812,7 +809,7 @@ describe("EventEditor", () => {
       endTimestampMs: null,
     });
     useUiStore.getState().actions.openEventEditor({ kind: "draft", draft });
-    const fetchMock = vi.fn().mockResolvedValue(okJson(record(), 201));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(record(), 201));
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     const secondSegment = screen
@@ -838,7 +835,7 @@ describe("EventEditor", () => {
         kind: "draft",
         draft: blankDraft(sid, { timestampMs: DAY5_MS, ...overrides }),
       });
-      const fetchMock = vi.fn().mockResolvedValue(okJson(record(), 201));
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(record(), 201));
       vi.stubGlobal("fetch", fetchMock);
       render(<EventEditor />);
       return { fetchMock };
@@ -915,7 +912,7 @@ describe("EventEditor", () => {
       const sid = hydrate();
       // event id 2 has both a start and an end.
       useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
-      const fetchMock = vi.fn().mockResolvedValue(okJson(record({ id: 2 }), 200));
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(record({ id: 2 }), 200));
       vi.stubGlobal("fetch", fetchMock);
       render(<EventEditor />);
       await clearField(user, "editor-end");
@@ -990,7 +987,7 @@ describe("EventEditor", () => {
       useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
       vi.stubGlobal(
         "fetch",
-        vi.fn().mockResolvedValue(okJson({ error: "archive is locked" }, 409)),
+        vi.fn().mockResolvedValue(jsonResponse({ error: "archive is locked" }, 409)),
       );
       render(<EventEditor />);
       await user.type(screen.getByTestId("editor-label"), "!");
@@ -1002,10 +999,7 @@ describe("EventEditor", () => {
 
 describe("EventEditor pending gate (#867)", () => {
   function held() {
-    let release!: (r: Response) => void;
-    const promise = new Promise<Response>((res) => {
-      release = res;
-    });
+    const { promise, resolve: release } = deferred<Response>();
     return { fetchMock: vi.fn().mockReturnValue(promise), release };
   }
 
@@ -1023,7 +1017,9 @@ describe("EventEditor pending gate (#867)", () => {
     await user.click(screen.getByTestId("editor-save"));
     expect(fetchMock.mock.calls.length).toBe(1);
     expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(true);
-    await act(() => Promise.resolve(release(okJson(record({ id: 101, label: "canary" }), 201))));
+    await act(() =>
+      Promise.resolve(release(jsonResponse(record({ id: 101, label: "canary" }), 201))),
+    );
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
     expect(fetchMock.mock.calls.length).toBe(1);
   });
@@ -1103,13 +1099,13 @@ describe("EventEditor pending gate (#867)", () => {
     // A press on a disabled swatch changes nothing.
     await user.click(green);
     expect(green.getAttribute("aria-selected")).toBe("false");
-    await act(() => Promise.resolve(release(okJson({ error: "archive is locked" }, 409))));
+    await act(() => Promise.resolve(release(jsonResponse({ error: "archive is locked" }, 409))));
     await waitFor(() => expect(screen.getByTestId("editor-error").textContent).toBeTruthy());
     expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("config reload v2");
     expect(green.getAttribute("aria-disabled")).toBeNull();
     expect(dashButton.hasAttribute("disabled")).toBe(false);
     await user.click(green);
-    fetchMock.mockResolvedValue(okJson(record({ id: 1 }), 200));
+    fetchMock.mockResolvedValue(jsonResponse(record({ id: 1 }), 200));
     await user.click(screen.getByTestId("editor-save"));
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
     expect(jsonBody(fetchMock, 1)).toMatchObject({ label: "config reload v2", color: "#2ca02c" });
@@ -1133,7 +1129,7 @@ describe("EventEditor pending gate (#867)", () => {
     );
     expect(screen.getByTestId("editor-save").hasAttribute("data-loading")).toBe(false);
     expect(screen.getByTestId("editor-delete").hasAttribute("disabled")).toBe(true);
-    await act(() => Promise.resolve(release(okJson(record({ id: 2 }), 200))));
+    await act(() => Promise.resolve(release(jsonResponse(record({ id: 2 }), 200))));
     await waitFor(() =>
       expect(screen.getByTestId("editor-save").hasAttribute("disabled")).toBe(false),
     );
@@ -1142,10 +1138,7 @@ describe("EventEditor pending gate (#867)", () => {
 
 describe("EventEditor and a late result (#932)", () => {
   function held() {
-    let release!: (r: Response) => void;
-    const promise = new Promise<Response>((res) => {
-      release = res;
-    });
+    const { promise, resolve: release } = deferred<Response>();
     return { fetchMock: vi.fn().mockReturnValueOnce(promise), release };
   }
 
@@ -1176,7 +1169,7 @@ describe("EventEditor and a late result (#932)", () => {
     // Event 3's editor is shut while event 2's Save is pending, so its custom
     // colour can only be set once the late result has landed.
     expect(screen.getByTestId("editor-color-custom-open").hasAttribute("disabled")).toBe(true);
-    await act(() => Promise.resolve(release(okJson(record({ id: 2, label: "saved" }), 200))));
+    await act(() => Promise.resolve(release(jsonResponse(record({ id: 2, label: "saved" }), 200))));
     await waitFor(() => expect(storedLabel(sid, 2)).toBe("saved"));
     expect(useUiStore.getState().eventEditor).toMatchObject({ eventId: 3 });
     expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("log capture");
@@ -1190,8 +1183,8 @@ describe("EventEditor and a late result (#932)", () => {
   });
 
   it.each([
-    { outcome: "success", response: () => okJson(record({ id: 2, label: "saved" }), 200) },
-    { outcome: "failure", response: () => okJson({ error: "archive is locked" }, 409) },
+    { outcome: "success", response: () => jsonResponse(record({ id: 2, label: "saved" }), 200) },
+    { outcome: "failure", response: () => jsonResponse({ error: "archive is locked" }, 409) },
   ])(
     "a Save's late $outcome after Cancel and reopening the same event leaves the reopened editor",
     async ({ response }) => {
@@ -1232,7 +1225,9 @@ describe("EventEditor and a late result (#932)", () => {
     // Seeded before the update landed: the stored label.
     expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("stress run");
     await act(() =>
-      Promise.resolve(release(okJson(record({ id: 2, label: "saved", end_timestamp: null }), 200))),
+      Promise.resolve(
+        release(jsonResponse(record({ id: 2, label: "saved", end_timestamp: null }), 200)),
+      ),
     );
     await waitFor(() =>
       expect((screen.getByTestId("editor-label") as HTMLInputElement).value).toBe("saved"),
@@ -1281,7 +1276,7 @@ describe("EventEditor and a late result (#932)", () => {
     await user.click(screen.getByTestId("confirm-delete-confirm"));
     act(() => useUiStore.getState().actions.closeEventEditor());
     open(sid, 2);
-    await act(() => Promise.resolve(release(okJson({ error: "archive is locked" }, 409))));
+    await act(() => Promise.resolve(release(jsonResponse({ error: "archive is locked" }, 409))));
     await waitFor(() =>
       expect(screen.getByTestId("editor-delete").hasAttribute("disabled")).toBe(false),
     );
@@ -1337,7 +1332,9 @@ describe("EventEditor and the tracked span (#868)", () => {
       "fetch",
       vi
         .fn()
-        .mockResolvedValue(okJson(record({ id: 1, end_timestamp: "2026-07-01T09:20:00Z" }), 200)),
+        .mockResolvedValue(
+          jsonResponse(record({ id: 1, end_timestamp: "2026-07-01T09:20:00Z" }), 200),
+        ),
     );
     render(<EventEditor />);
     await user.type(screen.getByTestId("editor-label"), "!");
@@ -1352,10 +1349,7 @@ describe("EventEditor and the tracked span (#868)", () => {
 // store when the undo settles, or closes if the undo deleted the event.
 describe("EventEditor and a pending undo (#929)", () => {
   function heldRevert() {
-    let release!: (r: Response) => void;
-    const promise = new Promise<Response>((res) => {
-      release = res;
-    });
+    const { promise, resolve: release } = deferred<Response>();
     return { promise, release };
   }
 
@@ -1363,7 +1357,9 @@ describe("EventEditor and a pending undo (#929)", () => {
 
   it("an editor opened on the target while an undo is pending reseeds from the store when it settles", async () => {
     const sid = hydrate();
-    const fetchMock = vi.fn().mockResolvedValueOnce(okJson(record({ id: 2, label: "renamed" })));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(record({ id: 2, label: "renamed" })));
     vi.stubGlobal("fetch", fetchMock);
     await updateEvent(sid, 2, { label: "renamed" });
     const { promise, release } = heldRevert();
@@ -1379,7 +1375,7 @@ describe("EventEditor and a pending undo (#929)", () => {
     expect(label()).toBe("renamed");
     expect(screen.getByTestId("editor-label").hasAttribute("disabled")).toBe(true);
     await act(async () => {
-      release(okJson(record({ id: 2, label: "stress run" })));
+      release(jsonResponse(record({ id: 2, label: "stress run" })));
       await undoing;
     });
     await waitFor(() => expect(label()).toBe("stress run"));
@@ -1388,7 +1384,7 @@ describe("EventEditor and a pending undo (#929)", () => {
 
   it("an editor opened on the target while an undo is pending closes if the undo deleted the event", async () => {
     const sid = hydrate();
-    const fetchMock = vi.fn().mockResolvedValueOnce(okJson(record({ id: 101 }), 201));
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(record({ id: 101 }), 201));
     vi.stubGlobal("fetch", fetchMock);
     await createEvent(sid, { label: "deploy" });
     const { promise, release } = heldRevert();
@@ -1403,7 +1399,7 @@ describe("EventEditor and a pending undo (#929)", () => {
     render(<EventEditor />);
     expect(screen.getByTestId("event-editor")).toBeTruthy();
     await act(async () => {
-      release(okJson(null));
+      release(jsonResponse(null));
       await undoing;
     });
     await waitFor(() => expect(useUiStore.getState().eventEditor).toBeNull());
@@ -1431,7 +1427,7 @@ describe("EventEditor sends only the fields the user changed (#993)", () => {
     const sid = useReviewStore.getState().sessions[0]?.id;
     if (!sid) throw new Error("fixture has no session");
     useUiStore.getState().actions.openEventEditor({ kind: "edit", sessionId: sid, eventId: 2 });
-    const fetchMock = vi.fn().mockResolvedValue(okJson(record({ id: 2 }), 200));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(record({ id: 2 }), 200));
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     return fetchMock;
@@ -1610,7 +1606,7 @@ describe("EventEditor and a write refused as changed (#992)", () => {
   const current = () =>
     record({ id: 2, label: "renamed elsewhere", color: "#7c5cff", end_timestamp: null });
   const changed = (cur: unknown) =>
-    okJson({ error: "the event was changed elsewhere", code: "changed", current: cur }, 409);
+    jsonResponse({ error: "the event was changed elsewhere", code: "changed", current: cur }, 409);
 
   function open(sid: string): void {
     act(() => {
@@ -1627,7 +1623,7 @@ describe("EventEditor and a write refused as changed (#992)", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(changed(current()))
-      .mockResolvedValueOnce(okJson(current(), 200));
+      .mockResolvedValueOnce(jsonResponse(current(), 200));
     vi.stubGlobal("fetch", fetchMock);
     render(<EventEditor />);
     await user.type(screen.getByTestId("editor-label"), "!");
@@ -1718,15 +1714,8 @@ describe("EventEditor and a write refused as changed (#992)", () => {
     const user = userEvent.setup();
     const sid = hydrate();
     open(sid);
-    let release!: (r: Response) => void;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockReturnValueOnce(
-        new Promise<Response>((res) => {
-          release = res;
-        }),
-      ),
-    );
+    const { promise, resolve: release } = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn().mockReturnValueOnce(promise));
     useToastStore.getState().dismissToast();
     render(<EventEditor />);
     await user.type(screen.getByTestId("editor-label"), "!");

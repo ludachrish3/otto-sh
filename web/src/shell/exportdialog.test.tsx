@@ -8,6 +8,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { jsonResponse } from "../__tests__/_sourceState";
 import { synthSession } from "../__tests__/_synth";
 import type { MonitorSourceState } from "../api/export.gen";
 import { useReviewStore } from "../data/reviewStore";
@@ -71,13 +72,6 @@ function loadJsonSource(): void {
   actions.setSourceState(JSON_SOURCE);
 }
 
-function okJson(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
 /** Waits for the acknowledgement the export posted to settle, answered or
  * refused (acknowledgeExport swallows both). */
 const ackSettled = () =>
@@ -92,7 +86,7 @@ beforeEach(() => {
   ) {
     downloads.push(this.download);
   });
-  fetchMock = vi.fn().mockResolvedValue(okJson({ ...JSON_SOURCE, unsaved: 0 }));
+  fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ...JSON_SOURCE, unsaved: 0 }));
   vi.stubGlobal("fetch", fetchMock);
   loadJsonSource();
 });
@@ -211,7 +205,10 @@ describe("ExportDialog", () => {
       observed_at: "2026-11-12T10:00:05.000000+00:00",
     };
     fetchMock.mockResolvedValue(
-      okJson({ error: "the source changed", code: "source_changed", source_state: newer }, 409),
+      jsonResponse(
+        { error: "the source changed", code: "source_changed", source_state: newer },
+        409,
+      ),
     );
     const before = useReviewStore.getState();
     const user = userEvent.setup();
