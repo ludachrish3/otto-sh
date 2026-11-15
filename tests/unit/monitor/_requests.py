@@ -11,10 +11,13 @@ into the window. The token a write sends follows the one rule in
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Literal
 
 from otto.monitor.server import SOURCE_TOKEN_HEADER
 from tests._fixtures._source_token import FROM_MODE, MODE_PATH, FromMode, resolve_token
+
+BodyEnding = Literal["complete", "disconnect", "hang"]
+"""How a request body ends (``asgi``'s ``ending``)."""
 
 
 async def asgi(
@@ -26,6 +29,7 @@ async def asgi(
     token: "str | FromMode | None" = FROM_MODE,
     content: "bytes | list[bytes] | None" = None,
     headers: "dict[str, str] | None" = None,
+    ending: BodyEnding = "complete",
 ) -> tuple[int | None, Any]:
     """One in-loop request against *app*: ``(status, json-or-None)``.
 
@@ -36,6 +40,11 @@ async def asgi(
     ``content`` sends a raw body in place of *body*: ``bytes`` with its
     ``Content-Length``, or a list of chunks with none (a chunked upload).
     ``headers`` adds further request headers.
+
+    ``ending`` is how the body ends: ``complete`` (the last chunk ends it),
+    ``disconnect`` (the client goes away after the chunks, mid-body) or
+    ``hang`` (no more of the body ever arrives, so a reader waits until the
+    request is cancelled).
     """
     if body is not None:
         content = json.dumps(body).encode()
@@ -59,9 +68,14 @@ async def asgi(
     chunks: list[bytes] = []
 
     async def receive() -> dict[str, object]:
-        if not pending:
-            return {"type": "http.request", "body": b"", "more_body": False}
-        return {"type": "http.request", "body": pending.pop(0), "more_body": bool(pending)}
+        if pending:
+            more = bool(pending[1:]) or ending != "complete"
+            return {"type": "http.request", "body": pending.pop(0), "more_body": more}
+        if ending == "disconnect":
+            return {"type": "http.disconnect"}
+        if ending == "hang":
+            await asyncio.Event().wait()
+        return {"type": "http.request", "body": b"", "more_body": False}
 
     async def send(message: dict[str, Any]) -> None:
         nonlocal status

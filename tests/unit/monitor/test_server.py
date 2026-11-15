@@ -32,7 +32,8 @@ import pytest
 import pytest_asyncio
 from _archive import _make_archive
 from _events import BLANKS
-from _requests import asgi, settle
+from _requests import BodyEnding, asgi, settle
+from starlette.requests import ClientDisconnect
 
 from otto.models import LabSnapshot, MonitorExport, SessionRecord
 from otto.models.monitor import EventRecord
@@ -1461,12 +1462,14 @@ async def _upload(
     unsaved: "str | None" = "0",
     name: "str | None" = "y.json",
     declared: "int | None" = None,
+    ending: BodyEnding = "complete",
 ) -> tuple[int | None, Any]:
     """POST *document* (a model, raw bytes, or chunks) to ``/api/source`` as a switch confirmation.
 
     ``unsaved`` and ``name`` are the confirmation's ``UNSAVED_HEADER`` and
     (percent-encoded) ``SOURCE_NAME_HEADER``; ``None`` omits the header.
     ``declared`` sends that ``Content-Length`` with chunks (none by default).
+    ``ending`` is how the body ends (``asgi``'s).
     """
     app = rig.app if isinstance(rig, _InLoop) else rig
     content = document_json(document).encode() if isinstance(document, MonitorExport) else document
@@ -1475,7 +1478,9 @@ async def _upload(
         headers[UNSAVED_HEADER] = unsaved
     if name is not None:
         headers[SOURCE_NAME_HEADER] = quote(name)
-    return await asgi(app, "POST", SOURCE_PATH, token=token, content=content, headers=headers)
+    return await asgi(
+        app, "POST", SOURCE_PATH, token=token, content=content, headers=headers, ending=ending
+    )
 
 
 def _two_session_ids_document() -> MonitorExport:
@@ -1639,6 +1644,43 @@ class TestSourceSwitch:
         assert second[1]["code"] == "source_changed"
         assert second[1]["source_state"]["token"] == first[1]["token"]
         assert most == 1
+
+    @pytest.mark.asyncio
+    async def test_a_client_gone_mid_upload_releases_the_gate(self) -> None:
+        """A disconnect mid-body fails that upload and leaves the source; the next upload runs."""
+        rig = _in_loop(_one_event_document())
+        served = rig.source
+        with pytest.raises(ClientDisconnect):
+            await _upload(rig, [b'{"format": 1'], ending="disconnect")
+        assert rig.source is served
+        status, _ = await asyncio.wait_for(_upload(rig, _one_event_document()), timeout=5)
+        assert status == 200, "a disconnected upload releases the gate"
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_upload_releases_the_gate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An upload cancelled while it reads its body (inside the gate) lets the next one run."""
+        rig = _in_loop(_one_event_document())
+        served = rig.source
+        real_read = review_source.read_upload
+        reading = asyncio.Event()
+
+        async def flagged_read(request: Any, **kwargs: Any) -> bytes:
+            reading.set()
+            return await real_read(request, **kwargs)
+
+        monkeypatch.setattr(review_source, "read_upload", flagged_read)
+        stalled = asyncio.create_task(_upload(rig, [b'{"format": 1'], ending="hang"))
+        await asyncio.wait_for(reading.wait(), timeout=5)
+        await settle()
+        assert not stalled.done(), "the upload waits for the rest of its body"
+        stalled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stalled
+        assert rig.source is served
+        status, _ = await asyncio.wait_for(_upload(rig, _one_event_document()), timeout=5)
+        assert status == 200, "a cancelled upload releases the gate"
 
     @pytest.mark.asyncio
     async def test_non_ascii_name_round_trips(self) -> None:
