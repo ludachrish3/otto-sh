@@ -66,7 +66,13 @@ from otto.host.host import BaseHost
 from otto.host.remote_host import RemoteHost
 from tests._fixtures.labdata import element_for, host_data
 from tests._fixtures.profiles import Cell, _ensure_custom_frames, axes_for, axis_space
-from tests.conformance._entry import family_of, hooked, password_sudo_on, proxied_on
+from tests.conformance._entry import (
+    family_of,
+    hooked,
+    password_sudo_on,
+    proxied_on,
+    switch_user_on,
+)
 from tests.conformance._lab_context import bed_lab_context
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._vocabulary import Vocabulary, vocabulary_for
@@ -623,6 +629,7 @@ def bed_space() -> "list[ResolvedCell]":
                 family=family_of(host),
                 proxied_login=proxied,
                 password_sudo=password_sudo,
+                switch_user=switch_user_on(entry, cell.term, family=family_of(host)),
                 open_shell_host=(
                     hooked(partial(_hooked_open, cell))
                     if cell.term == "ssh" and not proxied

@@ -74,7 +74,7 @@ from tests._fixtures.busybox import BUSYBOX_MATRIX, BusyBoxRelease, busybox_bina
 from tests._fixtures.labdata import element_of, entry_of, flatten_lab_doc
 from tests._fixtures.profiles import Cell
 from tests.conformance._bed import bed_space
-from tests.conformance._entry import LOCAL_FAMILY, family_of, hooked, proxied_on
+from tests.conformance._entry import LOCAL_FAMILY, family_of, hooked, proxied_on, switch_user_on
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._venue import BED, current_venue
 from tests.conformance._vocabulary import POSIX
@@ -234,6 +234,9 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
         proxied = {
             term: proxied_on(entry_of(entry), term, family=family) for term in host.valid_terms
         }
+        switch_users = {
+            term: switch_user_on(entry_of(entry), term, family=family) for term in host.valid_terms
+        }
     return [
         ResolvedCell(
             cell=Cell(element, term, transfer),
@@ -247,6 +250,7 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
             # placeholder (the loopback login is by key) and the hermetic venue
             # drives no real elevation. The password arm is the unit tests'.
             password_sudo=False,
+            switch_user=switch_users[term],
             open_shell_host=(
                 hooked(partial(_loopback_build, term, transfer))
                 if term == "ssh" and not proxied[term]

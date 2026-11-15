@@ -555,7 +555,9 @@ table's other keys) and `kind`: `"default"`, `"named"`, `"exec_pool"` or
 `"bridge"`, so work that must happen once is done on the default session
 only. The hook does **not** receive the host: a call back into it would
 wait for the session being opened, and otto refuses it by name
-({ref}`session-setup-reentry`).
+({ref}`session-setup-reentry`). A hook that leaves a session opened for a
+user (an `"exec_pool"` or `as_user=` session) as someone else is refused
+the same way; switch inside `session.as_user(...)` instead.
 
 ```python
 # .otto/init.py — registered via [init] in .otto/settings.toml

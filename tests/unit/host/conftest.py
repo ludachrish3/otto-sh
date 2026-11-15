@@ -778,3 +778,96 @@ def recording_as_user(seq: "list[str]") -> Callable[..., Any]:
             seq.append("switch:back")
 
     return as_user
+
+
+class OpenSteps(list):
+    """The steps a pooled session's open took, in order; see :func:`open_steps`."""
+
+    switch_raises: "Exception | None" = None
+    """Raised by the switch step instead of switching, when set."""
+
+
+@pytest.fixture
+def open_steps(monkeypatch: pytest.MonkeyPatch) -> OpenSteps:
+    """Record each step of ``SessionManager.open_session`` on a stub-built manager.
+
+    ``"ssh_as:<user>"`` when the transport is that user's own ssh connection,
+    ``"handshake"``, ``"proxy"`` (only when there are hops to replay),
+    ``"switch:<user>"`` after the real switch (so its stamp happens), and
+    ``"setup:<kind>(user=<user>)"``, where the user is the session's
+    ``current_user`` as ``_apply_session_setup`` is called: the value the
+    ``SetupContext`` it builds reads (``test_session_manager_setup.py`` pins
+    the context itself with a real hook).
+    """
+    from otto.host import login_proxy
+    from otto.host import session as session_mod
+    from otto.host.session import SessionManager
+    from tests.unit.host.test_session import _StubExecSession
+
+    monkeypatch.setattr(login_proxy, "_RESYNC_SETTLE", 0.0)
+    steps = OpenSteps()
+
+    def instrumented(session: Any) -> Any:
+        real = session._ensure_initialized
+
+        async def handshake() -> None:
+            # Every send re-enters it; the handshake is the first entry only.
+            if not session._initialized:
+                steps.append("handshake")
+            await real()
+
+        session._ensure_initialized = handshake
+        return session
+
+    real_from_factory = SessionManager._from_factory
+    monkeypatch.setattr(
+        SessionManager, "_from_factory", lambda self, f: instrumented(real_from_factory(self, f))
+    )
+    # The own-connection transport builds an SshSession over `ssh_as`'s
+    # connection; here it is the same stub the factory builds.
+    monkeypatch.setattr(
+        session_mod, "SshSession", lambda *a, **kw: instrumented(_StubExecSession())
+    )
+
+    real_init = SessionManager.__init__
+
+    def init(self: Any, *a: Any, **kw: Any) -> None:
+        real_init(self, *a, **kw)
+
+        async def ssh_as(*, user: str) -> object:
+            steps.append(f"ssh_as:{user}")
+            return object()
+
+        if self._connections is not None:
+            self._connections.ssh_as = ssh_as
+
+    monkeypatch.setattr(SessionManager, "__init__", init)
+
+    real_proxy = SessionManager._apply_login_proxy
+
+    async def proxy(self: Any, session: Any) -> None:
+        if getattr(self._connections, "proxy_hops", []):
+            steps.append("proxy")
+        await real_proxy(self, session)
+
+    monkeypatch.setattr(SessionManager, "_apply_login_proxy", proxy)
+
+    real_switch = session_mod.switch_and_stamp
+
+    async def switch(**kw: Any) -> Any:
+        if steps.switch_raises is not None:
+            raise steps.switch_raises
+        applied = await real_switch(**kw)
+        steps.append(f"switch:{kw['user']}")
+        return applied
+
+    monkeypatch.setattr(session_mod, "switch_and_stamp", switch)
+
+    real_setup = SessionManager._apply_session_setup
+
+    async def setup(self: Any, session: Any, kind: Any) -> None:
+        steps.append(f"setup:{kind}(user={session.current_user})")
+        await real_setup(self, session, kind)
+
+    monkeypatch.setattr(SessionManager, "_apply_session_setup", setup)
+    return steps

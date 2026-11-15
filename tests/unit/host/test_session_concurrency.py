@@ -1,7 +1,7 @@
 """Tier 1 stability tests for ``SessionManager`` — pure asyncio, no real transports.
 
 Targets the three race hotspots in :mod:`otto.host.session`:
-``_exec_pool``, ``_named_sessions`` get-or-create, and
+``_exec_pools``, ``_named_sessions`` get-or-create, and
 ``_ensure_session()`` default-session recreation.
 
 The lock fixes these tests were written to diagnose have since landed, so
@@ -49,7 +49,7 @@ the same 12.63 s and then flushing in a burst, with two sibling workers inside
 ``test_session_manager_property`` — also a 0.05 s test — for that whole
 window. Three unrelated tests in three processes inflating ~200x at the same
 instant is a frozen VM (steal or I/O on a shared GitHub runner); no deadlock in
-``_exec_pool`` can produce it, and a deadlock could not then have resolved
+``_exec_pools`` can produce it, and a deadlock could not then have resolved
 itself, which this one did, 2.6 s after the alarm.
 
 So the guard was not measuring the pool. It was measuring the hypervisor, which
@@ -96,6 +96,7 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from tests._fixtures.fake_shell import probe_marker
 from tests.unit.host._session_feed import identity_handshake_reply, writes_handshake
+from tests.unit.host.test_session import idle_exec_sessions
 
 pytestmark = pytest.mark.concurrency
 
@@ -214,7 +215,7 @@ def _pooled_exec(mgr: SessionManager, cmd: str):
 def _make_mgr(factory: _Factory, term: str = "telnet") -> SessionManager:
     """Build a ``SessionManager`` wired to the factory.
 
-    ``term='telnet'`` makes ``exec()`` go through ``_exec_pool``;
+    ``term='telnet'`` makes ``exec()`` go through ``_exec_pools``;
     SSH's ``exec`` bypasses the pool (uses asyncssh ``create_process``
     directly) and isn't relevant to these tests.
     """
@@ -422,7 +423,7 @@ async def test_exec_pool_connects_concurrently() -> None:
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
 async def test_exec_pool_high_fanout() -> None:
-    """200 concurrent ``exec()`` calls must not corrupt ``_exec_pool``.
+    """200 concurrent ``exec()`` calls must not corrupt ``_exec_pools``.
 
     Catches: ``IndexError`` from concurrent pop on a draining pool,
     duplicate sessions returned to multiple in-flight callers, dead
@@ -440,15 +441,15 @@ async def test_exec_pool_high_fanout() -> None:
     assert all(r.status.is_ok for r in statuses), "some execs returned non-ok status"
 
     # Every session left in the pool should still be alive.
-    dead_in_pool = [s for s in mgr._exec_pool if not s.alive]
+    dead_in_pool = [s for s in idle_exec_sessions(mgr) if not s.alive]
     assert not dead_in_pool, f"{len(dead_in_pool)} dead session(s) left in pool"
 
     # No duplicates in the pool — would indicate a session was returned twice.
-    pool_ids = [id(s) for s in mgr._exec_pool]
+    pool_ids = [id(s) for s in idle_exec_sessions(mgr)]
     assert len(pool_ids) == len(set(pool_ids)), "duplicate session detected in pool"
 
     # Pool size must not exceed factory creation count (sanity).
-    assert len(mgr._exec_pool) <= factory.created_count
+    assert len(idle_exec_sessions(mgr)) <= factory.created_count
 
     await mgr.close_all()
 
@@ -620,7 +621,7 @@ async def _exec_ops(ops: list[str]) -> None:
             # The pool holds HostSessions registered under `__exec_pool_N__`
             # keys (this is by design — exec reuses open_session for the
             # creation path), so those don't count as a violation.
-            pool_shells = {id(hs._session) for hs in mgr._exec_pool}
+            pool_shells = {id(hs._session) for hs in idle_exec_sessions(mgr)}
             user_named_shells = {
                 id(hs._session)
                 for name, hs in mgr._named_sessions.items()
@@ -628,12 +629,12 @@ async def _exec_ops(ops: list[str]) -> None:
             }
             overlap = pool_shells & user_named_shells
             assert not overlap, (
-                f"after {op!r}: user-named ShellSession id(s) {overlap} also appear in _exec_pool"
+                f"after {op!r}: user-named ShellSession id(s) {overlap} also appear in _exec_pools"
             )
 
             # Invariant: factory creation is bounded by total operations + 1
             # (the +1 covers the initial default session's lazy creation).
-            assert factory.created_count <= len(ops) + 2 + len(mgr._exec_pool), (
+            assert factory.created_count <= len(ops) + 2 + len(idle_exec_sessions(mgr)), (
                 f"factory.created_count={factory.created_count} after "
                 f"{op!r} — unbounded session growth"
             )

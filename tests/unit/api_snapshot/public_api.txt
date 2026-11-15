@@ -801,7 +801,10 @@ member	otto.host.command_frame:BashFrame.extract_exec_retcode	method	sync	PK:buf
 member	otto.host.command_frame:BashFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:BashFrame.frame	method	sync	PK:cmd:- KO:m:-
 member	otto.host.command_frame:BashFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
+member	otto.host.command_frame:BashFrame.guards_identity	property:g--
 member	otto.host.command_frame:BashFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host.command_frame:BashFrame.identity_guard	method	sync	KO:payload:- KO:mark:- KO:m:-
+member	otto.host.command_frame:BashFrame.identity_mark_statement	method	sync	KO:mark:-
 member	otto.host.command_frame:BashFrame.isolates_exec	property:g--
 member	otto.host.command_frame:BashFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:BashFrame.measures_terminal_mapping	attribute
@@ -830,7 +833,10 @@ member	otto.host.command_frame:CommandFrame.extract_exec_retcode	method	sync	PK:
 member	otto.host.command_frame:CommandFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:CommandFrame.frame	method	sync	PK:cmd:- KO:m:-
 member	otto.host.command_frame:CommandFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
+member	otto.host.command_frame:CommandFrame.guards_identity	property:g--
 member	otto.host.command_frame:CommandFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host.command_frame:CommandFrame.identity_guard	method	sync	KO:payload:- KO:mark:- KO:m:-
+member	otto.host.command_frame:CommandFrame.identity_mark_statement	method	sync	KO:mark:-
 member	otto.host.command_frame:CommandFrame.isolates_exec	property:g--
 member	otto.host.command_frame:CommandFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:CommandFrame.measures_terminal_mapping	attribute
@@ -849,10 +855,11 @@ member	otto.host.command_frame:CommandFrame.streams_output_live	attribute
 abstract	otto.host.command_frame:CommandFrame	end_pattern extract_retcode frame handshake marks_begin parse_output recover
 name	otto.host.command_frame:ExecInput	class
 mro	otto.host.command_frame:ExecInput	-
-call	otto.host.command_frame:ExecInput	sync	KO:stdin_eof:- KO:restore:E:{otto.host.command_frame:ExecRestore}:BASELINE=S:"baseline" KO:credential:B:false
+call	otto.host.command_frame:ExecInput	sync	KO:stdin_eof:- KO:restore:E:{otto.host.command_frame:ExecRestore}:BASELINE=S:"baseline" KO:credential:B:false KO:identity:N
 member	otto.host.command_frame:ExecInput.__eq__	method	sync	PK:other:-
 member	otto.host.command_frame:ExecInput.__hash__	method	sync	-
 member	otto.host.command_frame:ExecInput.credential	field
+member	otto.host.command_frame:ExecInput.identity	field
 member	otto.host.command_frame:ExecInput.restore	field
 member	otto.host.command_frame:ExecInput.stdin_eof	field
 abstract	otto.host.command_frame:ExecInput	-
@@ -871,7 +878,10 @@ member	otto.host.command_frame:RawFrame.extract_exec_retcode	method	sync	PK:buff
 member	otto.host.command_frame:RawFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:RawFrame.frame	method	sync	PK:cmd:- KO:m:-
 member	otto.host.command_frame:RawFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
+member	otto.host.command_frame:RawFrame.guards_identity	property:g--
 member	otto.host.command_frame:RawFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host.command_frame:RawFrame.identity_guard	method	sync	KO:payload:- KO:mark:- KO:m:-
+member	otto.host.command_frame:RawFrame.identity_mark_statement	method	sync	KO:mark:-
 member	otto.host.command_frame:RawFrame.isolates_exec	property:g--
 member	otto.host.command_frame:RawFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:RawFrame.measures_terminal_mapping	attribute
@@ -912,7 +922,10 @@ member	otto.host.command_frame:ZephyrFrame.extract_exec_retcode	method	sync	PK:b
 member	otto.host.command_frame:ZephyrFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host.command_frame:ZephyrFrame.frame	method	sync	PK:cmd:- KO:m:-
 member	otto.host.command_frame:ZephyrFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
+member	otto.host.command_frame:ZephyrFrame.guards_identity	property:g--
 member	otto.host.command_frame:ZephyrFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host.command_frame:ZephyrFrame.identity_guard	method	sync	KO:payload:- KO:mark:- KO:m:-
+member	otto.host.command_frame:ZephyrFrame.identity_mark_statement	method	sync	KO:mark:-
 member	otto.host.command_frame:ZephyrFrame.isolates_exec	property:g--
 member	otto.host.command_frame:ZephyrFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host.command_frame:ZephyrFrame.measures_terminal_mapping	attribute
@@ -1559,7 +1572,10 @@ member	otto.host:BashFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:BashFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:BashFrame.frame	method	sync	PK:cmd:- KO:m:-
 member	otto.host:BashFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
+member	otto.host:BashFrame.guards_identity	property:g--
 member	otto.host:BashFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host:BashFrame.identity_guard	method	sync	KO:payload:- KO:mark:- KO:m:-
+member	otto.host:BashFrame.identity_mark_statement	method	sync	KO:mark:-
 member	otto.host:BashFrame.isolates_exec	property:g--
 member	otto.host:BashFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:BashFrame.measures_terminal_mapping	attribute
@@ -1588,7 +1604,10 @@ member	otto.host:CommandFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:
 member	otto.host:CommandFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:CommandFrame.frame	method	sync	PK:cmd:- KO:m:-
 member	otto.host:CommandFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
+member	otto.host:CommandFrame.guards_identity	property:g--
 member	otto.host:CommandFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host:CommandFrame.identity_guard	method	sync	KO:payload:- KO:mark:- KO:m:-
+member	otto.host:CommandFrame.identity_mark_statement	method	sync	KO:mark:-
 member	otto.host:CommandFrame.isolates_exec	property:g--
 member	otto.host:CommandFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:CommandFrame.measures_terminal_mapping	attribute
@@ -2384,8 +2403,11 @@ member	otto.host:LocalSession.echoes	property:g--
 member	otto.host:LocalSession.enter_frame	method	coroutine	KO:frame:- KO:timeout:N
 member	otto.host:LocalSession.exec_baseline_lost	property:g--
 member	otto.host:LocalSession.expect	method	coroutine	PK:pattern:- KO:timeout:F:0x1.e000000000000p+4
+member	otto.host:LocalSession.identity_lost	property:g--
 member	otto.host:LocalSession.markers	property:g--
+member	otto.host:LocalSession.note_reached_by_switch	method	sync	-
 member	otto.host:LocalSession.open_transport	method	coroutine	-
+member	otto.host:LocalSession.reached_by_switch	property:g--
 member	otto.host:LocalSession.read_transport_until	method	coroutine	KO:pattern:-
 member	otto.host:LocalSession.reads_a_terminal	attribute
 member	otto.host:LocalSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N KO:exec_input:N
@@ -2544,7 +2566,10 @@ member	otto.host:RawFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:RawFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:RawFrame.frame	method	sync	PK:cmd:- KO:m:-
 member	otto.host:RawFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
+member	otto.host:RawFrame.guards_identity	property:g--
 member	otto.host:RawFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host:RawFrame.identity_guard	method	sync	KO:payload:- KO:mark:- KO:m:-
+member	otto.host:RawFrame.identity_mark_statement	method	sync	KO:mark:-
 member	otto.host:RawFrame.isolates_exec	property:g--
 member	otto.host:RawFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:RawFrame.measures_terminal_mapping	attribute
@@ -2707,6 +2732,7 @@ name	otto.host:SessionManager	class
 mro	otto.host:SessionManager	-
 call	otto.host:SessionManager	sync	@manifest:construct=false
 member	otto.host:SessionManager.ambient_user	property:g--
+member	otto.host:SessionManager.can_ssh_as	method	sync	KO:user:-
 member	otto.host:SessionManager.close_all	method	coroutine	-
 member	otto.host:SessionManager.current_user	property:g--
 member	otto.host:SessionManager.exec_on	method	coroutine	KO:conn:- KO:cmd:- KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
@@ -2718,7 +2744,7 @@ member	otto.host:SessionManager.has_live_sessions	property:g--
 member	otto.host:SessionManager.line_budget	method	sync	KO:route:-
 member	otto.host:SessionManager.line_room	method	sync	KO:route:- KO:cmd:-
 member	otto.host:SessionManager.open_budget	method	sync	KO:term:N
-member	otto.host:SessionManager.open_session	method	coroutine	KO:name:-
+member	otto.host:SessionManager.open_session	method	coroutine	KO:name:- KO:as_user:N
 member	otto.host:SessionManager.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:write_progress:N KO:exec_input:N
 member	otto.host:SessionManager.send	method	coroutine	PK:text:- KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
 member	otto.host:SessionManager.terminal_mapping	property:g--
@@ -2791,8 +2817,11 @@ member	otto.host:ShellSession.echoes	property:g--
 member	otto.host:ShellSession.enter_frame	method	coroutine	KO:frame:- KO:timeout:N
 member	otto.host:ShellSession.exec_baseline_lost	property:g--
 member	otto.host:ShellSession.expect	method	coroutine	PK:pattern:- KO:timeout:F:0x1.e000000000000p+4
+member	otto.host:ShellSession.identity_lost	property:g--
 member	otto.host:ShellSession.markers	property:g--
+member	otto.host:ShellSession.note_reached_by_switch	method	sync	-
 member	otto.host:ShellSession.open_transport	method	coroutine	-
+member	otto.host:ShellSession.reached_by_switch	property:g--
 member	otto.host:ShellSession.read_transport_until	method	coroutine	KO:pattern:-
 member	otto.host:ShellSession.reads_a_terminal	attribute
 member	otto.host:ShellSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N KO:exec_input:N
@@ -2819,8 +2848,11 @@ member	otto.host:TelnetSession.echoes	property:g--
 member	otto.host:TelnetSession.enter_frame	method	coroutine	KO:frame:- KO:timeout:N
 member	otto.host:TelnetSession.exec_baseline_lost	property:g--
 member	otto.host:TelnetSession.expect	method	coroutine	PK:pattern:- KO:timeout:F:0x1.e000000000000p+4
+member	otto.host:TelnetSession.identity_lost	property:g--
 member	otto.host:TelnetSession.markers	property:g--
+member	otto.host:TelnetSession.note_reached_by_switch	method	sync	-
 member	otto.host:TelnetSession.open_transport	method	coroutine	-
+member	otto.host:TelnetSession.reached_by_switch	property:g--
 member	otto.host:TelnetSession.read_transport_until	method	coroutine	KO:pattern:-
 member	otto.host:TelnetSession.reads_a_terminal	attribute
 member	otto.host:TelnetSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N KO:exec_input:N
@@ -3181,7 +3213,10 @@ member	otto.host:ZephyrFrame.extract_exec_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:ZephyrFrame.extract_retcode	method	sync	PK:buffer:- KO:m:-
 member	otto.host:ZephyrFrame.frame	method	sync	PK:cmd:- KO:m:-
 member	otto.host:ZephyrFrame.frame_exec	method	sync	PK:cmd:- KO:m:- KO:stdin_eof:- KO:restore:- KO:credential:B:false
+member	otto.host:ZephyrFrame.guards_identity	property:g--
 member	otto.host:ZephyrFrame.handshake	method	sync	PK:m:- KO:prefix:S:""
+member	otto.host:ZephyrFrame.identity_guard	method	sync	KO:payload:- KO:mark:- KO:m:-
+member	otto.host:ZephyrFrame.identity_mark_statement	method	sync	KO:mark:-
 member	otto.host:ZephyrFrame.isolates_exec	property:g--
 member	otto.host:ZephyrFrame.marks_begin	method	sync	PK:data:- KO:m:-
 member	otto.host:ZephyrFrame.measures_terminal_mapping	attribute

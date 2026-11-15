@@ -821,11 +821,15 @@ The hook runs on the persistent default session, on every named session,
 on the pooled sessions `exec` uses on a hooked Unix host, and on the
 interactive `otto host <id> login` bridge before you get the prompt. It
 does not run on `as_user`/`switch_user` (identity changes inside a session
-that is already set up), on `exec(user=...)`, or under a dry run (no
-session opens).
+that is already set up) or under a dry run (no session opens). A pooled
+session for `exec(user=...)` is opened as that user before its hook runs, so
+the hook sets it up as them (`SetupContext.user` names them); see
+{ref}`the exec pool <host-exec-pool>`.
 
 A hook types through the session handle it receives. A call back into its
-own host (`host.run()` or `host.exec()`) while the session opens is refused
+own host (`host.run()`, `host.exec()`, `host.send()` and the rest), or into
+any host still opening above it, is refused while the session opens; so is
+a hook that leaves a pooled session as someone other than its user
 ({ref}`why <session-setup-reentry>`).
 
 ### Two dialects: `landing_frame`

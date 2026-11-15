@@ -601,7 +601,7 @@ refused" below says why it must stay that way for now.
 - `otto.host.session.HostSession.run` — **OPEN**: a named session's `run()` calls
   `ShellSession.run_cmd` directly, one layer below the guard, so an over-long
   typed line is still silently truncated there.
-- `otto.host.session.SessionManager._exec_pooled` — **WIRED** by the same
+- `otto.host.session.SessionManager._exec_on_pooled` — **WIRED** by the same
   function: on a `term: telnet` host, and on *any* host whose login is proxied,
   `exec()` has no stateless primitive and types into a pooled shell session, so
   it is line-edited like a typed command. The line is measured in the exec frame

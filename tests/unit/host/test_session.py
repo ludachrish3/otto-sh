@@ -35,6 +35,7 @@ from otto.host.output_codec import PatternReader
 from otto.host.secret_wire import reveal
 from otto.host.session import (
     INIT_TIMEOUT_ENV_VAR,
+    HostSession,
     LocalSession,
     SessionManager,
     ShellSession,
@@ -2029,6 +2030,11 @@ class TestLoginProxyAtSessionEstablishment:
 from otto.result import CommandResult
 
 
+def idle_exec_sessions(mgr: SessionManager) -> list[HostSession]:
+    """Every idle pooled exec session *mgr* holds, across its per-user free-lists."""
+    return [session for idle in mgr._exec_pools.values() for session in idle]
+
+
 class _StubExecSession(ShellSession):
     """Immediate-handshake session with a canned, call-recording ``run_cmd``.
 
@@ -2121,8 +2127,8 @@ class TestExecProxyRouting:
         assert result.value == "OUT"
         # the pooled session actually ran the command and ended up stamped
         # as the proxied target, not the direct-auth via-user
-        assert len(mgr._exec_pool) == 1
-        pooled = mgr._exec_pool[0]
+        assert len(idle_exec_sessions(mgr)) == 1
+        pooled = idle_exec_sessions(mgr)[0]
         assert pooled.current_user == "mysql"
         assert pooled._session.run_cmd_calls == ["id"]
 
@@ -2151,7 +2157,7 @@ class TestExecProxyRouting:
 
         conn.ssh.assert_not_awaited()  # the raw exec channel must NOT be opened
         assert result.value == "OUT"
-        assert mgr._exec_pool[0].current_user == "mysql"
+        assert idle_exec_sessions(mgr)[0].current_user == "mysql"
 
 
 class TestHostSessionRunTimeout:
@@ -2518,7 +2524,7 @@ async def test_the_pool_is_never_built_on_a_console_term_and_exec_still_succeeds
     result = await mgr.exec_on_route(route=route, cmd="id -un", timeout=10.0, log=LogMode.NORMAL)
 
     assert (result.value, result.retcode, ran) == ("test", 0, ["id -un"])
-    assert mgr._exec_pool == []
+    assert idle_exec_sessions(mgr) == []
     assert mgr._exec_pool_count == 0
     assert mgr._named_sessions == {}
     assert fake_console_connections.console_dials == 0, "exec rode the session already open"
@@ -2534,7 +2540,7 @@ async def test_the_exec_pool_backstop_still_refuses_on_a_console_term(fake_conso
         log_output=lambda *_: None,
     )
     with pytest.raises(ConsoleError, match=r"single-client.*named sessions"):
-        await mgr._acquire_exec_session()
+        await mgr._acquire_exec_session(user=None)
     assert fake_console_connections.console_dials == 0
 
 

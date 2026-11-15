@@ -165,6 +165,14 @@ class ExecInput:
     Decided where the elevation is applied (an elevation form that reads the
     descriptor sets it); only then does the frame open the descriptor."""
 
+    identity: str | None = None
+    """The identity mark the session's switched shell carries, or ``None``.
+
+    Set by the exec pool for a session its open reached by a switch
+    (``SessionManager.open_session``); the frame then renders the payload
+    under its identity guard (:meth:`CommandFrame.identity_guard`). ``None``
+    for every session that carries no mark."""
+
 
 @final
 @dataclass(frozen=True)
@@ -354,6 +362,33 @@ class CommandFrame(ABC):
         with no edit of its own.
         """
         return type(self).frame_exec is not CommandFrame.frame_exec
+
+    def identity_mark_statement(self, *, mark: str) -> str:
+        """Return the statement that gives this dialect's shell the identity *mark*.
+
+        Only a dialect that ``guards_identity`` has one; the default refuses.
+        The statement is quote-free and rides the identity proof's own line.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no identity guard")
+
+    def identity_guard(self, *, payload: str, mark: str, m: SessionMarkers) -> str:
+        """Return the exec *payload* run only in the shell that carries the identity *mark*.
+
+        Only a dialect that ``guards_identity`` builds one: the guard is
+        this dialect's own syntax, and its "not run" answer is this dialect's
+        own end record. The default refuses: an application dialect, a raw
+        landing or an RTOS shell has no shell-local variable to test.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no identity guard")
+
+    @property
+    def guards_identity(self) -> bool:
+        """Whether this dialect can guard a command by an identity mark.
+
+        THE ONE DECISION of whether a session's frame can guard: the dialect
+        overrides :meth:`identity_guard`. Derived, never declared, like :attr:`isolates_exec`.
+        """
+        return type(self).identity_guard is not CommandFrame.identity_guard
 
     @abstractmethod
     def recover(self, m: SessionMarkers) -> str:
@@ -613,6 +648,26 @@ _STATUS_VAR = "__otto_rc"
 _FLAG_VAR = "__otto_f"
 """The unexported variable the exec frame holds its end record's flag in: ``B`` or ``N``."""
 
+IDENTITY_MARK_PREFIX = "__otto_as_"
+"""The name prefix of the alias a switched shell carries its identity mark as.
+
+An alias, not a variable or a function: no shell exports an alias, not even
+under ``set -a`` (dash and BusyBox ash export every variable to a child then,
+and bash's ``export -f`` hands a function on); the ``alias NAME`` query is a
+builtin that looks nowhere else, so neither an executable on ``PATH`` nor a
+function of the same name answers it; and the name holds the mark, so no
+older definition can stand in for it. Defined in the switched shell only
+(:meth:`BashFrame.identity_mark_statement`), so the shell underneath never
+has it, and queried by :meth:`BashFrame.identity_guard`. A ``( ... )``
+subshell sees it, and nothing a command does inside one removes it."""
+
+
+def _validated_mark(mark: str) -> str:
+    """Return *mark*, refused unless it is a plain word of letters and digits."""
+    if not mark.isalnum():
+        raise ValueError(f"identity mark {mark!r} must be letters and digits")
+    return mark
+
 
 def _restore_var(restore: "ExecRestore") -> str:
     """Return the shell variable holding the terminal record *restore* names."""
@@ -815,6 +870,27 @@ class BashFrame(CommandFrame):
             f"{_FLAG_VAR}=N; case ${{{var}+x}} in x) {_FLAG_VAR}=B; "
             f"{self.terminal_restore(restore)};; esac; {self.errexit_restore()}; "
             f'echo "{m.end_prefix}${{{_FLAG_VAR}}}${{{_STATUS_VAR}}}__"\n'
+        )
+
+    @override
+    def identity_mark_statement(self, *, mark: str) -> str:
+        # Quote-free, for the identity proof's line.
+        return f"alias {IDENTITY_MARK_PREFIX}{_validated_mark(mark)}=:"
+
+    @override
+    def identity_guard(self, *, payload: str, mark: str, m: SessionMarkers) -> str:
+        # The guard's test heads its own physical line and the payload follows
+        # it unchanged; the shell reads the whole `if` before it runs any of
+        # it. `alias NAME` is a builtin query of the shell's own aliases: no
+        # fork, no PATH lookup. In the marked shell the payload runs. In any
+        # other shell nothing runs and the end record comes back with no BEGIN
+        # before it, which the session reads as a command that never ran. The
+        # record's digits come from a variable, so an echoed copy of the typed
+        # text never holds a complete record.
+        name = IDENTITY_MARK_PREFIX + _validated_mark(mark)
+        return (
+            f"if alias {name} >/dev/null 2>&1; then\n{payload}"
+            f'else {_STATUS_VAR}=0; echo "{m.end_prefix}${{{_STATUS_VAR}}}__"; fi\n'
         )
 
     def terminal_restore(self, restore: ExecRestore) -> str:
