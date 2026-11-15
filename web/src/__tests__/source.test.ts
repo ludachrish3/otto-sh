@@ -1252,6 +1252,47 @@ describe("source admission (#958)", () => {
       expect(useUiStore.getState().switchPrompt?.name).toBe("c.json");
     });
 
+    it("a changed refusal stops waiting for a source that never installs once another import starts", async () => {
+      const { server } = await bootSwitchable(json("A", 10), () =>
+        Promise.resolve(
+          jsonResponse(
+            { error: "stale", code: "source_changed", source_state: json("C", 20) },
+            409,
+          ),
+        ),
+      );
+      // C's snapshot cannot be read: C stays pending, its install retried
+      // only when the connection returns.
+      server.snapshot = () => Promise.resolve(new Response(null, { status: 500 }));
+      await importLocalFile(new File([KITCHEN], "b.json"));
+
+      // Count the store subscriptions made from here on, and how many end.
+      const subscribe = useReviewStore.subscribe;
+      let live = 0;
+      const spy = vi.spyOn(useReviewStore, "subscribe").mockImplementation((listener) => {
+        live += 1;
+        const unsubscribe = subscribe(listener);
+        return () => {
+          live -= 1;
+          unsubscribe();
+        };
+      });
+      let settled = false;
+      const switching = requestSourceSwitch().then(() => {
+        settled = true;
+      });
+      await vi.waitFor(() => expect(useReviewStore.getState().pendingSource?.token).toBe("C"));
+      await importLocalFile(new File([MINIMAL], "d.json"));
+
+      // The newer import ends the old switch's wait, not only its re-prompt.
+      await vi.waitFor(() => expect(settled).toBe(true));
+      await switching;
+      expect(live).toBe(0);
+      spy.mockRestore();
+      expect(useReviewStore.getState().pendingSource?.token).toBe("C");
+      expect(useUiStore.getState().switchPrompt?.name).toBe("d.json");
+    });
+
     it("a 422 leaves the source untouched and shows the error", async () => {
       await bootSwitchable(json("A", 10, { unsaved: 1 }), () =>
         Promise.resolve(jsonResponse({ error: "not a monitor document" }, 422)),
