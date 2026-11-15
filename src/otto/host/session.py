@@ -103,6 +103,7 @@ from ..utils import Status
 from . import process_stop
 from .host import (
     DEFAULT_COMMAND_TIMEOUT,
+    ContextClaims,
     CredentialExpect,
     Expect,
     ShellCommand,
@@ -342,6 +343,18 @@ def _sink_for(
         return _drop_output
     return lambda line: log_output(line, mode)
 
+
+_ESTABLISHING = ContextClaims("otto_establishing")
+"""The ids of the hosts whose ``session_setup`` hook is running above this context.
+
+Claimed by :func:`~otto.host.session_setup.apply_session_setup` for the hook's
+duration, for every caller (the session manager and the ``otto login``
+bridge), and read by ``BaseHost._refuse_establishing``: a hook that calls back
+into any host still opening above it (its own, or the host whose hook called
+the one now opening) is refused by name rather than waiting for the session
+being opened. A task the hook spawns carries the claims, so it is refused
+while the hook runs; once the hook has ended, every copy reads released.
+"""
 
 NEVER_RAN = "the command never ran: its end record arrived with no BEGIN marker before it"
 """The value of a command whose end record came with no BEGIN marker before it.

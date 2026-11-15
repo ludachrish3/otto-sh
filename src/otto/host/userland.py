@@ -149,6 +149,7 @@ import logging
 import re
 import time
 from collections.abc import Callable, Coroutine
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
@@ -667,9 +668,16 @@ class Userland:
         self,
         options: UserlandOptions,
         run: Callable[..., Coroutine[Any, Any, CommandResult]],
+        *,
+        line_turn: "Callable[[], AbstractAsyncContextManager[None]] | None" = None,
     ) -> None:
         self._options = options
         self._run = run
+        # The host's entry (``BaseHost._host_entry``: the loop claim, the
+        # hook re-entry refusal and the line turn), taken BEFORE this
+        # object's lock, so the one lock order holds: turn, then this lock.
+        # A probe asked under the lock re-enters the turn its caller holds.
+        self._line_turn = line_turn if line_turn is not None else nullcontext
         self._resolved: dict[str, str] = {}
         # Keys whose value came from a declaration or a real answer, as opposed
         # to _UNASKABLE_DEFAULTS. Only these make resolve() idempotent.
@@ -841,7 +849,7 @@ class Userland:
         The module docstring's table says which capabilities are read at all
         and why the round is whole anyway.
         """
-        async with self._lock.get():
+        async with self._line_turn(), self._lock.get():
             if len(self._settled) == len(_UNASKABLE_DEFAULTS):
                 return
             if _monotonic() < self._retry_after:
@@ -1143,7 +1151,7 @@ class Userland:
         """
         if self._options.sudo_form:
             return
-        async with self._lock.get():
+        async with self._line_turn(), self._lock.get():
             if login in self._sudo_forms_settled:
                 return
             try:

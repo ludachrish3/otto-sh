@@ -522,11 +522,11 @@ session on it:
   `run()` left there, and what it changes (a `cd`, a variable, an `exit`)
   does not stay ({ref}`shell state, by route <exec-frame-shell-state>`).
   Concurrent `run()`, `exec()`
-  and `shell`-transfer commands take turns on the one line. A user switch
-  (`run(user=...)`, `as_user`) happens outside that turn-taking, so keep
-  switched calls sequential rather than gathering them with other commands.
-  `exec(user=...)` switches the session to that user for the one command
-  and back, inside its turn.
+  and `shell`-transfer commands take turns on the one line
+  ({ref}`the line turn <host-line-turn>`). `run(user=...)` and
+  `exec(user=...)` switch the session for the call and back inside their
+  turn. A scoped `as_user` block is outside it: keep what runs in one
+  sequential rather than gathering it with other commands.
 - The `shell` transfer works (its commands run on that session, as the
   logged-in user), and so do `scp`, `sftp` and `ftp`, which reach the device
   over its network rather than the console.
@@ -823,6 +823,10 @@ interactive `otto host <id> login` bridge before you get the prompt. It
 does not run on `as_user`/`switch_user` (identity changes inside a session
 that is already set up), on `exec(user=...)`, or under a dry run (no
 session opens).
+
+A hook types through the session handle it receives. A call back into its
+own host (`host.run()` or `host.exec()`) while the session opens is refused
+({ref}`why <session-setup-reentry>`).
 
 ### Two dialects: `landing_frame`
 

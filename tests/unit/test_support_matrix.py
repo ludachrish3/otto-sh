@@ -110,6 +110,7 @@ from tests._fixtures.support_matrix import (
 from tests._fixtures.witness_shell import STOPPED
 from tests.conformance import _entry
 from tests.conformance import conftest as conformance_conftest
+from tests.conformance import test_concurrency_contract as _concurrency_contract
 from tests.conformance import test_exec_contract as _exec_contract
 from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_progress_contract as _progress_contract
@@ -2683,6 +2684,8 @@ class _FakeHost:
                 "clean" if "output-never-carries-a-sentinel" in self._twists else _printf(command)
             )
         if command.startswith("printf "):
+            if "every-printf-answers-one-value" in self._twists:
+                return 0, "otto-cf-one-value"
             return 0, _printf(command)
         if command.startswith("stat -c %a "):
             path = command[len("stat -c %a ") :]
@@ -2967,6 +2970,7 @@ CONTROLS = {
         _state_contract.test_control_a_run_that_sets_nothing_reads_the_same_and_one_that_sets_reads_it
     ),
     "exec-stdin": _stdin_contract.test_control_input_given_to_the_command_is_read,
+    "exec-concurrent": _concurrency_contract.test_control_swapped_results_are_reported,
     "transfer-roundtrip": (
         _transfer_contract.test_control_the_roundtrip_comparison_rejects_a_corrupted_byte
     ),
@@ -3039,6 +3043,14 @@ HOST_CASES = [
         "the command reads nothing it is given",
         "exec-stdin",
         ("the-command-reads-no-stdin",),
+        True,
+        False,
+    ),
+    ("each call reads its own answer", "exec-concurrent", (), True, True),
+    (
+        "every command answers one value",
+        "exec-concurrent",
+        ("every-printf-answers-one-value",),
         True,
         False,
     ),
@@ -6746,14 +6758,14 @@ def test_a_cell_nothing_has_watched_yet_still_describes_the_promise(committed):
 
 
 def test_a_surface_with_one_observable_still_promises_it(committed):
-    """The accept-control for all of the above: ten of the fourteen surfaces are unbranched.
+    """The accept-control for all of the above: eleven of the fifteen surfaces are unbranched.
 
     Without it, a `promise_of` that answered "no promise" for everything would satisfy
     every refusal above and publish a page that promises nothing at all.
     """
     page = _page(committed)
     unbranched = [surface.id for surface in SURFACES if not VOICE[surface.id].branches]
-    assert len(unbranched) == 10, f"the tree's branching surfaces have changed: {unbranched}"
+    assert len(unbranched) == 11, f"the tree's branching surfaces have changed: {unbranched}"
     for surface_id in unbranched:
         cell = committed["cells"][surface_id]["gnu"]
         assert promise_of(surface_id, cell).capability == VOICE[surface_id].capability

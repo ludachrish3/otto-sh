@@ -107,6 +107,82 @@ Both return the command's exact output, whichever route carried it;
 {ref}`command-output-contract` says what that means and what otto undoes to
 get there.
 
+(host-line-turn)=
+
+### Concurrency and the line turn
+
+On most hosts an `exec` has a process or a channel of its own, so gathered
+`exec` calls run at the same time. A host whose commands all share one line
+cannot do that: a unix host on a `console` term (`run` and `exec` both type
+on the console's one shell) and every embedded host (one console, nothing
+beside it). One decision says which hosts these are,
+`BaseHost._shares_one_line()`, and on them every call takes **the line
+turn** (`BaseHost._line_turn()`) and holds it until it ends, so gathered
+calls run one after another and each gets its own result. The
+`exec-concurrent` contract checks that on every cell.
+
+Every host-level entry point that types on the host enters it through one
+sequence, `BaseHost._host_entry()`: `run`, `exec`, an embedded host's
+`exists`, `ls` and `rm`, the commands its file transfer and binary loader
+type, and the userland's probes. In order:
+
+1. the loop claim (`_claim_loop`), which starts a new turn when the host
+   moves to a new event loop;
+2. the refusal of a hook's re-entry (below);
+3. the turn itself, before anything opens the session, and so before the
+   connection manager's own console lock.
+
+The turn is re-entrant within its holder's context, while the holder
+holds it. So `run(user=...)` holds one turn across the switch, its commands
+and the switch back, and an `exec(sudo=True)` holds one across the userland
+probes and the sudo probe it may make (each itself an exec on that session)
+and its command: no other call runs on the line between them. A task
+created inside the turn (the task `asyncio.wait_for` runs a probe in on
+Python 3.10 and 3.11) re-enters it; a task that is still waiting when its
+holder has left waits for the turn like any other caller. One lock order
+holds everywhere: the line turn first, then the userland's lock, then the
+connection manager's console lock.
+
+What a caller holding the turn is responsible for: tasks it gathers inside
+the turn all re-enter it together, so they are not serialised against each
+other; and a task that re-entered and is still running when its holder
+leaves keeps the line, beside the next holder. Inside a turn, await the
+tasks you start one at a time, and before you leave it.
+A call cancelled while it waits never takes the turn; one cancelled
+while it holds it gives it up only after its command is stopped. The
+commands an embedded host's file transfer and binary loader type take the
+turn one command at a time, since a gathered transfer runs its files in
+tasks of their own.
+
+`send`, `expect` and a scoped `as_user` block do not take the turn (`send`
+and `expect` do take the re-entry refusal): a
+send/expect dialogue spans several calls, and an `as_user` block runs the
+caller's own code, which may gather calls of its own. Calls made inside an
+`as_user` block take the turn each, as anywhere else.
+
+(session-setup-reentry)=
+
+### A session-setup hook calling back into its host
+
+A session-setup hook runs inside the call that opens its session. A hook
+that calls back into its own host (`run`, `exec`, `send`, `expect`, or an
+embedded host's file operations, transfers and loader) would wait for the
+session it is opening (and, on a shared line, for the turn its caller
+holds) forever. otto refuses that call at once instead, with a
+{class}`~otto.host.errors.SessionSetupError` that says so: "session_setup
+called host.exec() while the session it sets up is opening (directly or
+through another host's hook); use the session handle the hook receives".
+The same holds for any host still opening above the hook: host A's hook
+calls host B, whose hook calls A, and the call into A is refused rather
+than deadlocking. A task the hook starts is refused the same way while the
+hook runs, and not after it has ended. The handle the hook receives is the
+way to type into the session during setup.
+
+The opening hosts are claims carried in the context (`ContextClaims` in
+`otto.host.host`, the same mechanism the line turn's holds use): a claim is
+shared by every task that copied it and reads released on every exit of the
+hook, return, exception or cancellation.
+
 Three pieces of per-session state matter architecturally:
 
 - **`current_user` and elevation.** Privilege changes (`su`, `sudo`,
