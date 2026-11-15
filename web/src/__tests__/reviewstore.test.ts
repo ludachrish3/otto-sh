@@ -156,6 +156,62 @@ describe("reviewStore", () => {
         return JSON.stringify(doc);
       };
       const metric = { timestamp: "2026-07-01T08:30:30Z", host: "solo", label: "CPU %", value: 9 };
+      // A snapshot's capture stamp, and a server stamp after it.
+      const CAPTURED = "2026-07-01T08:31:00.000001+00:00";
+      const AFTER = "2026-07-01T08:31:00.000002+00:00";
+      // Logged during a sync, for a session no snapshot here holds.
+      const ghost: MonitorSessionFragment = {
+        format: 1,
+        session: "ghost",
+        metrics: [metric],
+        observed_at: AFTER,
+      };
+
+      // #1037: an install whose replay cannot apply a logged fragment (one
+      // for a session the snapshot does not hold) withholds the
+      // acknowledgement in the SAME write that installs the snapshot. A
+      // subscriber never sees the new snapshot acknowledged in between.
+      it("an install that loses a fragment is never seen acknowledged", () => {
+        const { actions } = useReviewStore.getState();
+        actions.importMonitorSessions(MINIMAL, "live");
+        const token = actions.beginResync();
+        actions.appendFragment(ghost);
+        useReviewStore.setState({ resyncUnresolved: false }); // as an earlier install left it
+        // Every notification, not only the install's: none may show the
+        // acknowledgement settled.
+        const seen: boolean[] = [];
+        const unsubscribe = useReviewStore.subscribe((s) => {
+          seen.push(s.resyncUnresolved);
+        });
+        const result = actions.installSnapshot(withEvents([event(1)]), "live", {
+          replayToken: token,
+          captured: CAPTURED,
+          fresh: false,
+          state: sourceState({ mode: "live" }),
+          holds: 0,
+        });
+        unsubscribe();
+        expect(result).toBe("lost");
+        expect(seen).toEqual([true]);
+      });
+
+      // The store's own rule, as withholdCoverage applies it. data/source.ts
+      // never installs an older sync's snapshot (isCurrentSync), so this is
+      // the store keeping one gap rule for every loss, not a path the tab
+      // takes today.
+      it("a lost fragment marks every sync still in flight, as withholdCoverage does", () => {
+        const { actions } = useReviewStore.getState();
+        actions.importMonitorSessions(MINIMAL, "live");
+        const older = actions.beginResync();
+        const newer = actions.beginResync();
+        actions.appendFragment(ghost);
+        expect(resync(MINIMAL, { token: newer, captured: CAPTURED })).toBe(true); // "lost"
+        // Captured after the ghost, so this replay drops it and loses
+        // nothing itself: only the gap the loss marked keeps it withheld.
+        const later = "2026-07-01T08:31:00.000003+00:00";
+        expect(resync(MINIMAL, { token: older, captured: later })).toBe(true);
+        expect(useReviewStore.getState().resyncUnresolved).toBe(true);
+      });
 
       it("does not re-apply a fragment that landed before the resync began", () => {
         const { actions } = useReviewStore.getState();
