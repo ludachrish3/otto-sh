@@ -23,6 +23,9 @@ class _Recording(BaseHost):
         # with that assignment.
         super().__init__()
         self.name = "rec"
+        # `run` and `exec` claim the running loop first, which registers the
+        # host under its id.
+        self.id = "rec"
         self.exec_calls: list[dict] = []
         self.run_calls: list[dict] = []
         self.refuse_exec_expects_calls = 0

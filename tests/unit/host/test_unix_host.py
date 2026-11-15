@@ -72,38 +72,6 @@ def host() -> UnixHost:
     )
 
 
-@pytest.fixture
-def unix_host_ssh() -> UnixHost:
-    return UnixHost(
-        ip="10.0.0.1",
-        element=Element(name="box"),
-        creds=[Cred(login="user", password="pass")],
-        log=LogMode.QUIET,
-    )
-
-
-@pytest.fixture
-def console_unix_host(monkeypatch) -> UnixHost:
-    from otto.host.connections import TelnetTarget
-    from otto.host.options import ConsoleOptions
-
-    h = UnixHost(
-        ip="10.0.0.2",
-        element=Element(name="test2"),
-        creds=[Cred(login="test", password="Password1")],
-        log=LogMode.QUIET,
-        valid_terms=["console"],
-        term="console",
-        console_options=ConsoleOptions(server="test1", port=4001),
-    )
-
-    async def fake_target():
-        return TelnetTarget("localhost", 4001)
-
-    monkeypatch.setattr(h._connections, "console_target", fake_target)
-    return h
-
-
 # ---------------------------------------------------------------------------
 # Initialization
 # ---------------------------------------------------------------------------
@@ -1447,8 +1415,8 @@ class TestConsoleExec:
             await host.exec("boom", user="root")
 
         assert who["user"] == "test", "the switch was not undone"
-        assert host._console_exec_lock is not None
-        assert not host._console_exec_lock.locked(), "the failed exec kept the line"
+        assert host._line_lock is not None
+        assert not host._line_lock._lock.locked(), "the failed exec kept the line"
         after = await asyncio.wait_for(host.exec("id -un"), timeout=1.0)
         assert after.value == "test"
         assert events == ["as root", "run boom as root", "back", "run id -un as test"]
@@ -1493,7 +1461,7 @@ class TestConsoleExec:
         monkeypatch.setattr(host._session_mgr, "exec_on_route", slow)
         await asyncio.gather(host.exec("a"), host.exec("b"))
         assert events[:2] == ["start a", "start b"]
-        assert host._console_exec_lock is None
+        assert host._line_lock is None
 
     @pytest.mark.asyncio
     async def test_a_run_gathered_with_an_exec_serialises_on_a_console(self, monkeypatch):
@@ -1528,7 +1496,7 @@ class TestConsoleExec:
         monkeypatch.setattr(host._session_mgr, "exec_on_route", slow)
         await asyncio.gather(host.run("a"), host.exec("b"))
         assert events[:2] == ["start a", "start b"]
-        assert host._console_exec_lock is None
+        assert host._line_lock is None
 
     @pytest.mark.asyncio
     async def test_run_as_another_user_on_a_console_does_not_wait_on_itself(self, monkeypatch):

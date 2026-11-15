@@ -553,8 +553,9 @@ carries `host_id`, `host_name`, `user` (the identity the session is in —
 leave it alone; becoming someone is a login proxy's job), `params` (the
 table's other keys) and `kind`: `"default"`, `"named"`, `"exec_pool"` or
 `"bridge"`, so work that must happen once is done on the default session
-only. The hook does **not** receive the host: `host.run()` re-enters the
-session lock held while the hook runs and would deadlock.
+only. The hook does **not** receive the host: a call back into it would
+wait for the session being opened, and otto refuses it by name
+({ref}`session-setup-reentry`).
 
 ```python
 # .otto/init.py — registered via [init] in .otto/settings.toml

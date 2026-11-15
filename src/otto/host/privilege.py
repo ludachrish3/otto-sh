@@ -691,6 +691,7 @@ class PosixPrivilege(UserlandHost):
             ~otto.result.CommandNotRunError: this is a dry run — see
                 :func:`~otto.host.host.refuse_declined_elevation`.
         """
+        self._refuse_establishing("switch_user")  # ty: ignore[missing-attribute]
         if is_dry_run():
             self._refuse_elevation("switch_user", user or ROOT_LOGIN)
         applied = await perform_switch(
@@ -729,6 +730,7 @@ class PosixPrivilege(UserlandHost):
                 ENTRY, above the ``try``, so no undo is scheduled for a switch
                 that never happened.
         """
+        self._refuse_establishing("as_user")  # ty: ignore[missing-attribute]
         if is_dry_run():
             self._refuse_elevation("as_user", user)
         prev = self._live_session_mgr().current_user  # ty: ignore[missing-attribute]

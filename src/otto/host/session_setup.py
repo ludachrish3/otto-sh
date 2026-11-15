@@ -185,10 +185,15 @@ async def apply_session_setup(
     failure, its message kept in the ``SessionSetupError``'s.
     """
     from .errors import ConsoleError, RawLandingError
+    from .session import _ESTABLISHING
 
     fn = resolved(SESSION_SETUPS.get(setup.name).fn)
+    # The hook's host is claimed as opening for the hook's duration, so a
+    # call back into it (or into any host opening above it) is refused by
+    # name (BaseHost._refuse_establishing).
     try:
-        await fn(handle, ctx)
+        with _ESTABLISHING.claimed(ctx.host_id):
+            await fn(handle, ctx)
     except (RawLandingError, SessionSetupError):
         raise
     except Exception as exc:

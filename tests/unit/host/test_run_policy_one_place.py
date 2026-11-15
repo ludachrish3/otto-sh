@@ -31,11 +31,8 @@ FAMILIES = (LocalHost, RemoteHost, UnixHost, EmbeddedHost, DockerContainerHost)
 
 @pytest.mark.parametrize("family", FAMILIES)
 def test_the_run_policy_is_the_base_s(family):
-    """No family restates ``_run_one``; the unix family's line lock delegates to it."""
-    if family is UnixHost:
-        assert "_run_one" in vars(family), "the console line lock wraps the base's run"
-    else:
-        assert family._run_one is BaseHost._run_one, f"{family.__name__} restates _run_one"
+    """No family restates ``_run_one``; the line turn is the base's ``run``'s, above it."""
+    assert family._run_one is BaseHost._run_one, f"{family.__name__} restates _run_one"
 
 
 def test_only_the_container_host_binds_a_user_and_only_local_and_remote_refuse_one():

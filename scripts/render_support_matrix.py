@@ -253,7 +253,7 @@ class Voice:
     branches: "tuple[Branch, ...]" = ()
     """The observables this surface can offer, when it offers more than one.
 
-    Empty for a surface with a single observable, which is nine of the thirteen today.
+    Empty for a surface with a single observable, which is eleven of the fifteen today.
     Non-empty means :attr:`capability` is never used for a MEASURED cell: the cell's
     own stored ``observable`` decides which arm ran, and an observable matching no arm
     -- or more than one -- publishes NO promise and fails the docs build.
@@ -432,6 +432,14 @@ VOICE: "dict[str, Voice]" = {
             "the Zephyr shell runs each command on its own thread rather than as a "
             "process with a stdin, so there is nothing to read there"
         ),
+    ),
+    "exec-concurrent": Voice(
+        short="concurrent exec",
+        capability=(
+            "gather several `exec` calls on one host and have each return its own "
+            "command's output, never another call's"
+        ),
+        narrowed="the contract declares such a device outside its own domain",
     ),
     "transfer-roundtrip": Voice(
         short="file roundtrip",

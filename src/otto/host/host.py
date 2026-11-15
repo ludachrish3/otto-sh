@@ -5,11 +5,12 @@ import re
 import shlex
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
     asynccontextmanager,
+    contextmanager,
     nullcontext,
 )
 from contextvars import ContextVar
@@ -1378,6 +1379,93 @@ def _first_failure_reason(result: Result) -> str:
     return f"exit {failure.retcode}: {first_line}" if first_line else f"exit {failure.retcode}"
 
 
+class _Claim:
+    """One owner's claim in a :class:`ContextClaims`; reads released once the owner leaves."""
+
+    __slots__ = ("key", "live")
+
+    def __init__(self, key: object) -> None:
+        self.key = key
+        self.live = True
+
+
+class ContextClaims:
+    """Claims a context inherited or took, each valid only while its owner holds it.
+
+    A task created inside a claim copies its creator's context, so it carries
+    the claim; the claim object is shared, so once the owner leaves (return,
+    exception or cancellation) every copy reads it released. The one
+    mechanism behind "valid only while the holder holds": the line turn's
+    holds and the opening sessions a ``session_setup`` hook runs under.
+    """
+
+    __slots__ = ("_var",)
+
+    def __init__(self, name: str) -> None:
+        self._var: "ContextVar[tuple[_Claim, ...]]" = ContextVar(name, default=())
+
+    def live_keys(self) -> list[object]:
+        """Return the keys of the claims this context carries whose owner still holds them."""
+        return [claim.key for claim in self._var.get() if claim.live]
+
+    @contextmanager
+    def claimed(self, key: object) -> Generator[None, None, None]:
+        """Hold a claim on *key* for the block, in this context and every task it creates."""
+        claim = _Claim(key)
+        self._var.set((*self._var.get(), claim))
+        try:
+            yield
+        finally:
+            claim.live = False
+            # Cleared by value, not by token: the exit may run in another
+            # context (an abandoned holder finalised in a task of its own),
+            # where a token reset raises.
+            self._var.set(tuple(c for c in self._var.get() if c is not claim))
+
+
+_HOLDS = ContextClaims("otto_line_turn_holds")
+"""The line-turn claims the running context inherited or took. A task created
+inside a turn copies its context, so it re-enters that turn while the holder
+still holds it; once the holder has left, the claim it carries reads released."""
+
+
+class _LineTurn:
+    """One call at a time on a line every command of a host shares.
+
+    Re-entrant within the holder's context, while the holder holds it: a
+    call back into the host from the holder (``run(user=...)``'s own ``run``,
+    the sudo probe an ``exec`` makes) and a task created inside the turn
+    (the task ``asyncio.wait_for`` runs its awaitable in on Python 3.10 and
+    3.11, a probe) run inside the turn already held. A task that outlives
+    its holder's turn waits for the turn like any other caller. A task
+    cancelled while it waits never takes the turn.
+
+    What the holder is responsible for: tasks it gathers inside its turn
+    all re-enter it together, so they are not serialised against each
+    other; and a task that re-entered and is still running when the holder
+    leaves keeps typing on the line beside the next holder. A holder that
+    spawns tasks inside its turn awaits them one at a time, before it leaves.
+    """
+
+    __slots__ = ("_lock",)
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def held(self) -> AsyncGenerator[None, None]:
+        """Hold the turn for the block: enter the one this context holds, or wait for it."""
+        if any(key is self for key in _HOLDS.live_keys()):
+            yield
+            return
+        await self._lock.acquire()
+        try:
+            with _HOLDS.claimed(self):
+                yield
+        finally:
+            self._lock.release()
+
+
 @dataclass(kw_only=True)
 class BaseHost(ABC):
     """Abstract base class providing shared mechanics for all host implementations.
@@ -1570,6 +1658,12 @@ class BaseHost(ABC):
     contended stays bound to that loop. :meth:`_claim_loop` therefore rebuilds
     the managers whenever a loop other than this one claims the host, and a
     rebuild clears it."""
+
+    _line_lock: "_LineTurn | None" = field(default=None, init=False, repr=False, compare=False)
+    """The turn every call takes on a host whose commands share one line
+    (:meth:`_line_turn`); ``None`` until first use and whenever a loop takes
+    ownership (:meth:`_claim_loop`), since a contended lock stays bound to
+    the loop it served."""
 
     _generation: int = field(default=0, init=False, repr=False, compare=False)
     """This host's connection epoch: bumped whenever its connection managers are replaced
@@ -2162,10 +2256,31 @@ class BaseHost(ABC):
                 no pty, is not subject to the bound, and is the way to send
                 such a command — except on a ``console`` term, where ``exec``
                 shares ``run``'s session and its bound, so split the command.
+            ~otto.host.errors.SessionSetupError: a ``session_setup`` hook
+                called this while the session it sets up is opening.
+
+        On a host whose commands share one line (a console, an embedded
+        host) a call waits for the one before it to end.
 
         See Also:
             :meth:`exec`: stateless, concurrent-safe alternative for one-off commands.
         """
+        async with self._host_entry("run"):
+            return await self._run_in_turn(
+                cmds, expects=expects, timeout=timeout, log=log, sudo=sudo, user=user
+            )
+
+    async def _run_in_turn(
+        self,
+        cmds: str | ShellCommand | Sequence[str | ShellCommand],
+        *,
+        expects: Expect | list[Expect] | None,
+        timeout: float,
+        log: LogMode,
+        sudo: bool,
+        user: str | None,
+    ) -> Results:
+        """Run :meth:`run`'s body, inside the turn :meth:`run` took."""
         timeout = _validate_timeout(timeout)
         default_expects = _normalize_expects(expects)
         if user is not None:
@@ -2263,8 +2378,8 @@ class BaseHost(ABC):
         4. The command on the session manager, inside ``_run_user_binding``:
            the container host declares the user the channel open must bind.
 
-        A family contributes those hooks and nothing else; the unix family
-        wraps this method in a line lock on a ``console`` term. The *user*
+        A family contributes those hooks and nothing else; the line turn
+        (:meth:`_line_turn`) is taken by :meth:`run`, above this. The *user*
         the unix family honours never reaches here: :meth:`run` wraps the call
         in ``as_user`` and calls back in with ``user=None``.
 
@@ -2388,6 +2503,28 @@ class BaseHost(ABC):
             ~otto.host.errors.PasswordRefusedError: ``sudo=True`` and the
                 elevation prompt came back after otto answered it once: the
                 password was refused. The command is interrupted first.
+            ~otto.host.errors.SessionSetupError: a ``session_setup`` hook
+                called this while the session it sets up is opening.
+        """
+        async with self._host_entry("exec"):
+            return await self._exec_in_turn(
+                cmd, expects=expects, timeout=timeout, log=log, sudo=sudo, user=user
+            )
+
+    async def _exec_in_turn(
+        self,
+        cmd: str | ShellCommand,
+        *,
+        expects: Expect | list[Expect] | None,
+        timeout: float,
+        log: LogMode,
+        sudo: bool,
+        user: str | None,
+    ) -> CommandResult:
+        """Run :meth:`exec`'s body, inside the turn :meth:`exec` took.
+
+        The sudo probe (``_prepare_exec_elevation``) runs here, so on a
+        shared line the probe and the command it serves are one turn.
         """
         user = self._effective_exec_user(user)
         if user is not None:
@@ -2690,6 +2827,7 @@ class BaseHost(ABC):
         Under a dry run the text is announced and nothing is written to the
         transport.
         """
+        self._refuse_establishing("send")
         effective = self._effective_log(log)
         if is_dry_run():
             # The folded mode, not the default NORMAL: a dry run must not put a
@@ -2733,6 +2871,7 @@ class BaseHost(ABC):
                 :func:`refuse_declined_match` for why the empty string this
                 replaced was a fabrication and not a safe default.
         """
+        self._refuse_establishing("expect")
         timeout = _validate_timeout(timeout)
         if is_dry_run():
             refuse_declined_match(pattern, self.name, self._log_command)
@@ -2864,12 +3003,91 @@ class BaseHost(ABC):
         # or merely closed on, never serve this one.
         if self._served_loop is not None and self._served_loop is not loop:
             self.rebuild_connections()
+        if self._served_loop is not loop:
+            # The turn is per-loop state too; a close and reuse on the same
+            # loop keeps it, so a call still holding it keeps its turn.
+            self._line_lock = None
         self._owner_loop = loop
         self._served_loop = loop
         self._generation += 1
         from ..invocation import register  # function-scope: the leaf is read when a loop is claimed
 
         register(loop, self._registration())
+
+    ####################
+    #  The line turn
+    ####################
+
+    def _shares_one_line(self) -> bool:
+        """Whether every command of this host runs on one line (a console, an embedded host).
+
+        The one decision :meth:`_line_turn` reads. Families override; the
+        default is a host whose ``exec`` has a session or channel of its own.
+        """
+        return False
+
+    def _line_turn(self) -> "AbstractAsyncContextManager[None]":
+        """Take this host's line for one call, on a host that :meth:`_shares_one_line`.
+
+        Taken through :meth:`_host_entry`, never directly: every host-level
+        entry point that types on the host (``run``, ``exec``, an embedded
+        host's ``exists``/``ls``/``rm``, transfers, ``load`` and ``unload``,
+        the userland's probes) claims the loop, refuses a hook's re-entry and
+        then takes this turn. Re-entrant within the holder's
+        context while it holds it (see :class:`_LineTurn`), so ``run(user=...)`` holds one turn
+        across the switch, its command and the switch back, and an ``exec``
+        holds one across its sudo probe and its command. One lock order: it is
+        taken before the userland's lock and the connection manager's console
+        lock, never inside either. A host
+        whose commands do not share one line takes nothing.
+        """
+        if not self._shares_one_line():
+            return nullcontext()
+        # Claimed first: the turn is per-loop state a new owner replaces.
+        self._claim_loop()
+        if self._line_lock is None:
+            self._line_lock = _LineTurn()
+        return self._line_lock.held()
+
+    @asynccontextmanager
+    async def _host_entry(self, verb: str) -> AsyncGenerator[None, None]:
+        """Enter the host for one call that types on it: the one entry sequence.
+
+        Claims the running loop, refuses a ``session_setup`` hook's call back
+        into a host still opening above it (named by *verb*), then takes the
+        line turn (:meth:`_line_turn`). Every host-level entry point that
+        types on the host goes through this, so the three steps cannot be
+        spelled with a subset at one of them. ``send`` and ``expect`` take
+        only the refusal: they sit outside the turn.
+        """
+        self._claim_loop()
+        self._refuse_establishing(verb)
+        async with self._line_turn():
+            yield
+
+    def _refuse_establishing(self, verb: str) -> None:
+        """Refuse a host-level call made by a ``session_setup`` hook while its session opens.
+
+        The hook runs inside the call that opens the session; a call back
+        into the host would wait for that session (and, on a shared line,
+        for the turn its caller holds) forever. The same holds for a host
+        whose session is opening further up: host A's hook calls host B,
+        whose hook calls A. The hook's own session handle is the supported
+        way to type during setup.
+
+        Raises:
+            ~otto.host.errors.SessionSetupError: a session of this host is
+                opening above this call, and a hook made it.
+        """
+        from .errors import SessionSetupError
+        from .session import _ESTABLISHING  # loaded whenever a session manager exists
+
+        if self.id in _ESTABLISHING.live_keys():
+            raise SessionSetupError(
+                f"{self.name}: session_setup called host.{verb}() while the session it "
+                f"sets up is opening (directly or through another host's hook); use the "
+                f"session handle the hook receives"
+            )
 
     def _registration(self) -> "HostRegistration":
         """Build this host's record for its loop's registry, at its current generation."""

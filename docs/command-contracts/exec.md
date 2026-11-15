@@ -51,6 +51,7 @@ where its **Not checked** column says otherwise; the numbered notes below say wh
 | read `retcode` 128+N for a command killed by signal N, as a shell reports it, and keep using the host afterwards | not on a Zephyr board (note 2); not on BusyBox's applets run on the local machine (note 1) | `exec-signal-exit` |
 | run an `exec` that starts from the state its session was set up with (a console's narrower promise is linked below the table), and trust that its `cd`, variables, options, `exit` and, where it runs on a terminal, its terminal settings reach no later `exec` or `run` | not on a Zephyr board (note 3); not on BusyBox's applets run on the local machine (note 1) | `exec-isolated` |
 | run an `exec` without `expects=` and have its command read end of file on stdin, rather than wait on a terminal nobody types into | not on a Zephyr board (note 4); not on BusyBox's applets run on the local machine (note 1) | `exec-stdin` |
+| gather several `exec` calls on one host and have each return its own command's output, never another call's | not on BusyBox's applets run on the local machine (note 1) | `exec-concurrent` |
 | give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on a Zephyr board (note 5); not on BusyBox's applets run on the local machine (note 1) | `timeout` |
 
 On some devices a promise above is narrower: see
@@ -75,6 +76,7 @@ notes on the table below do not apply to them.
 | read `retcode` 128+N for a command killed by signal N, as a shell reports it, and keep using the host afterwards | only on some hosts (note 6) | `exec-signal-exit` |
 | run an `exec` that starts from the state its session was set up with (a console's narrower promise is linked below the table), and trust that its `cd`, variables, options, `exit` and, where it runs on a terminal, its terminal settings reach no later `exec` or `run` | only on some hosts (note 6) | `exec-isolated` |
 | run an `exec` without `expects=` and have its command read end of file on stdin, rather than wait on a terminal nobody types into | only on some hosts (note 6) | `exec-stdin` |
+| gather several `exec` calls on one host and have each return its own command's output, never another call's | only on some hosts (note 6) | `exec-concurrent` |
 | give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | only on some hosts (note 6) | `timeout` |
 
 On some devices a promise above is narrower: see

@@ -186,6 +186,14 @@ SURFACES: "tuple[Surface, ...]" = (
         ),
     ),
     Surface(
+        id="exec-concurrent",
+        title="exec: concurrent execs each return their own result",
+        contract=(
+            "tests/conformance/test_concurrency_contract.py"
+            "::test_concurrent_execs_each_return_their_own_result"
+        ),
+    ),
+    Surface(
         id="transfer-roundtrip",
         title="transfer: put/get roundtrip preserves content",
         contract=(

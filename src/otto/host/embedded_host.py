@@ -50,7 +50,7 @@ The interactive bridge (``run_login``) currently raises
 import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Annotated, NoReturn, cast
+from typing import Annotated, Any, NoReturn, cast
 
 from typing_extensions import final, override
 
@@ -320,7 +320,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
                 ctx=TransferContext(
                     transfer=self.transfer,
                     host_name=self.name,
-                    exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
+                    exec_cmd=lambda *a, **kw: self._run_one_in_turn("transfer", *a, **kw),
                     filesystem=self.filesystem,
                     max_filename_len=self.max_filename_len,
                 ),
@@ -353,6 +353,28 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     ####################
     #  Command execution
     ####################
+
+    @override
+    def _shares_one_line(self) -> bool:
+        """Answer True: an embedded target has one console and no stateless exec beside it."""
+        return True
+
+    async def _run_one_in_turn(self, verb: str, *args: Any, **kwargs: Any) -> CommandResult:
+        """One command on the console, entered as *verb*: the transfer's and the file ops'.
+
+        The commands a file transfer or a file operation type reach the
+        session without going through ``run`` or ``exec``, so they enter the
+        host here (:meth:`~otto.host.host.BaseHost._host_entry`), one command
+        at a time (a gathered transfer's files run in tasks of their own,
+        which a turn held across the whole transfer would shut out).
+        """
+        async with self._host_entry(verb):
+            return await self._run_one(*args, **kwargs)
+
+    async def _session_cmd_in_turn(self, verb: str, **kwargs: Any) -> CommandResult:
+        """One ``SessionManager.run_cmd`` on the console, entered as *verb*: the loader's."""
+        async with self._host_entry(verb):
+            return await self._live_session_mgr().run_cmd(**kwargs)
 
     @override
     async def run_login(self, *, user: str | None = None, force: bool = False) -> None:
@@ -408,10 +430,10 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     ) -> CommandResult:
         """Run a single command on the embedded host.
 
-        Unlike :meth:`~otto.host.host.BaseHost.exec`, this is **not** concurrency-safe: an
-        embedded target exposes a single console with no stateless exec
+        An embedded target exposes a single console with no stateless exec
         primitive, so ``exec`` runs on the same persistent session as
-        ``run``. It exists for API parity; use ``run`` for stateful
+        ``run``, and concurrent calls take turns on it (the line turn
+        ``exec`` holds). It exists for API parity; use ``run`` for stateful
         workflows.
 
         The *user* refusal is :meth:`_refuse_exec_user`'s, not this method's,
@@ -592,8 +614,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
                 device nothing — see
                 :func:`~otto.host.host.refuse_declined_fact`.
         """
-        result = await self._run_one(
-            self.filesystem.ls_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
+        result = await self._run_one_in_turn(
+            "exists", self.filesystem.ls_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
         )
         refuse_declined_fact(result, asked=f"exists({str(path)!r})")
         return result.status.is_ok
@@ -614,8 +636,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             ~otto.result.CommandNotRunError: under a dry run — see
                 :func:`~otto.host.host.refuse_declined_fact`.
         """
-        result = await self._run_one(
-            self.filesystem.ls_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
+        result = await self._run_one_in_turn(
+            "ls", self.filesystem.ls_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
         )
         refuse_declined_fact(result, asked=f"ls({str(path)!r})")
         if not result.status.is_ok:
@@ -633,8 +655,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         force: bool = False,  # noqa: ARG002 — required by UnixHost.rm override signature (flags not supported on embedded)
     ) -> Result:
         """Remove *path* via the device ``fs rm`` former (flags ignored)."""
-        result = await self._run_one(
-            self.filesystem.rm_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
+        result = await self._run_one_in_turn(
+            "rm", self.filesystem.rm_command(str(path)), timeout=DEFAULT_COMMAND_TIMEOUT
         )
         return Result(status=result.status, msg=result.value)
 
@@ -722,15 +744,12 @@ class EmbeddedHost(UserlandHost, RemoteHost):
                 def _wp(done: int, total: int) -> None:
                     handler(str(file), f"{self.name}:{name}", done, total)
 
-                result = await self._live_session_mgr().run_cmd(
-                    cmd=cmd,
-                    timeout=timeout,
-                    log=LogMode.NEVER,
-                    write_progress=_wp,
+                result = await self._session_cmd_in_turn(
+                    "load", cmd=cmd, timeout=timeout, log=LogMode.NEVER, write_progress=_wp
                 )
         else:
-            result = await self._live_session_mgr().run_cmd(
-                cmd=cmd, timeout=timeout, log=LogMode.NEVER
+            result = await self._session_cmd_in_turn(
+                "load", cmd=cmd, timeout=timeout, log=LogMode.NEVER
             )
         ok, reason = loader.check_loaded(result.value)
         if ok:
@@ -764,7 +783,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         cmd = loader.unload_command(name)
         last = ""
         for _ in range(loader.max_unload_rounds):
-            result = await self._live_session_mgr().run_cmd(cmd=cmd, timeout=timeout)
+            result = await self._session_cmd_in_turn("unload", cmd=cmd, timeout=timeout)
             last = result.value
             if loader.is_fully_unloaded(result.value):
                 return Result(status=Status.Success)

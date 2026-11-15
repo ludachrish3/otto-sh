@@ -381,13 +381,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Backing store for :meth:`_userland` — see there for why it is built on
     demand rather than by a ``default_factory``."""
 
-    _console_exec_lock: asyncio.Lock | None = field(
-        default=None, init=False, repr=False, compare=False
-    )
-    """Serialises ``run`` and ``exec`` on a ``console`` term, where both run on
-    the one session (see ``_console_line`` and ``_exec_on_console``); created
-    on first use, so a ``dataclasses.replace`` copy gets its own."""
-
     _profile_fields: ProfileFields | None = field(
         default=None, init=False, repr=False, compare=False
     )
@@ -446,6 +439,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             self._userland_cache = Userland(
                 self.userland_options,
                 lambda *a, **kw: self.exec(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
+                line_turn=lambda: self._host_entry("exec"),
             )
         return self._userland_cache
 
@@ -529,9 +523,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         abandon = getattr(self._connections, "abandon", None)
         if abandon is not None:
             abandon()
-        # The line lock binds to the loop that first contends it; a rebuild
-        # is how a host moves to a fresh loop, so it starts a fresh lock.
-        self._console_exec_lock = None
         self._connections = self._build_connections()
         self._session_mgr = self._build_session_mgr()
         self._file_transfer = self._build_file_transfer()
@@ -1084,47 +1075,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             exec_input=exec_input,
         )
 
-    def _console_line(self) -> asyncio.Lock:
-        """Return the lock that gives one ``run`` or ``exec`` the console line at a time.
-
-        Taken by :meth:`_run_one` and :meth:`_exec_on_console` on a
-        ``console`` term only. A user switch (``run(user=...)``,
-        ``exec(user=...)``, ``as_user``) drives the session with
-        ``send``/``expect``, which never take it, so a switch made while the
-        lock is held cannot wait on itself.
-        """
-        if self._console_exec_lock is None:
-            self._console_exec_lock = asyncio.Lock()
-        return self._console_exec_lock
-
     @override
-    async def _run_one(
-        self,
-        cmd: str,
-        timeout: float,
-        expects: "list[Expect | CredentialExpect] | None" = None,
-        log: LogMode = LogMode.NORMAL,
-        user: "str | None" = None,
-    ) -> CommandResult:
-        """Run one command on the persistent session; on a console, one at a time.
-
-        On a ``console`` term ``run`` and ``exec`` share the one session, so
-        a ``run`` takes the same line lock ``exec`` does and a gathered
-        ``run`` + ``exec`` cannot interleave on the line. Every other term
-        runs ``BaseHost._run_one`` unchanged.
-
-        Explicit two-argument ``super()``: a bare one raises on this
-        ``@dataclass(slots=True)`` class, which is rebuilt after the methods
-        close over the original.
-        """
-        # Claimed before the line lock: the lock is per-loop state that a
-        # stale owner's rebuild replaces.
-        self._claim_loop()
-        parent = super(UnixHost, self)
-        if self.term != "console":
-            return await parent._run_one(cmd, timeout, expects=expects, log=log, user=user)  # noqa: SLF001 — the parent's own implementation, via two-argument super()
-        async with self._console_line():
-            return await parent._run_one(cmd, timeout, expects=expects, log=log, user=user)  # noqa: SLF001 — the parent's own implementation, via two-argument super()
+    def _shares_one_line(self) -> bool:
+        """Answer whether the term is ``console``, where ``run`` and ``exec`` share one session."""
+        return self.term == "console"
 
     async def _exec_on_console(
         self,
@@ -1136,7 +1090,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         expects: "list[Expect | CredentialExpect] | None",
         exec_input: "ExecInput | None" = None,
     ) -> CommandResult:
-        """``exec`` on a ``console`` term: one command on the default session, one call at a time.
+        """``exec`` on a ``console`` term: one command on the default session.
 
         A console serves ONE client, so the session ``run`` uses is the only
         one there is (the pool would be a second connection; see
@@ -1145,37 +1099,31 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         code handling, the same shell state, one
         :class:`~otto.result.CommandResult`.
 
-        The per-host line lock (:meth:`_console_line`, shared with ``run``)
-        makes concurrent calls take turns, so gathered commands
-        (``asyncio.gather(host.exists(a), host.exists(b))``, or an ``exec``
-        gathered with a ``run``) run one after the other instead of
-        interleaving on the line. A *user* other
-        than the session's current one switches the session for the call and
-        back, as ``run(user=...)`` does, inside the same lock, so no other
-        call runs while the session is switched. The lock is not re-entrant:
-        a ``session_setup`` hook that calls back into ``exec`` while the
-        session is being built would wait on itself.
+        Concurrent calls take turns through the line turn ``exec`` already
+        holds (``BaseHost._line_turn``). A *user* other than the session's
+        current one switches the session for the call and back, as
+        ``run(user=...)`` does, inside that turn, so no other call runs while
+        the session is switched.
         """
         mgr = self._live_session_mgr()
-        async with self._console_line():
-            if user is None or user == mgr.current_user:
-                return await mgr.exec_on_route(
-                    route=ExecRoute.DEFAULT_SESSION,
-                    cmd=cmd,
-                    timeout=timeout,
-                    log=self._effective_log(log),
-                    expects=expects,
-                    exec_input=exec_input,
-                )
-            async with self.as_user(user=user):
-                return await mgr.exec_on_route(
-                    route=ExecRoute.DEFAULT_SESSION,
-                    cmd=cmd,
-                    timeout=timeout,
-                    log=self._effective_log(log),
-                    expects=expects,
-                    exec_input=exec_input,
-                )
+        if user is None or user == mgr.current_user:
+            return await mgr.exec_on_route(
+                route=ExecRoute.DEFAULT_SESSION,
+                cmd=cmd,
+                timeout=timeout,
+                log=self._effective_log(log),
+                expects=expects,
+                exec_input=exec_input,
+            )
+        async with self.as_user(user=user):
+            return await mgr.exec_on_route(
+                route=ExecRoute.DEFAULT_SESSION,
+                cmd=cmd,
+                timeout=timeout,
+                log=self._effective_log(log),
+                expects=expects,
+                exec_input=exec_input,
+            )
 
     ####################
     #  File transfer
@@ -1215,6 +1163,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         see :ref:`recursive-transfers`. ``concurrent`` bounds the files in
         flight; see :ref:`concurrent-transfers`.
         """
+        self._refuse_establishing("get")
         if user is not None:
             _validate_user(user)
             if self.transfer == "ftp":
@@ -1286,6 +1235,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         see :ref:`recursive-transfers`. ``concurrent`` bounds the files in
         flight; see :ref:`concurrent-transfers`.
         """
+        self._refuse_establishing("put")
         if user is not None:
             _validate_user(user)
             if self.transfer == "ftp":

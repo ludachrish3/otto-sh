@@ -687,3 +687,94 @@ async def unix_host_over_scripted(
 
     host._live_session_mgr()._session_factory = factory
     return host, sessions
+
+
+@pytest.fixture
+def unix_host_ssh() -> UnixHost:
+    """A UnixHost on ssh: its ``exec`` has channels of its own, beside the session."""
+    return UnixHost(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="user", password="pass")],
+        log=LogMode.QUIET,
+    )
+
+
+@pytest.fixture
+def console_unix_host(monkeypatch: pytest.MonkeyPatch) -> UnixHost:
+    """A UnixHost on a ``console`` term: ``run`` and ``exec`` share its one line."""
+    from otto.host.connections import TelnetTarget
+    from otto.host.options import ConsoleOptions
+
+    h = UnixHost(
+        ip="10.0.0.2",
+        element=Element(name="test2"),
+        creds=[Cred(login="test", password="Password1")],
+        log=LogMode.QUIET,
+        valid_terms=["console"],
+        term="console",
+        console_options=ConsoleOptions(server="test1", port=4001),
+    )
+
+    async def fake_target() -> TelnetTarget:
+        return TelnetTarget("localhost", 4001)
+
+    monkeypatch.setattr(h._connections, "console_target", fake_target)
+    return h
+
+
+class InFlight:
+    """A stand-in for the session manager's ``run_cmd`` and ``exec_on_route`` that counts overlap.
+
+    Each call records ``cmd:<cmd>`` in *seq* (when given), counts the calls
+    inside it at once into :attr:`max_in_flight`, yields one loop turn (or,
+    with *hold*, sets :attr:`started` and waits for :meth:`release`), and
+    returns a success on the route it was asked for (``run_cmd``: the
+    default session).
+    """
+
+    def __init__(self, seq: "list[str] | None" = None, *, hold: bool = False) -> None:
+        self.seq = seq if seq is not None else []
+        self.hold = hold
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.started = asyncio.Event()
+        self._released = asyncio.Event()
+
+    def release(self) -> None:
+        self._released.set()
+
+    async def _call(self, cmd: str, route: str = "default-session") -> CommandResult:
+        self.seq.append(f"cmd:{cmd}")
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            if self.hold:
+                self.started.set()
+                await self._released.wait()
+            else:
+                await asyncio.sleep(0)
+        finally:
+            self.in_flight -= 1
+        return CommandResult(command=cmd, value="", status=Status.Success, retcode=0, route=route)
+
+    async def run_cmd(self, **kw: Any) -> CommandResult:
+        return await self._call(kw["cmd"])
+
+    async def exec_on_route(self, **kw: Any) -> CommandResult:
+        return await self._call(kw["cmd"], kw["route"].value)
+
+
+def recording_as_user(seq: "list[str]") -> Callable[..., Any]:
+    """An ``as_user`` stand-in recording ``switch:<user>`` on entry, ``switch:back`` on exit."""
+
+    @asynccontextmanager
+    async def as_user(*, user: str = "root", password: object = None) -> AsyncIterator[None]:
+        seq.append(f"switch:{user}")
+        await asyncio.sleep(0)
+        try:
+            yield
+        finally:
+            seq.append("switch:back")
+
+    return as_user

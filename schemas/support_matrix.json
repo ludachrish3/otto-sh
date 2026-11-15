@@ -43,6 +43,11 @@
       "contract": "tests/conformance/test_stdin_contract.py::test_an_exec_without_expects_reads_end_of_file"
     },
     {
+      "id": "exec-concurrent",
+      "title": "exec: concurrent execs each return their own result",
+      "contract": "tests/conformance/test_concurrency_contract.py::test_concurrent_execs_each_return_their_own_result"
+    },
+    {
       "id": "transfer-roundtrip",
       "title": "transfer: put/get roundtrip preserves content",
       "contract": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content"
@@ -2863,6 +2868,35 @@
       }
     },
     "exec-stdin": {
+      "busybox-1.16.1": {
+        "status": "untested"
+      },
+      "busybox-1.21.1": {
+        "status": "untested"
+      },
+      "busybox-1.28.1": {
+        "status": "untested"
+      },
+      "busybox-1.31.0": {
+        "status": "untested"
+      },
+      "busybox-1.35.0": {
+        "status": "untested"
+      },
+      "gnu": {
+        "status": "untested"
+      },
+      "zephyr-2.7": {
+        "status": "untested"
+      },
+      "zephyr-3.7": {
+        "status": "untested"
+      },
+      "zephyr-4.4": {
+        "status": "untested"
+      }
+    },
+    "exec-concurrent": {
       "busybox-1.16.1": {
         "status": "untested"
       },
