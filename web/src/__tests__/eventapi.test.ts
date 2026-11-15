@@ -248,6 +248,21 @@ describe("eventApi", () => {
     expect(useUndoHistory.getState().undo).toEqual([]);
   });
 
+  // A wire id is an integer (#1035): a bool, a fraction or a string is no id.
+  it.each([
+    ["true", true],
+    ["a fraction", 7.5],
+    ["a string", "7"],
+  ])("a response record whose id is %s rejects and applies nothing", async (_, id) => {
+    const sid = hydrate();
+    const before = useReviewStore.getState().sessions[0]?.events;
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ ...record(7, "x"), id }));
+    const err = await createEvent(sid, { label: "x" }).catch((e) => e);
+    expect(err).toBeInstanceOf(EventApiError);
+    expect(err.message).toMatch("no event id");
+    expect(useReviewStore.getState().sessions[0]?.events).toEqual(before);
+  });
+
   it("a network failure surfaces as EventApiError and applies nothing", async () => {
     const sid = hydrate();
     const before = useReviewStore.getState().sessions[0].events.length;

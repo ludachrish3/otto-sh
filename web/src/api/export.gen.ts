@@ -560,8 +560,8 @@ export interface MonitorSourceState {
   source: Source2;
   token: Token;
   editable: Editable;
-  unsaved?: Unsaved;
-  revision?: Revision;
+  unsaved: Unsaved;
+  revision: Revision;
   observed_at: ObservedAt2;
 }
 /**

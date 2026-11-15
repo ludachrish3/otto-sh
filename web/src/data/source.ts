@@ -268,7 +268,7 @@ function finishInstall(
   let installed = source ?? state;
   if (pendingSource?.token === state.token) installed = pendingSource;
   else if (state.token !== source?.token || isAfterLastStamp(state)) installed = state;
-  const install = { ...opts, state: installed, holds: state.revision ?? 0 };
+  const install = { ...opts, state: installed, holds: state.revision };
   const result = actions.installSnapshot(text, state.source ?? "server", install);
   if (result === "invalid") return "invalid";
   // A logged fragment the replay could not apply is a loss like any other:
@@ -501,7 +501,7 @@ function switchPromptFor(name: string, text: string, source: MonitorSourceState)
   return {
     name,
     text,
-    shown: { token: source.token, unsaved: source.unsaved ?? 0, source: sourceLabel(source) },
+    shown: { token: source.token, unsaved: source.unsaved, source: sourceLabel(source) },
   };
 }
 

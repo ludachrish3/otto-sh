@@ -426,6 +426,9 @@ _EXTERNAL_DOC_LINKS = {
     "annotated_types.Ge": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
     "annotated_types.Le": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
     "annotated_types.Gt": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
+    # A ``Field(ge=0)`` inside a module-level ``Annotated`` alias (models/monitor.py's
+    # WireCount) is stringified bare, as ``Ge``, on the fields that use the alias.
+    "Ge": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
 }
 
 

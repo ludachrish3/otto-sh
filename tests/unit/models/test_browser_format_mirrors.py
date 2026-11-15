@@ -71,3 +71,19 @@ def test_the_browser_source_headers_mirror_the_server_ones(name):
     )
     assert found, f"{name} is not declared in sourceApi.ts"
     assert found.group(1) == getattr(server, name)
+
+
+def test_the_browser_wire_id_bound_mirrors_the_server_one():
+    """``isWireId`` (``wireInteger.ts``) stops where ``MAX_SAFE_EVENT_ID`` does (#1035).
+
+    The browser bounds an id by ``Number.isSafeInteger``, whose limit is
+    ``Number.MAX_SAFE_INTEGER``, 2**53 - 1: the server's id limit must be the
+    same number, or one side holds an id the other refuses.
+    """
+    from otto.monitor.event_ops import MAX_SAFE_EVENT_ID
+
+    source = (DATA / "wireInteger.ts").read_text()
+    found = re.search(r"export function isWireId\(.*?\n\}", source, re.DOTALL)
+    assert found, "isWireId is not declared in wireInteger.ts"
+    assert "Number.isSafeInteger(v)" in found.group(0)
+    assert MAX_SAFE_EVENT_ID == 2**53 - 1
