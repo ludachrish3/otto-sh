@@ -9,9 +9,16 @@ from pydantic import SecretStr
 
 from otto.host import session as session_mod
 from otto.host.app_shell import AppShell
-from otto.host.command_frame import BashFrame, RawFrame, ZephyrFrame
+from otto.host.command_frame import (
+    AshFrame,
+    BashFrame,
+    CommandFrame,
+    ExecInput,
+    RawFrame,
+    ZephyrFrame,
+)
 from otto.host.element import Element
-from otto.host.errors import RawLandingError
+from otto.host.errors import RawLandingError, UnsupportedOnUserlandError
 from otto.host.exec_route import ExecRoute
 from otto.host.login_proxy import Cred
 from otto.host.session import SessionManager, ShellSession
@@ -162,6 +169,58 @@ async def test_two_dialects_bash_landing_zephyr_target():
 
 
 @pytest.mark.asyncio
+async def test_an_exec_as_a_switched_user_on_a_two_dialect_host_runs_and_is_not_kept():
+    """The command frame (Zephyr) has no identity guard: no guard is typed into it, the exec
+    runs, and the session, reached by a switch, is closed rather than pooled."""
+    root = Cred(login="root", proxy="su", via="admin")
+    h = _Harness(_enter_python, landing=BashFrame(), target=ZephyrFrame(), extra_creds=[root])
+    try:
+        for _ in range(2):
+            r = await h.mgr.exec_on_route(
+                route=ExecRoute.POOLED_SHELL,
+                cmd="kernel version",
+                timeout=5.0,
+                log=LogMode.NORMAL,
+                user="root",
+                exec_input=ExecInput(stdin_eof=True),
+            )
+            assert (r.retcode, r.value) == (0, "zephyr:kernel version")
+        assert h.mgr._exec_pools.get("root", []) == []
+        assert len(h.sessions) == 2, "each exec opened its own session"
+        assert all(s.closed for s in h.sessions)
+        assert not any("__otto_as_" in w for shell in h.shells for w in shell.writes)
+    finally:
+        h.unregister()
+
+
+class _UnguardedAsh(AshFrame):
+    """An ash dialect that declares no identity guard: line limits, and nothing to guard with."""
+
+    identity_guard = CommandFrame.identity_guard
+
+
+@pytest.mark.asyncio
+async def test_a_refused_line_on_an_unguarded_switched_session_still_closes_it():
+    """The refusal that types nothing takes the same keep-or-discard decision as an exec's end."""
+    root = Cred(login="root", proxy="su", via="admin")
+    h = _Harness(_export, target=_UnguardedAsh(), extra_creds=[root])
+    try:
+        with pytest.raises(UnsupportedOnUserlandError):
+            await h.mgr.exec_on_route(
+                route=ExecRoute.POOLED_SHELL,
+                cmd="x" * 10_000,
+                timeout=5.0,
+                log=LogMode.NORMAL,
+                user="root",
+                exec_input=ExecInput(stdin_eof=True),
+            )
+        assert h.mgr._exec_pools.get("root", []) == []
+        assert all(s.closed for s in h.sessions)
+    finally:
+        h.unregister()
+
+
+@pytest.mark.asyncio
 async def test_hook_may_enter_the_frame_itself_and_run_in_the_target_dialect():
     async def hook(session, ctx):
         await session.send("python3\n")
@@ -307,6 +366,85 @@ async def test_exec_route_is_pooled_on_a_hook_host_and_the_hook_sees_exec_pool()
         r = await h.mgr.exec_on_route(route=route, cmd="id", timeout=10.0, log=LogMode.NORMAL)
         assert r.retcode == 0
         assert ("exec_pool", "admin") in h.calls
+    finally:
+        h.unregister()
+
+
+@pytest.mark.asyncio
+async def test_an_exec_as_another_user_is_set_up_as_them_and_reuses_their_session():
+    """The hook's context names the user the pooled session was opened for.
+
+    Asked twice, the second ``exec`` reuses that session: the hook ran once,
+    as root, and the shell the command ran in is root's.
+    """
+    root = Cred(login="root", proxy="su", via="admin")
+    h = _Harness(_export, extra_creds=[root])
+    try:
+        for _ in range(2):
+            r = await h.mgr.exec_on_route(
+                route=ExecRoute.POOLED_SHELL,
+                cmd="id",
+                timeout=10.0,
+                log=LogMode.NORMAL,
+                user="root",
+            )
+            assert r.retcode == 0
+        assert h.calls == [("exec_pool", "root")]
+        assert [s.current_user for s in h.mgr._exec_pools["root"]] == ["root"]
+    finally:
+        h.unregister()
+
+
+async def _switch_to_root(session, ctx):
+    await session.switch_user(user="root")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user", [None, "alice"])
+async def test_a_hook_that_leaves_a_pooled_session_as_someone_else_is_refused_by_name(user):
+    """A pooled session IS the user it was opened for: a hook's permanent switch is refused.
+
+    The command is never typed, the session is closed and no pool entry
+    is left; the error names the host, the hook, both users and the fix.
+    """
+    root = Cred(login="root", proxy="su", via="admin")
+    alice = Cred(login="alice", proxy="su", via="admin")
+    h = _Harness(_switch_to_root, extra_creds=[root, alice])
+    try:
+        with pytest.raises(SessionSetupError) as raised:
+            await h.mgr.exec_on_route(
+                route=ExecRoute.POOLED_SHELL, cmd="id", timeout=10.0, log=LogMode.NORMAL, user=user
+            )
+        opened_for = user or "admin"
+        message = str(raised.value)
+        assert message.startswith(f"h: session setup {h.name!r} left session ")
+        assert f"as 'root', not {opened_for!r}, the user it was opened for" in message
+        assert "the handle's as_user" in message
+        assert "exec(user=...)" in message
+        assert h.mgr._exec_pools.get(opened_for, []) == []
+        assert h.mgr._named_sessions == {}
+        assert all(cmd != "id" for shell in h.shells for _mode, cmd in shell.commands)
+    finally:
+        h.unregister()
+
+
+@pytest.mark.asyncio
+async def test_a_hook_whose_switch_is_scoped_keeps_the_pooled_session():
+    """The control: the same switch inside the handle's as_user leaves the session its user."""
+
+    async def scoped(session, ctx):
+        async with session.as_user(user="root"):
+            await session.run("true")
+
+    root = Cred(login="root", proxy="su", via="admin")
+    h = _Harness(scoped, extra_creds=[root])
+    try:
+        r = await h.mgr.exec_on_route(
+            route=ExecRoute.POOLED_SHELL, cmd="id", timeout=10.0, log=LogMode.NORMAL
+        )
+        assert r.retcode == 0
+        assert [s.current_user for s in h.mgr._exec_pools["admin"]] == ["admin"]
+        assert any(cmd == "id" for shell in h.shells for _mode, cmd in shell.commands)
     finally:
         h.unregister()
 

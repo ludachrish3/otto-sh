@@ -69,8 +69,8 @@ from .login_proxy import (
     _SU_PROMPT,
     _may_challenge,
     cred_for,
-    perform_switch,
     run_undo,
+    switch_and_stamp,
 )
 from .userland import SUDO_FORM_SHELL, UserlandHost
 
@@ -694,19 +694,29 @@ class PosixPrivilege(UserlandHost):
         self._refuse_establishing("switch_user")  # ty: ignore[missing-attribute]
         if is_dry_run():
             self._refuse_elevation("switch_user", user or ROOT_LOGIN)
-        applied = await perform_switch(
-            _HostProxyIO(self),
-            self._switch_creds(),
-            user,
-            password,
-            self._live_session_mgr().current_user,  # ty: ignore[missing-attribute]
-            getattr(self, "name", ""),
-            self._history_prefix(),
+        await self._switch_default_session(user, password)
+
+    async def _switch_default_session(
+        self, user: str, password: str | SecretStr | None
+    ) -> "list[Cred]":
+        """Switch the default session to *user* and stamp it.
+
+        The host's adapter onto :func:`~otto.host.login_proxy.switch_and_stamp`.
+        """
+        mgr = self._live_session_mgr()  # ty: ignore[missing-attribute]
+        return await switch_and_stamp(
+            io=_HostProxyIO(self),
+            creds=self._switch_creds(),
+            user=user,
+            password=password,
+            current_user=mgr.current_user,
+            stamp=mgr._set_current_user,  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation
+            host_id=getattr(self, "name", ""),
+            history_prefix=self._history_prefix(),
             # getattr, not self.term: see _su_cred's note above -- this
             # mixin also backs term-less hosts (LocalHost, DockerContainerHost).
-            protocol=getattr(self, "term", None),
+            term=getattr(self, "term", None),
         )
-        self._live_session_mgr()._set_current_user(applied[-1].login or ROOT_LOGIN)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[missing-attribute]
 
     @asynccontextmanager
     async def as_user(
@@ -734,17 +744,7 @@ class PosixPrivilege(UserlandHost):
         if is_dry_run():
             self._refuse_elevation("as_user", user)
         prev = self._live_session_mgr().current_user  # ty: ignore[missing-attribute]
-        applied = await perform_switch(
-            _HostProxyIO(self),
-            self._switch_creds(),
-            user,
-            password,
-            prev,
-            getattr(self, "name", ""),
-            self._history_prefix(),
-            protocol=getattr(self, "term", None),
-        )
-        self._live_session_mgr()._set_current_user(applied[-1].login or ROOT_LOGIN)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[missing-attribute]
+        applied = await self._switch_default_session(user, password)
         # The session the switch was typed into: the undo types into it, or
         # into nothing (see _undo_switch).
         switched = self._live_session_mgr()._live_default_session()  # noqa: SLF001 — intra-package read of the switched session  # ty: ignore[missing-attribute]

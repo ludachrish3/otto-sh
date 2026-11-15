@@ -275,9 +275,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         transfer_family="unix",
         note=(
             "`exec --user` reaches any login — direct creds authenticate on "
-            "their own SSH connection, proxy logins and telnet hosts switch a "
-            "pooled shell. `put`/`get --user` are direct-cred users only, and "
-            "never over the `ftp` backend, which authenticates separately with "
+            "their own SSH connection; otherwise, and on a proxied or hooked "
+            "host, it runs in a pooled shell opened as that user. "
+            "`put`/`get --user` are direct-cred users only, and never over "
+            "the `ftp` backend, which authenticates separately with "
             "its own credentials. `scp`, `sftp` and `nc` fan a batch out under "
             "`max_concurrent_transfers`; `shell` and `ftp` move one file at a "
             "time."
@@ -1003,13 +1004,18 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         in the order they are read:
 
         1. A *user* with a DIRECT credential on an ``ssh`` term, on a call
-           that needs no shell: ``SSH_CHANNEL`` on that user's own
-           connection (:meth:`~otto.host.connections.ConnectionManager.ssh_as`),
-           so the command runs with their real credentials.
+           that needs no shell, on a host whose own ``exec`` takes the raw
+           channel (no proxied login, no ``session_setup`` hook):
+           ``SSH_CHANNEL`` on that user's own connection
+           (:meth:`~otto.host.connections.ConnectionManager.ssh_as`), so the
+           command runs with their real credentials.
         2. Any other *user* (one reachable only through proxy hops, any user
-           on telnet, or a direct-credential user whose call needs a shell)
-           needs a shell switched to them for the call, so the call is
-           planned as needing a shell.
+           on telnet, a direct-credential user whose call needs a shell, or
+           one on a proxied or hooked host) needs a shell session opened for
+           them, so the call is planned as needing a shell: the pooled shell
+           opens one as them, over their own ssh login where they have one,
+           and sets it up as them
+           (:meth:`~otto.host.session.SessionManager.open_session`).
         3. Everything else is the transport's answer,
            :meth:`~otto.host.session.SessionManager.exec_route`: a
            ``console`` term is ``DEFAULT_SESSION``; a proxied login, a
@@ -1032,13 +1038,14 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """
         if (
             user is not None
-            and self.term == "ssh"
             and not needs_shell
-            and self._live_connections().has_direct_cred(user=user)
+            and self._live_session_mgr().can_ssh_as(user=user)
+            and self._live_session_mgr().exec_route(needs_shell=False) is ExecRoute.SSH_CHANNEL
         ):
             return ExecPlan(route=ExecRoute.SSH_CHANNEL, as_user=user)
-        # A user without a direct cred needs a shell switched to them for the
-        # call, and so does any user whose call needs a shell anyway.
+        # A user without a direct cred, or on a host whose exec is a shell,
+        # needs a shell session opened for them, and so does any user whose
+        # call needs a shell anyway.
         route = self._live_session_mgr().exec_route(needs_shell=needs_shell or user is not None)
         return ExecPlan(route=route)
 

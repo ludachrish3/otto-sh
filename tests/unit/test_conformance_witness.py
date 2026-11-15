@@ -162,13 +162,15 @@ def test_the_vocabulary_s_witness_templates_are_witness_shell_s_statements():
     assert POSIX.witness_finished_template is not None
     assert POSIX.process_state_template.format(path=p) == wit.process_state_template(p)
     assert POSIX.witness_cleanup_template.format(path=p) == wit.witness_cleanup_template(p)
+    assert POSIX.long_running_seconds is not None
+    seconds = int(POSIX.long_running_seconds)
     assert POSIX.pid_long_running_template.format(path=p) == wit.long_running_template(
-        p, seconds=10
+        p, seconds=seconds
     )
     assert POSIX.exec_pid_long_running_template is not None
     assert POSIX.exec_pid_long_running_template.format(
         path=p
-    ) == "exec " + wit.long_running_template(p, seconds=10)
+    ) == "exec " + wit.long_running_template(p, seconds=seconds)
     assert POSIX.witness_running_template.format(path=p) == wit.running_in_background_template(p)
     assert POSIX.witness_finished_template.format(path=p) == wit.finished_template(p)
     for words in ZEPHYR_SHELLS.values():

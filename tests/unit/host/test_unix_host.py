@@ -37,6 +37,7 @@ from otto.utils import Status
 from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
 from tests.conftest import active_context
 from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_host
+from tests.unit.host.test_session import idle_exec_sessions
 
 
 def _cs(
@@ -850,6 +851,10 @@ class TestExec:
         mock_session.run_cmd = AsyncMock(return_value=expected)
         mock_session.close = AsyncMock()
         mock_session._ensure_initialized = AsyncMock()
+        # A session the pool reads as a direct login: no switch, no mark, none lost.
+        mock_session.identity_mark = None
+        mock_session.identity_lost = False
+        mock_session.reached_by_switch = False
 
         with (
             patch("otto.host.session.TelnetClient", return_value=mock_client),
@@ -924,6 +929,9 @@ class TestExec:
             s.run_cmd = AsyncMock(side_effect=_fake_run_cmd)
             s.close = AsyncMock()
             s._ensure_initialized = AsyncMock()
+            s.identity_mark = None
+            s.identity_lost = False
+            s.reached_by_switch = False
             s.alive = True
             s._on_output = None
             return s
@@ -1351,7 +1359,7 @@ class TestConsoleExec:
 
         assert calls == [("uname -a", 7.0)]
         assert (result.value, result.retcode) == ("ok", 0)
-        assert host._session_mgr._exec_pool == []
+        assert idle_exec_sessions(host._session_mgr) == []
         assert host._session_mgr._exec_pool_count == 0
 
     @pytest.mark.asyncio

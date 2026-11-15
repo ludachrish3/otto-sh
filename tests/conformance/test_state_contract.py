@@ -17,7 +17,10 @@ The stimulus and the read are the cell's vocabulary
 working directory, the two state variables, the session-setup hook's mark
 (``OTTO_CF_HOOK``, set by ``tests/conformance/_entry.py``'s marking hook on
 every session of an ``exec-shell`` host), the options ``f``, ``C``, ``e`` and
-``u``, and the user, separated by ``|``.
+``u``, and the user, separated by ``|``. On a cell whose lab entry has a
+second user (``ResolvedCell.switch_user``), an ``exec`` as that user reads
+that user, and the hook's mark the cell's own ``exec`` reads: a session for
+another user is opened as them and set up as them.
 
 WHAT THIS CONTRACT IS ABOUT, declared rather than assumed: see
 :func:`applicable_cell`.
@@ -166,6 +169,12 @@ async def test_an_exec_starts_from_its_own_state_and_leaves_none(
             await issue(host, resolved_cell, terminal.change)
             terminal_reads.append((await issue(host, resolved_cell, _LONG_EXEC)).value)
             terminal_reads.append((await issue(host, resolved_cell, terminal.read)).value)
+        other = resolved_cell.switch_user
+        as_other = (
+            _fields((await issue(host, resolved_cell, read, user=other)).value)
+            if other is not None
+            else None
+        )
     assert baseline.hook == ("ran" if resolved_cell.entry == EXEC_SHELL else "unset")
     assert (run_read.cwd, run_read.run, "f" in run_read.opts) == ("/dev", "run", True)
     assert run_after == run_read  # exec -> run: nothing
@@ -182,6 +191,10 @@ async def test_an_exec_starts_from_its_own_state_and_leaves_none(
     if _console_exec(resolved_cell):
         # The declared difference: the clean login shell runs as run's user.
         assert baseline.user == run_read.user
+    if as_other is not None:
+        # exec as another user: a session that is them, set up as them.
+        assert (as_other.user, as_other.hook) == (other, baseline.hook)
+        state += f", and by exec as {other!r}: that user, set up as them"
     if terminal is None:
         note_observable(f"{state}; no terminal on this route")
         return

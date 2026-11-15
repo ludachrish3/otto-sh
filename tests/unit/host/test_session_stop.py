@@ -19,6 +19,7 @@ from otto.host.host import CredentialExpect
 from otto.host.session import ShellSession
 from otto.utils import wait_for_async
 from tests.unit.host._session_feed import scripted_shell, scripted_shell_unopened
+from tests.unit.host.test_session import idle_exec_sessions
 from tests.unit.host.test_session_exec_pooled import _exec, _mgr
 
 pytestmark = [pytest.mark.asyncio]
@@ -116,7 +117,7 @@ async def test_a_timed_out_pooled_exec_whose_stop_fails_is_closed_not_pooled():
     mgr._session_factory = lambda **kw: scripted_shell_unopened(confirms=False)
     r = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", timeout=0.2)
     assert r.timed_out
-    assert mgr._exec_pool == []
+    assert idle_exec_sessions(mgr) == []
 
 
 async def test_a_timed_out_zephyr_command_is_stopped_under_the_same_bound():
@@ -224,7 +225,7 @@ async def test_a_pooled_exec_cancelled_with_a_blocked_interrupt_is_disposed(monk
     with pytest.raises(asyncio.CancelledError):
         await task
     assert not made[-1].alive
-    assert mgr._exec_pool == []
+    assert idle_exec_sessions(mgr) == []
 
 
 @pytest.mark.timeout(10)

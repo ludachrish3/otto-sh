@@ -107,6 +107,59 @@ Both return the command's exact output, whichever route carried it;
 {ref}`command-output-contract` says what that means and what otto undoes to
 get there.
 
+(host-exec-pool)=
+
+### The exec pool: one free-list per user
+
+Where an `exec` cannot have a channel of its own (telnet, a proxied login, a
+`session_setup` hook, a call that needs a shell), it runs on a pooled shell
+session, and `SessionManager` keeps one free-list of idle ones per user
+(`_exec_pools`, keyed by `_pool_key`: the call's `user`, else the login, so
+`exec()` and `exec(user=<the login>)` share one). A session for another user
+is opened **for** them, in `SessionManager.open_session`'s order: their own
+SSH login when they have a direct credential on an SSH host (no proxy hops),
+otherwise the login's session with its proxy hops and then a switch to them;
+then the session-setup hook, which therefore sets the session up as them.
+Nothing is switched per call, and a switch that cannot be made fails the
+open. On a `console` term there is no pool: `exec(user=...)` switches the
+one session inside its line turn ({ref}`console-term`).
+
+Retention: a session goes back to its user's free-list after every `exec`
+that leaves it alive, still that user, and with its terminal record intact,
+when it does not need an identity guard its frame cannot give (below);
+anything else closes it. Nothing is evicted, so each free-list holds at most
+that user's peak of concurrent `exec` calls, and `close_all` (host close)
+closes them all.
+
+A session reached by a switch (any login-proxy hop, `su`, `sudo su` or
+several, or the switch to the call's user) has another shell underneath it,
+and that shell would answer if the switched one ended (an idle `TMOUT`, a
+kill). So, after the setup hook and its frame entry, otto proves once who
+the shell it will type into is (a different answer fails the open) and,
+on that same probe line, gives it a mark: an alias named for a random
+token (`identity_mark_statement`). A shell that cannot name itself (no
+`id`) answers nothing: it gets no mark, runs its `exec` on the switch's
+word alone, as an ordinary switch there does, and is closed, never kept. The shell underneath never has
+it; no shell passes an alias to a program it starts; and the guard's query
+(`alias NAME`, a builtin) answers only to that alias, never to a function
+or an executable on `PATH` of the same name. A command run inside the
+isolating exec frame cannot remove it from the session's shell; on a frame
+that does not isolate `exec`, a command that removes it makes the next call
+read the mark as missing. Every `exec` on the session is then typed with
+the frame's guard (`identity_guard`, an `if` on that query: no extra round
+trip, no fork). Where the mark is missing, the command is not run: the
+session is closed and the call runs once on a fresh session for the user,
+and a fresh session that has lost the user too raises
+{class}`~otto.host.login_proxy.LoginProxyError`. A session whose frame has
+no guard (an application dialect a hook entered) runs its `exec` and is
+closed, never kept: it works, it is only not reused. A session on its own
+direct connection (the login itself, the user's own SSH login) carries no
+mark and pays nothing. Known gap: the guard heads its own physical line
+before the command's, so a switched shell that ends after reading that
+line and before the rest arrives leaves the rest to the shell underneath. The
+guard also trusts the shell underneath to keep `alias` a builtin: a login
+profile that defines a function of that name defeats it.
+
 (host-line-turn)=
 
 ### Concurrency and the line turn
@@ -182,6 +235,14 @@ The opening hosts are claims carried in the context (`ContextClaims` in
 `otto.host.host`, the same mechanism the line turn's holds use): a claim is
 shared by every task that copied it and reads released on every exit of the
 hook, return, exception or cancellation.
+
+A session opened for a user (an exec-pool session, a named session opened
+with `as_user=`) is that user for its whole life. A hook that leaves such a
+session as someone else is refused after it returns, before anything is
+typed: the session is closed, no pool entry is kept, and the
+`SessionSetupError` names the host, the hook, the user the session was
+opened for and the user the hook left. Scope a switch inside the hook with
+the handle's `as_user`, or ask for the user at the call (`exec(user=...)`).
 
 Three pieces of per-session state matter architecturally:
 

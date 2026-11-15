@@ -3151,14 +3151,14 @@ GAPS: list[Gap] = [
                 ),
             ),
             GapPath(
-                site="otto.host.session.SessionManager._exec_pooled",
+                site="otto.host.session.SessionManager._exec_on_pooled",
                 state=PATH_WIRED,
                 checked_by="otto.host.session.refuse_if_typed_line_would_be_cut",
                 detail=(
                     "`exec()` is safe only where it has a stateless primitive. On a "
                     "`term: telnet` host, and on ANY host whose login is proxied, there is "
                     "none, so `exec_on_route` types the call into a pooled shell session, "
-                    "line-edited like a typed command. `_exec_pooled` therefore refuses a "
+                    "line-edited like a typed command. `_exec_on_pooled` therefore refuses a "
                     "line over the acquired session's bound before typing it, measured in "
                     "the exec frame, "
                     "and its message does not advise `exec()`, which is no escape there"

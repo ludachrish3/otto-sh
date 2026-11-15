@@ -27,8 +27,9 @@ On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):
 - Reached over `telnet`, it goes through a shell session (`pooled-shell`).
 - The host's login is **proxied** (otto logs in as one account and then switches to the one it runs as; [Credentials and login proxies](../configuration/host-sources.md#credentials-and-login-proxies)): a shell session (`pooled-shell`). No host the suite tests has a proxied login ({ref}`What is not covered at all <command-contracts-not-covered>`).
 - The host declares a **session-setup hook** (project code otto runs on every shell session it opens; {ref}`Session setup <per-host-session-setup>`): a shell session (`pooled-shell`).
-- The call needs a shell: it passes `expects` (patterns otto answers while the command runs, such as a password prompt), `sudo=True`, or a `user` otto cannot log in as directly (`pooled-shell`).
-- `exec(user=...)` over `ssh` for a user with SSH credentials of its own, and no `expects` or `sudo`: an SSH connection as that user, even when the login is proxied or the host declares a session-setup hook (`ssh-channel`).
+- The call needs a shell: it passes `expects` (patterns otto answers while the command runs, such as a password prompt), `sudo=True`, or a `user` otto cannot log in as directly; a call with a `user` runs in a shell session opened as that user (`pooled-shell`).
+- `exec(user=...)` over `ssh` for a user with SSH credentials of its own, and no `expects` or `sudo`: an SSH connection as that user (`ssh-channel`).
+- The same call where the login is proxied or the host declares a session-setup hook: a shell session opened over that user's own SSH connection and set up as them (`pooled-shell`).
 - Reached over `console`, it uses the same session as `run`: a console serves one client (`default-session`).
 
 On other hosts:

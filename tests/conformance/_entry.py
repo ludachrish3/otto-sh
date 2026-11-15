@@ -316,6 +316,29 @@ def password_sudo_on(entry: "dict[str, Any]", term: str, *, family: str) -> bool
     return pick is not None and bool(pick.get("password")) and pick.get("login") != ROOT_LOGIN
 
 
+def switch_user_on(entry: "dict[str, Any]", term: str, *, family: str) -> "str | None":
+    """A second user *entry*'s login over *term* can become, or ``None``.
+
+    Read off the lab entry, as :func:`proxied_on` reads the login: the first
+    cred applying to *term* that is not the login's own, names a login other
+    than root and the login's, carries a password and names no ``proxy`` --
+    a plain account a session can be opened as, by its own ssh login or by
+    ``su`` with that password. A local or embedded host has none.
+    """
+    login = _login_cred(entry, term, family=family)
+    if login is None:
+        return None
+    for cred in entry.get("creds", []):
+        if term not in cred.get("protocols", [term]) or cred is login:
+            continue
+        name = cred.get("login")
+        if name in (ROOT_LOGIN, login.get("login")) or "proxy" in cred:
+            continue
+        if cred.get("password"):
+            return name
+    return None
+
+
 def proxied_on(entry: "dict[str, Any]", term: str, *, family: str) -> bool:
     """Whether *entry*'s creds make a login over *term* a proxied one.
 

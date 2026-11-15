@@ -7,6 +7,7 @@ budget reads the same plan the dispatch runs.
 """
 
 import ast
+import contextlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -408,13 +409,12 @@ def _route_of_page_case(case_id: str, stack) -> str:
             return mgr.exec_route().value
         case "needs-shell":
             return plan(_unix_host(term="ssh"), needs_shell=True)
-        case "own-ssh-user":
-            name = stack.enter_context(noop_session_setup("page-case-own-user"))
-            hooked = _unix_with_users()
-            hooked.session_setup = SessionSetup(name=name)
-            routes = {plan(_unix_with_users(), user="root"), plan(hooked, user="root")}
-            assert len(routes) == 1, routes
-            return routes.pop()
+        case "own-ssh-user" | "own-ssh-user-shell":
+            host = _unix_with_users()
+            if case_id == "own-ssh-user-shell":
+                name = stack.enter_context(noop_session_setup("page-case-own-user"))
+                _declare_hook(host, SessionSetup(name=name))
+            return plan(host, user="root")
         case "console":
             return plan(_unix_console())
         case "embedded":
@@ -437,3 +437,55 @@ def test_every_route_case_the_exec_page_lists_is_the_route_otto_takes():
     with contextlib.ExitStack() as stack:
         for case in EXEC_ROUTE_CASES:
             assert _route_of_page_case(case.id, stack) == case.route, case.id
+
+
+def _declare_hook(host: UnixHost, setup) -> None:
+    """Give a built *host* the ``session_setup`` *setup*, where its session manager reads it.
+
+    The manager takes the hook at construction, so setting the host's field
+    afterwards alone would leave the route deciding without it.
+    """
+    host.session_setup = setup
+    host._live_session_mgr()._session_setup = setup
+
+
+def _hooked_or_proxied(host: UnixHost, reason, *, direct_cred_user: str, monkeypatch, stack):
+    """*host* with a ``session_setup`` hook, a proxied login, or neither (*reason* ``None``).
+
+    *direct_cred_user* is the one user its connections say has a direct credential.
+    """
+    from otto.host.connections import ConnectionManager
+    from otto.host.session_setup import SessionSetup
+    from tests._fixtures.session_setup_hooks import noop_session_setup
+
+    conns = host._live_connections()
+    if reason == "session_setup":
+        _declare_hook(host, SessionSetup(name=stack.enter_context(noop_session_setup("plan-hook"))))
+    elif reason == "proxy_hops":
+        hop = Cred(login="app", proxy="su", via="user")
+        monkeypatch.setattr(ConnectionManager, "proxy_hops", property(lambda _self: [hop]))
+    monkeypatch.setattr(conns, "has_direct_cred", lambda *, user: user == direct_cred_user)
+    return host
+
+
+@pytest.mark.parametrize("reason", ["session_setup", "proxy_hops"])
+def test_a_direct_cred_user_on_a_hooked_or_proxied_host_takes_the_pooled_shell(
+    reason, unix_host_ssh, monkeypatch
+):
+    with contextlib.ExitStack() as stack:
+        host = _hooked_or_proxied(
+            unix_host_ssh, reason, direct_cred_user="alice", monkeypatch=monkeypatch, stack=stack
+        )
+        assert host._plan_exec(user="alice", needs_shell=False) == ExecPlan(
+            route=ExecRoute.POOLED_SHELL
+        )
+
+
+def test_a_direct_cred_user_on_a_plain_ssh_host_keeps_their_own_channel(unix_host_ssh, monkeypatch):
+    with contextlib.ExitStack() as stack:
+        host = _hooked_or_proxied(
+            unix_host_ssh, None, direct_cred_user="alice", monkeypatch=monkeypatch, stack=stack
+        )
+        assert host._plan_exec(user="alice", needs_shell=False) == ExecPlan(
+            route=ExecRoute.SSH_CHANNEL, as_user="alice"
+        )

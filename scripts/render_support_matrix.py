@@ -2978,16 +2978,23 @@ EXEC_ROUTE_CASES = (
         "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
         "the call needs a shell: it passes `expects` (patterns otto answers while the "
         "command runs, such as a password prompt), `sudo=True`, or a `user` otto cannot "
-        "log in as directly",
+        "log in as directly; a call with a `user` runs in a shell session opened as "
+        "that user",
         "pooled-shell",
     ),
     RouteCase(
         "own-ssh-user",
         "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
         "`exec(user=...)` over `ssh` for a user with SSH credentials of its own, and no "
-        "`expects` or `sudo`: an SSH connection as that user, even when the login is "
-        "proxied or the host declares a session-setup hook",
+        "`expects` or `sudo`: an SSH connection as that user",
         "ssh-channel",
+    ),
+    RouteCase(
+        "own-ssh-user-shell",
+        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        "the same call where the login is proxied or the host declares a session-setup "
+        "hook: a shell session opened over that user's own SSH connection and set up as them",
+        "pooled-shell",
     ),
     RouteCase(
         "console",

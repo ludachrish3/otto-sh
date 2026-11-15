@@ -1,20 +1,22 @@
-"""`SessionManager.exec_on_route` on the pooled route: switching user for one call, and
-the keep-or-discard rule that protects the free-list (spec D3/D4/D5, §4.2)."""
+"""`SessionManager.exec_on_route` on the pooled route: one free-list per user, each
+session opened for its user, and the keep-or-discard rule that protects them."""
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import SecretStr
 
+from otto.host.command_frame import BashFrame, ExecInput
 from otto.host.exec_route import ExecRoute
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.login_proxy import Cred, LoginProxyError
-from otto.host.session import SessionManager
+from otto.host.session import NEVER_RAN, SessionManager
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
-from tests.unit.host.test_session import _proxy_connections, _StubExecSession
+from tests.unit.host.test_session import _proxy_connections, _StubExecSession, idle_exec_sessions
 
 _PW = SecretStr("pw")
 """The password every fake ``credentials`` pair here carries."""
@@ -90,8 +92,8 @@ class TestPooledExec:
         mgr = _mgr(term="telnet")
         result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id")
         assert result.value == "OUT"
-        assert len(mgr._exec_pool) == 1
-        assert mgr._exec_pool[0]._session.run_cmd_calls == ["id"]
+        assert len(idle_exec_sessions(mgr)) == 1
+        assert idle_exec_sessions(mgr)[0]._session.run_cmd_calls == ["id"]
 
     @pytest.mark.asyncio
     async def test_expects_ride_the_pooled_run(self):
@@ -109,12 +111,12 @@ class TestPooledExec:
         mgr = _mgr(term="telnet")
         mgr._session_factory = _RecordingExpects
         await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="sudo -S id", expects=[("assword", "pw\n")])
-        assert mgr._exec_pool[0]._session.run_cmd_calls == ["sudo -S id"]
+        assert idle_exec_sessions(mgr)[0]._session.run_cmd_calls == ["sudo -S id"]
         assert seen == [[("assword", "pw\n")]]
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_fast_resync_settle")
-    async def test_user_switches_for_the_call_and_the_session_comes_back(self):
+    async def test_user_runs_on_a_session_opened_as_them_and_kept_as_them(self):
         mgr = _mgr(term="telnet", creds=[Cred(login="root", password="rootpw")])
         seen: list[tuple[str, str]] = []
 
@@ -126,84 +128,117 @@ class TestPooledExec:
         mgr._session_factory = _Switching
         result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id", user="root")
         assert result.value == "OUT"
-        # The identity half is the point: the command ran INSIDE the switch,
-        # not before it and not after the undo.
         assert seen[-1] == ("id", "root")
-        pooled = mgr._exec_pool
-        assert len(pooled) == 1
-        assert pooled[0].current_user == "admin", "switch-back restored the acquired identity"
+        assert [s.current_user for s in mgr._exec_pools["root"]] == ["root"]
+        assert "admin" not in mgr._exec_pools, "no session was opened as the login"
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_fast_resync_settle")
-    async def test_a_failed_undo_discards_the_session_and_still_returns_the_result(
-        self, monkeypatch, caplog
-    ):
-        """The command RAN — spec §4.2 step 4: its result is what `exec` owes
-        the caller, and a broken switch-back is the session's problem, not the
-        result's. The session is discarded (it is still running as the switched
-        user) and the failure is reported as a warning naming host, user and
-        the undo's own error."""
-        mgr = _mgr(term="telnet", creds=[Cred(login="root", password="rootpw")])
-        from otto.host import session as session_mod
+    async def test_a_session_that_ran_as_someone_else_is_closed_not_pooled(self, caplog):
+        """A command that changed who the shell is (an ``su`` it ran) costs the session."""
+        mgr = _mgr(term="telnet")
 
-        async def _broken_undo(io, hop, via, host_id, history_prefix=""):
-            raise RuntimeError("undo exploded")
+        class _Becomes(_StubExecSession):
+            async def run_cmd(self, cmd, **kw):
+                self.current_user = "root"
+                return await super().run_cmd(cmd=cmd, **kw)
 
-        monkeypatch.setattr(session_mod, "run_undo", _broken_undo)
-        closed: list[str] = []
-        real_close = session_mod.HostSession.close
-
-        async def _spy_close(self):
-            closed.append(self.name)
-            await real_close(self)
-
-        monkeypatch.setattr(session_mod.HostSession, "close", _spy_close)
-
+        mgr._session_factory = _Becomes
         with caplog.at_level(logging.WARNING, logger="otto.host.session"):
-            result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id", user="root")
-        assert result.value == "OUT", "the command ran; its result is not the undo's to lose"
-        assert mgr._exec_pool == [], "a session that could not switch back is never pooled"
-        assert closed == ["__exec_pool_1__"]
-        undo_warnings = [
-            r.getMessage()
-            for r in caplog.records
-            if r.levelno == logging.WARNING and "undo exploded" in r.getMessage()
-        ]
-        assert undo_warnings, f"no warning named the undo failure: {caplog.text}"
-        assert "root" in undo_warnings[0], undo_warnings[0]
-        assert "h" in undo_warnings[0], undo_warnings[0]
+            result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="su -")
+        assert result.value == "OUT"
+        assert idle_exec_sessions(mgr) == []
+        assert "opened for 'admin'" in caplog.text, caplog.text
+
+    @pytest.mark.asyncio
+    async def test_the_default_user_and_the_named_login_share_one_bucket(self):
+        mgr = _mgr()
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="a")
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="b", user="admin")
+        assert list(mgr._exec_pools) == ["admin"]
+        assert len(mgr._exec_pools["admin"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_session_for_x_is_x_before_setup_runs(self, open_steps):
+        mgr = _mgr(creds=[Cred(login="alice", password="pw")])
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="alice")
+        # No hops, so no "proxy" step.
+        assert open_steps == ["handshake", "switch:alice", "setup:exec_pool(user=alice)"]
+        assert mgr._exec_pools["alice"][0].current_user == "alice"
+
+    @pytest.mark.asyncio
+    async def test_a_proxied_login_s_session_for_x_replays_the_hops_then_switches(self, open_steps):
+        hop = Cred(login="mysql", proxy="su", via="admin")
+        mgr = _mgr(hops=[hop], login_target="mysql", creds=[hop, Cred(login="alice")])
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="alice")
+        assert open_steps == ["handshake", "proxy", "switch:alice", "setup:exec_pool(user=alice)"]
+        assert mgr._exec_pools["alice"][0].current_user == "alice"
+
+    @pytest.mark.asyncio
+    async def test_a_direct_cred_x_on_ssh_opens_on_xs_own_connection_and_is_stamped_x(
+        self, open_steps
+    ):
+        mgr = _mgr(creds=[Cred(login="alice", password="pw")])
+        mgr._connections.has_direct_cred = lambda *, user: user == "alice"
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="alice")
+        assert open_steps == ["ssh_as:alice", "handshake", "setup:exec_pool(user=alice)"]
+        assert mgr._exec_pools["alice"][0].current_user == "alice"
+
+    @pytest.mark.asyncio
+    async def test_a_direct_cred_x_on_a_proxied_ssh_login_skips_the_hops(self, open_steps):
+        hop = Cred(login="mysql", proxy="su", via="admin")
+        mgr = _mgr(hops=[hop], login_target="mysql", creds=[hop, Cred(login="alice")])
+        mgr._connections.has_direct_cred = lambda *, user: user == "alice"
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="alice")
+        assert open_steps == ["ssh_as:alice", "handshake", "setup:exec_pool(user=alice)"]
+        assert mgr._exec_pools["alice"][0].current_user == "alice"
+
+    @pytest.mark.asyncio
+    async def test_a_direct_cred_x_on_telnet_switches_instead(self, open_steps):
+        mgr = _mgr(term="telnet", creds=[Cred(login="alice", password="pw")])
+        mgr._connections.has_direct_cred = lambda *, user: True
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="alice")
+        assert "ssh_as:alice" not in open_steps
+        assert "switch:alice" in open_steps
+        assert mgr._exec_pools["alice"][0].current_user == "alice"
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_fast_resync_settle")
-    async def test_a_failed_switch_discards_the_session_and_raises(self, monkeypatch):
-        mgr = _mgr(term="telnet", creds=[Cred(login="root", password="rootpw")])
-        from otto.host import session as session_mod
+    async def test_alternating_users_keep_their_own_sessions(self):
+        mgr = _mgr(creds=[Cred(login="alice", password="pw"), Cred(login="bob", password="pw")])
+        for user in ["alice", "bob", "alice", "bob"]:
+            await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id -un", user=user)
+        assert {k: len(v) for k, v in mgr._exec_pools.items()} == {"alice": 1, "bob": 1}
+        assert mgr._exec_pool_count == 2, "each user's session was opened once and reused"
 
-        async def _broken_switch(*a, **kw):
-            raise LoginProxyError("hop failed")
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_fast_resync_settle")
+    async def test_concurrent_same_user_calls_each_get_a_session_and_both_are_kept(self):
+        mgr = _mgr(creds=[Cred(login="alice", password="pw")])
+        await asyncio.gather(
+            *(_exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="alice") for _ in range(2))
+        )
+        # Retention is the user's peak of concurrent calls.
+        assert len(mgr._exec_pools["alice"]) == 2
 
-        monkeypatch.setattr(session_mod, "perform_switch", _broken_switch)
+    @pytest.mark.asyncio
+    async def test_a_failed_switch_fails_at_open_and_leaves_nothing(self, open_steps):
+        mgr = _mgr()
+        open_steps.switch_raises = LoginProxyError("no password for bob")
         with pytest.raises(LoginProxyError):
-            await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id", user="root")
-        assert mgr._exec_pool == []
+            await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="bob")
+        assert mgr._exec_pools.get("bob", []) == []
+        assert not any(n.startswith("__exec_pool_") for n in mgr._named_sessions)
+        assert "setup:exec_pool(user=bob)" not in open_steps, "setup never ran as the wrong user"
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_fast_resync_settle")
-    async def test_the_next_exec_after_a_discard_opens_a_fresh_session(self, monkeypatch):
-        mgr = _mgr(term="telnet", creds=[Cred(login="root", password="rootpw")])
-        from otto.host import session as session_mod
-
-        async def _broken_undo(io, hop, via, host_id, history_prefix=""):
-            raise RuntimeError("undo exploded")
-
-        monkeypatch.setattr(session_mod, "run_undo", _broken_undo)
-        await _exec(
-            mgr, ExecRoute.POOLED_SHELL, cmd="id", user="root"
-        )  # the undo fails; the result still comes back
-        monkeypatch.undo()
-        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id")
-        assert mgr._exec_pool_count == 2
-        assert [s.name for s in mgr._exec_pool] == ["__exec_pool_2__"]
+    async def test_close_all_clears_every_bucket_and_reopens_cleanly(self):
+        mgr = _mgr(creds=[Cred(login="alice", password="pw")])
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="alice")
+        await mgr.close_all()
+        assert mgr._exec_pools == {}
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="alice")
+        assert len(mgr._exec_pools["alice"]) == 1
 
     @pytest.mark.asyncio
     async def test_a_dead_session_is_closed_not_pooled(self):
@@ -216,7 +251,7 @@ class TestPooledExec:
 
         mgr._session_factory = _Dies
         await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id")
-        assert mgr._exec_pool == []
+        assert idle_exec_sessions(mgr) == []
 
     @pytest.mark.asyncio
     async def test_a_session_whose_terminal_record_was_lost_is_closed_not_pooled(self):
@@ -230,7 +265,7 @@ class TestPooledExec:
         mgr._session_factory = _LosesRecord
         result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="id")
         assert result.value == "OUT"
-        assert mgr._exec_pool == []
+        assert idle_exec_sessions(mgr) == []
 
 
 class TestAmbientUser:
@@ -321,9 +356,9 @@ class TestTheSshRowPromotesOffTheRawChannel:
         result = await _exec(mgr, route, cmd="id", user="root")
 
         assert result.value == "OUT"
-        # INSIDE the switch: the raw route would have run it as the login user.
+        # As root: the raw route would have run it as the login user.
         assert seen[-1] == ("id", "root")
-        assert len(mgr._exec_pool) == 1
+        assert len(idle_exec_sessions(mgr)) == 1
         assert not mgr._connections.ssh.await_count, "the raw exec channel was opened anyway"
 
     @pytest.mark.asyncio
@@ -343,7 +378,7 @@ class TestTheSshRowPromotesOffTheRawChannel:
         result = await _exec(mgr, route, cmd="sudo -S id", expects=[("assword", "pw\n")])
 
         assert result.value == "OUT"
-        assert mgr._exec_pool[0]._session.run_cmd_calls == ["sudo -S id"]
+        assert idle_exec_sessions(mgr)[0]._session.run_cmd_calls == ["sudo -S id"]
         assert seen == [[("assword", "pw\n")]], "the answers have to REACH the shell"
         mgr._connections.ssh.assert_not_awaited()
 
@@ -366,7 +401,7 @@ class TestTheSshRowPromotesOffTheRawChannel:
 
         assert result.value == "RAW"
         assert ran == ["id"]
-        assert mgr._exec_pool == [], "a plain ssh exec must never open a pooled shell"
+        assert idle_exec_sessions(mgr) == [], "a plain ssh exec must never open a pooled shell"
         mgr._connections.ssh.assert_awaited_once()
 
 
@@ -420,7 +455,7 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
 
         assert ran == [("id -un", None, 5.0)]
         assert result.value == "out"
-        assert mgr._exec_pool == []
+        assert idle_exec_sessions(mgr) == []
         assert mgr._exec_pool_count == 0, "no pool session was ever asked for"
 
     @pytest.mark.asyncio
@@ -468,3 +503,143 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
         assert mgr.line_budget(route=route) == typed_line_budget(
             mgr._command_frame, echoes=True, exec_input=typed
         )
+
+
+class TestOpenSessionAsUser:
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_fast_resync_settle")
+    async def test_an_existing_session_is_returned_to_the_user_it_is(self):
+        mgr = _mgr(creds=[Cred(login="alice", password="pw")])
+        first = await mgr.open_session(name="aux", as_user="alice")
+        assert await mgr.open_session(name="aux", as_user="alice") is first
+        assert await mgr.open_session(name="aux") is first
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_fast_resync_settle")
+    async def test_an_existing_session_asked_for_as_another_user_is_refused_by_name(self):
+        mgr = _mgr(creds=[Cred(login="alice", password="pw")])
+        first = await mgr.open_session(name="aux", as_user="alice")
+        typed = list(first._session.writes)
+        with pytest.raises(ValueError, match=r"'aux' is open as 'alice', not 'admin'"):
+            await mgr.open_session(name="aux", as_user="admin")
+        assert first._session.writes == typed, "nothing was typed"
+        assert mgr._named_sessions["aux"] is first
+
+
+class _SwitchedShellGone(_StubExecSession):
+    """A pooled session whose switched shell may have gone, leaving the login's underneath.
+
+    What the shell does with the guard is the frame's business (a real shell
+    runs it in ``test_exec_identity_guard``); this double answers a guarded
+    exec the way the session reads a skipped one, so the pool's handling of
+    it is what is under test.
+    """
+
+    def __init__(self, *, gone: bool) -> None:
+        super().__init__()
+        self.gone = gone
+        self.exec_inputs: list[object] = []
+
+    async def run_cmd(  # ty: ignore[invalid-method-override]
+        self,
+        cmd: str,
+        expects=None,
+        timeout=None,
+        on_output=None,
+        redact=False,
+        write_progress=None,
+        exec_input=None,
+    ) -> CommandResult:
+        self.run_cmd_calls.append(cmd)
+        self.exec_inputs.append(exec_input)
+        if exec_input is not None and exec_input.identity is not None and self.gone:
+            self._identity_lost = True
+            return CommandResult(status=Status.Failed, value=NEVER_RAN, command=cmd, retcode=-1)
+        return CommandResult(status=Status.Success, value="OUT", command=cmd, retcode=0)
+
+
+def _gone_mgr(*gone: bool) -> tuple[SessionManager, list[_SwitchedShellGone]]:
+    mgr = _mgr(creds=[Cred(login="alice", password="pw")])
+    built: list[_SwitchedShellGone] = []
+    states = iter(gone)
+
+    def factory(**_kw: object) -> _SwitchedShellGone:
+        built.append(_SwitchedShellGone(gone=next(states)))
+        return built[-1]
+
+    mgr._session_factory = factory
+    return mgr, built
+
+
+_EXEC = ExecInput(stdin_eof=True)
+"""What ``BaseHost.exec`` hands every pooled exec: an exec, so its frame can carry the guard."""
+
+
+class TestSwitchedShellIdentity:
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_fast_resync_settle")
+    async def test_a_switched_session_is_marked_at_open_and_every_exec_is_guarded(self):
+        mgr, built = _gone_mgr(False)
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="a", user="alice", exec_input=_EXEC)
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="b", user="alice", exec_input=_EXEC)
+        (shell,) = built
+        assert shell.identity_mark is not None
+        assert shell.run_cmd_calls == ["a", "b"]
+        marking = BashFrame().identity_mark_statement(mark=shell.identity_mark)
+        proofs = [w for w in shell.writes if marking in w]
+        assert proofs
+        assert all("$(id -un)" in w for w in proofs), "the mark rides the identity proof's line"
+        assert [getattr(i, "identity", None) for i in shell.exec_inputs] == [
+            shell.identity_mark
+        ] * 2
+
+    @pytest.mark.asyncio
+    async def test_a_session_reached_by_a_login_proxy_hop_alone_is_guarded(self):
+        """`exec()` on a proxied login: no switch to a user, but the hop put a shell on top."""
+        hop = Cred(login="mysql", proxy="su", via="admin")
+        mgr = _mgr(hops=[hop], login_target="mysql", creds=[hop])
+        built: list[_SwitchedShellGone] = []
+
+        def factory(**_kw: object) -> _SwitchedShellGone:
+            built.append(_SwitchedShellGone(gone=False))
+            return built[-1]
+
+        mgr._session_factory = factory
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="a", exec_input=_EXEC)
+        (shell,) = built
+        assert shell.reached_by_switch
+        assert shell.identity_mark is not None
+        assert getattr(shell.exec_inputs[-1], "identity", None) == shell.identity_mark
+
+    @pytest.mark.asyncio
+    async def test_a_session_never_switched_carries_no_mark_and_no_guard(self):
+        mgr, built = _gone_mgr(False)
+        await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="a", exec_input=_EXEC)
+        (shell,) = built
+        assert shell.identity_mark is None
+        assert shell.run_cmd_calls == ["a"]
+        assert getattr(shell.exec_inputs[0], "identity", None) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_fast_resync_settle")
+    async def test_a_session_whose_switched_shell_has_gone_is_discarded_and_the_call_reopens_once(
+        self,
+    ):
+        mgr, built = _gone_mgr(True, False)
+        result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="alice", exec_input=_EXEC)
+        assert result.value == "OUT"
+        gone, fresh = built
+        assert gone.identity_lost
+        assert not gone.alive
+        assert [s._session for s in mgr._exec_pools["alice"]] == [fresh]
+        assert fresh.run_cmd_calls[-1] == "c"
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_fast_resync_settle")
+    async def test_a_fresh_session_that_loses_its_user_too_raises_and_runs_nothing(self):
+        mgr, built = _gone_mgr(True, True)
+        with pytest.raises(LoginProxyError, match="lost that user before its command ran"):
+            await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", user="alice", exec_input=_EXEC)
+        assert len(built) == 2
+        assert all(not s.alive for s in built)
+        assert mgr._exec_pools.get("alice", []) == []

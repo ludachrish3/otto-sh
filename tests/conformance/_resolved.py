@@ -128,6 +128,12 @@ class ResolvedCell:
     sudo asks it (no ``NOPASSWD``). Set by the venues beside
     :attr:`proxied_login`."""
 
+    switch_user: str | None = None
+    """A second user this cell's login can become, read off the lab entry
+    (:func:`~tests.conformance._entry.switch_user_on`), or ``None``: the user
+    an ``exec(user=...)`` arm runs as. Set by the venues beside
+    :attr:`proxied_login`."""
+
     open_shell_host: "Callable[[], AbstractAsyncContextManager[BaseHost]] | None" = None
     """The same host as :attr:`open_host`, built with a registered no-op
     ``session_setup`` so ``exec`` is forced onto the pooled shell. Set by both

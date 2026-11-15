@@ -466,7 +466,22 @@ _RESYNC_FRAME = BashFrame()
 _IDENTITY_TAIL = r"(\d+)__(.*?)__"
 
 
-def _identity_probe(m: SessionMarkers, history_prefix: str) -> str:
+_SWITCH_MISMATCH_CAUSE = (
+    "A rejected password is the usual cause: `su` reports the failure and exits back to "
+    "the calling shell, which then answers otto's probe perfectly well, so liveness alone "
+    "cannot see it."
+)
+"""Why a switch's identity proof usually fails: what :func:`_resync_shell` says by default."""
+
+_SETUP_MISMATCH_CAUSE = (
+    "The session_setup hook is the likely cause: it changed or replaced the shell (a raw "
+    "`sudo -i` or `exec` typed with send, say) after otto switched it; scope a switch with "
+    "the handle's as_user."
+)
+"""Why the post-setup proof (:func:`prove_identity`) usually fails."""
+
+
+def _identity_probe(m: SessionMarkers, history_prefix: str, marking: str = "") -> str:
     """Render the liveness+identity probe for markers *m*.
 
     Anchored like the handshake (:func:`~otto.host.command_frame.whole_line_echo`):
@@ -480,8 +495,13 @@ def _identity_probe(m: SessionMarkers, history_prefix: str) -> str:
     a fresh shell gets its terminal record, the terminal as it is at the
     transition, and a shell that already holds one (the outer shell a
     rejected ``su`` returned to, the one an undo lands back in) keeps it.
+
+    *marking* is a statement that rides the same line (a pooled session's
+    identity mark, :func:`prove_identity`), so the shell that answers the
+    proof is the shell that ran it.
     """
-    statements = f"{history_prefix}{establish_exec_state(replace=False)}; "
+    marked = f"{marking}; " if marking else ""
+    statements = f"{history_prefix}{establish_exec_state(replace=False)}; {marked}"
     return whole_line_echo(m.recover, RECOVER_SUFFIX, statements, after="$?__$(id -un)__")
 
 
@@ -504,7 +524,10 @@ async def _resync_shell(
     prompt: str | None = None,
     password: SecretStr | None = None,
     expect_user: str | None = None,
-) -> None:
+    marking: str = "",
+    settle: float | None = None,
+    mismatch_cause: str | None = None,
+) -> str:
     """Resync with the shell after a su/sudo/exit transition, and prove who it is.
 
     *history_prefix* is the caller's already-resolved history-suppression
@@ -542,6 +565,7 @@ async def _resync_shell(
     answer it, or if the shell that answers is not *expect_user*.
     """
     answered = False
+    answered_as: list[str] = []
 
     async def answer() -> None:
         nonlocal answered
@@ -587,13 +611,16 @@ async def _resync_shell(
             await asyncio.sleep(_RESYNC_SETTLE)
             raise asyncio.TimeoutError("credential prompt answered; probe again")
         seen_user = hit.group(2)
+        answered_as.append(seen_user)
+        # A non-empty answer must be the expected user. An EMPTY one (a
+        # userland with no `id`) proves liveness only: a switch accepts it, as
+        # it always has; the caller reads it from the return value and decides
+        # what an unproven identity is worth (prove_identity: nothing).
         if expect_user and seen_user and seen_user != expect_user:
             raise LoginProxyError(
                 f"{host_id}: after becoming {hop_login!r} the shell answered as "
-                f"{seen_user!r}, not {expect_user!r} — the transition did not take. A "
-                f"rejected password is the usual cause: `su` reports the failure and "
-                f"exits back to the calling shell, which then answers otto's probe "
-                f"perfectly well, so liveness alone cannot see it."
+                f"{seen_user!r}, not {expect_user!r} — the transition did not take. "
+                + (mismatch_cause or _SWITCH_MISMATCH_CAUSE)
             )
         return matched
 
@@ -605,7 +632,7 @@ async def _resync_shell(
     # authentication. When a prompt does come, the privilege boundary is
     # crossed AFTER the password is accepted, so the flush the settle exists
     # for has not happened yet -- hence the second settle before probing.
-    settle = _RESYNC_SETTLE
+    settle = _RESYNC_SETTLE if settle is None else settle
     if prompt_re is not None:
         settle = 0.0
         with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
@@ -617,7 +644,7 @@ async def _resync_shell(
     confirmed = await confirm_live(
         io.send,
         expect,
-        lambda m: _identity_probe(m, history_prefix),
+        lambda m: _identity_probe(m, history_prefix, marking),
         _identity_pattern,
         lambda: SessionMarkers.for_session(session_id=uuid.uuid4().hex[:12]),
         settle=settle,
@@ -629,6 +656,7 @@ async def _resync_shell(
             f"{host_id}: shell did not resync after a login-proxy transition "
             f"({hop_login!r}) — su/sudo/exit flushed the next command"
         )
+    return answered_as[-1] if answered_as else ""
 
 
 async def run_proxy(
@@ -751,3 +779,74 @@ async def perform_switch(
     await run_proxy(io, cred, via=via, host_id=host_id, history_prefix=history_prefix)
     applied.append(cred)
     return applied
+
+
+async def switch_and_stamp(
+    *,
+    io: ProxyIO,
+    creds: list[Cred],
+    user: str,
+    password: str | SecretStr | None,
+    current_user: str,
+    stamp: Callable[[str], None],
+    host_id: str,
+    history_prefix: str,
+    term: str | None,
+) -> list[Cred]:
+    """Switch to *user* from *current_user* through *io*, then *stamp* who it now is.
+
+    The one switch-and-record step: every entry point that changes a
+    session's user calls it (``HostSession.switch_user``/``as_user``,
+    ``SessionManager.open_session`` for a pooled session opened for another
+    user, and ``PosixPrivilege.switch_user``/``as_user`` on the host's default
+    session), so the identity a switch lands on is decided once: the last
+    hop's login, or root for an argument-less ``su``. :func:`perform_switch`
+    runs the hops and stamps nothing.
+
+    Args:
+        io: what the hops are typed through.
+        creds: the host's creds the target and via accounts are looked up in.
+        user: the user to become; ``""`` is root.
+        password: overrides the target cred's password when given.
+        current_user: who the session is before the switch.
+        stamp: records the identity the switch landed on.
+        host_id: the host, for the hops' messages.
+        history_prefix: the history-suppression payload the hops are typed with.
+        term: the session's term, which picks among same-login creds.
+
+    Raises:
+        LoginProxyError: a hop failed.
+    """
+    applied = await perform_switch(
+        io, creds, user, password, current_user, host_id, history_prefix, protocol=term
+    )
+    stamp(applied[-1].login or ROOT_LOGIN)
+    return applied
+
+
+async def prove_identity(
+    io: ProxyIO, *, host_id: str, user: str, marking: str, history_prefix: str = ""
+) -> bool:
+    """Prove the shell on *io* is *user*, running *marking* on the proof's own line.
+
+    The switch's own identity proof (:func:`_resync_shell`), typed once more
+    with no settle: what a pooled session opened by a switch uses after its
+    setup hook, so the mark (*marking*) lands in the shell that answers as
+    *user*, and in no other. Returns whether the shell named itself: an empty
+    answer (a userland with no ``id``) is no proof, and the caller must not
+    rely on the mark.
+
+    Raises:
+        LoginProxyError: the shell answered as someone else, or not at all.
+    """
+    seen = await _resync_shell(
+        io,
+        host_id,
+        user,
+        history_prefix,
+        expect_user=user,
+        marking=marking,
+        settle=0.0,
+        mismatch_cause=_SETUP_MISMATCH_CAUSE,
+    )
+    return seen == user

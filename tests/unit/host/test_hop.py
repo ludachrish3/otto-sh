@@ -499,6 +499,7 @@ class TestConnectionManagerTunnel:
             shell = MockSession.return_value
             shell._ensure_initialized = AsyncMock()
             shell.close = AsyncMock()
+            shell.reached_by_switch = False  # a direct login: no shell under it to guard against
             await mgr.open_session(name="__exec_pool_1__")
 
         MockTelnet.assert_called_once()

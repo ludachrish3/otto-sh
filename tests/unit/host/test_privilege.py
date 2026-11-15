@@ -11,7 +11,6 @@ import pytest
 from pydantic import SecretStr
 
 from otto.host import host as host_module
-from otto.host import privilege as privilege_mod
 from otto.host.command_frame import RECOVER_SUFFIX
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
@@ -1671,7 +1670,8 @@ async def test_the_undo_of_a_switch_whose_session_a_cancel_left_dead_types_nothi
     shell = _SwitchedShell("user")
     mgr._session = shell  # ty: ignore[invalid-assignment]
 
-    async def switch(_io: object, _creds: object, user: str, *_a: object, **_kw: object):
+    async def switch(user: str, password: object) -> list[Cred]:
+        shell.stamp_user(user)
         return [Cred(login=user, proxy="su", via="user")]
 
     typed: list[str] = []
@@ -1682,7 +1682,7 @@ async def test_the_undo_of_a_switch_whose_session_a_cancel_left_dead_types_nothi
     async def ensure_session() -> None:
         raise AssertionError("the undo must not open a session")
 
-    monkeypatch.setattr(privilege_mod, "perform_switch", switch)
+    monkeypatch.setattr(host, "_switch_default_session", switch)
     monkeypatch.setattr(mgr, "send", send)
     monkeypatch.setattr(mgr, "_ensure_session", ensure_session)
 

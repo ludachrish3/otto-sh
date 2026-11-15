@@ -17,6 +17,7 @@ import dataclasses
 import math
 import os
 import re
+import secrets
 import uuid
 import warnings
 from abc import ABC, abstractmethod
@@ -54,7 +55,14 @@ from .exec_route import ExecRoute
 from .exit_status import exit_status_of, no_return_code_result
 from .identity import ROOT_LOGIN
 from .limitation import Limitation
-from .login_proxy import LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
+from .login_proxy import (
+    LoginProxyError,
+    cred_for,
+    prove_identity,
+    run_proxy,
+    run_undo,
+    switch_and_stamp,
+)
 from .output_codec import (
     MAX_SEPARATOR_LEN,
     OUTPUT_ENCODING,
@@ -147,6 +155,10 @@ _LOG_PREVIEW_BUFFER = 1024  # buffer length above which run_cmd shows head+tail 
 
 # Timeout for session recovery after Ctrl+C
 _RECOVERY_TIMEOUT = 5.0
+
+_EXEC_POOL_PREFIX = "__exec_pool_"
+"""The name prefix of the exec pool's sessions (``SessionManager._open_exec_session``)."""
+
 
 # Per-probe wait inside the recovery resend loop (confirm_live).
 _RECOVERY_PROBE_TIMEOUT = 0.5
@@ -383,13 +395,16 @@ def render_payload(
     """
     if exec_input is None:
         return frame.frame(cmd, m=m)
-    return frame.frame_exec(
+    payload = frame.frame_exec(
         cmd,
         m=m,
         stdin_eof=exec_input.stdin_eof,
         restore=exec_input.restore,
         credential=exec_input.credential,
     )
+    if exec_input.identity is None:
+        return payload
+    return frame.identity_guard(payload=payload, mark=exec_input.identity, m=m)
 
 
 def typed_line_ceiling(frame: "CommandFrame | None", *, echoes: bool) -> int:
@@ -771,11 +786,48 @@ class ShellSession(ABC):
         # set, run_cmd refuses to type its sentinel command frame into the app
         # (see the guard at the top of run_cmd); raw send/expect stay usable.
         self._app_shell: object | None = None
+        # Whether the open reached this shell by a switch (a login-proxy hop
+        # or a switch to the user), so another shell sits underneath it; the
+        # shell-local mark a pooled such session carries (the frame's
+        # ``identity_mark_statement``), or None; whether an exec found it gone
+        # (the frame's ``identity_guard``); and whether its frame has no
+        # guard, so the exec pool does not keep it.
+        self._reached_by_switch = False
+        self.identity_mark: str | None = None
+        self._identity_lost = False
+        self.identity_unguarded = False
 
     @property
     def alive(self) -> bool:
         """Whether the session is initialized and responsive."""
         return self._alive
+
+    @property
+    def reached_by_switch(self) -> bool:
+        """Whether the open reached this shell by a switch, so another shell sits underneath.
+
+        THE ONE ANSWER to "does this pooled session need an identity guard",
+        fed by what the open did: every login-proxy hop and every switch to
+        the session's user (:meth:`note_reached_by_switch`). A session on its
+        own direct connection (the login itself, the user's own ssh login)
+        never sets it.
+        """
+        return self._reached_by_switch
+
+    def note_reached_by_switch(self) -> None:
+        """Record that the open reached this shell by a switch (see :attr:`reached_by_switch`)."""
+        self._reached_by_switch = True
+
+    @property
+    def identity_lost(self) -> bool:
+        """Whether an ``exec`` found this switched shell's identity mark gone.
+
+        Set when the frame's guard (:meth:`~otto.host.command_frame.CommandFrame.identity_guard`)
+        typed with the exec did not find the mark: the switched
+        shell has ended and another shell (the login's, underneath) answered.
+        The command was not run, and the exec pool discards the session.
+        """
+        return self._identity_lost
 
     @property
     def exec_baseline_lost(self) -> bool:
@@ -1722,7 +1774,13 @@ class ShellSession(ABC):
         buffer = self._undo_terminal_mapping(read.raw())
         if exec_input is not None:
             self._note_exec_baseline(buffer)
-        if seen_begin or self._begun_before_end(buffer):
+        begun = seen_begin or self._begun_before_end(buffer)
+        if not begun and exec_input is not None and exec_input.identity is not None:
+            # The identity guard skipped the command: this shell is not the
+            # one the session was switched to.
+            self._identity_lost = True
+            logger.warning(f"{self._log_tag}: switched shell gone; the command was not run")
+        if begun:
             output = self._frame.parse_output(buffer, cmd=cmd, m=self._markers)
             retcode = (
                 self._frame.extract_retcode(buffer, m=self._markers)
@@ -2618,6 +2676,15 @@ class _DockerSshSession(SshSession):
             self._on_open(opened_as)
 
 
+def _stamp_of(session: "ShellSession") -> Callable[[str], None]:
+    """Return the stamp a switch on *session* makes: who its shell now runs as."""
+
+    def stamp(login: str) -> None:
+        session.current_user = login
+
+    return stamp
+
+
 class HostSession:
     """A named persistent shell session on any host type.
 
@@ -2778,17 +2845,17 @@ class HostSession:
             raise NotImplementedError("switch_user is not supported on this host's sessions")
         if is_dry_run():
             self._refuse_elevation("switch_user", user or ROOT_LOGIN)
-        applied = await perform_switch(
-            self,
-            self._creds,
-            user,
-            password,
-            self.current_user,
-            self._host_id,
-            self._history_prefix,
-            protocol=self._term,
+        await switch_and_stamp(
+            io=self,
+            creds=self._creds,
+            user=user,
+            password=password,
+            current_user=self._session.current_user,
+            stamp=_stamp_of(self._session),
+            host_id=self._host_id,
+            history_prefix=self._history_prefix,
+            term=self._term,
         )
-        self._session.current_user = applied[-1].login or ROOT_LOGIN
 
     @asynccontextmanager
     async def as_user(
@@ -2814,17 +2881,17 @@ class HostSession:
         if is_dry_run():
             self._refuse_elevation("as_user", user)
         prev = self.current_user
-        applied = await perform_switch(
-            self,
-            self._creds,
-            user,
-            password,
-            prev,
-            self._host_id,
-            self._history_prefix,
-            protocol=self._term,
+        applied = await switch_and_stamp(
+            io=self,
+            creds=self._creds,
+            user=user,
+            password=password,
+            current_user=self._session.current_user,
+            stamp=_stamp_of(self._session),
+            host_id=self._host_id,
+            history_prefix=self._history_prefix,
+            term=self._term,
         )
-        self._session.current_user = applied[-1].login or ROOT_LOGIN
         # Narrowed local: `self._creds` re-widens to `list[Cred] | None` once
         # captured by the nested `_undo` closure below (attribute narrowing
         # doesn't cross closure boundaries), so bind it here where the
@@ -3874,13 +3941,15 @@ class SessionManager:
         # some as_user()/switch_user() made, which `exec` then inherits.
         self._baseline_user: str | None = None
         self._named_sessions: dict[str, HostSession] = {}
-        # Free-list of idle shell sessions used by `exec()` for terminals
-        # (e.g. telnet) that lack a stateless exec primitive.  Serial callers
-        # reuse one session so the TCP+auth handshake is paid once; concurrent
-        # callers each pull their own session off the list (opening a fresh
-        # one if none are free), preserving `exec()`'s documented contract
-        # that concurrent calls run independently.
-        self._exec_pool: list[HostSession] = []
+        # Free-lists of idle shell sessions used by `exec()` where it has no
+        # stateless exec primitive (telnet, a proxied login, a hook, a call
+        # that needs a shell), one per user (`_pool_key`): a session is opened
+        # for its user and stays that user. Serial callers reuse one session
+        # so the TCP+auth handshake is paid once; concurrent callers each pull
+        # their own session off the list (opening a fresh one if none are
+        # free), preserving `exec()`'s documented contract that concurrent
+        # calls run independently.
+        self._exec_pools: dict[str, list[HostSession]] = {}
         self._exec_pool_count: int = 0
         # Serializes the get-or-create paths so concurrent callers can't all
         # observe a dead/missing session, all close it, and all create
@@ -4025,9 +4094,44 @@ class SessionManager:
         """
         return history_prefix(self._session_frame, self._shell_history)
 
-    def _seed_user(self, session: "ShellSession") -> None:
-        """Stamp a freshly built session with the login user."""
-        session.current_user = self._login_user()
+    def _seed_user(self, session: "ShellSession", user: str | None = None) -> None:
+        """Stamp a freshly built session with *user*, or the login user when ``None``.
+
+        *user* is given only for a session whose transport authenticated as
+        that user itself (:meth:`open_session`'s own-connection case).
+        """
+        session.current_user = self._pool_key(user)
+
+    def _pool_key(self, user: str | None) -> str:
+        """Name the exec pool bucket *user*'s ``exec`` takes a session from: *user*, else the login.
+
+        ``exec()`` and ``exec(user=<the login>)`` therefore share one bucket.
+        """
+        return user or self._login_user()
+
+    def can_ssh_as(self, *, user: str) -> bool:
+        """Whether *user* can authenticate an ssh connection of their own here.
+
+        The term is ``ssh`` and they have a direct credential
+        (:meth:`~otto.host.connections.ConnectionManager.has_direct_cred`): the
+        one answer both the exec plan (a raw channel as them) and
+        ``_own_ssh_login`` (a pooled session over their own login) read.
+        """
+        if getattr(self._connections, "term", None) != "ssh":
+            return False
+        has_direct_cred = getattr(self._connections, "has_direct_cred", None)
+        return has_direct_cred is not None and has_direct_cred(user=user)
+
+    def _own_ssh_login(self, as_user: str | None) -> str | None:
+        """*as_user* when a session for them is opened over their own ssh login, else ``None``.
+
+        That is: *as_user* is not the login and :meth:`can_ssh_as` them. Such
+        a session needs no switch and no login proxy: its transport is
+        :meth:`~otto.host.connections.ConnectionManager.ssh_as`.
+        """
+        if as_user is None or as_user == self._login_user() or not self.can_ssh_as(user=as_user):
+            return None
+        return as_user
 
     async def _apply_login_proxy(self, session: "ShellSession") -> None:
         """Replay the connection manager's proxy hops over *session*.
@@ -4069,6 +4173,7 @@ class SessionManager:
             await run_proxy(
                 io, hop, via=via, host_id=self._host_id, history_prefix=self._history_prefix()
             )
+            session.note_reached_by_switch()
             via_login = hop.login
         session.current_user = target
 
@@ -4313,7 +4418,9 @@ class SessionManager:
             session._init_timeout = deadline  # noqa: SLF001 — intra-package: the manager owns its sessions' readiness deadline
         return session
 
-    async def _open_transport_session(self, *, named: bool) -> "ShellSession":
+    async def _open_transport_session(
+        self, *, named: bool, ssh_user: str | None = None
+    ) -> "ShellSession":
         """Build a ShellSession over the manager's term: ssh, telnet or console.
 
         The ONE place the term is dispatched, for the default session
@@ -4324,6 +4431,10 @@ class SessionManager:
         default session already holds it — so a named request there is
         refused by name rather than dialled. ``exec`` never asks for one on a
         console: :meth:`exec_route` sends it to the default session.
+
+        *ssh_user* (``ssh`` only) builds the session over that user's own
+        connection (:meth:`~otto.host.connections.ConnectionManager.ssh_as`)
+        instead of the login's.
         """
         assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no session_factory
         # Resolved before anything dials: an unusable OTTO_INIT_TIMEOUT is
@@ -4332,7 +4443,11 @@ class SessionManager:
         init_timeout = self._readiness_deadline()
         term = self._connections.term
         if term == "ssh":
-            ssh_conn = await self._connections.ssh()
+            ssh_conn = (
+                await self._connections.ssh_as(user=ssh_user)
+                if ssh_user is not None
+                else await self._connections.ssh()
+            )
             return SshSession(
                 ssh_conn,
                 command_frame=self._session_frame,
@@ -4525,7 +4640,7 @@ class SessionManager:
         (see ``_exec_on_default_session``), and concurrent callers are
         serialised by the host, not here.
 
-        *user* switches the pooled session for the call only — see
+        *user* picks the pooled session opened for that user — see
         ``_exec_pooled``. The bare ssh channel authenticates as the host's own
         connection; a direct-credential user's connection is the host's to
         open (:meth:`exec_on`).
@@ -4693,8 +4808,9 @@ class SessionManager:
         This layer does not serialise concurrent callers and cannot switch
         the session's identity. Both belong to the host, which owns the
         switch (:meth:`~otto.host.privilege.PosixPrivilege.as_user`) and so
-        must hold one lock across the switch, the command and the switch
-        back (see ``UnixHost._exec_on_console``). A *user* other than the
+        holds its line turn (``BaseHost._line_turn``, taken in
+        ``BaseHost.exec`` through ``BaseHost._host_entry``) across the switch,
+        the command and the switch back (see ``UnixHost._exec_on_console``). A *user* other than the
         session's current one reaching here is refused by name rather than
         run as the wrong user.
         """
@@ -4719,7 +4835,7 @@ class SessionManager:
         user: str | None,
         exec_input: ExecInput | None = None,
     ) -> CommandResult:
-        """One command on a pooled shell session, switched to *user* for the call.
+        """One command on a pooled shell session opened for *user*.
 
         Telnet has no stateless exec primitive (unlike SSH which multiplexes
         channels over one connection), and a proxied login cannot use SSH's
@@ -4734,26 +4850,75 @@ class SessionManager:
         launching multiple ``nc -l`` listeners in parallel) each get their
         own, preserving the documented concurrency contract.
 
-        The session goes back to the free-list only when it is alive, is
-        running as the user it was acquired as, has not lost its terminal
-        record (:attr:`ShellSession.exec_baseline_lost`), and — when a switch
-        was asked for — both the switch and its undo completed. Anything else closes
-        it: a session whose switch-back failed, or half applied, would let
-        the next pooled ``exec`` run silently as *user*. ``alive`` alone was
-        the old test, and it also left dead handles on the list for the next
-        acquire to skip.
+        There is one free-list per user (:meth:`_pool_key`: *user*, else the
+        login). A session for another user is opened FOR them
+        (:meth:`open_session` with ``as_user``): over their own ssh login when
+        they have a direct credential on an ssh host, otherwise switched to
+        them before the session-setup hook runs, so the hook sets the session
+        up as them. Nothing is switched per call.
+
+        RETENTION. A session goes back to its user's free-list whenever it is
+        alive, is still running as that user, and has not lost its terminal
+        record (:attr:`ShellSession.exec_baseline_lost`); anything else closes
+        it, so the next ``exec`` never inherits a session that is someone else
+        (a command that ran ``su``, say). A stop that could not confirm the
+        shell already left the session not alive. Nothing is evicted: each
+        free-list holds at most that user's peak of concurrent ``exec`` calls,
+        and :meth:`close_all` closes them all.
+
+        IDENTITY. A session its open reached by a switch (a login-proxy hop or
+        a switch to its user: :attr:`ShellSession.reached_by_switch`) has
+        another shell underneath it. Where its frame can guard, it carries an
+        identity mark set on the line of its identity proof after setup
+        (:meth:`_mark_identity`), and every exec on it is typed with the
+        frame's guard (:meth:`~otto.host.command_frame.CommandFrame.identity_guard`).
+        When the switched shell has gone (an idle ``TMOUT``, a kill) and the
+        shell underneath answers the guard, the command is not run: the
+        session is closed and the call runs once on a fresh session for the
+        user. A fresh session that has lost its user too raises
+        :class:`~otto.host.login_proxy.LoginProxyError`. Where its frame has no
+        guard, the session runs its exec and is closed, never kept.
 
         A line the session's terminal would cut is refused first, through
         :func:`refuse_if_typed_line_would_be_cut` measured in the exec frame
         and against the acquired session's echo fact, before anything is typed;
         the session goes back to the free-list untouched.
-
-        A failed switch-back costs the SESSION, never the RESULT. The command
-        has already run by then, so its result is returned and the undo's
-        failure is logged as a warning naming host, user and error — see the
-        handler below.
         """
-        session = await self._acquire_exec_session()
+        key = self._pool_key(user)
+        session = await self._acquire_exec_session(user=user)
+        result = await self._exec_on_pooled(
+            session, cmd, key=key, timeout=timeout, log=log, expects=expects, exec_input=exec_input
+        )
+        if not session._session.identity_lost:  # noqa: SLF001 — the manager's own pooled session
+            return result
+        # The switched shell had gone, and the guard kept the command from the
+        # shell underneath: open a fresh session for the user, once.
+        session = await self._open_exec_session(key)
+        result = await self._exec_on_pooled(
+            session, cmd, key=key, timeout=timeout, log=log, expects=expects, exec_input=exec_input
+        )
+        if session._session.identity_lost:  # noqa: SLF001 — the manager's own pooled session
+            raise LoginProxyError(
+                f"{self._host_id}: a fresh session switched to {key!r} lost that user "
+                f"before its command ran; the command was not run"
+            )
+        return result
+
+    async def _exec_on_pooled(
+        self,
+        session: "HostSession",
+        cmd: str,
+        *,
+        key: str,
+        timeout: float,
+        log: LogMode,
+        expects: "list[Expect | CredentialExpect] | None",
+        exec_input: ExecInput | None,
+    ) -> CommandResult:
+        """Run *cmd* on the pooled *session* of *key*, then keep or close it."""
+        mark = session._session.identity_mark  # noqa: SLF001 — the manager's own pooled session
+        if exec_input is not None and mark is not None:
+            exec_input = replace(exec_input, identity=mark)
         try:
             refuse_if_typed_line_would_be_cut(
                 self._command_frame,
@@ -4764,72 +4929,62 @@ class SessionManager:
                 exec_input=exec_input,
             )
         except UnsupportedOnUserlandError:
-            # Nothing was typed, so the session is as it was acquired: idle again.
-            self._exec_pool.append(session)
+            # Nothing was typed: the same keep-or-discard decision as a command's end.
+            await self._release_pooled(session, key)
             raise
-        acquired_as = session.current_user
-        switched_ok = user is None
         try:
-            if user is None:
-                return _ran_on(
-                    await session._run_one(  # noqa: SLF001 — the manager's own pooled session, on its internal entry
-                        cmd, expects=expects, timeout=timeout, log=log, exec_input=exec_input
-                    ),
-                    ExecRoute.POOLED_SHELL,
-                )
-            result: CommandResult | None = None
-            try:
-                async with session.as_user(user=user):
-                    switched_ok = True
-                    result = await session._run_one(  # noqa: SLF001 — as above
-                        cmd, expects=expects, timeout=timeout, log=log, exec_input=exec_input
-                    )
-            except Exception as exc:
-                # A failure BEFORE the command produced a result -- the switch
-                # itself, or the command -- is the call's failure and
-                # propagates. Afterwards there is only one thing left that can
-                # raise: the undo, run under `compensate` in `as_user`'s
-                # `finally`. The command RAN, so its result is what the caller
-                # is owed; losing it would make a successful command look like
-                # a failed one because the way back was broken. The session
-                # pays instead -- it is still running as *user*, so the
-                # keep-or-discard rule below closes it rather than handing the
-                # next exec a silently elevated shell. Only `Exception`: a
-                # cancellation `compensate` re-raises must still reach the
-                # caller.
-                if result is None:
-                    raise
-                logger.warning(
-                    "%s: exec as %r ran, but switching the pooled session back "
-                    "failed (%r) -- returning the command's result and "
-                    "discarding the session",
-                    self._name or self._host_id,
-                    user,
-                    exc,
-                )
-            return _ran_on(result, ExecRoute.POOLED_SHELL)
+            return _ran_on(
+                await session._run_one(  # noqa: SLF001 — the manager's own pooled session, on its internal entry
+                    cmd, expects=expects, timeout=timeout, log=log, exec_input=exec_input
+                ),
+                ExecRoute.POOLED_SHELL,
+            )
         finally:
-            if (
-                session.alive
-                and switched_ok
-                and session.current_user == acquired_as
-                and not session.exec_baseline_lost
-            ):
-                self._exec_pool.append(session)
-            else:
-                logger.warning(
-                    "%s: not pooling exec session %s "
-                    "(alive=%s, switched_ok=%s, baseline_lost=%s, user=%r, acquired as %r)",
-                    self._name,
-                    session.name,
-                    session.alive,
-                    switched_ok,
-                    session.exec_baseline_lost,
-                    session.current_user,
-                    acquired_as,
-                )
-                with suppress(Exception):
-                    await session.close()
+            await self._release_pooled(session, key)
+
+    async def _release_pooled(self, session: "HostSession", key: str) -> None:
+        """Return *session* to *key*'s free-list, or close it: THE ONE retention decision.
+
+        Read after every exec, and after a refusal that typed nothing. A
+        session is kept only while it is alive, still *key*, with its terminal
+        record and its identity mark intact, and not a switched session whose
+        frame has no identity guard.
+        """
+        lost = session._session.identity_lost  # noqa: SLF001 — the manager's own pooled session
+        unguarded = session._session.identity_unguarded  # noqa: SLF001 — the manager's own pooled session
+        keepable = (
+            session.alive
+            and session.current_user == key
+            and not session.exec_baseline_lost
+            and not lost
+        )
+        if keepable and not unguarded:
+            self._exec_pools.setdefault(key, []).append(session)
+        elif keepable:
+            # By design: a session reached by a switch whose frame has no
+            # identity guard works, but is not reused.
+            logger.debug(
+                "%s: not pooling exec session %s: reached by a switch, and its frame "
+                "has no identity guard",
+                self._name,
+                session.name,
+            )
+            with suppress(Exception):
+                await session.close()
+        else:
+            logger.warning(
+                "%s: not pooling exec session %s (alive=%s, baseline_lost=%s, user=%r, "
+                "opened for %r, identity_lost=%s)",
+                self._name,
+                session.name,
+                session.alive,
+                session.exec_baseline_lost,
+                session.current_user,
+                key,
+                lost,
+            )
+            with suppress(Exception):
+                await session.close()
 
     def exec_route(self, *, needs_shell: bool = False) -> ExecRoute:
         """Which primitive an ``exec`` on this manager's transport would run on right now.
@@ -4968,22 +5123,70 @@ class SessionManager:
         ]
         return not opened or any(s.echoes for s in opened)
 
-    async def _acquire_exec_session(self) -> "HostSession":
-        """Pop an idle exec session off the free-list, or open a new one.
+    async def _acquire_exec_session(self, *, user: str | None) -> "HostSession":
+        """Pop an idle session off *user*'s free-list, or open a new one for them.
 
-        Sessions are keyed by a monotonic index so concurrent callers get
-        independent entries in ``_named_sessions``.  Dead sessions (closed
-        or disconnected) are skipped so callers always get a usable one.
+        The free-list is :meth:`_pool_key`'s bucket. A new session is opened
+        FOR that user (``open_session(as_user=...)``), so it is them before
+        its session setup runs. Sessions are named by a monotonic index so
+        concurrent callers get independent entries in ``_named_sessions``.
+        Dead sessions (closed or disconnected) are skipped so callers always
+        get a usable one.
         """
-        while self._exec_pool:
-            session = self._exec_pool.pop()
+        key = self._pool_key(user)
+        idle = self._exec_pools.get(key, [])
+        while idle:
+            session = idle.pop()
             if session.alive:
                 return session
-        self._exec_pool_count += 1
-        return await self.open_session(name=f"__exec_pool_{self._exec_pool_count}__")
+        return await self._open_exec_session(key)
 
-    async def open_session(self, *, name: str) -> "HostSession":
-        """Open or reuse a named persistent shell session.
+    async def _open_exec_session(self, key: str) -> "HostSession":
+        """Open a new pooled session for *key*, named by the pool's monotonic index."""
+        self._exec_pool_count += 1
+        return await self.open_session(
+            name=f"{_EXEC_POOL_PREFIX}{self._exec_pool_count}__", as_user=key
+        )
+
+    async def _mark_identity(self, session: "ShellSession") -> None:
+        """Give a pooled session reached by a switch its identity mark, or record that it has none.
+
+        Run once, at open, after the setup hook and its frame entry, in the
+        shell the session will type into (a hook may have started another).
+        Where that shell's frame can guard
+        (:attr:`~otto.host.command_frame.CommandFrame.guards_identity`), the
+        mark is set on the line of the switch's own identity proof
+        (:func:`~otto.host.login_proxy.prove_identity`), so the shell that
+        answers as the user is the shell that holds the mark; every exec then
+        carries the frame's guard. Where it cannot (an application dialect a
+        hook entered), or the shell cannot name itself (no ``id``), the
+        session is marked unguarded and the exec pool does not keep it.
+
+        Raises:
+            ~otto.host.login_proxy.LoginProxyError: the shell did not answer
+                as the session's user.
+        """
+        frame = session._frame  # noqa: SLF001 — the manager's own session, its frame after setup
+        if not frame.guards_identity:
+            session.identity_unguarded = True
+            return
+        mark = secrets.token_hex(8)
+        proven = await prove_identity(
+            _SessionProxyIO(session, self._log_command, self._log_output),
+            host_id=self._host_id,
+            user=session.current_user,
+            marking=frame.identity_mark_statement(mark=mark),
+            history_prefix=self._history_prefix(),
+        )
+        if not proven:
+            # The shell could not name itself (no `id`): a mark it holds
+            # vouches for nothing, so the session is treated as unguarded.
+            session.identity_unguarded = True
+            return
+        session.identity_mark = mark
+
+    async def open_session(self, *, name: str, as_user: str | None = None) -> "HostSession":
+        """Open or reuse a named persistent shell session, as *as_user* when given.
 
         Serialized via a per-name lock with a double-checked-locking
         pattern: concurrent callers requesting the same name resolve to a
@@ -4995,10 +5198,33 @@ class SessionManager:
         ``HostSession.alive`` is True on return — this prevents follow-on
         callers from observing a just-created (un-handshaken) session as
         dead and recreating it.
+
+        A new session is opened in this order:
+
+        1. its transport: *as_user*'s own ssh connection when they are not
+           the login and have a direct credential on an ``ssh`` term
+           (``_own_ssh_login``), else the login's;
+        2. the marker handshake;
+        3. the login proxy's hops (``_apply_login_proxy``), for the
+           login's session only;
+        4. when *as_user* is not who the session now is, a switch to them
+           (``switch_and_stamp``), kept for the session's life;
+        5. the session-setup hook (``_apply_session_setup``), which so
+           sees *as_user* as the session's user.
+
+        A failure at any step closes the session and leaves no entry; a
+        switch that cannot be made raises
+        :class:`~otto.host.login_proxy.LoginProxyError` here. *as_user* is
+        what the exec pool opens its sessions with; ``None`` is the login.
+
+        An existing live session of *name* is returned as it is when
+        *as_user* is ``None`` or the user it is now; one that is another user
+        raises :class:`ValueError` naming the session, its user and
+        *as_user*, before anything is typed.
         """
         existing = self._named_sessions.get(name)
         if existing and existing.alive:
-            return existing
+            return self._refuse_other_user(existing, as_user)
 
         # ``setdefault`` is atomic here — no ``await`` between lookup and use —
         # so concurrent callers for the same name share one lock instance.
@@ -5006,7 +5232,7 @@ class SessionManager:
         async with lock:
             existing = self._named_sessions.get(name)
             if existing and existing.alive:
-                return existing
+                return self._refuse_other_user(existing, as_user)
 
             # Close the underlying transport of the dead entry (if any) but
             # leave the dict slot intact — we'll overwrite it below.  Calling
@@ -5016,14 +5242,15 @@ class SessionManager:
             if existing is not None:
                 await existing._session.close()  # noqa: SLF001 — intra-package access to HostSession._session to close dead transport
 
+            own_login = self._own_ssh_login(as_user)
             named_factory = self._named_session_factory or self._session_factory
-            if named_factory is not None:
+            if named_factory is not None and own_login is None:
                 shell_session: ShellSession = self._from_factory(named_factory)
             else:
-                shell_session = await self._open_transport_session(named=True)
+                shell_session = await self._open_transport_session(named=True, ssh_user=own_login)
 
             shell_session._on_output = _sink_for(self._log_output, LogMode.NORMAL)  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
-            self._seed_user(shell_session)
+            self._seed_user(shell_session, own_login)
             # The marker handshake can take ~1 s on a cold telnet open (the
             # slow window that used to live inside ``connect()``'s login
             # drain). A cancellation or failed login landing here must not
@@ -5042,8 +5269,24 @@ class SessionManager:
             # get proxied for free. A failed hop tears the session down and
             # propagates, leaving no entry in _named_sessions (mirrors the
             # handshake-failure cleanup just above).
+            # Not on a session that authenticated as its own user: the hops
+            # lead to the login, which that session is not.
             try:
-                await self._apply_login_proxy(shell_session)
+                if own_login is None:
+                    await self._apply_login_proxy(shell_session)
+                if as_user is not None and as_user != shell_session.current_user:
+                    await switch_and_stamp(
+                        io=_SessionProxyIO(shell_session, self._log_command, self._log_output),
+                        creds=self._creds or [],
+                        user=as_user,
+                        password=None,
+                        current_user=shell_session.current_user,
+                        stamp=_stamp_of(shell_session),
+                        host_id=self._host_id,
+                        history_prefix=self._history_prefix(),
+                        term=getattr(self._connections, "term", None),
+                    )
+                    shell_session.note_reached_by_switch()
             except BaseException:
                 with suppress(Exception):  # pragma: no cover - best-effort cleanup
                     await shell_session.close()
@@ -5052,9 +5295,12 @@ class SessionManager:
             # Then the session-setup hook, on the same terms: it runs once per
             # OPEN, so the exec pool's sessions get it too (that is why the
             # pool is the only exec route a hooked host has).
-            kind: SetupKind = "exec_pool" if name.startswith("__exec_pool_") else "named"
+            kind: SetupKind = "exec_pool" if name.startswith(_EXEC_POOL_PREFIX) else "named"
             try:
                 await self._apply_session_setup(shell_session, kind)
+                self._refuse_hook_switched_user(shell_session, name=name, as_user=as_user)
+                if kind == "exec_pool" and shell_session.reached_by_switch:
+                    await self._mark_identity(shell_session)
             except BaseException:
                 with suppress(Exception):  # pragma: no cover - best-effort cleanup
                     await shell_session.close()
@@ -5075,6 +5321,41 @@ class SessionManager:
             )
             self._named_sessions[name] = host_session
             return host_session
+
+    def _refuse_hook_switched_user(
+        self, session: "ShellSession", *, name: str, as_user: str | None
+    ) -> None:
+        """Refuse a session a setup hook left as someone other than *as_user*.
+
+        A session opened for a user (an exec-pool session, a named session
+        opened ``as_user=``) IS that user for its whole life: the pool keeps
+        it in that user's bucket. A hook that switched it permanently would
+        have every command asked for *as_user* run as someone else, so the
+        open is refused here, after the hook and before anything is typed.
+        A session opened without a requested user is not checked.
+
+        Raises:
+            ~otto.host.errors.SessionSetupError: the hook left the session as
+                another user.
+        """
+        if as_user is None or session.current_user == as_user or self._session_setup is None:
+            return
+        raise SessionSetupError(
+            f"{self._host_id}: session setup {self._session_setup.name!r} left session "
+            f"{name!r} as {session.current_user!r}, not {as_user!r}, the user it was opened "
+            f"for; scope the switch to the hook (the handle's as_user) or ask for the user "
+            f"at the call (exec(user=...))"
+        )
+
+    @staticmethod
+    def _refuse_other_user(session: "HostSession", as_user: str | None) -> "HostSession":
+        """Return *session*, or raise if *as_user* asks for a user it is not."""
+        if as_user is not None and session.current_user != as_user:
+            raise ValueError(
+                f"session {session.name!r} is open as {session.current_user!r}, "
+                f"not {as_user!r}: open it under another name to have it as {as_user!r}"
+            )
+        return session
 
     async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to the default session, creating it if needed."""
@@ -5111,6 +5392,8 @@ class SessionManager:
                 return_exceptions=True,
             )
             self._named_sessions.clear()
+        # The pools' sessions are named sessions, closed just above.
+        self._exec_pools.clear()
 
         # Drop the per-name locks too. close_all() is a teardown point with
         # no concurrent open_session() in flight, so clearing here is race-free
