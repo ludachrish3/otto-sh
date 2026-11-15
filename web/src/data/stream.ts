@@ -87,15 +87,17 @@ export interface StreamControl {
   lost: (how: { recover: boolean }) => void;
 }
 
-/** The one warning for a connection whose fragments arrive in a format this
- * dashboard does not read, such as a tab left open across an upgrade that bumped
- * only the stream's version: its resync still reads, so it would look live while
- * every update is dropped. */
+/** The one warning for a connection whose frames (fragments and source
+ * frames alike) arrive in a format this dashboard does not read, such as a tab
+ * left open across an upgrade that bumped only the stream's version: its resync
+ * still reads, so it would look current while every update is dropped. Worded
+ * for every streamed mode: a review tab streams too (#1038). */
 function unreadableFormatWarning(format: unknown, dropped: number): string {
   return (
-    `The live stream sent ${dropped} update(s) in format ${String(format)}, but this ` +
-    `dashboard reads format ${MONITOR_STREAM_READ_VERSIONS.join(", ")}. Live updates are ` +
-    "being dropped; reload the page to get a dashboard that matches the server."
+    `The server's stream sent ${dropped} update(s) in format ${String(format)}, but ` +
+    `this dashboard reads format ${MONITOR_STREAM_READ_VERSIONS.join(", ")}. Updates ` +
+    "from the server are being dropped; reload the page to get a dashboard that " +
+    "matches the server."
   );
 }
 
@@ -166,8 +168,9 @@ export function startStream(
   // BOTH kinds of pending work — leaving this one untracked was the bug: a
   // stopped stream's already-scheduled reconnect fired anyway.
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  // Fragments dropped for an unreadable `format`: counted until, and surfaced ONCE
-  // per connection in the warnings channel at, the next flush — not once per fragment.
+  // Frames (fragments or source frames) dropped for an unreadable `format`:
+  // counted until, and surfaced ONCE per connection in the warnings channel at,
+  // the next flush — not once per frame.
   // Reset by connect(), because the resync on each reconnect replaces the
   // warnings channel wholesale.
   let unreadable = 0;
@@ -287,7 +290,7 @@ export function startStream(
         lost({ recover: false });
         if (!warnedUnreadable) {
           // Counted only until the one warning goes out, so the count it states is
-          // exactly what it counted; later unreadable fragments are dropped uncounted.
+          // exactly what it counted; later unreadable frames are dropped uncounted.
           if (unreadable === 0) unreadableFormat = frame.format;
           unreadable += 1;
         }

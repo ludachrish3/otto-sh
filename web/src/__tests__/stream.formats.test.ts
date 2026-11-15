@@ -18,6 +18,7 @@ import type { NormalizedSession } from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";
 import { startStream } from "../data/stream";
 import { MONITOR_STREAM_READ_VERSIONS, MONITOR_STREAM_WRITE_VERSIONS } from "../data/streamFormat";
+import { sourceState } from "./_sourceState";
 import { synthSession } from "./_synth";
 
 const SAMPLES = join(
@@ -131,6 +132,23 @@ describe("monitor-live-stream versions (browser)", () => {
     expect(state.sessions[0]?.metrics.map((m) => m.value)).toEqual([25]);
     expect(state.sessions[0]?.events).toEqual([]);
     expect(state.warnings).toEqual([warned]);
+  });
+
+  // #1038: a review tab streams too, and a source frame in an unreadable
+  // format is counted with the fragments, so the warning names no mode.
+  it("counts an unreadable source frame, in wording for live and review alike", () => {
+    const next = Math.max(...MONITOR_STREAM_READ_VERSIONS) + 1;
+    const onSource = vi.fn();
+    const { stop } = startStream({ onSource });
+    const state = sourceState({ mode: "review", kind: "json", source: "a.json" });
+    emit({ format: next, source_state: state, observed_at: state.observed_at });
+    vi.advanceTimersByTime(20);
+    stop();
+    expect(onSource).not.toHaveBeenCalled(); // dropped, not delivered
+    const [warning] = useReviewStore.getState().warnings;
+    expect(warning).toContain(`sent 1 update(s) in format ${next}`);
+    expect(warning).toContain("reload the page");
+    expect(warning).not.toMatch(/live/iu);
   });
 
   it("reads a fragment with no format, as the Python model does", () => {
