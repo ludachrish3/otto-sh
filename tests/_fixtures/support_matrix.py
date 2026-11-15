@@ -194,6 +194,14 @@ SURFACES: "tuple[Surface, ...]" = (
         ),
     ),
     Surface(
+        id="exec-cancel",
+        title="exec: a cancelled exec's command is stopped and the host stays usable",
+        contract=(
+            "tests/conformance/test_cancel_contract.py"
+            "::test_cancelling_an_exec_stops_its_command_and_leaves_the_host_usable"
+        ),
+    ),
+    Surface(
         id="transfer-roundtrip",
         title="transfer: put/get roundtrip preserves content",
         contract=(

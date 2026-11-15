@@ -253,7 +253,7 @@ class Voice:
     branches: "tuple[Branch, ...]" = ()
     """The observables this surface can offer, when it offers more than one.
 
-    Empty for a surface with a single observable, which is eleven of the fifteen today.
+    Empty for a surface with a single observable, which is twelve of the sixteen today.
     Non-empty means :attr:`capability` is never used for a MEASURED cell: the cell's
     own stored ``observable`` decides which arm ran, and an observable matching no arm
     -- or more than one -- publishes NO promise and fails the docs build.
@@ -441,6 +441,32 @@ VOICE: "dict[str, Voice]" = {
         ),
         narrowed="the contract declares such a device outside its own domain",
     ),
+    "exec-cancel": Voice(
+        short="cancelled exec",
+        capability=(
+            "cancel an `exec` and have otto stop its command before the cancellation "
+            "reaches you (on the local machine: its leader ended and its process group hung "
+            "up, as the known gaps below say), with the host answering the next command"
+        ),
+        narrowed=(
+            "this suite's vocabulary for such a target declares no "
+            "`exec_pid_long_running_template`, or the cell's `term` is a `console`: on a "
+            "single-client console otto cannot watch the command from a second connection, "
+            "so the stop is checked by a unit test that models the console"
+        ),
+        reader_narrowed=(
+            "otto checks a cancelled `exec` on a Zephyr board and on a console with unit "
+            "tests rather than on a device. The bed firmware has no command that blocks "
+            "(issue #1066), and a Zephyr guest is never driven to a cancellation (issue "
+            "#260); and a console takes one client, so otto cannot watch the command from a "
+            "second connection while it cancels it"
+        ),
+        narrowed_detail=(
+            "**None of this says a cancel is broken on such a device** -- it says the "
+            "surface has no observable there, which is why the cell is `not-observable` "
+            "rather than `measured-broken`."
+        ),
+    ),
     "transfer-roundtrip": Voice(
         short="file roundtrip",
         capability="put a file on the device and get the same bytes back",
@@ -608,10 +634,10 @@ VOICE: "dict[str, Voice]" = {
 KNOWN_GAPS: "dict[str, list[str]]" = {
     "exec": [
         (
-            "On the local machine, a timed-out `exec` sends TERM to the other processes of "
-            "the command's process group, but they may still be exiting when the call "
-            "returns, and one that ignores TERM survives "
-            "(`tests/unit/host/test_process_stop.py`)."
+            "On the local machine, a timed-out `exec` sends TERM, and a cancelled one HUP, "
+            "to the other processes of the command's process group and ends its leader, "
+            "but they may still be exiting when the call returns, and one that ignores the "
+            "signal survives (`tests/unit/host/test_process_stop.py`)."
         ),
     ],
     "run": [

@@ -135,6 +135,7 @@ from otto.host.telnet import abort_console_transports
 from tests._fixtures._console_lock import RESOURCE_NAME, console_access
 from tests._fixtures.bed_locks import lock_dir_or_root
 from tests.conformance._bed import BED_BUSYBOX, BED_ZEPHYR
+from tests.conformance._entry import on_console
 from tests.conformance._resolved import ResolvedCell
 
 # Which venue kinds stand up a console that serves ONE client at a time.
@@ -179,7 +180,7 @@ _HELD: "list[Path]" = []
 
 def opens_a_single_client_console(resolved: ResolvedCell) -> bool:
     """Whether standing *resolved* up puts a client on a single-client console."""
-    return resolved.kind in SINGLE_CLIENT_CONSOLE_KINDS or resolved.cell.term == "console"
+    return resolved.kind in SINGLE_CLIENT_CONSOLE_KINDS or on_console(resolved)
 
 
 def shares_a_family_cpu_budget(resolved: ResolvedCell) -> bool:

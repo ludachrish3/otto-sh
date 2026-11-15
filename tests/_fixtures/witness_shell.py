@@ -93,9 +93,42 @@ def witness_write_template(path: str) -> str:
     )
 
 
+STARTED_TOKEN = "otto-cf-started"
+"""What the long-running stimulus prints once it has written its witness: the one declaration
+its producer (:func:`long_running_template`), the cancel contract that waits for it and the
+support matrix's fake that relays it all read."""
+
+
+_WITNESSED_SHELL = "sh -c '"
+"""How :func:`long_running_template` opens the shell that becomes the witnessed process."""
+
+
 def long_running_template(path: str, *, seconds: int = 60) -> str:
     """A stimulus process that writes its own witness at *path*, then sleeps as the same pid."""
-    return f"sh -c '{witness_write_template(path)}; echo otto-cf-started; exec sleep {seconds}'"
+    return (
+        f"{_WITNESSED_SHELL}{witness_write_template(path)}; echo {STARTED_TOKEN}; "
+        f"exec sleep {seconds}'"
+    )
+
+
+def ignoring(command: str, signals: str) -> str:
+    """*command* (a :func:`long_running_template` spelling), its witnessed shell ignoring *signals*.
+
+    The ignore is set BY THE WITNESSED SHELL ITSELF, not inherited from a
+    wrapper. Measured 2026-11-16 on the lab's BusyBox 1.16.1, 1.21.1, 1.28.1
+    and 1.31.0 guests (``SigIgn`` in ``/proc/<pid>/status``): a new ``sh``
+    started with ``SIGHUP`` ignored (``(trap '' HUP; exec sh -c ...)``)
+    resets it to the default, so its sleeper dies of the hang-up; BusyBox
+    1.35.0 and GNU shells keep it. A ``trap "" HUP`` inside the shell holds
+    across its ``exec sleep`` on all five guests.
+    """
+    assert command.count(_WITNESSED_SHELL) == 1, command
+    return command.replace(_WITNESSED_SHELL, f'{_WITNESSED_SHELL}trap "" {signals}; ')
+
+
+def without_ignoring(command: str) -> str:
+    """*command* with an :func:`ignoring` ignore taken out again (a fake host's reading of it)."""
+    return re.sub(rf"{re.escape(_WITNESSED_SHELL)}trap \"\" [A-Z ]+; ", _WITNESSED_SHELL, command)
 
 
 def running_in_background_template(path: str, *, seconds: int = 30) -> str:

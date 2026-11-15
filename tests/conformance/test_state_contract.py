@@ -32,7 +32,7 @@ from typing import NamedTuple
 import pytest
 
 from otto.host.exec_route import ExecRoute
-from tests.conformance._entry import EXEC_SHELL, UNIX, expected_route, issue, opened
+from tests.conformance._entry import EXEC_SHELL, UNIX, expected_route, issue, on_console, opened
 from tests.conformance._resolved import ResolvedCell
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
@@ -80,7 +80,7 @@ def _console_exec(resolved: ResolvedCell) -> bool:
     options, as the user that shell is at that moment. The contract checks
     that user too, the console's declared difference.
     """
-    return resolved.cell.term == "console" and resolved.family == UNIX
+    return on_console(resolved) and resolved.family == UNIX
 
 
 def _terminal_arm(resolved: ResolvedCell) -> bool:

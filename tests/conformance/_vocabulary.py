@@ -70,6 +70,12 @@ OTTO_SENTINEL_PREFIX = "__OTTO_"
 # POSIX vocabulary can afford.
 _FRAME_TOKEN = "otto-conformance-frame"
 _TAIL_TOKEN = "otto-conformance-tail"
+# How long the unix vocabulary's long-running commands sleep: one value, so a judge
+# that reads `long_running_seconds` is reading the sleep that actually runs. Long
+# enough that the cancel contract's control (the command must still run for the
+# stop bound after the cancel) keeps a wide margin on a loaded runner; no sunny-day
+# path waits for it, since every contract that runs it stops or kills it.
+_UNIX_LONG_RUNNING_S = 30
 
 
 class OutputArm(enum.Enum):
@@ -388,8 +394,8 @@ POSIX = Vocabulary(
     single_line_pattern=None,
     sentinel_plant_command=f"printf '%s\\n' {OTTO_SENTINEL_PREFIX}conformance_control__",
     remove_file_template="rm {path}",
-    long_running_command="sleep 10",
-    long_running_seconds=10.0,
+    long_running_command=f"sleep {_UNIX_LONG_RUNNING_S}",
+    long_running_seconds=float(_UNIX_LONG_RUNNING_S),
     run_state_set_command="cd /dev && export OTTO_CF_RUN=run && set -f",
     exec_state_set_command="cd / && export OTTO_CF_EXEC=exec && set -C",
     state_read_command=(
@@ -415,10 +421,12 @@ POSIX = Vocabulary(
     stdin_eof_command="cat; echo otto-cf-eof",
     # The witness statements are `witness_shell`'s own (DEF-WIT), as `{path}` templates.
     pid_long_running_template=witness_shell.format_template(
-        functools.partial(witness_shell.long_running_template, seconds=10)
+        functools.partial(witness_shell.long_running_template, seconds=_UNIX_LONG_RUNNING_S)
     ),
     exec_pid_long_running_template=witness_shell.format_template(
-        lambda path: "exec " + witness_shell.long_running_template(path, seconds=10)
+        lambda path: (
+            "exec " + witness_shell.long_running_template(path, seconds=_UNIX_LONG_RUNNING_S)
+        )
     ),
     witness_running_template=witness_shell.format_template(
         witness_shell.running_in_background_template
