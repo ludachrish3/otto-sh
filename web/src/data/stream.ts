@@ -101,9 +101,17 @@ function unreadableFormatWarning(format: unknown, dropped: number): string {
  *    (`clean`). The promise must not
  *    reject (data/source.ts's resyncOnOpen resolves false instead).
  *    Returning nothing means the open itself is enough.
- *  - `onFirstError` runs when the stream fails before it EVER opened (a
- *    static server with no `/api/stream`): the stream stops itself, with no
- *    reconnect.
+ *  - `isServed` is asked when a connection errors before the stream EVER
+ *    opened: an error event cannot tell a server with no `/api/stream` (a
+ *    static file server) from a real one refusing this connection (#1042).
+ *    It returns a promise of whether a server serves the URL after all:
+ *    true retries with backoff, and a later error before an open retries
+ *    without asking again. The promise must not reject. With no `isServed`,
+ *    such an error is no server.
+ *  - `onNoServer` runs once when the stream stops because no server serves
+ *    it: `isServed` answered false, or the EventSource could not even be
+ *    constructed (a refused URL; no EventSource at all), which no server
+ *    can change. The stream stops itself, with no reconnect.
  *  - `onSource` receives each source frame's state, in arrival order with
  *    the fragments around it.
  * A later error reconnects with backoff, and so does `reconnect()`. The
@@ -117,7 +125,8 @@ export function startStream(
   opts: {
     url?: string;
     onOpen?: () => Promise<boolean> | undefined;
-    onFirstError?: () => void;
+    isServed?: () => Promise<boolean>;
+    onNoServer?: () => void;
     onSource?: (state: MonitorSourceState) => void;
   } = {},
 ): StreamControl {
@@ -125,6 +134,9 @@ export function startStream(
   let source: EventSource | null = null;
   let stopped = false;
   let opened = false;
+  // `isServed` answered true: from then on an error before an open retries,
+  // as after an open.
+  let served = false;
   let attempt = 0;
   // The current connection's record for the backoff: whether its open was
   // healthy, and whether it lost a frame (`lost`). Only a connection that
@@ -210,9 +222,11 @@ export function startStream(
     try {
       source = new EventSource(url);
     } catch {
-      // A constructor that throws (a refused URL; no EventSource at all) is
-      // a transport failure like any other: the same path as an error event.
-      failed();
+      // A constructor that throws (a refused URL; no EventSource at all):
+      // before an open no server can change that, so it is no server; after
+      // one, a transport failure like any other.
+      if (!opened && !served) noServer();
+      else failed();
       return;
     }
 
@@ -267,19 +281,42 @@ export function startStream(
     source.onerror = failed;
   };
 
-  /** A connection failed: before the stream ever opened, no stream is
-   * served here (a static server), so retrying would only fail again; stop,
-   * and say so once. After it opened, reconnect with backoff. Reconnect only:
-   * the resync runs on the new connection's open (`onOpen`), once it is
-   * subscribed, so nothing published in between is lost. */
+  /** A connection failed. Before the stream ever opened, `isServed` says
+   * whether a server is here at all: no server stops the stream, once; a
+   * server is retried like a stream that opened. After it opened, reconnect
+   * with backoff. Reconnect only: the resync runs on the new connection's
+   * open (`onOpen`), once it is subscribed, so nothing published in between
+   * is lost. */
   function failed(): void {
     source?.close();
     source = null;
-    if (!opened) {
-      stop();
-      opts.onFirstError?.();
+    if (opened || served) {
+      retry();
       return;
     }
+    if (opts.isServed === undefined) {
+      noServer();
+      return;
+    }
+    void opts.isServed().then((isServer) => {
+      if (stopped) return;
+      if (!isServer) {
+        noServer();
+        return;
+      }
+      served = true;
+      retry();
+    });
+  }
+
+  /** No server serves this stream: stop, and say so once. */
+  function noServer(): void {
+    stop();
+    opts.onNoServer?.();
+  }
+
+  /** Reconnect after the backoff's next step. */
+  function retry(): void {
     useReviewStore.getState().actions.setConnection("disconnected");
     if (stopped) return;
     if (clean()) attempt = 0;

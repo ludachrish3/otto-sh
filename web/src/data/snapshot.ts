@@ -1,5 +1,6 @@
 // The ONE fetch of `/api/mode` and the ONE fetch of `/api/monitor_sessions`
-// (data/source.ts's syncFromServer and admitSource both read through here).
+// (data/source.ts's syncFromServer and admitSource both read through here,
+// and data/bootstrap.ts's probe after a stream that never opened).
 //
 // Soft-fail contract (binding): the built dist/ is also served by dumb
 // static file servers with no /api/* routes at all (the docs-capture

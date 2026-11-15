@@ -124,7 +124,10 @@ at once even while the collector is stalled; health still reads the last
 metric alone. Because the dashboard boots from that
 snapshot fetch in live and review mode alike, it also runs from a bare static
 file server with no `/api/*` routes (the docs screenshots and ad-hoc demos): a
-boot whose stream never opens falls back to the empty Import screen. A stream
+boot whose stream never opens, and whose one `GET /api/mode` probe finds no
+otto server, falls back to the empty Import screen (the probe tells a static
+server from a real one that refused the first stream; see
+[the dashboard page](../../cli/monitor/dashboard.md)). A stream
 that opened is an otto server, so a `GET /api/mode` or a snapshot that fails
 is retried through the stream's reconnect, with Import withheld until a mode
 answers. Once `/api/mode` has answered, the source it names decides Import (a

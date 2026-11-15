@@ -17,10 +17,16 @@
 //
 // Until the boot learns what serves the URL, the URL's source is unresolved
 // (the store's `sourceKindUnresolved`) and Import is withheld: the first
-// `/api/mode` answer names the source (it is pending from then on, whatever
-// its snapshot does), and a stream that fails before it ever opened means
-// no otto server serves the URL: no server source, where Import loads a
-// file in the tab.
+// sync's `/api/mode` answer names the source (it is pending from then on,
+// whatever its snapshot does), and a stream that fails before it ever opened, with
+// no otto server answering `/api/mode` either, means no otto server serves
+// the URL: no server source, where Import loads a file in the tab. An
+// EventSource error says nothing of why, so a real server that refused the
+// first stream (draining, say) is told apart by that one probe (#1042): it
+// answers a source state, and the stream retries until it opens. The probe
+// only settles whether a server is there; the source it names is recorded
+// by the sync on the first open, so meanwhile the page waits for the
+// server's data with Import withheld.
 //
 // Soft-fail contract (binding): the built dist/ is also served by dumb
 // static file servers with no /api/* routes at all (ad-hoc demo serving,
@@ -28,8 +34,12 @@
 // Playwright pin blocks every non-local request outright. Both depend on
 // this module leaving the shell exactly as it behaves without it whenever a
 // fetch can't succeed. So a stream that fails before it ever opens (no
-// /api/stream) stops, with no reconnect, nothing is fetched, and the empty
-// Import shell stays. That is the ONE "no server" outcome.
+// /api/stream) asks `/api/mode` once, through snapshot.ts's soft-failing
+// fetchMode; when that is no source state (a 404, an HTML page, a blocked
+// or failed request) the stream stops, with no reconnect, nothing else is
+// fetched, and the empty Import shell stays. A stream that cannot even be
+// constructed (no EventSource) skips the probe. That is the ONE "no server"
+// outcome.
 //
 // A stream that opened is an otto server, so nothing it does after that
 // closes the stream: a `/api/mode` or a snapshot that could not be read (a
@@ -48,6 +58,7 @@
 // stream open for it.
 
 import { useReviewStore } from "./reviewStore";
+import { fetchMode } from "./snapshot";
 import {
   admitSourceFrame,
   registerStream,
@@ -77,8 +88,12 @@ export async function bootstrapFromServer(): Promise<void> {
     // A reconnect's open is healthy once its resync installs (the stream
     // resets its backoff when such a connection ends having lost no frame).
     onOpen: () => (opened ? resyncOnOpen() : firstOpened()),
+    // The stream errored before it ever opened: an otto server whose
+    // `/api/mode` answers is there (it refused this connection, e.g. while
+    // draining), and the stream retries (#1042).
+    isServed: async () => (await fetchMode(generation)) !== null,
     // No otto server serves the URL: the one way the boot concludes that.
-    onFirstError: () => {
+    onNoServer: () => {
       review.setSourceKindUnresolved(false);
       settleFirstOpen(false);
     },
