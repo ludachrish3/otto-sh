@@ -300,14 +300,11 @@ def test_an_own_class_registered_for_the_verb_is_built_once_under_dry_run(run_cl
 
 def test_a_secret_default_reaches_the_instruction_as_its_value(run_cli):
     """Typer used to render the default through str(): the body got '**********'."""
-    import click
     import pydantic
 
     @options
     class Vault:
-        token: Annotated[pydantic.SecretStr, typer.Option(click_type=click.STRING)] = (
-            pydantic.SecretStr("dflt")
-        )
+        token: Annotated[pydantic.SecretStr, typer.Option()] = pydantic.SecretStr("dflt")
 
     register_options(Vault, verbs=["run"])
     seen = []
@@ -497,14 +494,13 @@ class TestDryRunBuildsAndShowsOptions:
         )
 
     def test_a_secretstr_field_is_masked_never_the_raw_value(self, run_cli) -> None:
-        import click
         import pydantic
 
         @options
         class CredOptions:
-            token: Annotated[
-                pydantic.SecretStr, typer.Option(click_type=click.STRING, help="A secret.")
-            ] = pydantic.SecretStr("x")
+            token: Annotated[pydantic.SecretStr, typer.Option(help="A secret.")] = (
+                pydantic.SecretStr("x")
+            )
 
         register_options(CredOptions, verbs=["run"])
 
@@ -765,14 +761,11 @@ class TestDryRunBuildsAndShowsOptions:
         """
         import dataclasses
 
-        import click
         import pydantic
 
         @dataclasses.dataclass
         class OptSecret:
-            token: Annotated[
-                pydantic.SecretStr | None, typer.Option(click_type=click.STRING, help="t")
-            ] = None
+            token: Annotated[pydantic.SecretStr | None, typer.Option(help="t")] = None
 
         @instruction(options=OptSecret)
         async def optsecret(opts: OptSecret) -> None: ...
@@ -785,14 +778,13 @@ class TestDryRunBuildsAndShowsOptions:
 
     def test_a_secretstr_list_field_is_masked_in_would_run_too(self, run_cli) -> None:
         """``list[SecretStr]`` -- same gap, through a container instead of a union."""
-        import click
         import pydantic
 
         @options
         class ListSecret:
-            tokens: Annotated[
-                list[pydantic.SecretStr], typer.Option(click_type=click.STRING, help="t")
-            ] = pydantic.Field(default_factory=list)
+            tokens: Annotated[list[pydantic.SecretStr], typer.Option(help="t")] = pydantic.Field(
+                default_factory=list
+            )
 
         @instruction(options=ListSecret)
         async def listsecret(opts: ListSecret) -> None: ...

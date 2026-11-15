@@ -713,7 +713,7 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `tomli` | 2.4.0 | TOML parser for `.otto/settings.toml` |
 | `tomlkit` | 0.14 | Comment-preserving edits to the user settings file (`otto cache enable` / `disable`) |
 | `truststore` | 0.10 | Verifies otto's HTTPS clients (`otto.tls`) against the OS certificate store |
-| `typer` | 0.26 | CLI framework (builds `otto run`, `otto test`, etc.) |
+| `typer` | 0.29 | CLI framework (builds `otto run`, `otto test`, etc.) |
 | `typing-extensions` | 4.12.0 | Backport of `typing.override` (PEP 698) for Python < 3.12 |
 | `uv` | 0.11 | Installs and syncs the `otto env` orchestration venv; otto runs the uv installed with it |
 | `uvicorn` | 0.42.0 | ASGI server for the monitor dashboard |

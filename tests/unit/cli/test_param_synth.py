@@ -48,6 +48,17 @@ def _by_name(binding, name):
     return next(p for p in binding.params if p.name == name)
 
 
+def _built_param(param: inspect.Parameter):
+    """Return the parser parameter Typer builds for synthesized *param*, through its public API."""
+    app = typer.Typer()
+
+    def command(**kwargs): ...
+
+    command.__signature__ = inspect.Signature([param])  # ty: ignore[unresolved-attribute]
+    app.command()(command)
+    return next(p for p in typer.main.get_command(app).params if p.name == param.name)
+
+
 def _has_typer(param, typer_type):
     # annotation is Annotated[T, typer.Argument()/Option()] -> check metadata
     meta = getattr(param.annotation, "__metadata__", ())
@@ -293,13 +304,10 @@ def test_opt_short_on_bool_keeps_the_auto_generated_negative():
     typer_meta = param.annotation.__metadata__[0]
     assert typer_meta.param_decls == ("--recursive/--no-recursive", "-r")
 
-    # Behavioural check: hand the same OptionInfo typer produced to typer's own
-    # get_click_param (the function Typer itself uses to build the underlying
-    # click.Option) and inspect the real parsed opts/secondary_opts, the way
-    # click itself will see them at parse time.
-    base = get_args(param.annotation)[0]
-    param_meta = typer.models.ParamMeta(name="recursive", default=typer_meta, annotation=base)
-    click_param, _ = typer.main.get_click_param(param_meta)
+    # Behavioural check: let Typer build a real command from the synthesized
+    # parameter and inspect the parsed opts/secondary_opts, the way the parser
+    # itself will see them at parse time.
+    click_param = _built_param(param)
     assert click_param.opts == ["--recursive", "-r"]
     assert click_param.secondary_opts == ["--no-recursive"]
 
@@ -318,10 +326,7 @@ def test_a_default_true_bool_option_renders_with_its_off_switch():
 
     binding = build_cli_binding(verb)
     param = next(p for p in binding.params if p.name == "concurrent")
-    typer_meta = param.annotation.__metadata__[0]
-    base = get_args(param.annotation)[0]
-    param_meta = typer.models.ParamMeta(name="concurrent", default=typer_meta, annotation=base)
-    click_param, _ = typer.main.get_click_param(param_meta)
+    click_param = _built_param(param)
     assert "--concurrent" in click_param.opts
     assert "--no-concurrent" in click_param.secondary_opts
 

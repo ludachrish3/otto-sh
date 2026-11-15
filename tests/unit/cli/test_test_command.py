@@ -481,13 +481,10 @@ def test_dry_run_validates_verb_options_as_a_run_would(otto_test_cli, one_projec
 
 
 def test_dry_run_masks_secret_and_repr_false_fields(otto_test_cli, one_project):
-    import click
 
     @options
     class Creds:
-        token: Annotated[pydantic.SecretStr, typer.Option(click_type=click.STRING)] = (
-            pydantic.SecretStr("")
-        )
+        token: Annotated[pydantic.SecretStr, typer.Option()] = pydantic.SecretStr("")
         note: Annotated[str, typer.Option()] = pydantic.Field(default="", repr=False)
 
     register_options(Creds, verbs=["test"])
@@ -503,13 +500,10 @@ def test_dry_run_masks_secret_and_repr_false_fields(otto_test_cli, one_project):
 
 
 def _secret_default_class():
-    import click
 
     @options
     class Vault:
-        token: Annotated[pydantic.SecretStr, typer.Option(click_type=click.STRING)] = (
-            pydantic.SecretStr("dflt")
-        )
+        token: Annotated[pydantic.SecretStr, typer.Option()] = pydantic.SecretStr("dflt")
 
     return Vault
 
@@ -683,14 +677,11 @@ def test_a_parse_time_usage_error_prints_usage_and_try(otto_test_cli, one_projec
 
 def _probe_options():
     """The reviewer's probe shape: a plain flag, a SecretStr, and two ``repr=False`` defaults."""
-    import click
 
     @options
     class Probe:
         firmware: Annotated[str, typer.Option(help="Firmware.")] = "latest"
-        token: Annotated[pydantic.SecretStr, typer.Option(click_type=click.STRING)] = (
-            pydantic.SecretStr("S3CR3T-TOKEN")
-        )
+        token: Annotated[pydantic.SecretStr, typer.Option()] = pydantic.SecretStr("S3CR3T-TOKEN")
         note: Annotated[str, typer.Option(help="Hidden note.")] = pydantic.Field(
             default_factory=lambda: "S3CR3T-FROM-FACTORY", repr=False
         )
@@ -714,7 +705,7 @@ def test_no_sensitive_default_reaches_the_cache_or_the_help(otto_test_cli):
 
 
 def test_a_secret_flag_keeps_every_other_flag_cached():
-    """One SecretStr field (an explicit click_type) used to drop the verb's whole flag list."""
+    """One SecretStr field used to drop the verb's whole flag list."""
     from otto.cli.registry import collect_test_verb_options
 
     register_options(_probe_options(), verbs=["test"])

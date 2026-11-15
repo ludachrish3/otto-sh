@@ -77,7 +77,7 @@ def _tree():
             _param(["--field", "--debug"], "debug", takes_value=False),
             _param(
                 ["--xdir", "-x"], "xdir", source={"kind": "none"}
-            ),  # a TyperPath: Typer offers nothing
+            ),  # a Path: Typer offers nothing
             _param(
                 ["--out", "-o"], "out", source={"kind": "echo"}
             ),  # a File: Typer echoes the fragment
@@ -236,7 +236,7 @@ def test_given_non_multiple_options_are_not_offered_again():
 
 
 def test_pending_value_option_completes_its_source():
-    assert _answer("otto --xdir ", 2) == []  # TyperPath: nothing, not the fragment
+    assert _answer("otto --xdir ", 2) == []  # a Path: nothing, not the fragment
     assert _answer("otto --xdir /tm", 2) == []
     assert _answer("otto --out ", 2) == [""]  # File: the fragment itself
     assert _answer("otto --out /tm", 2) == ["/tm"]

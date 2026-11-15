@@ -167,6 +167,10 @@ depends_on = [
     # file or conftest that registers anything is refused there too. A leaf
     # (it depends only on otto.errors), so no cycle can form.
     "otto.registry",
+    # completion_cache asks otto.params whether a flag's type is a pydantic
+    # secret (one decision with the masking), function-locally at cache-seed
+    # time. A foundation leaf over otto.errors and otto.registry: no cycle.
+    "otto.params",
     "otto.config.scope",
     "otto.models.dependencies",
     # otto.utils: the completion cache's collection child spells and collapses

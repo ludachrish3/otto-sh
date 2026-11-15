@@ -1180,7 +1180,8 @@ def test_exec_rejects_a_negative_timeout(monkeypatch):
     app = _make_app(monkeypatch, {"u1": UnixHost})
     r = CliRunner().invoke(app, ["u1", "exec", "--timeout", "-5", "echo hi"])
     assert r.exit_code == 2, r.output
-    assert "not in the range" in r.output
+    # Typer's own bound check (pydantic-worded since typer 0.29); the panel may wrap it.
+    assert "greater than or equal to 0" in " ".join(r.output.replace("│", " ").split())
 
 
 def test_run_accepts_infinite_timeout(monkeypatch):

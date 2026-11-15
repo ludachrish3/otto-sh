@@ -12,6 +12,35 @@ def _cli():
     return typer.main.get_command(app)
 
 
+def test_choice_values_are_spelled_as_typer_completes_them():
+    """An Enum completes by its VALUE, a Literal by itself; case sensitivity is carried."""
+    import enum
+    from typing import Annotated, Literal
+
+    class Mode(enum.Enum):
+        FAST = "fast"
+        SAFE = "Safe"
+
+    app = typer.Typer()
+
+    @app.callback()
+    def root() -> None: ...
+
+    @app.command()
+    def go(
+        mode: Annotated[Mode, typer.Argument()],
+        level: Annotated[Literal["lo", "HI"], typer.Option(case_sensitive=False)] = "lo",
+        modes: Annotated[list[Mode] | None, typer.Option()] = None,
+    ) -> None: ...
+
+    tree = serialize_tree(typer.main.get_command(app), pending_key=PENDING_SUBCMD_ARGS_KEY).tree
+    sources = {p["name"]: p["source"] for p in tree["commands"]["go"]["params"]}
+    assert sources["mode"] == {"kind": "static", "values": ["fast", "Safe"], "case_sensitive": True}
+    assert sources["level"] == {"kind": "static", "values": ["lo", "HI"], "case_sensitive": False}
+    assert sources["modes"] == sources["mode"]
+    assert sources["help"] == {"kind": "none"}
+
+
 def test_every_completer_in_the_cli_is_registered():
     """Spec §3.3: an unregistered completer would go live without anyone noticing."""
     result = serialize_tree(_cli(), pending_key=PENDING_SUBCMD_ARGS_KEY)
@@ -39,7 +68,7 @@ def test_root_options_and_commands_are_serialised_in_menu_order():
     assert pair["flags"] == ["--field", "--debug"]
     assert pair["takes_value"] is False
     xdir = next(p for p in tree["params"] if "--xdir" in p["flags"])
-    # a TyperPath: Typer offers nothing for a path fragment
+    # a Path: Typer offers nothing for a path fragment
     assert xdir["source"] == {"kind": "none"}
     assert "--help" in {f for p in tree["params"] for f in p["flags"]}
     # Stub-proof: a `--pending-subcmd-args` mishap resolves every child as a
@@ -77,7 +106,7 @@ def test_host_node_carries_per_class_verb_views():
 
 
 def test_the_serialiser_sees_typers_vendored_click():
-    """Typer 0.27 vendors click; a serialiser written against upstream `click` classifies NOTHING."""  # noqa: E501
+    """Typer vendors click; a serialiser written against upstream `click` classifies NOTHING."""
     from typer.core import TyperGroup, TyperOption
 
     cli = _cli()
