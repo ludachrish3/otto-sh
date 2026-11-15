@@ -253,7 +253,9 @@ function finishInstall(
   const install = { ...opts, state: installed, holds: state.revision ?? 0 };
   const result = actions.installSnapshot(text, state.source ?? "server", install);
   if (result === "invalid") return "invalid";
-  // A logged fragment the replay could not apply is a loss like any other.
+  // A logged fragment the replay could not apply is a loss like any other:
+  // the install already withheld the acknowledgement in its one write, and
+  // the stream's `lost` starts the recovery.
   if (result === "lost") stream?.lost({ recover: true });
   if (announce) {
     announce = false;

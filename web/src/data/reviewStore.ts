@@ -106,6 +106,14 @@ export function isCurrentResync(token: number): boolean {
   return token === lastResyncToken && resyncLogs.has(token);
 }
 
+/** A fragment was lost: every sync still in flight may have captured its
+ * snapshot before the loss, so none of their installs may settle the
+ * acknowledgement. The ONE gap rule, shared by `withholdCoverage` and an
+ * install whose own replay loses a fragment. */
+function markLogsGapped(): void {
+  for (const log of resyncLogs.values()) log.gap = true;
+}
+
 /** The fragment as a snapshot install may replay it: whole (metrics, log
  * events, meta and event changes alike), when it carries the server stamp
  * that orders it against the capture. A stampless fragment cannot be
@@ -244,8 +252,8 @@ interface ReviewActions {
    * `covered` to `holds`, all in one store write: the document and the
    * source it belongs to never disagree. The token is spent, and the
    * install resolves `resyncUnresolved` unless a fragment was lost while
-   * its sync was in flight (`withholdCoverage`). Only the newest sync
-   * installs (data/source.ts's isCurrentSync).
+   * its sync was in flight (`withholdCoverage`) or its own replay loses one.
+   * Only the newest sync installs (data/source.ts's isCurrentSync).
    *
    * `fresh` resets `range` and `activeSessionId` as an Import does. A resync
    * (not fresh) keeps both when `activeSessionId` still resolves against the
@@ -259,9 +267,11 @@ interface ReviewActions {
    * Returns `invalid` (and sets importError, keeping any previously loaded
    * data) when the body does not parse; `lost` when it installed but the
    * replay could not apply a logged fragment (one for a session the
-   * snapshot does not hold): the caller handles it as any other loss
-   * (data/stream.ts's `lost`, through data/source.ts's finishInstall), which
-   * withholds the acknowledgement and starts recovery; else `installed`. */
+   * snapshot does not hold). Such an install has already withheld the
+   * acknowledgement in its one write, so no subscriber sees it acknowledged
+   * in between (#1037); the caller starts recovery as for any other loss
+   * (data/stream.ts's `lost`, through data/source.ts's finishInstall). Else
+   * `installed`. */
   installSnapshot: (
     text: string,
     sourceName: string,
@@ -422,17 +432,16 @@ export interface ReviewState {
 export const useReviewStore = create<ReviewState>()((set, get) => {
   /** Parse `text` and install it in one store write, with `later` replayed
    * onto it in `opts.mode` and the fields `along` (see installSnapshot's doc
-   * comment). */
+   * comment). `along` is built after the replay, from the fragments it could
+   * not apply, so what follows from a loss lands in the same write as the
+   * snapshot (#1037). */
   const loadDocument = (
     text: string,
     sourceName: string,
     later: readonly MonitorSessionFragment[],
-    opts: Pick<SnapshotInstall, "fresh" | "captured"> & {
-      mode: ReviewState["mode"];
-      unheld?: MonitorSessionFragment[];
-    },
-    along: Partial<ReviewState> = {},
-  ): boolean => {
+    opts: Pick<SnapshotInstall, "fresh" | "captured"> & { mode: ReviewState["mode"] },
+    along: (unheld: readonly MonitorSessionFragment[]) => Partial<ReviewState> = () => ({}),
+  ): MonitorSessionFragment[] | null => {
     let result: ReturnType<typeof parseExportDocument>;
     try {
       result = parseExportDocument(text, opts.captured);
@@ -441,7 +450,7 @@ export const useReviewStore = create<ReviewState>()((set, get) => {
         importError:
           err instanceof ExportParseError ? err.message : `Import failed: ${String(err)}`,
       });
-      return false;
+      return null;
     }
     const { activeSessionId, sessions: held } = get();
     // The ONE condition that decides preserve-vs-fallback for a resync: does
@@ -450,20 +459,22 @@ export const useReviewStore = create<ReviewState>()((set, get) => {
       !opts.fresh &&
       activeSessionId !== null &&
       result.sessions.some((s) => s.id === activeSessionId);
+    const unheld: MonitorSessionFragment[] = [];
+    const sessions = reconcileSnapshot(result.sessions, held, later, {
+      fresh: opts.fresh,
+      mode: opts.mode,
+      unheld,
+    });
     set({
-      sessions: reconcileSnapshot(result.sessions, held, later, {
-        fresh: opts.fresh,
-        mode: opts.mode,
-        unheld: opts.unheld,
-      }),
+      sessions,
       rawMonitorSessions: result.document,
       sourceName,
       warnings: result.warnings,
       importError: null,
       ...(keepView ? {} : { activeSessionId: result.sessions[0]?.id ?? null, range: null }),
-      ...along,
+      ...along(unheld),
     });
-    return true;
+    return unheld;
   };
   return {
     sessions: [],
@@ -483,28 +494,33 @@ export const useReviewStore = create<ReviewState>()((set, get) => {
     actions: {
       importMonitorSessions: (text, sourceName) =>
         // A file the tab loaded itself: no server source, so no mode.
-        loadDocument(text, sourceName, [], { fresh: true, captured: null, mode: null }),
+        loadDocument(text, sourceName, [], { fresh: true, captured: null, mode: null }) !== null,
       installSnapshot: (text, sourceName, opts) => {
         const log = resyncLogs.get(opts.replayToken);
         resyncLogs.delete(opts.replayToken);
         const { state } = opts;
         const { covered, lastSourceStamp } = get();
-        const unheld: MonitorSessionFragment[] = [];
-        // The document and the source it belongs to, in one write.
-        const loaded = loadDocument(
+        // The document, the source it belongs to, and the acknowledgement it
+        // settles, in one write (#1037). A logged fragment the replay could
+        // not apply is a loss like any other: this install does not settle
+        // the acknowledgement, and, as withholdCoverage does, every sync
+        // still in flight is marked.
+        const unheld = loadDocument(
           text,
           sourceName,
           laterThanCapture(log?.frags ?? [], opts.captured),
-          { ...opts, mode: state.mode, unheld },
-          {
+          { ...opts, mode: state.mode },
+          (lost) => ({
             ...sourceFields(state, null),
             lastSourceStamp: raisedStamp(lastSourceStamp, state),
-            resyncUnresolved: log?.gap === true,
+            resyncUnresolved: log?.gap === true || lost.length > 0,
             covered: raisedCover(covered, state.token, opts.holds),
-          },
+          }),
         );
-        if (!loaded) return "invalid";
-        return unheld.length > 0 ? "lost" : "installed";
+        if (unheld === null) return "invalid";
+        if (unheld.length === 0) return "installed";
+        markLogsGapped();
+        return "lost";
       },
       // One store write and one notification, whether the door is HTTP or SSE.
       appendFragment: (frag) => get().actions.appendFragments([frag]),
@@ -541,7 +557,7 @@ export const useReviewStore = create<ReviewState>()((set, get) => {
         return unheld.every((f) => replaying && replayable(f) !== null);
       },
       withholdCoverage: () => {
-        for (const log of resyncLogs.values()) log.gap = true;
+        markLogsGapped();
         if (!get().resyncUnresolved) set({ resyncUnresolved: true });
       },
       selectSession: (id) => set({ activeSessionId: id, range: null }),
