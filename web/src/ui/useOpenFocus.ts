@@ -5,6 +5,7 @@ import {
   type RefCallback,
   type RefObject,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -54,12 +55,50 @@ import { type FocusManager, useFocusManager } from "react-aria";
  * Pass `ref` to the preferred field's element, and render `scope` anywhere
  * inside the overlay's Dialog: it hands the hook the overlay FocusScope's
  * focus manager for the fallback.
+ *
+ * `nested` (#1032) is for an overlay that launches a nested overlay
+ * rendered elsewhere in the React tree (the event editor, which App renders,
+ * over the events panel). When that nested overlay closes, react-aria
+ * restores focus to the control that opened it. If a Delete removed that
+ * control (the deleted event's Edit button), react-aria's fallbacks do not
+ * reach this overlay, and focus falls to <body>, where its Escape never
+ * hears a key. Pass `{ nestedOpen }`: when the nested overlay closes, the
+ * control in this overlay that last held focus (its opener) is gone, and
+ * focus sits on <body> a frame later, the overlay's Dialog takes focus.
+ * Gating on the opener being gone, not only on <body>, leaves an ordinary
+ * close to react-aria, whose restore may land later than that frame (under
+ * virtual modality focusSafely waits for transitions). The Dialog, not the
+ * field: the field may be a text input, which keeps Ctrl+Z for itself
+ * (ui/shortcuts.ts's isTextEditingTarget), and the delete promises Ctrl+Z
+ * undoes it. From the Dialog, Escape closes the overlay and Tab reaches its
+ * first control.
  */
 export function useOpenFocus<T extends HTMLElement>(
   opening: boolean | string | null,
+  nested: { nestedOpen: boolean } = { nestedOpen: false },
 ): { ref: RefCallback<T>; scope: ReactElement } {
+  const { nestedOpen } = nested;
   const target = useRef<T | null>(null);
   const manager = useRef<FocusManager | undefined>(undefined);
+  // The control in this overlay that last held focus: when a nested overlay
+  // opens, its opener. Declared before the opening focus below, so the
+  // listener already hears that focus.
+  const lastFocused = useRef<Element | null>(null);
+  useLayoutEffect(() => {
+    if (opening === false || opening === null) return;
+    const doc = target.current?.ownerDocument ?? document;
+    const onFocusIn = (e: FocusEvent) => {
+      const dialog = dialogOf(target.current);
+      if (dialog && e.target instanceof Element && dialog.contains(e.target)) {
+        lastFocused.current = e.target;
+      }
+    };
+    doc.addEventListener("focusin", onFocusIn);
+    return () => {
+      doc.removeEventListener("focusin", onFocusIn);
+      lastFocused.current = null;
+    };
+  }, [opening]);
   useLayoutEffect(() => {
     if (opening === false || opening === null) return;
     // The contract, checked on every open (dev only, like theme.ts): a caller
@@ -74,11 +113,35 @@ export function useOpenFocus<T extends HTMLElement>(
     if (el !== null && el.ownerDocument.activeElement === el) return;
     manager.current?.focusFirst({ tabbable: true });
   }, [opening]);
+  const wasNestedOpen = useRef(nestedOpen);
+  useEffect(() => {
+    const closed = wasNestedOpen.current && !nestedOpen;
+    wasNestedOpen.current = nestedOpen;
+    if (!closed) return;
+    const frame = requestAnimationFrame(() => {
+      // The overlay itself closed meanwhile: nothing to reclaim focus into.
+      if (manager.current === undefined) return;
+      // The opener is still here: react-aria restores to it, perhaps later.
+      const opener = lastFocused.current;
+      if (opener === null || opener.isConnected) return;
+      const dialog = dialogOf(target.current);
+      if (dialog === null || dialog.ownerDocument.activeElement !== dialog.ownerDocument.body) {
+        return;
+      }
+      dialog.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [nestedOpen]);
   const ref = useCallback((el: T | null) => {
     target.current = el;
   }, []);
   const scope = useMemo(() => createElement(OpenFocusScope, { into: manager }), []);
   return { ref, scope };
+}
+
+/** The overlay's Dialog: the nearest one enclosing its preferred field. */
+function dialogOf(el: HTMLElement | null): HTMLElement | null {
+  return el?.closest<HTMLElement>('[role="dialog"]') ?? null;
 }
 
 /** Reads the enclosing FocusScope's focus manager into the hook's ref.

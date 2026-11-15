@@ -65,7 +65,9 @@ const COMPOSE_STOP = "events-stop";
  *
  * Its first control takes `focusRef`, so it has focus when the panel opens
  * (ui/useOpenFocus.ts, #957). The panel stays open under the event editor
- * it launches, a nested overlay whose close restores focus here. The
+ * it launches, a nested overlay whose close restores focus here, or, when a
+ * Delete removed the Edit button that opened it, onto the panel itself
+ * (#1032). The
  * exposure is only within the panel's first 500 ms: opening and closing the
  * editor inside that window. A read-only panel launches no editor. */
 function EventsComposeRow(props: {
@@ -226,8 +228,14 @@ export function EventsPanel(props: { isOpen: boolean; onClose: () => void }) {
   const editable = useReviewStore((s) => s.editable);
   const openEventEditor = useUiStore((s) => s.actions.openEventEditor);
   const [jumpNotice, setJumpNotice] = useState<string | null>(null);
-  // The overlay below is mounted exactly while this holds.
-  const composeFocus = useOpenFocus<HTMLElement>(isOpen && session !== null);
+  // The overlay below is mounted exactly while this holds. The event editor
+  // it launches is rendered by App, not inside this overlay, so
+  // the panel takes focus back when a Delete leaves the editor nothing to
+  // restore it to (ui/useOpenFocus.ts, #1032).
+  const editorOpen = useUiStore((s) => s.eventEditor !== null);
+  const composeFocus = useOpenFocus<HTMLElement>(isOpen && session !== null, {
+    nestedOpen: editorOpen,
+  });
 
   // Cleared on reopen: a refusal from the panel's last time open must not
   // linger into the next one.
