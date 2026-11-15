@@ -1631,6 +1631,15 @@ EOF
     def provision_test_vm(vm, name)
         set_hostname(vm, name)
 
+        # The sudo policy of the 'test' login, per VM. Some VMs ask 'test' for
+        # its password so password sudo is tested on a real sudo: test1 with
+        # sudo's default timestamp, test3 asking every time. Elsewhere 'test'
+        # is not a sudoer, so a refused account stays testable too.
+        sudo_policy = {
+            "test1" => ["test ALL=(ALL:ALL) ALL"],
+            "test3" => ["Defaults:test timestamp_timeout=0", "test ALL=(ALL:ALL) ALL"],
+        }.fetch(name, [])
+
         # The test VMs idle well under 2 GB, so reduce the amount per VM
         # to ease memory pressure on the host.
         vm.vm.provider "virtualbox" do |vb|
@@ -1673,6 +1682,19 @@ EOF
             # Create an additional user 'test' for SSH and telnet access.
             useradd -m -s /bin/bash test
             echo 'test:Password1' | chpasswd
+
+            # Password sudo for 'test' on some VMs (sudo_policy above):
+            # 'vagrant' keeps sudo without a password everywhere, because
+            # Vagrant itself needs it. Checked by visudo before it is installed,
+            # so a bad line can never lock sudo; removed where no policy is set.
+            rm -f /etc/sudoers.d/otto-test-password
+            if [ -n '#{sudo_policy.join}' ]; then
+                printf '%s\n' #{sudo_policy.map { |line| "'#{line}'" }.join(" ")} > /etc/sudoers.d/otto-test-password.new
+                chmod 0440 /etc/sudoers.d/otto-test-password.new
+                visudo -cf /etc/sudoers.d/otto-test-password.new \
+                    && mv /etc/sudoers.d/otto-test-password.new /etc/sudoers.d/otto-test-password \
+                    || { rm -f /etc/sudoers.d/otto-test-password.new; exit 1; }
+            fi
         SHELL
     end
 

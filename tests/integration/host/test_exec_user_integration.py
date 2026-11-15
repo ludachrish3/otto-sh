@@ -100,9 +100,10 @@ async def test_exec_user_lands_on_a_proxy_login(term: str) -> None:
 async def test_exec_sudo_user_answers_with_that_users_own_password() -> None:
     """``exec(sudo=True, user="test")`` must not be told it typed the wrong password.
 
-    ``test`` has a password of its own and is NOT assumed to be a sudoer, so
-    the assertion is about the challenge, not the outcome: sudo may still
-    refuse the account, but it must never come back ``Sorry, try again`` —
+    ``test`` has a password of its own and is a sudoer on only some lab VMs
+    (the Vagrantfile's ``sudo_policy``), so the assertion is about the
+    challenge, not the outcome: sudo may still refuse the account where it
+    is not one, but it must never come back ``Sorry, try again`` —
     that string is sudo saying the password it was handed (pre-fix: the
     session user's) did not belong to the user running the command.
     """
