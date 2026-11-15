@@ -44,8 +44,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from asyncssh import HostKeyNotVerifiable, SSHClient, SSHKey
-from asyncssh.public_key import get_default_certificate_algs, get_default_public_key_algs
 from typing_extensions import override
 
 # The module, not its names: the test suite redirects the default file by
@@ -53,6 +51,7 @@ from typing_extensions import override
 # (``_hermetic_known_hosts`` in tests/conftest.py), which a name imported
 # here would not see.
 from . import known_hosts
+from ._asyncssh import asyncssh
 from .errors import (
     HostKeyChangedError,
     HostKeyNotCertifiedError,
@@ -94,7 +93,7 @@ nor asyncssh's own reasons (``Host key is not trusted``, ``Host key is
 revoked``, ``Host CA key ...``) begins with another."""
 
 
-class HostKeyClient(SSHClient):
+class HostKeyClient(asyncssh.SSHClient):
     """The client object of one connection that checks host keys by host ID.
 
     asyncssh calls :meth:`validate_host_public_key` only for a plain key the
@@ -109,10 +108,12 @@ class HostKeyClient(SSHClient):
         self._store = store
         self._alias = alias
         self._port = port
-        self._first_use: SSHKey | None = None
+        self._first_use: asyncssh.SSHKey | None = None
 
     @override
-    def validate_host_public_key(self, host: str, addr: str, port: int, key: SSHKey) -> bool:
+    def validate_host_public_key(
+        self, host: str, addr: str, port: int, key: asyncssh.SSHKey
+    ) -> bool:
         """Judge the key against the file as it is now; accept and remember a first use.
 
         asyncssh asks this for a key absent from what its ``known_hosts``
@@ -229,9 +230,11 @@ class HostKeyCheck:
             found = self.store.match(self.alias, self.port)
         except KnownHostsError:
             return None
-        certificates = get_default_certificate_algs() if found.ca_keys else []
+        certificates = asyncssh.public_key.get_default_certificate_algs() if found.ca_keys else []
         recorded = [alg for key in found.host_keys for alg in key.sig_algorithms]
-        ordered = dict.fromkeys([*certificates, *recorded, *get_default_public_key_algs()])
+        ordered = dict.fromkeys(
+            [*certificates, *recorded, *asyncssh.public_key.get_default_public_key_algs()]
+        )
         return [alg.decode("ascii") for alg in ordered]
 
     def connect_kwargs(self) -> dict[str, Any]:
@@ -289,7 +292,7 @@ def host_key_refusal(
             host_id=check.alias, address=address, path=str(store.path), reason=reason, kind=kind
         )
 
-    if isinstance(exc, HostKeyNotVerifiable):
+    if isinstance(exc, asyncssh.HostKeyNotVerifiable):
         if str(exc).startswith(_REVOKED_REASONS):
             return refused(str(exc), HostKeyRefusal.REVOKED)
         if str(exc).startswith(_CHANGED_REASON):

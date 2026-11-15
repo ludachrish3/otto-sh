@@ -924,8 +924,8 @@
     },
     "host_ssh_exec": {
       "by_bucket": {
-        "fd": 175,
-        "other": 1289,
+        "fd": 163,
+        "other": 252,
         "otto:*": 34,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -951,7 +951,7 @@
         "otto:errors.cpython-315.pyc": 1,
         "otto:fleet": 2,
         "otto:fleet.cpython-315.pyc": 1,
-        "otto:host": 257,
+        "otto:host": 261,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
@@ -1006,20 +1006,17 @@
         "workspace": 55
       },
       "by_process": {
-        "collect2": 182,
-        "gcc": 186,
-        "ld": 634,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3670
+        "python": 3639
       },
-      "file_ops": 4696,
+      "file_ops": 3651,
       "workspace": 55
     },
     "host_ssh_login": {
       "by_bucket": {
-        "fd": 175,
-        "other": 1289,
+        "fd": 163,
+        "other": 252,
         "otto:*": 34,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1045,7 +1042,7 @@
         "otto:errors.cpython-315.pyc": 1,
         "otto:fleet": 2,
         "otto:fleet.cpython-315.pyc": 1,
-        "otto:host": 257,
+        "otto:host": 261,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
@@ -1100,14 +1097,11 @@
         "workspace": 55
       },
       "by_process": {
-        "collect2": 182,
-        "gcc": 186,
-        "ld": 634,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3670
+        "python": 3639
       },
-      "file_ops": 4696,
+      "file_ops": 3651,
       "workspace": 55
     },
     "import_otto": {

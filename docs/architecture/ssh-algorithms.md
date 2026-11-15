@@ -19,6 +19,29 @@ credential or a FIDO key are pinned as registered and stock only — so a
 dependency bump that drops one fails the suite before any device notices,
 for every row the suite can actually drive a handshake over.
 
+## Optional native libraries
+
+Two rows on this page need a native library that asyncssh looks for once,
+while it loads: liboqs for the `sntrup761` key exchanges and libnettle for
+the `umac` MACs. otto finds a library only when the dynamic linker's cache
+lists it, which is what `ldconfig -p` prints:
+
+```console
+$ ldconfig -p | grep -E 'liboqs|libnettle'
+	libnettle.so.8 (libc6,x86-64) => /lib/x86_64-linux-gnu/libnettle.so.8
+```
+
+A library a package manager installed is listed. One copied into place by
+hand is listed after `sudo ldconfig`. A library reachable only through
+`LD_LIBRARY_PATH` or `LIBRARY_PATH` is not listed and is not used, and on a
+system whose C library has no `ldconfig -p` (Alpine's musl) neither library
+is found. The rows that need a missing library are then not offered, and the
+handshake settles on another algorithm from the same table.
+
+otto looks no further than the cache because the stdlib's fallback for an
+unlisted name is to run `gcc` and `ld`, on every command that opens an SSH
+connection ({doc}`startup-performance`).
+
 ## Key exchange
 
 Set with `kex_algs`.
@@ -43,8 +66,8 @@ Set with `kex_algs`.
 | `mlkem768x25519-sha256` | yes | |
 | `mlkem768nistp256-sha256` | yes | |
 | `mlkem1024nistp384-sha384` | yes | |
-| `sntrup761x25519-sha512` | yes | liboqs importable when asyncssh loads |
-| `sntrup761x25519-sha512@openssh.com` | yes | liboqs importable when asyncssh loads |
+| `sntrup761x25519-sha512` | yes | [liboqs in the linker cache](#optional-native-libraries) |
+| `sntrup761x25519-sha512@openssh.com` | yes | [liboqs in the linker cache](#optional-native-libraries) |
 | `curve25519-sha256` | yes | |
 | `curve25519-sha256@libssh.org` | yes | |
 | `curve448-sha512` | yes | |
@@ -127,8 +150,8 @@ Set with `mac_algs`.
 
 | Algorithm | Stock | Needs |
 |---|---|---|
-| `umac-64-etm@openssh.com` | yes | libnettle importable when asyncssh loads |
-| `umac-128-etm@openssh.com` | yes | libnettle importable when asyncssh loads |
+| `umac-64-etm@openssh.com` | yes | [libnettle in the linker cache](#optional-native-libraries) |
+| `umac-128-etm@openssh.com` | yes | [libnettle in the linker cache](#optional-native-libraries) |
 | `hmac-sha2-256-etm@openssh.com` | yes | |
 | `hmac-sha2-512-etm@openssh.com` | yes | |
 | `hmac-sha1-etm@openssh.com` | yes | |
@@ -137,8 +160,8 @@ Set with `mac_algs`.
 | `hmac-sha2-512-96-etm@openssh.com` | no | |
 | `hmac-sha1-96-etm@openssh.com` | no | |
 | `hmac-md5-96-etm@openssh.com` | no | |
-| `umac-64@openssh.com` | yes | libnettle importable when asyncssh loads |
-| `umac-128@openssh.com` | yes | libnettle importable when asyncssh loads |
+| `umac-64@openssh.com` | yes | [libnettle in the linker cache](#optional-native-libraries) |
+| `umac-128@openssh.com` | yes | [libnettle in the linker cache](#optional-native-libraries) |
 | `hmac-sha2-256` | yes | |
 | `hmac-sha2-512` | yes | |
 | `hmac-sha1` | yes | |

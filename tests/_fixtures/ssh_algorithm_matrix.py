@@ -44,11 +44,13 @@ FAMILIES = [KEX, HOST_KEY, CIPHER, MAC, COMPRESSION]
 
 # Notes. The first two gate the HANDSHAKE (the row is registered, but no
 # hostless test holds the credential); the last two gate REGISTRATION (the
-# row exists only when the library was importable).
+# row exists only when asyncssh found the library as it loaded, which
+# through otto means the linker cache lists it: the page's "Optional native
+# libraries" section, which the two notes link to).
 NEEDS_KERBEROS = "Kerberos credentials on the client"
 NEEDS_FIDO = "a FIDO security key"
-NEEDS_NETTLE = "libnettle importable when asyncssh loads"
-NEEDS_LIBOQS = "liboqs importable when asyncssh loads"
+NEEDS_NETTLE = "[libnettle in the linker cache](#optional-native-libraries)"
+NEEDS_LIBOQS = "[liboqs in the linker cache](#optional-native-libraries)"
 IMPORT_GATED = frozenset({NEEDS_NETTLE, NEEDS_LIBOQS})
 
 # Registries a row's family looks itself up in, to answer "is this name

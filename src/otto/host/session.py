@@ -921,8 +921,8 @@ class ShellSession(ABC):
         (``asyncio.IncompleteReadError``) or a write landing on an
         already-dead channel (``BrokenPipeError``). Overridden by
         :class:`SshSession` to add asyncssh's own ``ConnectionLost`` —
-        asyncssh is a heavy import (its ``ctypes.util.find_library`` probe
-        for liboqs/nettle spawns ``ldconfig`` and, on a miss, gcc/ld/collect2),
+        asyncssh is a heavy import (the cryptography stack, and ``ldconfig``
+        runs to look for liboqs and nettle: :mod:`otto.host._asyncssh`),
         so only the transport that can actually raise that error pays to
         import it, and only when a session of that transport exists. Consulted
         at every choke point that must treat "the transport is gone" as one
@@ -2005,13 +2005,13 @@ class SshSession(_PatternReaderTransport, ShellSession):
 
     @override
     def _connection_lost_errors(self) -> list[type[BaseException]]:
-        import asyncssh
+        from ._asyncssh import asyncssh
 
         return [*super()._connection_lost_errors(), asyncssh.ConnectionLost]
 
     @override
     async def open_transport(self) -> None:
-        import asyncssh
+        from ._asyncssh import asyncssh
 
         assert self._conn is not None, "SshSession._conn must be set before open_transport()"  # noqa: S101 — internal invariant: _conn set by subclass before open_transport()
         # Bytes (``encoding=None``), read in chunks through the session's
@@ -4570,7 +4570,7 @@ class SessionManager:
         :attr:`~otto.logger.mode.LogMode.NEVER`), so :meth:`exec_on_route` must NOT log
         before dispatching here.
         """
-        import asyncssh
+        from ._asyncssh import asyncssh
 
         mode = log
         if mode is not LogMode.NEVER:

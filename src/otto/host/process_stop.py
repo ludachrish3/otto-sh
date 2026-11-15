@@ -260,7 +260,7 @@ class ChannelStoppable:
 
     def send(self, sig: "StopSignal | Literal['KILL']") -> None:
         """Ask the channel to deliver *sig*."""
-        import asyncssh  # the ssh route has loaded it already
+        from ._asyncssh import asyncssh  # the ssh route has loaded it already
 
         try:
             if sig == "KILL":
@@ -274,7 +274,7 @@ class ChannelStoppable:
 
     async def wait(self) -> None:
         """Return once the channel reports the command's exit."""
-        import asyncssh
+        from ._asyncssh import asyncssh
 
         try:
             await self._process.wait()

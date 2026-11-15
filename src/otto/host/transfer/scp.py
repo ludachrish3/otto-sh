@@ -377,7 +377,7 @@ class ScpFileTransfer(UnixFileTransfer):
         *,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
-        import asyncssh
+        from .._asyncssh import asyncssh
 
         ssh_conn = await self._connections.ssh()
 
@@ -404,7 +404,7 @@ class ScpFileTransfer(UnixFileTransfer):
         *,
         concurrent: bool = True,
     ) -> dict[Path, Result]:
-        import asyncssh
+        from .._asyncssh import asyncssh
 
         ssh_conn = await self._connections.ssh()
 

@@ -872,8 +872,8 @@
     },
     "host_ssh_exec": {
       "by_bucket": {
-        "fd": 171,
-        "other": 1309,
+        "fd": 159,
+        "other": 272,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -896,7 +896,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 199,
+        "otto:host": 203,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -945,20 +945,17 @@
         "workspace": 59
       },
       "by_process": {
-        "collect2": 226,
-        "gcc": 186,
-        "ld": 642,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3361
+        "python": 3330
       },
-      "file_ops": 4439,
+      "file_ops": 3394,
       "workspace": 59
     },
     "host_ssh_login": {
       "by_bucket": {
-        "fd": 171,
-        "other": 1309,
+        "fd": 159,
+        "other": 272,
         "otto:*": 30,
         "otto:__init__": 2,
         "otto:__init__.abi3.so": 1,
@@ -981,7 +978,7 @@
         "otto:env": 13,
         "otto:errors": 2,
         "otto:errors.cpython-310.pyc": 1,
-        "otto:host": 199,
+        "otto:host": 203,
         "otto:instructions": 2,
         "otto:instructions.cpython-310.pyc": 1,
         "otto:inventory": 33,
@@ -1030,14 +1027,11 @@
         "workspace": 59
       },
       "by_process": {
-        "collect2": 226,
-        "gcc": 186,
-        "ld": 642,
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3361
+        "python": 3330
       },
-      "file_ops": 4439,
+      "file_ops": 3394,
       "workspace": 59
     },
     "import_otto": {

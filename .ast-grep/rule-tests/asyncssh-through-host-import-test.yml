@@ -1,0 +1,45 @@
+id: asyncssh-through-host-import
+valid:
+- |
+  def run():
+      from ._asyncssh import asyncssh
+- |
+  from .._asyncssh import asyncssh
+- |
+  if TYPE_CHECKING:
+      from asyncssh import SSHClientConnection
+      from asyncssh.listener import SSHListener
+- |
+  if typing.TYPE_CHECKING:
+      import asyncssh
+- |
+  import asyncssh_extras
+- |
+  from asyncsshx import connect
+invalid:
+- |
+  import asyncssh
+- |
+  def run():
+      import asyncssh
+- |
+  def run():
+      from asyncssh import connect
+- |
+  from asyncssh.sftp import SFTPConnectionLost
+- |
+  import asyncssh.public_key
+- |
+  import asyncssh as ssh
+- |
+  import os, asyncssh
+- |
+  if TYPE_CHECKING:
+      pass
+  else:
+      import asyncssh
+- |
+  try:
+      import asyncssh
+  except ImportError:
+      asyncssh = None

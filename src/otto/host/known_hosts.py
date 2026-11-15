@@ -29,10 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-from asyncssh import SSHKey, SSHKnownHosts, import_known_hosts
-from asyncssh.public_key import KeyImportError, import_certificate_subject
-
 from ..utils import atomic_write_bytes
+from ._asyncssh import asyncssh
 from .errors import (
     ForgetResult,
     HostKeyChangedError,
@@ -100,9 +98,9 @@ class HostKeyMatch(NamedTuple):
     this seven-part sequence; the names are asyncssh's own.
     """
 
-    host_keys: Sequence[SSHKey]
-    ca_keys: Sequence[SSHKey]
-    revoked_keys: Sequence[SSHKey]
+    host_keys: Sequence[asyncssh.SSHKey]
+    ca_keys: Sequence[asyncssh.SSHKey]
+    revoked_keys: Sequence[asyncssh.SSHKey]
     x509_certs: Sequence[object]
     revoked_certs: Sequence[object]
     x509_subjects: Sequence[object]
@@ -169,12 +167,12 @@ def _unwritable(path: Path, err: OSError) -> KnownHostsUnwritableError:
     )
 
 
-def _matches(parsed: SSHKnownHosts, name: str) -> HostKeyMatch:
+def _matches(parsed: asyncssh.SSHKnownHosts, name: str) -> HostKeyMatch:
     """Return asyncssh's match for *name* alone: no address, no port fallback."""
     return HostKeyMatch(*parsed.match(name, "", None))
 
 
-def _verdict(found: HostKeyMatch, key: SSHKey) -> HostKeyVerdict:
+def _verdict(found: HostKeyMatch, key: asyncssh.SSHKey) -> HostKeyVerdict:
     """Judge *key* against what the file holds for one host (:meth:`KnownHosts.judge`)."""
     if key in found.revoked_keys:
         return HostKeyVerdict.REVOKED
@@ -236,7 +234,7 @@ class KnownHosts:
         names = list(dict.fromkeys([entry_name(alias, port), alias, _bracketed_name(alias, port)]))
         self._refuse_subject_lines(text, names)
         try:
-            parsed = import_known_hosts(text)
+            parsed = asyncssh.import_known_hosts(text)
         except ValueError as err:
             raise KnownHostsError(f"{self.path}: {err}") from err
         found = [_matches(parsed, name) for name in names]
@@ -268,12 +266,14 @@ class KnownHosts:
             if entry is None:
                 continue
             try:
-                import_certificate_subject(entry.data)
-            except KeyImportError:
+                asyncssh.public_key.import_certificate_subject(entry.data)
+            except asyncssh.public_key.KeyImportError:
                 continue
             marker = f"@{entry.marker} " if entry.marker else ""
             try:
-                probe = import_known_hosts(f"{marker}{','.join(entry.patterns)} {_PROBE_KEY}")
+                probe = asyncssh.import_known_hosts(
+                    f"{marker}{','.join(entry.patterns)} {_PROBE_KEY}"
+                )
             except ValueError:
                 continue
             revokes = any(_matches(probe, name).revoked_keys for name in names)
@@ -299,7 +299,7 @@ class KnownHosts:
         """
         return self._lookup(self._read(), alias, _DEFAULT_PORT if port is None else port)
 
-    def judge(self, alias: str, port: int, key: SSHKey) -> HostKeyVerdict:
+    def judge(self, alias: str, port: int, key: asyncssh.SSHKey) -> HostKeyVerdict:
         """Judge *key*, presented by *alias* on *port*, against the file as it is now.
 
         The one decision both the handshake
@@ -341,7 +341,7 @@ class KnownHosts:
         finally:
             os.close(fd)
 
-    def record(self, alias: str, port: int, key: SSHKey) -> None:
+    def record(self, alias: str, port: int, key: asyncssh.SSHKey) -> None:
         """Record *key* as *alias*'s key on *port*, unless the file already holds it.
 
         The line written is the deciding entry's name (:func:`entry_name`):
@@ -509,7 +509,7 @@ def _is_alias_pattern(pattern: str, data: str, alias: str, names: list[str]) -> 
     if pattern.startswith("|"):
         # A hashed name can only be tested against candidates, through asyncssh.
         try:
-            parsed = import_known_hosts(f"{pattern} {data}")
+            parsed = asyncssh.import_known_hosts(f"{pattern} {data}")
         except ValueError:
             return False
         return any(any(_matches(parsed, name)) for name in names)
@@ -529,7 +529,7 @@ def _forget_verdict(line: str, alias: str, names: list[str]) -> "_Verdict":
     if not any(ours):
         # Not named outright; a wildcard or negation is asyncssh's to judge.
         try:
-            parsed = import_known_hosts(line)
+            parsed = asyncssh.import_known_hosts(line)
         except ValueError:
             return _Verdict.KEEP
         if not any(any(_matches(parsed, name)) for name in names):

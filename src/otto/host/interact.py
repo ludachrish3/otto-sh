@@ -894,7 +894,7 @@ async def run_ssh_login(
     that path. The host's ``shell_history`` is
     NOT among them: ``login`` never suppresses a human's shell history.
     """
-    import asyncssh
+    from ._asyncssh import asyncssh
 
     term_type = os.environ.get("TERM") or "xterm"
     cols, rows = interactive_terminal_size()

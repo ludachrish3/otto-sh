@@ -1,0 +1,50 @@
+id: asyncssh-through-host-import
+language: python
+severity: error
+message: otto imports asyncssh in one place, `otto.host._asyncssh`, which holds asyncssh's import-time library lookup to the linker cache. Take the name from there (`from ._asyncssh import asyncssh`, in the function that needs it) and reach everything else as an attribute of it. A name used only in annotations stays a `from asyncssh import ...` under `if TYPE_CHECKING:`.
+note: >
+  `import asyncssh` looks for liboqs and nettle with
+  `ctypes.util.find_library` while it loads. On glibc Linux a name the linker
+  cache does not list makes that function run gcc and then ld: eight extra
+  processes and about a thousand file operations per command that reaches
+  SSH, measured on a machine without liboqs (#659). `otto.host._asyncssh`
+  imports asyncssh with the lookup held to the cache leg.
+
+  The saving holds only if that module's import is the FIRST import of
+  asyncssh in the process, so every runtime import goes through it. A direct
+  `import asyncssh` that happens to run first brings the compiler runs back
+  for the whole process, and no test of the module that wrote it would show
+  it; the SSH surfaces of the import budget would, later and without naming
+  the line.
+
+  Runtime means: anywhere but the consequence of `if TYPE_CHECKING:`. A
+  function body counts, because that is where otto's imports of asyncssh
+  live. The submodules need no import of their own: `asyncssh/__init__`
+  loads `sftp`, `public_key`, `misc` and `listener`, so
+  `asyncssh.sftp.SFTPConnectionLost` resolves from the one name.
+files:
+- src/otto/**
+ignores:
+# The one import site.
+- src/otto/host/_asyncssh.py
+rule:
+  all:
+  - any:
+    - kind: import_statement
+      has:
+        any:
+        - kind: dotted_name
+        - kind: aliased_import
+        regex: '^asyncssh(\.|\s|$)'
+    - kind: import_from_statement
+      has:
+        field: module_name
+        regex: '^asyncssh(\.|$)'
+  - not:
+      inside:
+        kind: if_statement
+        field: consequence
+        stopBy: end
+        has:
+          field: condition
+          regex: '^(typing\.)?TYPE_CHECKING$'
