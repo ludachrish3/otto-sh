@@ -5,13 +5,14 @@ Runs on the SLOW path only (a cache write), after bootstrap, so resolving
 every command real here is a once-per-rewrite cost; the shim never imports
 this module.
 
-Typer vendors click as ``typer._click``: the app's commands are
+Typer vendors click: the app's commands are
 ``typer.core.TyperGroup``/``TyperCommand`` and its parameters
 ``typer.core.TyperOption``/``TyperArgument``. ``isinstance(x, click.Group)``
 against the upstream ``click`` package is ALWAYS False for this app (and
 ``click`` is not a dependency of otto-sh), so every class test below names
 Typer's own classes and every context comes from the command's own
-``context_class``.
+``context_class``. The vendored click's own names come from
+:mod:`otto.config._typer`, the one module that reaches into Typer's internals.
 """
 
 # Spec: docs/superpowers/specs/2026-09-04-shim-completion-design.md, sections 3.3-3.4.
@@ -31,8 +32,7 @@ if TYPE_CHECKING:
     import os
     from pathlib import Path
 
-    from typer._click.core import Command, Context, Parameter
-
+    from ._typer import Command, Context, Parameter
     from .project import Project
 
 _log = logging.getLogger(__name__)
@@ -83,25 +83,12 @@ def _context(cmd: "Command", name: str, parent: "Context | None") -> "Context":
     return type(cmd).context_class(cmd, info_name=name, parent=parent, **extra)
 
 
-def _original_completer(param: "Parameter") -> Any | None:
-    """Unwrap Typer's two layers to the ``autocompletion=`` callable, or ``None``."""
-    compat = getattr(param, "_custom_shell_complete", None)
-    if compat is None:
-        return None
-    code = getattr(compat, "__code__", None)
-    if code is None:  # a raw shell_complete= callable need not be a function
-        return compat
-    for name, cell in zip(code.co_freevars, compat.__closure__ or (), strict=False):
-        if name == "autocompletion":
-            wrapper = cell.cell_contents
-            return getattr(wrapper, "__wrapped__", wrapper)
-    return compat
-
-
 def _source_for(
     param: "Parameter", ctx: "Context", where: str, unregistered: list[str]
 ) -> dict[str, Any]:
-    fn = _original_completer(param)
+    from ._typer import autocompletion_of  # lazy: only a cache write reaches Typer's internals
+
+    fn = autocompletion_of(param)
     if fn is not None:
         declared = getattr(fn, "__completion_source__", None)
         if not isinstance(declared, dict):

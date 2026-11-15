@@ -33,7 +33,6 @@ import pytest
 import rich
 import typer
 from rich.console import Console
-from typer._click import _compat as click_compat
 from typer.testing import CliRunner
 
 from otto import lifecycle
@@ -44,6 +43,7 @@ from tests._fixtures.held_console import (
     live_sinks_with_a_held_console,
     quiet_pytest_live_logging,
 )
+from tests._fixtures.typer_internals import click_compat, termui
 
 
 @pytest.fixture(autouse=True)
@@ -309,7 +309,7 @@ def test_a_prompt_holds_the_terminal_after_draining_the_queue(pytestconfig, tmp_
         assert _proxy("stdout")._queue() is None
         return "answer"
 
-    monkeypatch.setattr("typer._click.termui.visible_prompt_func", reading)
+    monkeypatch.setattr(termui, "visible_prompt_func", reading)
     logging.getLogger("otto").info("logged before the question")
 
     with management.direct_terminal():

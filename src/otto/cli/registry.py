@@ -8,6 +8,7 @@ string imported only on dispatch), the help line shown by ``otto --help``
 third-party plugins register through the same :func:`register_cli_command`.
 """
 
+import functools
 import importlib
 import inspect
 from collections.abc import Callable
@@ -229,6 +230,29 @@ def _live_app_help(app: typer.Typer) -> str | None:
     return typer.main.solve_typer_info_help(TyperInfo(app)) or None
 
 
+def command_without_completion(app: typer.Typer) -> Any:
+    """Return ``typer.main.get_command(app)`` without Typer's completion options.
+
+    Typer appends ``--install-completion`` and ``--show-completion`` as the
+    LAST two params of the command of an app built with ``add_completion=True``
+    (its default). Those belong to the root ``otto`` app alone, so a sub-app
+    converted on its own drops them. Only a trailing pair with exactly those
+    names, in Typer's order, goes: a command's own option that shares one
+    name stays. (A command that itself declares both, last, in that order,
+    would lose them; Typer publishes no way to tell its pair apart.)
+    """
+    cmd: Any = typer.main.get_command(app)
+    if [p.name for p in cmd.params[-2:]] == _completion_param_names():
+        del cmd.params[-2:]
+    return cmd
+
+
+@functools.cache
+def _completion_param_names() -> list[str]:
+    """Return the names of the completion pair Typer appends, in its order, as Typer builds it."""
+    return [p.name or "" for p in typer.main.get_install_completion_arguments()]
+
+
 def resolve_spec_command(spec: CommandSpec) -> Any:
     """Return the vendored-click command/group for *spec*, importing lazily.
 
@@ -252,12 +276,7 @@ def resolve_spec_command(spec: CommandSpec) -> Any:
             # Suppress the sub-app's own ``--install/--show-completion`` params:
             # completion belongs to the root ``otto`` app, and base's flattened
             # ``monitor`` (from a name-less ``add_typer``) never carried them.
-            add_completion = loader._add_completion  # noqa: SLF001 — Typer flag we toggle for conversion
-            loader._add_completion = False  # noqa: SLF001
-            try:
-                leaf: Any = typer.main.get_command(loader)
-            finally:
-                loader._add_completion = add_completion  # noqa: SLF001
+            leaf = command_without_completion(loader)
             leaf.name = spec.name
             return leaf
         converted: Any = typer.main.get_group(loader)

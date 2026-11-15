@@ -72,6 +72,22 @@ def test_single_command_typer_app_flattens_like_typer_native():
     assert "show_completion" not in param_names
 
 
+def test_flattened_leaf_keeps_its_own_option_named_like_typers_completion_pair():
+    # Only the pair Typer appends goes: an app's own option that happens to be
+    # named show_completion is the app's, and still parses.
+    sub = typer.Typer(name="solo_display", add_completion=False)
+
+    @sub.command()
+    def go(show_completion: str = typer.Option("default", "--display")) -> None:
+        """Go."""
+        typer.echo(show_completion)
+
+    register_cli_command("solo_display", sub, help="Solo display.")
+    cmd = resolve_spec_command(CLI_COMMANDS.get("solo_display"))
+    assert [p.name for p in cmd.params] == ["show_completion"]
+    assert cmd.main(["--display", "shown"], standalone_mode=False) is None
+
+
 def test_register_function_resolves_to_command():
     async def hello(name: str = "world") -> None:
         """Say hello."""

@@ -357,7 +357,7 @@ def _wrap_with_options(
         # all (a test, or a library caller reaching this callable directly)
         # -- and never having gone through the CLI seam is exactly the case a
         # dry run cannot apply to, so that IS the "not a dry run" answer here.
-        from typer._click.globals import get_current_context
+        from ..config._typer import get_current_context
 
         # `typer.Context` (used everywhere else in this module) is a thin
         # subclass typer's OWN commands never actually instantiate --

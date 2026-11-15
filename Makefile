@@ -1890,7 +1890,7 @@ lint-arch: ## (Quality) Architecture gates: tach (module dependency contracts an
 	@$(SAY) "tach: the monitor boundary test still counts every import the installed tach counts"
 	@uv run --group lint python scripts/monitor_boundary_tach_canary.py
 	@$(SAY) "ast-grep: architecture pattern rules (.ast-grep/rules/)"
-	@uv run --group lint ast-grep scan src/otto web/src tests
+	@uv run --group lint ast-grep scan src/otto web/src tests scripts
 	@$(SAY) "ast-grep: rule tests (.ast-grep/rule-tests/)"
 	@uv run --group lint ast-grep test --skip-snapshot-tests
 	@$(SAY) "duplicate code: no clone pair beyond scripts/duplicate_code_baseline.txt, and none it lists has gone"

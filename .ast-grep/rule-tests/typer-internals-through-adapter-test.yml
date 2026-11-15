@@ -1,0 +1,126 @@
+id: typer-internals-through-adapter
+valid:
+- |
+  from ..config._typer import UsageError
+- |
+  from otto.config._typer import UsageError
+- |
+  def run():
+      from ._typer import get_current_context
+- |
+  from tests._fixtures.typer_internals import click_compat, termui
+- |
+  import typer
+- |
+  from typer.core import TyperGroup, TyperOption
+- |
+  from typer import Option, prompt
+- |
+  from typer import Option as _option
+- |
+  from typer.main import get_command
+- |
+  import typer_extras
+- |
+  from typerx._click import thing
+- |
+  from . import _typer
+- |
+  """Mirror ``typer._click.parser``: a docstring that names the module is prose."""
+- |
+  def f():
+      """typer._click.core is where Context lives."""
+- |
+  monkeypatch.setattr(termui, "visible_prompt_func", reading)
+- |
+  name = "typer.core"
+- |
+  text = "see typer._click for why"
+- |
+  ctx = typer.Context
+- |
+  self._typer.thing
+- |
+  getattr(typer, "Option")
+- |
+  getattr(other, "_click")
+- |
+  termui = sys.modules[typer.prompt.__module__]
+- |
+  print(typer, "_example")
+- |
+  log.info(f"typer.testing._get_command{name} is obsolete")
+- |
+  log.info("typer._click moved its parser")
+- |
+  name = "typer.__version__"
+- |
+  import typer.testing
+- |
+  from typer import testing
+- |
+  from typer import __version__
+- |
+  getattr(typer, "__version__")
+invalid:
+- |
+  from typer._click.exceptions import UsageError
+- |
+  def run():
+      from typer._click.globals import get_current_context
+- |
+  if TYPE_CHECKING:
+      from typer._click.core import Command, Context, Parameter
+- |
+  import typer._click.termui
+- |
+  import typer._completion_shared as shared
+- |
+  from typer import _click
+- |
+  from typer import Option, _click
+- |
+  from typer import (
+      Option,
+      _completion_shared,
+  )
+- |
+  from typer import _completion_shared as shared
+- |
+  from typer.main import _split_opt
+- |
+  from typer.core import TyperGroup, _main
+- |
+  typer._click.termui.visible_prompt_func = reading
+- |
+  shells = typer._completion_shared.Shells
+- |
+  typer.main._get_click_type(x)
+- |
+  getattr(typer, "_click")
+- |
+  monkeypatch.setattr(typer.main, "_split_opt", fake)
+- |
+  monkeypatch.setattr("typer._click.termui.visible_prompt_func", reading)
+- |
+  importlib.import_module('typer._click.shell_completion')
+- |
+  importlib.import_module(f"typer._click.{name}")
+- |
+  target = """typer._click.core"""
+- |
+  mock.patch("typer.testing._get_command", return_value=cmd)
+- |
+  monkeypatch.setattr("typer.main._split_opt", fake)
+- |
+  mock.patch.object(typer.testing, "_get_command", return_value=cmd)
+- |
+  hasattr(typer.main, "_x")
+- |
+  builtins.getattr(typer, "_click")
+- |
+  import typer as t
+- |
+  import typer.main as tm
+- |
+  assert type(ctx).__module__ == "typer._click.core"
