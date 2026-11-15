@@ -262,10 +262,10 @@ async def test_a_session_whose_restore_is_not_confirmed_gets_no_next_command(nam
         await s._ensure_initialized()
         task = asyncio.ensure_future(s.exec_(_DAMAGE, timeout=40))
         await asyncio.wait_for(s.armed.wait(), 5)
+        s.refuse_restore = True
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        s.refuse_restore = True
         before = len(s.writes)
         with pytest.raises(RuntimeError, match="session is not alive"):
             await s.exec_("echo otto-next-command", timeout=5)

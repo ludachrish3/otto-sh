@@ -1,8 +1,9 @@
 """The shell-route stop of a command otto gives up on: one bound, owned by ``compensate``.
 
-A timed-out or password-refused command is interrupted and the shell
-confirmed under one bound; a stop that cannot confirm leaves the session dead,
-and a cancellation landing during it is held until it ends.
+A timed-out, password-refused or cancelled command is interrupted and the
+shell confirmed under one bound, before the call returns; a stop that cannot
+confirm leaves the session dead, and a cancellation landing during it is held
+until it ends.
 """
 
 import asyncio
@@ -15,6 +16,8 @@ from otto.host.command_frame import ZephyrFrame
 from otto.host.errors import PasswordRefusedError
 from otto.host.exec_route import ExecRoute
 from otto.host.host import CredentialExpect
+from otto.host.session import ShellSession
+from otto.utils import wait_for_async
 from tests.unit.host._session_feed import scripted_shell, scripted_shell_unopened
 from tests.unit.host.test_session_exec_pooled import _exec, _mgr
 
@@ -123,3 +126,120 @@ async def test_a_timed_out_zephyr_command_is_stopped_under_the_same_bound():
     assert s.ops.count("write:'\\x03'") == 1
     assert not s._needs_recovery
     assert s.alive
+
+
+async def _old_mark_only(self, *, restore):
+    """The cancel arm as it was: mark the session for the next use, write nothing."""
+    self._needs_recovery = True
+
+
+async def _cancel_once_begun(s, task):
+    await s.began.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.timeout(10)
+async def test_a_cancel_stops_the_command_before_the_cancel_returns():
+    s = await scripted_shell()
+    await _cancel_once_begun(s, asyncio.ensure_future(s.run_cmd(cmd="c", timeout=60)))
+    assert s.ops.count("write:'\\x03'") == 1
+    assert not s._needs_recovery
+    assert s.alive
+    assert _stop_tasks() == []
+
+
+@pytest.mark.timeout(10)
+async def test_a_second_cancel_is_held_until_the_stop_resolves():
+    s = await scripted_shell(hold_probe=True)
+    task = asyncio.ensure_future(s.run_cmd(cmd="c", timeout=60))
+    await s.began.wait()
+    task.cancel()
+    await s.probe_sent.wait()
+    task.cancel()
+    s.probe_reply.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not s._needs_recovery
+    assert s.alive
+    assert _stop_tasks() == []
+
+
+@pytest.mark.timeout(10)
+async def test_a_blocked_interrupt_on_cancel_is_bounded_and_leaves_the_session_marked(
+    monkeypatch,
+):
+    for name in ("_RECOVERY_TIMEOUT", "_RECOVERY_SETTLE", "_RECOVERY_PROBE_TIMEOUT"):
+        monkeypatch.setattr(session_mod, name, 0.01)
+    # the command is written; the interrupt blocks
+    s = await scripted_shell(write_blocks_from="\x03")
+    await _cancel_once_begun(s, asyncio.ensure_future(s.run_cmd(cmd="c", timeout=60)))
+    assert s._needs_recovery
+    assert not s.alive
+    assert _stop_tasks() == []
+    with pytest.raises(RuntimeError, match="session is not alive"):
+        await s.run_cmd(cmd="true", timeout=5)
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize("op", ["run_cmd", "send", "expect"])
+async def test_a_session_a_cancel_left_dead_receives_nothing_further(op, monkeypatch):
+    for name in ("_RECOVERY_TIMEOUT", "_RECOVERY_SETTLE", "_RECOVERY_PROBE_TIMEOUT"):
+        monkeypatch.setattr(session_mod, name, 0.01)
+    s = await scripted_shell(write_blocks_from="\x03")
+    await _cancel_once_begun(s, asyncio.ensure_future(s.run_cmd(cmd="c", timeout=60)))
+    assert not s.alive
+    before = list(s.ops)
+    calls = {
+        "run_cmd": lambda: s.run_cmd(cmd="true", timeout=5),
+        "send": lambda: s.send("x\n"),
+        "expect": lambda: s.expect("x", timeout=5),
+    }
+    with pytest.raises(RuntimeError, match="session is not alive"):
+        await calls[op]()
+    assert s.ops == before
+
+
+@pytest.mark.timeout(10)
+async def test_a_pooled_exec_cancelled_with_a_blocked_interrupt_is_disposed(monkeypatch):
+    for name in ("_RECOVERY_TIMEOUT", "_RECOVERY_SETTLE", "_RECOVERY_PROBE_TIMEOUT"):
+        monkeypatch.setattr(session_mod, name, 0.01)
+    mgr = _mgr()
+    made = []
+
+    def factory(**kw):
+        made.append(scripted_shell_unopened(write_blocks_from="\x03"))
+        return made[-1]
+
+    mgr._session_factory = factory
+    task = asyncio.ensure_future(_exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", timeout=60))
+    await wait_for_async(
+        lambda: bool(made) and made[-1].began.is_set(),
+        10.0,
+        interval=0.01,
+        on_timeout="the pooled command never began",
+    )
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not made[-1].alive
+    assert mgr._exec_pool == []
+
+
+@pytest.mark.timeout(10)
+async def test_nothing_touches_the_transport_after_the_call_returns():
+    s = await scripted_shell()
+    await _cancel_once_begun(s, asyncio.ensure_future(s.run_cmd(cmd="c", timeout=60)))
+    s.ops.append("<returned>")
+    for _ in range(10):
+        await asyncio.sleep(0)
+    assert s.ops[-1] == "<returned>"
+
+
+@pytest.mark.timeout(10)
+async def test_control_with_the_old_mark_only_branch_the_command_is_not_stopped(monkeypatch):
+    monkeypatch.setattr(ShellSession, "_stop_interrupted_command", _old_mark_only)
+    s = await scripted_shell()
+    await _cancel_once_begun(s, asyncio.ensure_future(s.run_cmd(cmd="c", timeout=60)))
+    assert "write:'\\x03'" not in s.ops

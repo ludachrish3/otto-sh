@@ -155,11 +155,17 @@ shell's `set -e` is neither inherited nor changed.
 
 When an `exec` times out, has its password refused, or is cancelled, the
 frame's own end never ran. otto then types one line of its own once the shell
-is back (for a cancelled `exec`, at the next use of the session): it puts the
+is back, before the call returns or the cancellation reaches you: it puts the
 terminal record back and turns `set -e` on again where the shell had it. A
 session that cannot confirm that line is dead
 ({ref}`closing-a-session`), and a pooled one is discarded instead of handed
 out again.
+
+The same holds for a `run` that times out or is cancelled: otto types its
+Ctrl-C before the call returns. If your own session has `set -e` on, that
+interrupt can end the shell itself. otto then cannot confirm the shell, the
+session is dead, and the next use opens a new session or fails as
+{ref}`closing-a-session` describes.
 
 To do this the shell keeps a few unexported variables of otto's:
 
@@ -239,10 +245,11 @@ signalled.
 
 The local shell runs in a session of its own, with no controlling terminal, so
 a Ctrl-C typed at otto's terminal does not reach the commands running in it.
-Cancelling a `run` does not stop its command by itself: the command is
-stopped when the session or its host is closed, which the CLI does as it
-exits. A library caller that cancels a `run` and keeps the host open must
-close the session, or the host, to stop the command.
+Cancelling a `run` stops its command the way a timeout does, before the
+cancellation reaches the caller: otto sends INT to the shell's own child
+processes and checks that the shell answers again. A process those children
+started is not signalled; it is stopped when the session or its host is
+closed, which the CLI does as it exits.
 
 ## Send and expect
 

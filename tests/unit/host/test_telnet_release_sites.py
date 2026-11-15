@@ -431,9 +431,9 @@ def _zephyr(port: int, name: str = "zephyr37_fat") -> ZephyrHost:
 async def test_cancel_then_close_drains_and_reconnects(monkeypatch):
     """A command cancelled mid-output, then ``host.close()``: drained before close, then redialled.
 
-    The peer is still sending when the cancellation lands. The close reads
-    every byte it sends before it closes the line (the peer's EOF arrives
-    after its burst, and nothing is left unread on otto's side), and a
+    The peer is still sending when the cancellation lands. The cancel's own
+    stop reads to the end of the burst, and the close leaves nothing unread
+    before it closes the line (the peer's EOF arrives after its burst), and a
     fresh ``ConnectionManager.telnet()`` then connects to the single-client
     peer.
     """
@@ -455,10 +455,13 @@ async def test_cancel_then_close_drains_and_reconnects(monkeypatch):
 
             monkeypatch.setattr(writer, "close", close)
 
-            with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(host.run("spew"), 0.05)
-            assert peer.spew_started.is_set(), "the command was cancelled before its output began"
+            task = asyncio.ensure_future(host.run("spew"))
+            await peer.spew_started.wait()
             assert not peer.burst_done, "the command was cancelled after its output ended"
+            task.cancel()
+            # The cancel waits for the stop, which reads past the burst's end.
+            with pytest.raises(asyncio.CancelledError):
+                await task
             await host.close()
 
             # telnetlib3 buffers what arrives; an empty buffer at the close

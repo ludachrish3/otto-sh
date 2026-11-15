@@ -11,6 +11,7 @@ import pytest
 from pydantic import SecretStr
 
 from otto.host import host as host_module
+from otto.host import privilege as privilege_mod
 from otto.host.command_frame import RECOVER_SUFFIX
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
@@ -148,6 +149,8 @@ def _mock_session_mgr(*, prompts: bool = True, user: str = "admin", **model_kw):
     mgr.expect = AsyncMock(side_effect=_expect)
     mgr.shell = shell
     mgr._set_current_user = MagicMock()
+    # The live default session the switch is typed into: the same one at the undo.
+    mgr._live_default_session = MagicMock(return_value=MagicMock(name="default-session"))
     # One `user` for both sides on purpose. Setting `current_user` apart from
     # the model's starting identity describes a session that believes it is
     # someone the shell is not, and the undo's identity check reads the
@@ -1645,3 +1648,50 @@ def test_no_elevated_command_sits_inside_a_handler_that_swallows_the_refusal():
         "above the broad handler, or narrow it to the exceptions it actually "
         "means — a `suppress` has only the second option."
     )
+
+
+class _SwitchedShell:
+    """The default session's stand-in: alive until the stop gives up on it."""
+
+    def __init__(self, user: str) -> None:
+        self.alive = True
+        self.current_user = user
+
+    def stamp_user(self, login: str) -> None:
+        self.current_user = login
+
+
+@pytest.mark.asyncio
+async def test_the_undo_of_a_switch_whose_session_a_cancel_left_dead_types_nothing(
+    unix_host_ssh, monkeypatch
+):
+    """The switch died with its session: no `exit` is typed, no session is opened for it."""
+    host = unix_host_ssh
+    mgr = host._live_session_mgr()
+    shell = _SwitchedShell("user")
+    mgr._session = shell  # ty: ignore[invalid-assignment]
+
+    async def switch(_io: object, _creds: object, user: str, *_a: object, **_kw: object):
+        return [Cred(login=user, proxy="su", via="user")]
+
+    typed: list[str] = []
+
+    async def send(text: object, **kw: object) -> None:
+        typed.append(str(text))
+
+    async def ensure_session() -> None:
+        raise AssertionError("the undo must not open a session")
+
+    monkeypatch.setattr(privilege_mod, "perform_switch", switch)
+    monkeypatch.setattr(mgr, "send", send)
+    monkeypatch.setattr(mgr, "_ensure_session", ensure_session)
+
+    async def cancelled_block() -> None:
+        async with host.as_user(user="root"):
+            shell.alive = False  # the cancelled command's stop could not confirm the shell
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled_block()
+    assert typed == []
+    assert shell.current_user == "user"

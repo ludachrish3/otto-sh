@@ -80,6 +80,7 @@ if TYPE_CHECKING:
     from ..result import Results
     from .command_frame import ExecInput
     from .host import Expect, Host
+    from .session import ShellSession
 
 
 async def run_sh_elevated(host: "Host", script: str, *, timeout: float | None = None) -> "Results":
@@ -742,6 +743,9 @@ class PosixPrivilege(UserlandHost):
             protocol=getattr(self, "term", None),
         )
         self._live_session_mgr()._set_current_user(applied[-1].login or ROOT_LOGIN)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[missing-attribute]
+        # The session the switch was typed into: the undo types into it, or
+        # into nothing (see _undo_switch).
+        switched = self._live_session_mgr()._live_default_session()  # noqa: SLF001 — intra-package read of the switched session  # ty: ignore[missing-attribute]
         # The undo chain is a compensating action: an interrupt landing while
         # it runs must not strand the session as the switched user (chaos
         # spec: shielded compensating actions). compensate() holds a
@@ -755,13 +759,27 @@ class PosixPrivilege(UserlandHost):
         from ..lifecycle import undone_after
 
         async with undone_after(
-            lambda: self._undo_switch(applied, prev),
+            lambda: self._undo_switch(applied, prev, switched),
             what=f"{getattr(self, 'name', '')}: as_user undo to {prev or 'login user'!r}",
         ):
             yield self
 
-    async def _undo_switch(self, applied: "list[Cred]", prev: str) -> None:
-        """Unwind *applied* innermost-first, restoring ``current_user`` to *prev*."""
+    async def _undo_switch(
+        self, applied: "list[Cred]", prev: str, switched: "ShellSession | None"
+    ) -> None:
+        """Unwind *applied* innermost-first in *switched*, restoring ``current_user`` to *prev*.
+
+        Only the session that was switched is typed into. When it is no
+        longer the live default session (a stop that could not confirm the
+        shell left it dead), the switch died with it: there is nothing to
+        undo, nothing is typed and no session is opened to type into. Its
+        stamp is still put back.
+        """
+        mgr = self._live_session_mgr()  # ty: ignore[missing-attribute]
+        if switched is None or mgr._live_default_session() is not switched:  # noqa: SLF001 — intra-package read of the switched session
+            if switched is not None:
+                switched.current_user = prev
+            return
         creds = self._switch_creds()
         for i, hop in enumerate(reversed(applied)):
             via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
@@ -776,4 +794,4 @@ class PosixPrivilege(UserlandHost):
             await run_undo(
                 _HostProxyIO(self), hop, via, getattr(self, "name", ""), self._history_prefix()
             )
-        self._live_session_mgr()._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[missing-attribute]
+        mgr._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user
