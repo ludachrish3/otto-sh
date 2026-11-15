@@ -96,7 +96,7 @@ dependencies = [
     # resolved transitively (docs tooling); declared because we import it
     # directly.
     "truststore>=0.10",
-    "typer>=0.26",
+    "typer>=0.29",
     # `override` (PEP 698) lives in `typing` only from 3.12; our floor is 3.10,
     # so it is imported from typing_extensions. Already resolved transitively
     # (pydantic/typer); declared directly because we now import it directly.

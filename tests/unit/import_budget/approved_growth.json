@@ -5,41 +5,766 @@
       "surface": "run_bootstrapped",
       "minor": "3.10",
       "buckets": {
-        "otto:host": 4
+        "otto:host": 4,
+        "site:typer": 8
       },
-      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session."
+      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session. site:typer: typer 0.29's new parameter modules (typer._coercion, typer._param_types, typer._adapters) replace its click type system."
     },
     {
       "surface": "run_bootstrapped",
       "minor": "3.11",
       "buckets": {
-        "otto:host": 4
+        "otto:host": 4,
+        "site:typer": 8
       },
-      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session."
+      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session. site:typer: typer 0.29's new parameter modules (typer._coercion, typer._param_types, typer._adapters) replace its click type system."
     },
     {
       "surface": "run_bootstrapped",
       "minor": "3.12",
       "buckets": {
-        "otto:host": 4
+        "otto:host": 4,
+        "site:typer": 8
       },
-      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session."
+      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session. site:typer: typer 0.29's new parameter modules (typer._coercion, typer._param_types, typer._adapters) replace its click type system."
     },
     {
       "surface": "run_bootstrapped",
       "minor": "3.13",
       "buckets": {
-        "otto:host": 4
+        "otto:host": 4,
+        "site:typer": 8
       },
-      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session."
+      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session. site:typer: typer 0.29's new parameter modules (typer._coercion, typer._param_types, typer._adapters) replace its click type system."
     },
     {
       "surface": "run_bootstrapped",
       "minor": "3.14",
       "buckets": {
-        "otto:host": 4
+        "otto:host": 4,
+        "site:typer": 8
       },
-      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session."
+      "why": "The new leaf module otto.host.limitation (#935) is loaded with otto.host.options, which declares the console's unescaped-0xFF device limitation beside the option it describes; any run that opens a host session loads it anyway through otto.host.session. site:typer: typer 0.29's new parameter modules (typer._coercion, typer._param_types, typer._adapters) replace its click type system."
+    },
+    {
+      "surface": "cov",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 12,
+        "other": 70,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 60
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "docker",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 12,
+        "other": 70,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 60
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "help",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 12,
+        "other": 70,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 60
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "host",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 12,
+        "other": 70,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 60
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "monitor",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 12,
+        "other": 70,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 60
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "reservation",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 12,
+        "other": 70,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 60
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "run",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 12,
+        "other": 70,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 60
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "schema",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 12,
+        "other": 70,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 60
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "test",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 12,
+        "other": 70,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 60
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "cov",
+      "minor": "3.11",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "docker",
+      "minor": "3.11",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "help",
+      "minor": "3.11",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "host",
+      "minor": "3.11",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "monitor",
+      "minor": "3.11",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "reservation",
+      "minor": "3.11",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "run",
+      "minor": "3.11",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "schema",
+      "minor": "3.11",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "test",
+      "minor": "3.11",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "cov",
+      "minor": "3.12",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "docker",
+      "minor": "3.12",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "help",
+      "minor": "3.12",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "host",
+      "minor": "3.12",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "monitor",
+      "minor": "3.12",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "reservation",
+      "minor": "3.12",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "run",
+      "minor": "3.12",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "schema",
+      "minor": "3.12",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "test",
+      "minor": "3.12",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 56
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "cov",
+      "minor": "3.13",
+      "buckets": {
+        "fd": 12,
+        "other": 73,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "docker",
+      "minor": "3.13",
+      "buckets": {
+        "fd": 12,
+        "other": 73,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "help",
+      "minor": "3.13",
+      "buckets": {
+        "fd": 12,
+        "other": 73,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "host",
+      "minor": "3.13",
+      "buckets": {
+        "fd": 12,
+        "other": 73,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "monitor",
+      "minor": "3.13",
+      "buckets": {
+        "fd": 12,
+        "other": 73,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "reservation",
+      "minor": "3.13",
+      "buckets": {
+        "fd": 12,
+        "other": 73,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "run",
+      "minor": "3.13",
+      "buckets": {
+        "fd": 12,
+        "other": 73,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "schema",
+      "minor": "3.13",
+      "buckets": {
+        "fd": 12,
+        "other": 73,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "test",
+      "minor": "3.13",
+      "buckets": {
+        "fd": 12,
+        "other": 73,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "cov",
+      "minor": "3.14",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "docker",
+      "minor": "3.14",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "help",
+      "minor": "3.14",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "host",
+      "minor": "3.14",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "monitor",
+      "minor": "3.14",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "reservation",
+      "minor": "3.14",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "run",
+      "minor": "3.14",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "schema",
+      "minor": "3.14",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
+    },
+    {
+      "surface": "test",
+      "minor": "3.14",
+      "buckets": {
+        "fd": 12,
+        "other": 67,
+        "site:*": 4,
+        "site:annotated_types": 6,
+        "site:pydantic": 185,
+        "site:pydantic_core": 22,
+        "site:typer": 8,
+        "site:typing_inspection": 17,
+        "stdlib": 67
+      },
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%)."
     }
   ]
 }

@@ -5,7 +5,7 @@ Runs on the SLOW path only (a cache write), after bootstrap, so resolving
 every command real here is a once-per-rewrite cost; the shim never imports
 this module.
 
-Typer 0.27 vendors click as ``typer._click``: the app's commands are
+Typer vendors click as ``typer._click``: the app's commands are
 ``typer.core.TyperGroup``/``TyperCommand`` and its parameters
 ``typer.core.TyperOption``/``TyperArgument``. ``isinstance(x, click.Group)``
 against the upstream ``click`` package is ALWAYS False for this app (and
@@ -20,9 +20,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from typer._click.types import File
-from typer._types import TyperChoice
-from typer.core import TyperGroup, TyperOption
+from typer.core import TyperArgument, TyperGroup, TyperOption
 
 from ..errors import OttoError
 from .cache_sections import SHIM_SECTION as SHIM_SECTION  # noqa: PLC0414 — explicit re-export
@@ -100,7 +98,9 @@ def _original_completer(param: "Parameter") -> Any | None:
     return compat
 
 
-def _source_for(param: "Parameter", where: str, unregistered: list[str]) -> dict[str, Any]:
+def _source_for(
+    param: "Parameter", ctx: "Context", where: str, unregistered: list[str]
+) -> dict[str, Any]:
     fn = _original_completer(param)
     if fn is not None:
         declared = getattr(fn, "__completion_source__", None)
@@ -113,26 +113,32 @@ def _source_for(param: "Parameter", where: str, unregistered: list[str]) -> dict
 
             source["always"] = list(builtin_host_ids())
         return source
-    kind = param.type
-    if isinstance(kind, TyperChoice):
-        # TyperChoice.shell_complete: str(choice) by prefix, lower-cased unless case_sensitive
+    if not isinstance(param, TyperOption | TyperArgument):
+        return {"kind": "none"}  # click's own Parameter.shell_complete offers nothing
+    kind = param.type_descriptor
+    if kind.is_choice:
+        # Typer's own answer to an empty fragment IS the choice list, spelled the
+        # way it completes (an Enum by its value); the shell then filters by
+        # prefix, lower-cased unless case_sensitive.
         return {
             "kind": "static",
-            "values": [str(c) for c in kind.choices],
+            "values": [item.value for item in param.shell_complete(ctx, "")],
             "case_sensitive": bool(kind.case_sensitive),
         }
-    if isinstance(kind, File):
-        return {"kind": "echo"}  # File.shell_complete echoes the fragment (no otto parameter today)
-    # typer.models.TyperPath.shell_complete returns [] (a path fragment gets NOTHING), exactly
-    # like ParamType's default: both are "none", never "echo".
+    if kind.is_file:
+        return {"kind": "echo"}  # a File echoes the fragment (no otto parameter today)
+    # A path (like every other type) completes to [] -- a path fragment gets
+    # NOTHING from Typer: "none", never "echo".
     return {"kind": "none"}
 
 
-def _param(param: "Parameter", where: str, unregistered: list[str]) -> dict[str, Any] | None:
+def _param(
+    param: "Parameter", ctx: "Context", where: str, unregistered: list[str]
+) -> dict[str, Any] | None:
     if getattr(param, "hidden", False):
         return None
     is_option = isinstance(param, TyperOption)  # a TyperArgument otherwise
-    source = _source_for(param, f"{where}/{param.name}", unregistered)
+    source = _source_for(param, ctx, f"{where}/{param.name}", unregistered)
     return {
         # A TyperArgument's `opts` holds its NAME (['host_id']), not a flag: no flags at all.
         "flags": [*param.opts, *param.secondary_opts] if is_option else [],
@@ -168,7 +174,7 @@ def _node(
     (and, on the root, ``host_classes``) are the optional ones it reads with
     ``.get``.
     """
-    params = [p for p in (_param(x, where, unregistered) for x in cmd.get_params(ctx)) if p]
+    params = [p for p in (_param(x, ctx, where, unregistered) for x in cmd.get_params(ctx)) if p]
     commands: dict[str, Any] = {}
     if isinstance(cmd, TyperGroup):  # the test typer._click's _resolve_context descends by
         for sub_name in cmd.list_commands(ctx):

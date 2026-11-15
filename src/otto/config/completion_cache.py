@@ -749,11 +749,18 @@ def _unwrap_optional(t: Any) -> Any:
 
 def _type_to_kind(base: Any) -> str | None:
     """Map a Python type to the cache's ``kind`` tag, or ``None`` if unsupported."""
+    from ..params import contains_secret_type  # lazy: only the cache-seed path asks
+
     base = _unwrap_optional(base)
     if base in _TYPE_TO_KIND:
         return _TYPE_TO_KIND[base]
-    if get_origin(base) is list and get_args(base) == (str,):
+    is_list = get_origin(base) is list
+    if is_list and get_args(base) == (str,):
         return "str_list"
+    if contains_secret_type(base):
+        # A pydantic secret (SecretStr, list[SecretStr], ...) is a string on the
+        # command line, so a string is what completion rebuilds.
+        return "str_list" if is_list else "str"
     return None
 
 
@@ -853,11 +860,6 @@ def serialize_options(
             return None
 
         kind = _type_to_kind(base)
-        if kind is None and getattr(meta, "click_type", None) is not None:
-            # An explicit click_type is how a type typer cannot convert (a
-            # pydantic SecretStr) becomes a flag at all: the command line
-            # hands it a string, so a string is what completion rebuilds.
-            kind = "str"
         if kind is None:
             log.debug(
                 f"completion-cache: skipping option {command_name}.{pname!r} — "

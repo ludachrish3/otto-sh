@@ -376,7 +376,8 @@ def test_add_idle_timeout_below_one_is_a_usage_error():
     # Not just "exited 2" — RED must fail for the right reason, not a bare
     # "No such option" from a flag that was never wired up.
     assert "--idle-timeout" in result.output
-    assert "not in the range x>=1" in result.output
+    # Typer's own bound check (pydantic-worded since typer 0.29); the panel may wrap it.
+    assert "greater than or equal to 1" in " ".join(result.output.replace("│", " ").split())
     assert fake_add.await_count == 0
 
 
