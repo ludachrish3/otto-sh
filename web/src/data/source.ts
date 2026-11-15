@@ -74,6 +74,24 @@ let announce = false;
 // Separate from the generation: two quick imports race each other's file
 // reads, not the server, and a parse failure must not bump the generation.
 let importTicket = 0;
+// The waits of earlier imports' re-prompts (`pendingSettled`): a newer
+// import ends them, so a source that never installs holds at most the newest
+// one, until the next import.
+const importWaits = new Set<() => void>();
+
+/** Starts an import: takes the next ticket, which supersedes every earlier
+ * import, and ends their re-prompt waits. */
+function startImport(): number {
+  importTicket += 1;
+  for (const end of [...importWaits]) end();
+  return importTicket;
+}
+
+/** The ONE test of whether import `ticket` may still act: no newer import
+ * has started (`startImport`). */
+function isCurrentImport(ticket: number): boolean {
+  return ticket === importTicket;
+}
 
 /** Records the stream startStream opened: a local file closes it, a sync
  * that could not install reconnects it (`retryOnReconnect`), and an install
@@ -485,15 +503,24 @@ function switchPromptFor(name: string, text: string, source: MonitorSourceState)
   };
 }
 
-/** Resolves once no server source is pending. */
-function nothingPending(): Promise<void> {
-  if (useReviewStore.getState().pendingSource === null) return Promise.resolve();
+/** Resolves true once no server source is pending while import `ticket` is
+ * still the newest, or false as soon as a newer import starts
+ * (`startImport`). Either way the wait lets go of the store: a pending
+ * source that never installs holds it only until the next import. */
+function pendingSettled(ticket: number): Promise<boolean> {
+  if (!isCurrentImport(ticket)) return Promise.resolve(false);
+  if (useReviewStore.getState().pendingSource === null) return Promise.resolve(true);
   return new Promise((resolve) => {
-    const unsubscribe = useReviewStore.subscribe((s) => {
-      if (s.pendingSource !== null) return;
+    const finish = (settled: boolean): void => {
       unsubscribe();
-      resolve();
+      importWaits.delete(abandon);
+      resolve(settled);
+    };
+    const abandon = (): void => finish(false);
+    const unsubscribe = useReviewStore.subscribe((s) => {
+      if (s.pendingSource === null) finish(true);
     });
+    importWaits.add(abandon);
   });
 }
 
@@ -504,7 +531,8 @@ function nothingPending(): Promise<void> {
  *  - refused as `source_changed`: the source the server serves is
  *    admitted, and once nothing is pending the prompt opens again over the
  *    installed source, with its fresh counts, unless another import has
- *    started meanwhile;
+ *    started meanwhile, which also ends the wait (`pendingSettled`): a
+ *    refused switch never outlives a newer import;
  *  - any other refusal: shown through `importError`; the source is
  *    untouched. */
 export async function requestSourceSwitch(): Promise<void> {
@@ -528,10 +556,10 @@ export async function requestSourceSwitch(): Promise<void> {
   }
   await admitSource(result.state, { own: true });
   if (result.kind === "ok") return;
-  await nothingPending();
+  if (!(await pendingSettled(ticket))) return;
   const { source } = useReviewStore.getState();
   const ui = useUiStore.getState();
-  if (source?.kind !== "json" || ui.switchPrompt !== null || ticket !== importTicket) return;
+  if (source?.kind !== "json" || ui.switchPrompt !== null) return;
   ui.actions.openSwitchPrompt(switchPromptFor(prompt.name, prompt.text, source));
 }
 
@@ -559,19 +587,18 @@ function detachServerSource(): void {
  * untouched. The server's snapshots do not come through here: they install
  * through `syncFromServer` and `admitSource`. */
 export async function importLocalFile(file: File): Promise<void> {
-  importTicket += 1;
-  const ticket = importTicket;
+  const ticket = startImport();
   let text: string;
   try {
     text = await file.text();
   } catch (err) {
-    if (ticket !== importTicket) return;
+    if (!isCurrentImport(ticket)) return;
     useReviewStore
       .getState()
       .actions.setImportError(`Import failed: could not read ${file.name}: ${String(err)}`);
     return;
   }
-  if (ticket !== importTicket) return;
+  if (!isCurrentImport(ticket)) return;
   const review = useReviewStore.getState();
   if (!importOffered(review)) return;
   const target = servedSource(review);
