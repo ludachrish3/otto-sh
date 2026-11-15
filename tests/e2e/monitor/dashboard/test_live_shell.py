@@ -460,6 +460,50 @@ def _boot_live_with_r1(page: Page, dash: DashboardHarness[FakeCollector]) -> Non
     expect(_tid(page, "mark-button")).to_be_visible()  # live and editable
 
 
+_FAKE_VISIBILITY = """(state) => {
+    if (!("__ottoVisibility" in window)) {
+        Object.defineProperty(document, "visibilityState", {
+            configurable: true,
+            get: () => window.__ottoVisibility,
+        });
+    }
+    window.__ottoVisibility = state;
+    document.dispatchEvent(new Event("visibilitychange"));
+}"""
+
+
+def test_a_hidden_tab_lets_its_stream_go_and_catches_up_when_shown(
+    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
+) -> None:
+    """An HTTP/1.1 browser holds about six connections per host across all
+    its tabs, so a tab hidden for 30 s closes its stream; shown again, it
+    opens a new one at once, and that open's resync brings in what was
+    published meanwhile (#1041). The page's ``visibilityState`` is faked (a
+    headless page is always visible) and ``page.clock`` jumps the grace."""
+    streams: list[str] = []
+    page.on("request", lambda r: streams.append(r.url) if r.url.endswith("/api/stream") else None)
+    now = datetime.now(tz=timezone.utc).replace(microsecond=0)
+    _push_tick(live_stream_dash, "r1", now - timedelta(seconds=10), 10.0)
+    install_clock(page, now)
+    page.goto(live_stream_dash.url)
+    page.goto(f"{live_stream_dash.url}#/hosts")
+    _tid(page, "subject-link-r1").click()
+    chart = _tid(page, "chart-CPU")
+    expect(chart).to_be_visible()
+    before = chart.get_attribute("data-point-count")
+    assert len(streams) == 1, streams
+
+    page.evaluate(_FAKE_VISIBILITY, "hidden")
+    page.clock.fast_forward(30_000)
+    # Published while the tab holds no stream: only the resync can bring it.
+    _push_tick(live_stream_dash, "r1", now, 20.0)
+
+    page.evaluate(_FAKE_VISIBILITY, "visible")
+    expect(chart).not_to_have_attribute("data-point-count", before or "")
+    assert len(streams) == 2, streams
+    expect(_tid(page, "reconnecting-banner")).to_have_count(0)
+
+
 def test_a_refused_first_stream_is_still_a_live_server(
     page: Page, live_stream_dash: DashboardHarness[FakeCollector]
 ) -> None:
