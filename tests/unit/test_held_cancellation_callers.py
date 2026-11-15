@@ -287,7 +287,7 @@ def _privileged_host(monkeypatch: pytest.MonkeyPatch) -> Any:
     )
     host._session_mgr = _mock_session_mgr(user="root")
 
-    async def failing_undo(_self: Any, _applied: Any, _prev: str) -> None:
+    async def failing_undo(_self: Any, _applied: Any, _prev: str, _switched: Any) -> None:
         raise OSError("undo failed")
 
     monkeypatch.setattr(PosixPrivilege, "_undo_switch", failing_undo)

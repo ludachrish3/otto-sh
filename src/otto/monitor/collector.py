@@ -522,9 +522,11 @@ class MetricCollector:
             while duration is None or datetime.now(tz=timezone.utc) - start < duration:
                 # Sleep and collect concurrently (as the pre-bucket loop did):
                 # the tick period is max(interval, collect_time), not their sum.
-                await asyncio.gather(
-                    asyncio.sleep(bucket_secs),
-                    self._collect_bucket(entries, bucket_secs),
+                # Supervised: a cancel lands on the sleep at once, and a bare
+                # gather would return then, leaving the collect still stopping
+                # its in-flight command after collection was cancelled.
+                await _gather_cancelling_siblings(
+                    [asyncio.sleep(bucket_secs), self._collect_bucket(entries, bucket_secs)]
                 )
 
         # Supervised, not bare-gathered: if any loop escapes with a
@@ -571,7 +573,7 @@ class MetricCollector:
     ) -> None:
         await self._tunnel_pass()
         while duration is None or datetime.now(tz=timezone.utc) - start < duration:
-            await asyncio.gather(asyncio.sleep(secs), self._tunnel_pass())
+            await _gather_cancelling_siblings([asyncio.sleep(secs), self._tunnel_pass()])
 
     async def _record_point(
         self,

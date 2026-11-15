@@ -723,16 +723,13 @@ class ShellSession(ABC):
             self._init_timeout = init_timeout
         self._initialized = False
         self._alive = False
-        # Set when an in-flight operation (run_cmd / expect) is externally
-        # cancelled, leaving the remote shell mid-command with possibly
-        # buffered output we never consumed. The next operation runs
-        # _recover_session before doing anything to drain that state and
-        # return the shell to a clean prompt.
+        # Set while a stop of a command otto gave up on has not confirmed
+        # the shell (left set, with the session dead, when it never does),
+        # and when a send() or expect() is cancelled mid-flight: the next
+        # operation then runs the stop before doing anything else. A
+        # send() or expect() waits for that next use rather than stopping at
+        # once: it ran no command of otto's, so there is nothing to stop.
         self._needs_recovery = False
-        # What a cancelled isolated exec left to put back (its frame's tail
-        # never ran), restored by that next operation's recovery; None when
-        # the pending recovery has nothing to restore.
-        self._pending_restore: ExecRestore | None = None
         self._on_output: Callable[[str], None] = lambda _: None
         # Optional per-command write-progress sink: (bytes_written, total).
         # Set transiently around a single framed write (see _run_cmd_inner) and
@@ -953,13 +950,18 @@ class ShellSession(ABC):
         """Initialize the session if needed, and recover it if the prior op was cancelled.
 
         The deferred recovery is the stop a timed-out command gets
-        (:meth:`_stop_under_bound`): bounded, followed by the restore line
-        when the cancelled op was an isolated ``exec``, and a session it
-        cannot confirm is left dead.
+        (:meth:`_stop_under_bound`), bounded, and a session it cannot confirm
+        is left dead. A cancelled ``run_cmd`` never defers to it: it stops
+        its command, restore line included, before the cancel returns.
+
+        A session already known dead is refused here, before the deferred
+        recovery: nothing more (no interrupt, no recovery probe) is typed
+        into a session a stop could not confirm.
         """
         await self._ensure_initialized()
+        self._require_alive()
         if self._needs_recovery:
-            await self._stop_under_bound(restore=self._pending_restore)
+            await self._stop_under_bound(restore=None)
 
     def _handshake_payload(self, m: SessionMarkers) -> str:
         """Render the complete first line written into a fresh shell.
@@ -1235,7 +1237,6 @@ class ShellSession(ABC):
         self._frame = frame
         self._end_pattern = frame.end_pattern(self._markers)
         self._needs_recovery = False
-        self._pending_restore = None
         self._initialized = False
         logger.debug(f"{self._log_tag}: entering frame {type(frame).__name__}")
         await self._handshake(timeout=timeout)
@@ -1423,8 +1424,9 @@ class ShellSession(ABC):
                 f"the target shell, then enter_frame() before run()"
             )
         await self._ensure_ready()
-        # A recovery that could not confirm the shell (an unconfirmed restore
-        # after a cancelled exec) left it dead: nothing more is typed into it.
+        # A stop that could not confirm the shell (an unconfirmed restore
+        # after a timed-out or cancelled exec) left it dead: nothing more is
+        # typed into it.
         self._require_alive()
         sink = on_output if on_output is not None else self._on_output
         output = ExecOutput(valuer=self._partial_value())
@@ -1459,16 +1461,14 @@ class ShellSession(ABC):
                 f"password refused for {refused.expect.user or 'the session user'} "
                 f"on {refused.expect.host or 'this host'}"
             ) from None
-        except asyncio.CancelledError:
-            # External cancellation (e.g., asyncio.wait_for at the caller
-            # level) leaves the remote shell mid-command with buffered output
-            # we never consumed. Mark for recovery on next use rather than
-            # running it inline — running here would race the cancellation
-            # propagation and could leave the recover-marker write detached.
-            # What the interrupted exec's tail would have put back goes with
-            # it, for that recovery's restore line.
-            self._needs_recovery = True
-            self._pending_restore = restore
+        except asyncio.CancelledError as exc:
+            # The command is stopped before the cancel returns, by the stop a
+            # timeout gets, with this cancellation held: it is the one the
+            # stop re-raises, whatever else lands while the stop runs, and the
+            # stop is cut by its bound and the teardown deadline.
+            from ..lifecycle import held_cancellation
+
+            await self._stop_under_bound(restore=restore, held=held_cancellation(exc))
             raise
         except tuple(self._connection_lost_errors()) as exc:
             # Same class of event either way — the transport is gone: EOF on
@@ -1534,7 +1534,7 @@ class ShellSession(ABC):
         :meth:`_recover_session`, which marks the session dead when the
         probe fails; then, for an interrupted isolated ``exec`` (*restore*
         not ``None``), :meth:`_restore_after_interrupt`. A confirmed recovery
-        (and restore) clears the pending recovery and its pending restore.
+        (and restore) clears the pending recovery.
         Reads no output for the caller: what recovery reads is the shell's.
         """
         await self._recover_session()
@@ -1542,7 +1542,6 @@ class ShellSession(ABC):
             await self._restore_after_interrupt(restore)
         if self._alive:
             self._needs_recovery = False
-            self._pending_restore = None
 
     async def _restore_after_interrupt(self, restore: ExecRestore) -> None:
         """Put back what an interrupted isolated ``exec``'s own end would have restored.
@@ -1573,7 +1572,12 @@ class ShellSession(ABC):
             logger.debug(f"{self._log_tag}: restore after interrupt failed; session marked dead")
             self._alive = False
 
-    async def _stop_under_bound(self, *, restore: ExecRestore | None) -> None:
+    async def _stop_under_bound(
+        self,
+        *,
+        restore: ExecRestore | None,
+        held: "asyncio.CancelledError | None" = None,
+    ) -> None:
         """Stop a command otto gave up on (a timeout, a refused password, a cancel) under one bound.
 
         The stop runs under :func:`~otto.lifecycle.compensate` with
@@ -1583,6 +1587,10 @@ class ShellSession(ABC):
         session dead, to be closed later, and the pool discards it.
         *restore* is what an interrupted isolated ``exec`` leaves
         to put back (:meth:`_stop_interrupted_command`), ``None`` otherwise.
+        *held* is the cancellation that stopped the command, when one did
+        (:func:`~otto.lifecycle.held_cancellation`): it is re-raised once the
+        stop ends, confirmed or not, and the teardown deadline bounds the
+        stop from the start.
         """
         # Imported here, not at module scope: otto.lifecycle is needed only
         # when a command is stopped, as for the proxied undo below.
@@ -1594,6 +1602,7 @@ class ShellSession(ABC):
                 self._stop_interrupted_command(restore=restore),
                 timeout=self._stop_bound(),
                 what=f"{self._log_tag}: stop the interrupted command",
+                held=held,
             )
         finally:
             if self._needs_recovery:
@@ -4135,6 +4144,17 @@ class SessionManager:
             return None
         current = self._session.current_user
         return current if current != self._baseline_user else None
+
+    def _live_default_session(self) -> "ShellSession | None":
+        """Return the default session when it exists and is alive, else ``None``.
+
+        What the host's scoped switch reads: its undo types only into the
+        session it switched, and only while that session is still the live
+        default one.
+        """
+        if self._session is not None and self._session.alive:
+            return self._session
+        return None
 
     def _set_current_user(self, user: str) -> None:
         """Private bookkeeping for the default session.

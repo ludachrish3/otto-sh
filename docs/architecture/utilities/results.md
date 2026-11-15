@@ -301,7 +301,8 @@ still returns the timed-out result or re-raises what interrupted it.
 
 On a shell route (`run`, and an `exec` typed into a shell session: over
 `telnet`, over `console`, or over `ssh` when the call needs a shell), a
-timed-out command, and one whose password was refused, is stopped this way:
+timed-out command, one whose password was refused, and a cancelled one are
+stopped this way, before the call returns or the cancellation is re-raised:
 
 1. otto types an interrupt (`^C`) to the command.
 2. It checks that the shell answers again, under one bound: the settle after

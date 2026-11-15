@@ -9,6 +9,7 @@ import asyncio
 
 import pytest
 
+from otto.lifecycle import compensate, held_cancellation
 from otto.monitor.collector import _gather_cancelling_siblings
 
 
@@ -49,6 +50,71 @@ async def test_outer_cancellation_reaches_every_loop():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert sorted(reached) == ["a", "b"]
+
+
+class _StopsOnCancelHost:
+    """A host whose second ``run`` is in flight until cancelled, then stops its command.
+
+    The stop takes a timer's worth of time, as a shell session's does (the
+    interrupt, the settle, the probe): a supervisor that lets the cancel
+    return before it ends has left the stop running unowned.
+    """
+
+    id = "fake"
+    name = "fake"
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.in_flight = asyncio.Event()
+        self.stopped = False
+
+    async def run(self, *_args: object, **_kwargs: object) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            return  # the initial collection returns; the next tick hangs
+        self.in_flight.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError as exc:
+            # Held, as a shell session's stop is: a second cancel waits for it.
+            await compensate(self._stop(), held=held_cancellation(exc))
+            raise
+
+    async def _stop(self) -> None:
+        await asyncio.sleep(0.05)
+        self.stopped = True
+
+
+@pytest.mark.asyncio
+async def test_cancelled_collection_waits_for_the_command_stop():
+    """Cancelling collection mid-tick returns only once the in-flight command's stop ended.
+
+    The tick sleeps and collects side by side; cancelling it cancels the
+    sleep at once, and a bare ``gather`` then returned with the collect still
+    stopping its command, which the loop's close later cut short.
+    """
+    from datetime import timedelta
+
+    from otto.monitor.collector import MetricCollector, MonitorTarget
+    from otto.monitor.parsers import MetricParser
+
+    class _Parser(MetricParser):
+        chart = "T"
+        y_title = "V"
+        unit = ""
+        command = "true"
+
+        def parse(self, output, *, ctx):
+            return None
+
+    host = _StopsOnCancelHost()
+    collector = MetricCollector(targets=[MonitorTarget(host=host, parsers={"true": _Parser()})])  # ty: ignore[invalid-argument-type] — duck-typed host
+    task = asyncio.create_task(collector.run(interval=timedelta(seconds=1)))
+    await host.in_flight.wait()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert host.stopped, "collection's cancel returned while the command was still being stopped"
+    assert [t for t in asyncio.all_tasks() if t is not asyncio.current_task()] == []
 
 
 @pytest.mark.asyncio

@@ -217,7 +217,7 @@ async def test_a_cancel_landing_during_close_is_held_and_the_pipes_are_released(
     assert s._transport is None
 
 
-async def test_a_cancelled_run_keeps_running_until_the_session_is_closed(tmp_path: Path) -> None:
+async def test_a_cancelled_run_is_stopped_before_the_cancel_returns(tmp_path: Path) -> None:
     w = tmp_path / "w"
     s = LocalSession()
     with _reaping([w]):
@@ -227,11 +227,12 @@ async def test_a_cancelled_run_keeps_running_until_the_session_is_closed(tmp_pat
             await _await_witness(w)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(asyncio.shield(task), 2.0)
-            assert observe(w) == RUNNING  # cancellation alone sends the command nothing
+                await asyncio.wait_for(asyncio.shield(task), 10.0)
+            # the shell's child was interrupted and the shell confirmed, the session kept
+            assert observe(w) == STOPPED
+            assert s.alive
         finally:
             await s.close()
-        await _gone(w)
 
 
 async def test_close_twice_is_quiet() -> None:
