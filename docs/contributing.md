@@ -301,6 +301,14 @@ artifact; open a trace with `npx playwright show-trace <trace.zip>` (or at
 trace.playwright.dev) to step through its clicks, DOM, console and network.
 Locally, `make dashboard` leaves failure screenshots in `reports/playwright/`.
 
+A test that intercepts requests keeps its `page.route` installed until it
+ends: never let a page's last route expire (`times=`) or come off
+(`unroute`) mid-test. With no route left, Playwright switches the engine's
+request interception off, and a request in flight across that switch can
+be held in the browser and never sent (#1123). To refuse only the first
+request, keep one handler that fulfils it and calls `route.continue_()` for
+every later one.
+
 ### Web quality gates
 
 `web/` carries the same lint / format / type-check / coverage discipline as

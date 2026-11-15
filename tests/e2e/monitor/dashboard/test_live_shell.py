@@ -19,7 +19,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page, Route, expect
 
 from tests._fixtures._clock import install_clock, pause_clock_at_ms
 from tests._fixtures._dashboard_harness import DashboardHarness
@@ -513,7 +513,23 @@ def test_a_refused_first_stream_is_still_a_live_server(
     offers Import."""
     streams: list[str] = []
     page.on("request", lambda r: streams.append(r.url) if r.url.endswith("/api/stream") else None)
-    page.route("**/api/stream", lambda route: route.fulfill(status=503), times=1)
+    refused: list[Route] = []
+
+    def refuse_the_first(route: Route) -> None:
+        # A `times=1` route removes itself after its first use; with no route
+        # left, Playwright switches chromium's request interception off. A
+        # request in flight across that switch (the boot's `/api/mode` probe,
+        # sent a few ms after the refusal) was sometimes never sent, and the
+        # boot waited for it (#1123). Kept installed, refusing only the first
+        # stream, the route never changes the interception during the boot
+        # (docs/contributing.md, "Behavior-spec contract").
+        if refused:
+            route.continue_()
+            return
+        refused.append(route)
+        route.fulfill(status=503)
+
+    page.route("**/api/stream", refuse_the_first)
 
     _boot_live_with_r1(page, live_stream_dash)
     assert len(streams) >= 2, streams
