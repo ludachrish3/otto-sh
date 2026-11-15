@@ -35,7 +35,7 @@ from otto.host.host import BaseHost
 from otto.utils import WaitTimeoutError, wait_for_async
 from tests._fixtures import witness_shell
 from tests.conformance._cells import RUNNER_LOCAL_KINDS
-from tests.conformance._entry import opened
+from tests.conformance._entry import on_console, opened
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._sample import cell_label
 from tests.conformance._vocabulary import Vocabulary
@@ -44,8 +44,6 @@ logger = logging.getLogger(__name__)
 
 _START_WAIT_S = 5.0
 """How long :meth:`Witness.state` waits for a stimulus to write its witness."""
-
-_CONSOLE = "console"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -102,7 +100,7 @@ async def _run_template(runner: BaseHost, template: str, path: str) -> str:
 @contextlib.asynccontextmanager
 async def _remote_runner(resolved: ResolvedCell, host: BaseHost) -> "AsyncIterator[BaseHost]":
     """The host the remote observer runs on: *host* on a console, else one second host."""
-    if resolved.cell.term == _CONSOLE:
+    if on_console(resolved):
         yield host
         return
     async with opened(resolved) as second:

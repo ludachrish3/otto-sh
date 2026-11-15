@@ -73,6 +73,11 @@ _BUSYBOX_ARTIFACT = "busybox-artifact"
 _SSH, _TELNET, _CONSOLE = "ssh", "telnet", "console"
 
 
+def on_console(resolved: ResolvedCell) -> bool:
+    """Whether *resolved*'s cell is on a ``console`` term: the one console discriminator."""
+    return resolved.cell.term == _CONSOLE
+
+
 def entries_declared(contract: str) -> "list[str]":
     """The entries *contract*'s ``@pytest.mark.entries(...)`` names; ``[]`` if unmarked.
 
@@ -159,7 +164,7 @@ def expected_route(resolved: ResolvedCell) -> str:
         return ExecRoute.POOLED_SHELL.value
     if resolved.family == LOCAL_FAMILY:
         return ExecRoute.LOCAL_SUBPROCESS.value
-    if resolved.family == EMBEDDED or resolved.cell.term == _CONSOLE:
+    if resolved.family == EMBEDDED or on_console(resolved):
         return ExecRoute.DEFAULT_SESSION.value
     if resolved.cell.term == _SSH and not resolved.proxied_login:
         return ExecRoute.SSH_CHANNEL.value

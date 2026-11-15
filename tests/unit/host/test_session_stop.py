@@ -18,6 +18,7 @@ from otto.host.exec_route import ExecRoute
 from otto.host.host import CredentialExpect
 from otto.host.session import ShellSession
 from otto.utils import wait_for_async
+from tests._fixtures.session_stop import old_mark_only
 from tests.unit.host._session_feed import scripted_shell, scripted_shell_unopened
 from tests.unit.host.test_session import idle_exec_sessions
 from tests.unit.host.test_session_exec_pooled import _exec, _mgr
@@ -129,11 +130,6 @@ async def test_a_timed_out_zephyr_command_is_stopped_under_the_same_bound():
     assert s.alive
 
 
-async def _old_mark_only(self, *, restore):
-    """The cancel arm as it was: mark the session for the next use, write nothing."""
-    self._needs_recovery = True
-
-
 async def _cancel_once_begun(s, task):
     await s.began.wait()
     task.cancel()
@@ -240,7 +236,7 @@ async def test_nothing_touches_the_transport_after_the_call_returns():
 
 @pytest.mark.timeout(10)
 async def test_control_with_the_old_mark_only_branch_the_command_is_not_stopped(monkeypatch):
-    monkeypatch.setattr(ShellSession, "_stop_interrupted_command", _old_mark_only)
+    monkeypatch.setattr(ShellSession, "_stop_interrupted_command", old_mark_only)
     s = await scripted_shell()
     await _cancel_once_begun(s, asyncio.ensure_future(s.run_cmd(cmd="c", timeout=60)))
     assert "write:'\\x03'" not in s.ops

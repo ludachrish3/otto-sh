@@ -338,6 +338,7 @@ By promise id:
 - `run-keeps-state`: `tests/conformance/test_state_contract.py::test_what_one_run_does_to_its_session_the_next_run_sees`
 - `exec-stdin`: `tests/conformance/test_stdin_contract.py::test_an_exec_without_expects_reads_end_of_file`
 - `exec-concurrent`: `tests/conformance/test_concurrency_contract.py::test_concurrent_execs_each_return_their_own_result`
+- `exec-cancel`: `tests/conformance/test_cancel_contract.py::test_cancelling_an_exec_stops_its_command_and_leaves_the_host_usable`
 - `timeout`: `tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way`
 
 The suite checks shell-routed `exec` (the `exec-shell` entry) on an SSH host

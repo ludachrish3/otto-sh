@@ -28,20 +28,23 @@ import copy
 import dataclasses
 import datetime as dt
 import json
+import logging
 import os
 import re
 import shlex
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
 
+from otto.host import process_stop
 from otto.host.command_frame import BashFrame
 from otto.host.exec_route import ExecRoute
 from otto.host.limitation import Limitation
-from otto.host.session import RouteRecord
+from otto.host.session import RouteRecord, ShellSession
 from otto.host.transfer import (
     TRANSFER_BACKENDS,
     ProgressGranularity,
@@ -107,9 +110,10 @@ from tests._fixtures.support_matrix import (
     element_accounting_errors,
     positive_control_errors,
 )
-from tests._fixtures.witness_shell import STOPPED
+from tests._fixtures.witness_shell import RUNNING, STARTED_TOKEN, STOPPED, without_ignoring
 from tests.conformance import _entry
 from tests.conformance import conftest as conformance_conftest
+from tests.conformance import test_cancel_contract as _cancel_contract
 from tests.conformance import test_concurrency_contract as _concurrency_contract
 from tests.conformance import test_exec_contract as _exec_contract
 from tests.conformance import test_output_contract as _output_contract
@@ -2569,7 +2573,33 @@ class _FakeHost:
         )
 
     async def exec(self, command, timeout=None) -> CommandResult:
+        witnessed = self._witnesses.long_running_path(_outside_subshell(command))
+        if witnessed is not None and timeout is None:
+            await self._run_until_cancelled(witnessed)
         return self._routed(self._answer(command, timeout, dict(self._state)), self.exec_route)
+
+    async def _run_until_cancelled(self, witnessed: str) -> None:
+        """A witnessed command with no budget: relays its start token, then runs until cancelled.
+
+        A cancel stops it through the real seam the cancel contract's control
+        disables for this route, read at call time: ``ShellSession``'s stop on
+        the pooled shell, ``process_stop.stop_interrupted`` otherwise. Either
+        one that runs records the witnessed process as stopped.
+        """
+        self._witnesses.record(witnessed, RUNNING)
+        _fake_output_logger.info(f"[yellow]@fake > | {STARTED_TOKEN}", extra={"host": self})
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError as exc:
+
+            def stopped() -> None:
+                self._witnesses.record(witnessed, STOPPED)
+
+            if self.exec_route == "pooled-shell":
+                await ShellSession._stop_interrupted_command(_FakeShell(stopped), restore=None)
+            else:
+                await process_stop.stop_interrupted(_FakeProcess(stopped), exc, what="fake")
+            raise
 
     def _routed(self, result: CommandResult, route: str) -> CommandResult:
         if "reports-the-wrong-route" in self._twists:
@@ -2894,6 +2924,44 @@ class _FakeHost:
         return Result(status=Status.Success)
 
 
+_fake_output_logger = logging.getLogger("otto.host.host")
+"""Where :class:`_FakeHost` relays a command's output, as a host's ``_log_output`` does."""
+
+
+def _outside_subshell(command: str) -> str:
+    """*command* without the cancel contract's form around it (``CANCEL_FORMS``)."""
+    for form in _cancel_contract.CANCEL_FORMS.values():
+        before, after = form.around.split("{command}")
+        if (before or after) and command.startswith(before) and command.endswith(after):
+            return without_ignoring(command[len(before) : len(command) - len(after)])
+    return command
+
+
+class _FakeShell:
+    """What ``ShellSession._stop_interrupted_command`` reads of a session: its recovery."""
+
+    def __init__(self, stopped: "Callable[[], None]") -> None:
+        self._stopped = stopped
+        self._alive = True
+        self._needs_recovery = True
+
+    async def _recover_session(self) -> None:
+        self._stopped()
+
+
+class _FakeProcess:
+    """A process for ``process_stop.stop_interrupted``: any signal stops it at once."""
+
+    def __init__(self, stopped: "Callable[[], None]") -> None:
+        self._stopped = stopped
+
+    def send(self, _signal: object) -> None:
+        self._stopped()
+
+    async def wait(self) -> None:
+        return None
+
+
 def _state_words(command: str) -> "list[str] | None":
     """The POSIX vocabulary's state words *command* chains with ``; ``, in order; ``None`` if not.
 
@@ -2971,6 +3039,7 @@ CONTROLS = {
     ),
     "exec-stdin": _stdin_contract.test_control_input_given_to_the_command_is_read,
     "exec-concurrent": _concurrency_contract.test_control_swapped_results_are_reported,
+    "exec-cancel": _cancel_contract.test_control_with_the_stop_disabled_the_command_is_seen_running,
     "transfer-roundtrip": (
         _transfer_contract.test_control_the_roundtrip_comparison_rejects_a_corrupted_byte
     ),
@@ -3051,6 +3120,14 @@ HOST_CASES = [
         "every command answers one value",
         "exec-concurrent",
         ("every-printf-answers-one-value",),
+        True,
+        False,
+    ),
+    ("a cancel with the stop disabled leaves the command running", "exec-cancel", (), True, True),
+    (
+        "every process reads stopped, also after a cancel",
+        "exec-cancel",
+        ("every-process-reads-stopped",),
         True,
         False,
     ),
@@ -6310,6 +6387,7 @@ def test_the_narrowing_pin_examines_a_real_mechanism_on_every_narrowing_surface(
         "exec-isolated",
         "run-keeps-state",
         "exec-stdin",
+        "exec-cancel",
         "transfer-roundtrip",
         "transfer-mode",
         "transfer-progress",
@@ -6758,14 +6836,14 @@ def test_a_cell_nothing_has_watched_yet_still_describes_the_promise(committed):
 
 
 def test_a_surface_with_one_observable_still_promises_it(committed):
-    """The accept-control for all of the above: eleven of the fifteen surfaces are unbranched.
+    """The accept-control for all of the above: twelve of the sixteen surfaces are unbranched.
 
     Without it, a `promise_of` that answered "no promise" for everything would satisfy
     every refusal above and publish a page that promises nothing at all.
     """
     page = _page(committed)
     unbranched = [surface.id for surface in SURFACES if not VOICE[surface.id].branches]
-    assert len(unbranched) == 11, f"the tree's branching surfaces have changed: {unbranched}"
+    assert len(unbranched) == 12, f"the tree's branching surfaces have changed: {unbranched}"
     for surface_id in unbranched:
         cell = committed["cells"][surface_id]["gnu"]
         assert promise_of(surface_id, cell).capability == VOICE[surface_id].capability

@@ -65,6 +65,7 @@ from tests._fixtures.witness_shell import RUNNING, STOPPED, FakeWitnesses
 from tests.conformance import _bed, _console_safety, _lab_context
 from tests.conformance import _vocabulary as _vocabulary_module
 from tests.conformance import conftest as _conformance_conftest
+from tests.conformance import test_cancel_contract as _cancel_contract
 from tests.conformance import test_exec_contract as _exec_contract
 from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_progress_contract as _progress_contract
@@ -3242,6 +3243,33 @@ def test_the_timeout_contract_covers_every_cell_with_a_long_running_stimulus() -
         assert _timeout_contract.applicable_cell(resolved), (
             f"{cell_label(resolved)} is a POSIX shell with `sleep`; the timeout "
             f"contract must not have narrowed the hermetic venue"
+        )
+
+
+def test_the_cancel_contract_covers_every_cell_it_can_watch_from_a_second_connection() -> None:
+    """Which cells the cancel contract's domain includes and excludes, pinned.
+
+    Outside: the ``bed-zephyr`` cells (no command that blocks) and every
+    ``console``-term cell (one client, so no second connection to watch the
+    command from). Both directions, as for the timeout domain above, and no
+    hermetic cell is narrowed.
+    """
+    space = bed_space()
+    outside = {cell_label(rc) for rc in space if not _cancel_contract.applicable_cell(rc)}
+    expected = {
+        cell_label(rc) for rc in space if rc.kind == BED_ZEPHYR or rc.cell.term == "console"
+    }
+    assert outside == expected, (
+        f"the cancel contract's domain excludes {sorted(outside)}, not exactly the Zephyr "
+        f"and console cells {sorted(expected)}"
+    )
+    assert {cell_label(rc) for rc in space if rc.kind == BED_ZEPHYR} < outside
+    assert len(outside) < len(space)
+
+    for resolved in hermetic_space():
+        assert _cancel_contract.applicable_cell(resolved), (
+            f"{cell_label(resolved)} is a POSIX shell off a console; the cancel contract "
+            f"must not have narrowed the hermetic venue"
         )
 
 
