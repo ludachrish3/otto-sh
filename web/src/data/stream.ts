@@ -20,6 +20,14 @@ import { MONITOR_STREAM_READ_VERSIONS } from "./streamFormat";
 
 const FLUSH_MS = 16; // one frame
 const BACKOFF_MS = [1000, 2000, 5000, 10_000, 30_000];
+/** How long a tab stays hidden before it lets its stream go (#1041). An
+ * HTTP/1.1 browser holds about six connections per host across all its tabs,
+ * so tabs a user is not looking at must not hold theirs: one stream each
+ * would starve every fetch once six or so share a server. 30 s keeps a quick
+ * switch to another tab and back free of any reconnect. Restated in prose by
+ * docs/cli/monitor/dashboard.md and jumped by the browser test in
+ * tests/e2e/monitor/dashboard/test_live_shell.py: change them with it. */
+export const HIDDEN_GRACE_MS = 30_000;
 
 // The fragment's array-typed fields (metrics/events/log_events/deleted_event_ids) —
 // see MonitorSessionFragment in export.gen.ts. Checked below so a fragment carrying
@@ -137,6 +145,11 @@ export function startStream(
   // `isServed` answered true: from then on an error before an open retries,
   // as after an open.
   let served = false;
+  // The tab's document, when there is one; `parked` while a hidden tab has
+  // let the stream go, and `parkTimer` counts down the grace before it does.
+  const doc = typeof document === "undefined" ? undefined : document;
+  let parked = false;
+  let parkTimer: ReturnType<typeof setTimeout> | null = null;
   let attempt = 0;
   // The current connection's record for the backoff: whether its open was
   // healthy, and whether it lost a frame (`lost`). Only a connection that
@@ -202,7 +215,11 @@ export function startStream(
     }
   };
 
-  const connect = () => {
+  // `resume`: the tab is shown again after letting its stream go (`park`).
+  // The connection state is left as it was: nothing was lost that the user
+  // needs telling about, so no reconnecting banner flashes while the resumed
+  // connection opens. If it fails, `failed` says so as for any drop.
+  const connect = (resume = false) => {
     if (stopped) return;
     // zustand's vanilla setState notifies subscribers on every call, even when the
     // value doesn't change (it bails only on reference-equal partials, never on
@@ -212,7 +229,7 @@ export function startStream(
     // them again would fire a spurious update ahead of the very first buffered
     // fragment. Only write when the value would actually change.
     const target = attempt === 0 ? "connecting" : "disconnected";
-    if (useReviewStore.getState().connection !== target) {
+    if (!resume && useReviewStore.getState().connection !== target) {
       useReviewStore.getState().actions.setConnection(target);
     }
     unreadable = 0;
@@ -344,12 +361,64 @@ export function startStream(
     stopped = true;
     if (timer !== null) clearTimeout(timer);
     if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+    if (parkTimer !== null) clearTimeout(parkTimer);
+    doc?.removeEventListener("visibilitychange", followVisibility);
     source?.close();
   }
 
   function reconnect(): void {
-    if (stopped || !opened || reconnectTimer !== null) return;
+    if (stopped || parked || !opened || reconnectTimer !== null) return;
     failed();
+  }
+
+  /** The tab was hidden or shown: hidden, it lets the stream go once
+   * HIDDEN_GRACE_MS has passed (`park`); shown, it takes the stream back at
+   * once, or keeps the one it never let go. */
+  function followVisibility(): void {
+    if (stopped || doc === undefined) return;
+    if (doc.visibilityState === "hidden") {
+      if (parkTimer === null && !parked) parkTimer = setTimeout(park, HIDDEN_GRACE_MS);
+      return;
+    }
+    if (parkTimer !== null) {
+      clearTimeout(parkTimer);
+      parkTimer = null;
+    }
+    if (parked) {
+      parked = false;
+      attempt = 0;
+      connect(true);
+    }
+  }
+
+  /** Let the stream go while the tab is hidden (#1041). What already
+   * arrived applies; a pending retry is dropped (the tab reconnects when
+   * shown); and the acknowledgement is withheld, as for a lost frame, since
+   * what is published meanwhile is missed until the resumed connection's
+   * open resyncs. A stream that has not yet opened (the boot is still
+   * asking whether a server is there) waits another grace. */
+  function park(): void {
+    parkTimer = null;
+    if (stopped) return;
+    if (!opened && !served) {
+      parkTimer = setTimeout(park, HIDDEN_GRACE_MS);
+      return;
+    }
+    // Parked first: a frame the flush below cannot apply then withholds the
+    // acknowledgement (`lost`) without asking for a reconnect, which would
+    // mark the connection disconnected for a drop that is not one.
+    parked = true;
+    if (timer !== null) {
+      clearTimeout(timer);
+      flush();
+    }
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    source?.close();
+    source = null;
+    useReviewStore.getState().actions.withholdCoverage();
   }
 
   /** The ONE handling of a frame the tab did not apply: one it could not
@@ -370,5 +439,7 @@ export function startStream(
   }
 
   connect();
+  doc?.addEventListener("visibilitychange", followVisibility);
+  followVisibility(); // a tab opened in the background
   return { stop, reconnect, lost };
 }

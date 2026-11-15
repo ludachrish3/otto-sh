@@ -28,6 +28,14 @@ decides: a live run that has recorded nothing yet shows that waiting screen,
 without Import, and keeps retrying until its first data arrives, with the
 **Reconnecting…** banner up while each retry backs off.
 
+A browser holds only about six connections to one server across all its
+tabs, and each dashboard tab's stream is one of them. So a tab that stays
+hidden for 30 seconds closes its stream, and opens a new one the moment you
+come back to it. The new stream brings the tab up to date, keeping a paused
+or pinned view as it was. The **Reconnecting…** banner shows only if the
+stream was already reconnecting when the tab was hidden. Switching away and
+back within 30 seconds keeps the stream open.
+
 You can also feed it a monitor export document yourself — drag a file onto
 the window, or use the **⋯** overflow menu's *Import* — where Import is
 offered: on a `.json` review it switches the source the server serves, and
