@@ -578,18 +578,25 @@ async def wait_for_async(
     interval: float | Callable[[int], float] = 0.1,
     probe_first: bool = True,
     on_timeout: str | Callable[[], str],
+    clock: Callable[[], float] | None = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
 ) -> None:
     """Async twin of :func:`wait_for`; awaits *predicate* if it returns an awaitable.
 
     Same shape and contract as :func:`wait_for` (see there for the
     ``probe_first`` / *interval* / *on_timeout* semantics); the clock is the
     running loop's (``loop.time()``), the sleep is ``asyncio.sleep``.
+
+    *clock* and *sleep* replace those two, for a caller whose module keeps
+    its own time seams so tests can run its waits on a virtual clock
+    (:func:`otto.host.daemon.rescan_until_exited`).
     """
     # Here, not at the top: every command's help imports this module, and
     # only a caller already on an event loop reaches this line.
     import asyncio
 
-    loop = asyncio.get_running_loop()
+    now = clock if clock is not None else asyncio.get_running_loop().time
+    pause = sleep if sleep is not None else asyncio.sleep
 
     async def probe() -> bool:
         result = predicate()
@@ -598,15 +605,15 @@ async def wait_for_async(
         return result
 
     _check_timeout(timeout)
-    deadline = loop.time() + timeout
+    deadline = now() + timeout
     if probe_first and await probe():
         return
     sleeps = 0
     while True:
-        remaining = deadline - loop.time()
+        remaining = deadline - now()
         if remaining <= 0:
             raise WaitTimeoutError(_render_on_timeout(on_timeout))
-        await asyncio.sleep(min(_interval_at(interval, sleeps), remaining))
+        await pause(min(_interval_at(interval, sleeps), remaining))
         sleeps += 1
         if await probe():
             return

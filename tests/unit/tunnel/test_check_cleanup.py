@@ -904,7 +904,8 @@ class TestAKilledEchoGetsTimeToExit:
     async def test_an_unkillable_echo_is_still_refused_after_a_bounded_wait(
         self, monkeypatch
     ) -> None:
-        from otto.tunnel import _tunnel_echoes, check
+        from otto.host import daemon
+        from otto.tunnel import check
 
         the_bed = bed(c={"unkillable": True}).install(monkeypatch)
         c = the_bed.hosts["c"]
@@ -927,8 +928,7 @@ class TestAKilledEchoGetsTimeToExit:
             )
         ]
         [settled] = waited
-        bound = _tunnel_echoes.KILL_SETTLE_S + _tunnel_echoes._READY_INTERVAL_S
-        assert _tunnel_echoes.KILL_SETTLE_S <= settled <= bound
+        assert settled == daemon.KILL_SETTLE_S
 
 
 def test_the_sweep_marks_a_ps_that_fails(tmp_path) -> None:

@@ -47,7 +47,7 @@ deadline is charged in full; and the run ends on a host that goes quiet
 protocols, one leftover tunnel in the sweep, as before the columns + the TCP
 column + the UDP column + the run end:
 
-- 3 hops, the unix bed's path: 45.6 + 383.4 + 373.4 + 150 = 952 s, about 16 min;
+- 3 hops, the unix bed's path: 46 + 383.8 + 373.8 + 150 = 954 s, about 16 min;
 - 5 hosts that each run an echo (4 hops and a full-proof ``--dest``):
   72 + 512.2 + 502.2 + 210 = 1296 s, about 22 min.
 
