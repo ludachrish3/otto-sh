@@ -70,7 +70,7 @@ export function matchesInLines(
     const spans: [number, number][] = [];
     let matched = false;
     re.lastIndex = 0;
-    for (;;) {
+    while (true) {
       const m = re.exec(text);
       if (m === null) break;
       matched = true;
