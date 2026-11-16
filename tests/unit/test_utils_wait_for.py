@@ -389,3 +389,27 @@ async def test_async_real_loop_smoke():
 
     with pytest.raises(TimeoutError):
         await wait_for_async(lambda: False, 0.01, interval=0.002, on_timeout="real-loop timeout")
+
+
+@pytest.mark.asyncio
+async def test_async_runs_on_a_callers_clock_and_sleep():
+    """A caller's own *clock* and *sleep* replace the loop's: the waits never touch asyncio's."""
+    now = [0.0]
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    probes: list[float] = []
+
+    def ready() -> bool:
+        probes.append(now[0])
+        return False
+
+    with pytest.raises(WaitTimeoutError, match="still waiting"):
+        await wait_for_async(
+            ready, 0.5, interval=0.2, on_timeout="still waiting", clock=lambda: now[0], sleep=sleep
+        )
+    assert sleeps == [0.2, 0.2, pytest.approx(0.1)]
+    assert probes == [0.0, 0.2, 0.4, pytest.approx(0.5)]

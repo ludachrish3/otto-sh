@@ -18,7 +18,7 @@ from typing import Any
 
 from ..check.errors import CheckHostUnreachableError
 from ..check.fingerprint import check_read
-from ..host.daemon import kill_command, parse_ps_output
+from ..host.daemon import kill_command, parse_ps_output, rescan_until_exited
 from .check_probes import (
     CHECK_PREFIX,
     PS_FAILED,
@@ -39,17 +39,7 @@ probe sent straight after the launch could race the bind and blame the
 network. A deadline, not a number of tries, so a host whose every command is
 slow gets the same time as a fast one."""
 _READY_INTERVAL_S = 0.2
-"""How often the socket listing is read while an echo is not yet bound, and how often a
-host is scanned again while a killed echo is still listed."""
-KILL_SETTLE_S = 1.0
-"""How long, on the wall clock, killed echoes get to exit before one still listed survived its kill.
-
-socat exits promptly on SIGTERM, but a scan sent straight after the ``kill``
-can still list it for a moment; one scan alone would then call it a
-survivor. The scan is repeated until the killed pids are gone, ``ps``
-cannot list, or this deadline passes."""
-
-
+"""How often the socket listing is read while an echo is not yet bound."""
 _LOCAL_FIELD = 3
 """The local-address column of an ``ss -H`` or ``netstat`` listing line."""
 
@@ -122,17 +112,17 @@ async def kill(host: Any, pids: list[int]) -> None:
 async def _scan_after_kill(host: Any, pids: list[int]) -> EchoScan:
     """Scan *host* until none of the killed *pids* is listed, and return that last scan.
 
-    It also stops when ``ps`` cannot list, or once :data:`KILL_SETTLE_S` has
-    passed; what is still listed then survived its kill. With no *pids* it
-    is one scan.
+    The settle is :func:`otto.host.daemon.rescan_until_exited`'s, shared with
+    ``otto tunnel remove``: it also stops when ``ps`` cannot list, or once
+    :data:`~otto.host.daemon.KILL_SETTLE_S` has passed, and what is still
+    listed then survived its kill. With no *pids* it is one scan.
     """
-    deadline = clock() + KILL_SETTLE_S
-    while True:
-        after = await scan(host)
-        listed = {echo.pid for echo in after.echoes}
-        if not after.listed or not listed & set(pids) or clock() >= deadline:
-            return after
-        await sleep(_READY_INTERVAL_S)
+    killed = set(pids)
+
+    def still_listed(after: EchoScan) -> bool:
+        return after.listed and any(echo.pid in killed for echo in after.echoes)
+
+    return await rescan_until_exited(lambda: scan(host), still_listed)
 
 
 async def kill_confirmed(host: Any, pids: list[int]) -> set[int] | None:
@@ -140,7 +130,7 @@ async def kill_confirmed(host: Any, pids: list[int]) -> set[int] | None:
 
     ``kill`` exits non-zero for a pid it may not signal, such as an echo
     another user started, and that is no error here: the scans after it,
-    given :data:`KILL_SETTLE_S` to see each one go, say whether it went.
+    given :data:`~otto.host.daemon.KILL_SETTLE_S` to see each one go, say whether it went.
     ``None`` when a scan could not list processes, so nothing is known
     either way. Nothing to kill sends nothing, and scans nothing.
     """
@@ -180,7 +170,7 @@ class Cleaned:
 async def clean_hop(hop: ResolvedHop, token: str, *, keep_tunnel: str | None = None) -> Cleaned:
     """Kill run *token*'s echoes on *hop*, then re-scan it and name any that survived.
 
-    The re-scan gives the killed echoes :data:`KILL_SETTLE_S` to exit, so one
+    The re-scan gives the killed echoes :data:`~otto.host.daemon.KILL_SETTLE_S` to exit, so one
     still exiting is not called a survivor.
 
     Echoes of *keep_tunnel* are left running (and are not survivors): they are

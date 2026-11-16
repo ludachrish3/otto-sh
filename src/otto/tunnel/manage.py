@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, TypeGuard
 
 from typing_extensions import final
 
-from ..host.daemon import kill_command, launch_command
+from ..host.daemon import kill_command, launch_command, rescan_until_exited
 from ..host.errors import HostCommandError, HostUnreachableError
 from ..host.host import is_dry_run
 from ..logger.mode import LogMode
@@ -21,6 +21,7 @@ from ..utils import PerLoop
 from .carrier import DEFAULT_CARRIER, TunnelCarrier, build_carrier
 from .discovery import (
     _TUNNEL_HOST_TIMEOUT,
+    Observation,
     TunnelDiscovery,
     _device_read,
     _device_running,
@@ -1170,12 +1171,23 @@ async def _reap(lab: "Lab", predicate: Any) -> RemovedReport:
             continue
         killed[host_id] = sorted(pids)
 
-    # Post-remove verify (spec §10): re-scan only the hosts we killed on.
+    # Post-remove verify (spec §10): re-scan only the hosts we killed on, giving
+    # the killed processes the shared settle to exit before any is a survivor.
     survivors: list[tuple[str, int]] = []
     if killed:
         verify_hosts = [lab.hosts[h] for h in killed]
-        post, _post_unreachable = await _scan_hosts(verify_hosts)
-        survivors = sorted((origin, obs.pid) for origin, obs in post if obs.parsed.tunnel.id in ids)
+
+        def left(scanned: tuple[list[tuple[str, Observation]], list[str]]) -> list[tuple[str, int]]:
+            post, _post_unreachable = scanned
+            return sorted((origin, obs.pid) for origin, obs in post if obs.parsed.tunnel.id in ids)
+
+        scanned = await rescan_until_exited(
+            lambda: _scan_hosts(verify_hosts), lambda scanned: bool(left(scanned))
+        )
+        survivors = left(scanned)
+        # A host the last verify scan could not reach says nothing about its
+        # processes: it is unreachable, never confirmed clean.
+        unreachable.update(scanned[1])
     return RemovedReport(
         removed_ids=sorted(ids),
         killed=killed,

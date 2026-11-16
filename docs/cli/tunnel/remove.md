@@ -15,7 +15,9 @@ tunnel ownership isn't tracked — see
 destructive and owner-agnostic, it asks for confirmation first; pass `-y` / `--yes` to skip the prompt (e.g. from a
 script or CI cleanup step).
 
-If any killed process is still alive on the post-kill scan, `remove` names
-it as a survivor and exits non-zero — never a silent trust of the kill
-command's own exit code.
+If any killed process is still alive after the kill, `remove` names it as a
+survivor and exits non-zero — never a silent trust of the kill command's own
+exit code. A process can still be listed for a moment while it exits, so the
+re-scan repeats for up to a second before it calls anything a survivor. A
+kill whose processes are already gone costs a single re-scan.
 

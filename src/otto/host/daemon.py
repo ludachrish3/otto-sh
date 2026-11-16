@@ -11,10 +11,12 @@ site) — shared by tunnels and link-impairment timers without a tunnel<->link
 import edge.
 """
 
+import contextlib
 import re
-from collections.abc import Iterable, Sequence
+import time
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import quote, unquote
 
 from .shell_quote import bash_script
@@ -340,6 +342,64 @@ def kill_command(pids: Iterable[int]) -> str:
     if not sorted_pids:
         raise ValueError("kill_command needs at least one pid")
     return f"kill {' '.join(str(p) for p in sorted_pids)}"
+
+
+KILL_SETTLE_S = 1.0
+"""How long, on the wall clock, killed daemons get to exit before one still listed is a survivor.
+
+A daemon exits promptly on SIGTERM, but a ``ps`` scan sent straight after the
+``kill`` can still list it for a moment, and one scan alone would then call it
+a survivor. :func:`rescan_until_exited` repeats the scan until nothing it was
+waiting for is listed, or this deadline passes. Every reap that verifies its
+kills goes through it: ``otto tunnel remove`` and the tunnel check's echoes."""
+
+KILL_RESCAN_INTERVAL_S = 0.2
+"""How often a host is scanned again while a killed daemon is still listed."""
+
+clock = time.monotonic
+"""The settle deadline reads this clock, so tests can move it with their own waits."""
+
+
+async def sleep(seconds: float) -> None:
+    """Every settle wait goes through here, so tests can make it instant."""
+    import asyncio
+
+    await asyncio.sleep(seconds)
+
+
+_Scan = TypeVar("_Scan")
+
+
+async def rescan_until_exited(
+    scan: Callable[[], Awaitable[_Scan]], still_listed: Callable[[_Scan], bool]
+) -> _Scan:
+    """Run *scan* after a kill until *still_listed* is false for it, and return that last scan.
+
+    It also stops once :data:`KILL_SETTLE_S` has passed, and what is still
+    listed then survived its kill. A first scan that lists nothing waited for
+    costs that one scan and no wait. *still_listed* returns false for a scan
+    that could not list processes, so nothing waits on a host that cannot
+    answer. The poll is :func:`otto.utils.wait_for_async`'s, on this
+    module's :data:`clock` and :func:`sleep`.
+    """
+    from ..utils import WaitTimeoutError, wait_for_async
+
+    last: list[_Scan] = []
+
+    async def exited() -> bool:
+        last[:] = [await scan()]
+        return not still_listed(last[0])
+
+    with contextlib.suppress(WaitTimeoutError):
+        await wait_for_async(
+            exited,
+            KILL_SETTLE_S,
+            interval=KILL_RESCAN_INTERVAL_S,
+            on_timeout="killed processes still listed",
+            clock=clock,
+            sleep=sleep,
+        )
+    return last[0]
 
 
 def enc(value: str | int | None) -> str:

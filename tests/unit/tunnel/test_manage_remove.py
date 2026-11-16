@@ -5,6 +5,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
+
+from otto.host import daemon
 from otto.result import CommandResult
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND
 from otto.tunnel.manage import RemovedReport, remove_all_tunnels, remove_tunnel
@@ -17,12 +20,31 @@ _LO = 49152
 
 
 @dataclass
+class SettleClock:
+    now: float = 0.0
+
+
+@pytest.fixture
+def settle_clock(monkeypatch) -> SettleClock:
+    """Run the post-kill settle (``otto.host.daemon``'s seams) on a virtual clock."""
+    fake = SettleClock()
+
+    async def no_wait(seconds: float) -> None:
+        fake.now += seconds
+
+    monkeypatch.setattr(daemon, "sleep", no_wait)
+    monkeypatch.setattr(daemon, "clock", lambda: fake.now)
+    return fake
+
+
+@dataclass
 class FakeHost:
     """Scripted host for the remove path: discovery scan, then kill, then a
     post-kill verify scan — both discovery and verify go over
     ``DISCOVERY_PS_COMMAND``.
 
-    ``ps_texts`` is a small queue: while more than one entry remains, each
+    ``ps_texts`` is a small queue (an exception entry is raised instead of answered):
+    while more than one entry remains, each
     ``DISCOVERY_PS_COMMAND`` call pops the next one; once a single entry is
     left, it repeats forever. First pop = the discovery scan; the (repeating)
     remainder = the post-kill verify scan(s). This lets a test express
@@ -51,6 +73,8 @@ class FakeHost:
             if self.scan_fail:
                 raise ConnectionError("host is unreachable")
             text = self.ps_texts.pop(0) if len(self.ps_texts) > 1 else self.ps_texts[0]
+            if isinstance(text, Exception):
+                raise text
             return CommandResult(status=Status.Success, value=text, command=cmd)
         if cmd.startswith("kill "):
             if self.kill_raises:
@@ -158,7 +182,7 @@ class TestRemoveTunnel:
         for host in hosts.values():
             assert not any(cmd.startswith("kill ") for cmd in host.commands)
 
-    def test_survivor_reported(self) -> None:
+    def test_survivor_reported(self, settle_clock) -> None:
         tunnel = _three_hop_tunnel()
         carrier_fwd, carrier_rev = _LO, _LO + 1
         text_a, _pids_a = _full_ps(tunnel, "a", carrier_fwd, carrier_rev, 100)
@@ -188,6 +212,60 @@ class TestRemoveTunnel:
         assert report.survivors == [("c", survivor_pid)]
         assert "c" in report.killed  # the kill itself was ack'd fine
         assert report.unreachable == []
+
+    def test_a_killed_process_still_exiting_is_not_a_survivor(self, settle_clock) -> None:
+        """The first verify scan still lists a killed pid and the next does not: it exited (#1135).
+
+        socat exits promptly on SIGTERM, but a scan sent straight after the
+        ``kill`` can still list it. One scan alone called that a survivor.
+        """
+        tunnel = Tunnel(protocol="udp", service_port=8080, path=(TunnelHop("a"), TunnelHop("b")))
+        carrier_fwd, carrier_rev = _LO, _LO + 1
+        text_a, _pids_a = _full_ps(tunnel, "a", carrier_fwd, carrier_rev, 100)
+        text_b, _pids_b = _full_ps(tunnel, "b", carrier_fwd, carrier_rev, 200)
+        a = FakeHost("a", ps_texts=[text_a, ""])
+        b = FakeHost("b", ps_texts=[text_b, text_b, ""])
+        lab = _lab(a=a, b=b)
+
+        report = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id))
+
+        assert report.survivors == []
+        assert sorted(report.killed) == ["a", "b"]
+        assert [c for c in b.commands if c == DISCOVERY_PS_COMMAND] == [DISCOVERY_PS_COMMAND] * 3
+        assert settle_clock.now < daemon.KILL_SETTLE_S
+
+    def test_a_process_left_past_the_settle_deadline_is_a_survivor(self, settle_clock) -> None:
+        """Still listed once ``KILL_SETTLE_S`` has passed: a survivor, after a bounded wait."""
+        tunnel = Tunnel(protocol="udp", service_port=8080, path=(TunnelHop("a"), TunnelHop("b")))
+        carrier_fwd, carrier_rev = _LO, _LO + 1
+        text_a, _pids_a = _full_ps(tunnel, "a", carrier_fwd, carrier_rev, 100)
+        text_b, pids_b = _full_ps(tunnel, "b", carrier_fwd, carrier_rev, 200)
+        lab = _lab(a=FakeHost("a", ps_texts=[text_a, ""]), b=FakeHost("b", ps_texts=[text_b]))
+
+        report = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id))
+
+        assert report.survivors == sorted(("b", pid) for pid in pids_b)
+        assert settle_clock.now == daemon.KILL_SETTLE_S
+
+    def test_a_host_lost_mid_settle_is_unreachable_not_clean(self, settle_clock) -> None:
+        """A re-scan that lists a killed pid, then a host that stops answering: unreachable.
+
+        The last verify scan says nothing about that host's processes, so it may
+        never pass as confirmed clean (#1135).
+        """
+        tunnel = Tunnel(protocol="udp", service_port=8080, path=(TunnelHop("a"), TunnelHop("b")))
+        carrier_fwd, carrier_rev = _LO, _LO + 1
+        text_a, _pids_a = _full_ps(tunnel, "a", carrier_fwd, carrier_rev, 100)
+        text_b, _pids_b = _full_ps(tunnel, "b", carrier_fwd, carrier_rev, 200)
+        lost = ConnectionError("host is unreachable")
+        lab = _lab(
+            a=FakeHost("a", ps_texts=[text_a, ""]), b=FakeHost("b", ps_texts=[text_b, text_b, lost])
+        )
+
+        report = asyncio.run(remove_tunnel(lab, tunnel_id=tunnel.id))
+
+        assert report.survivors == []
+        assert report.unreachable == ["b"]
 
     def test_kill_failure_marks_unreachable(self) -> None:
         tunnel = Tunnel(protocol="tcp", service_port=8080, path=(TunnelHop("a"), TunnelHop("b")))

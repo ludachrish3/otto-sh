@@ -450,6 +450,7 @@ class Bed:
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> "Bed":
         """Patch this bed's fakes into :mod:`otto.tunnel.check`; return self."""
+        from otto.host import daemon
         from otto.tunnel import _tunnel_echoes, check
 
         monkeypatch.setattr(check, "add_tunnel", self.add_tunnel)
@@ -461,8 +462,10 @@ class Bed:
         async def no_wait(seconds: float) -> None:
             self.now += seconds
 
-        monkeypatch.setattr(_tunnel_echoes, "sleep", no_wait)
-        monkeypatch.setattr(_tunnel_echoes, "clock", lambda: self.now)
+        # The readiness waits and the kill settle each read their own seam.
+        for waits in (_tunnel_echoes, daemon):
+            monkeypatch.setattr(waits, "sleep", no_wait)
+            monkeypatch.setattr(waits, "clock", lambda: self.now)
         return self
 
 

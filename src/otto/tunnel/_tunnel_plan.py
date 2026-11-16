@@ -19,8 +19,9 @@ from ..check.sweep import (
     probe_worst_s,
     run_end_worst_s,
 )
+from ..host.daemon import KILL_SETTLE_S
 from . import _tunnel_rows as rows
-from ._tunnel_echoes import _READY_INTERVAL_S, KILL_SETTLE_S, READY_DEADLINE_S
+from ._tunnel_echoes import _READY_INTERVAL_S, READY_DEADLINE_S
 from ._tunnel_rows import LOOPBACK
 from .carrier import build_carrier
 from .check_probes import _BULK_UDP_EOF_WAIT_S, HANDSHAKE_DRAIN_S, SMALL_SIZES, TRIPS
@@ -205,18 +206,21 @@ def _echo_start_worst_s() -> float:
     return COMMAND_ALLOWANCE_S + READY_DEADLINE_S + _READY_INTERVAL_S + 2 * COMMAND_ALLOWANCE_S
 
 
-_KILL_SETTLE_WORST_S = KILL_SETTLE_S + _READY_INTERVAL_S
-"""The re-scans after a kill that leaves a survivor: they run to the settle deadline,
-and the last one starts just before it (``otto.tunnel._tunnel_echoes._scan_after_kill``)."""
+_KILL_SETTLE_WORST_S = KILL_SETTLE_S
+"""The re-scans after a kill that leaves a survivor: they run to the settle deadline, the
+last sleep capped at it, and the last scan starts there
+(:func:`otto.host.daemon.rescan_until_exited`)."""
 
 
 def _removal_worst_s(hosts: int) -> float:
     """``remove_tunnel`` of one throwaway tunnel: a lab-wide scan, a kill per host, a re-scan.
 
+    The re-scan covers every killed-on host at once, and repeats for up to the
+    kill settle while a killed process is still listed.
     Hand-counted: update it when adding a host command to
     :func:`~otto.tunnel.manage.remove_tunnel`.
     """
-    return (hosts + 2) * COMMAND_ALLOWANCE_S
+    return (hosts + 2) * COMMAND_ALLOWANCE_S + _KILL_SETTLE_WORST_S
 
 
 def _add_worst_s(hosts: int) -> float:
