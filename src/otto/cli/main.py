@@ -1,7 +1,6 @@
 """Top-level ``otto`` CLI: callback, subcommand dispatch, and eager option handlers."""
 
 import dataclasses
-import functools
 import importlib
 import os
 import sys
@@ -14,9 +13,9 @@ from typing import (
 )
 
 import typer
-from typer.core import TyperGroup
 from typing_extensions import override
 
+from ..config._typer import NoSuchOption, QuietCompletionGroup, pending_subcommand_args
 from ..config.env import (
     DEFAULT_LOG_RETENTION_DAYS,
     FIELD_PRODUCT_ENV_VAR,
@@ -325,40 +324,7 @@ PENDING_SUBCMD_ARGS_KEY = "_pending_subcmd_args"
 completion tree serialiser sets it to resolve each child real."""
 
 
-def _completion_may_run(complete_var: str | None) -> bool:
-    """Return whether this invocation may be a shell completion request.
-
-    Over-approximates Typer's own test, which reads ``complete_var`` or the
-    variable it derives from the program name, without restating how it
-    derives it.
-    """
-    if complete_var is not None:
-        return complete_var in os.environ
-    return any(k.startswith("_") and k.endswith("_COMPLETE") for k in os.environ)
-
-
-@functools.cache
-def _quiet_completion() -> type:
-    """Return the mixin put before a shell's completion class: its completers print to nowhere.
-
-    Built on first use, so only a TAB loads the completion registry's names
-    from :mod:`otto.config._typer`.
-    """
-    from ..config._typer import ShellComplete
-
-    class _QuietCompletion(ShellComplete):
-        @override
-        def complete(self) -> str:
-            import contextlib
-            import io
-
-            with contextlib.redirect_stdout(io.StringIO()):
-                return super().complete()
-
-    return _QuietCompletion
-
-
-class _OttoGroup(TyperGroup):
+class _OttoGroup(QuietCompletionGroup):
     """Root group: registry-backed lazy dispatch + pending-token snapshot.
 
     ``list_commands`` names every registered :class:`CommandSpec`, plus any
@@ -386,9 +352,7 @@ class _OttoGroup(TyperGroup):
         result = super().parse_args(ctx, args)
         # Save the pending subcommand tokens (subcommand name + its args) so
         # the main() callback can inspect them even after invoke() clears them.
-        ctx.meta[PENDING_SUBCMD_ARGS_KEY] = list(
-            getattr(ctx, "_protected_args", []) + getattr(ctx, "args", [])
-        )
+        ctx.meta[PENDING_SUBCMD_ARGS_KEY] = pending_subcommand_args(ctx)
         return result
 
     @override
@@ -397,18 +361,7 @@ class _OttoGroup(TyperGroup):
         # after the subcommand is hinted here rather than in each command class.
         try:
             return super().invoke(ctx)
-        except (typer.Exit, typer.Abort):
-            # A subcommand's --help, `raise typer.Exit(0)`, ctx.exit(): an exit,
-            # not a failure, and never the option error this hints.
-            raise
-        except Exception as e:
-            # The class is looked up only once something failed, so a command
-            # that returns or exits (its --help included) never loads
-            # otto.config._typer.
-            from ..config._typer import NoSuchOption
-
-            if not isinstance(e, NoSuchOption):
-                raise
+        except NoSuchOption as e:
             global_opts = {o for p in self.params for o in (*p.opts, *p.secondary_opts)}
             target = self._dispatch_target(ctx)
             if target is not None and e.option_name in global_opts:
@@ -433,36 +386,6 @@ class _OttoGroup(TyperGroup):
 
         ensure_help_banner(ctx)
         return super().get_help(ctx)
-
-    @override
-    def _main_shell_completion(
-        self, ctx_args: Any, prog_name: str, complete_var: str | None = None
-    ) -> None:
-        # The completers run user code (a plugin's `autocompletion=`, the
-        # import of a lazily loaded command module), and Typer echoes
-        # `comp.complete()` into the stdout entry() points at the shell. The
-        # completion class of every shell Typer serves runs them with a
-        # discarded stdout and returns the words, so only the words reach the
-        # shell. Every shell, so this never re-derives which one was asked.
-        # Typer calls this on EVERY invocation, before parsing; only a TAB
-        # needs the registry wrapped. Typer names its variable after the
-        # program (`_OTTO_COMPLETE`, `_OTTO_DEV_COMPLETE` for a renamed
-        # executable) unless handed one, so any `_..._COMPLETE` variable counts:
-        # wrapping when no TAB is in flight costs only the import, while
-        # skipping it under a TAB would let a completer's output reach the shell.
-        if not _completion_may_run(complete_var):
-            super()._main_shell_completion(ctx_args, prog_name, complete_var)
-            return
-        from ..config._typer import Shells, add_completion_class, get_completion_class
-
-        quiet_base = _quiet_completion()
-        for shell in Shells:
-            completer = get_completion_class(shell.value)
-            if completer is not None and not issubclass(completer, quiet_base):
-                # The class is only known here; ty cannot order a base held in a variable.
-                quiet = type(completer.__name__, (quiet_base, completer), {})  # ty: ignore[unsupported-dynamic-base]
-                add_completion_class(quiet, shell.value)
-        super()._main_shell_completion(ctx_args, prog_name, complete_var)
 
     def _wants_real(self, ctx: Any, cmd_name: str) -> bool:
         """Return whether *cmd_name* is the invocation's actual dispatch/completion target.
@@ -1252,7 +1175,7 @@ def entry(cache_stale: bool = False) -> None:
     # A TAB's stdout is the shell's: from here to exit, what user code prints
     # (an init module on import or at exit, a completer during the TAB) goes
     # to /dev/null, and only the words click writes reach the shell. The
-    # completers run under _quiet_completion()'s discarded stdout.
+    # completers run under QuietCompletionGroup's discarded stdout.
     with contextlib.ExitStack() as answer:
         shell = None
         if completion:
