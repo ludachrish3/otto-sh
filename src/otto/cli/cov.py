@@ -598,7 +598,7 @@ def clean() -> None:
 
 
 # `clean` zeroes remote counters and writes nothing locally — no output dir.
-clean.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
+clean.__cli_output_dir__ = False  # ty: ignore[missing-attribute]
 
 
 def _render_clean_report(cleaned: "CleanReport") -> None:
@@ -652,8 +652,8 @@ def check_stamp(
     typer.echo(f"{binary}: {len(stamps)} .gcno stamp(s) match {gcno_dir}")
 
 
-check_stamp.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
-check_stamp.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+check_stamp.__cli_output_dir__ = False  # ty: ignore[missing-attribute]
+check_stamp.__cli_lab_free__ = True  # ty: ignore[missing-attribute]
 
 
 # ---------------------------------------------------------------------------
@@ -702,8 +702,8 @@ def kmodcov_export(
         typer.echo(f"{result.directory}: already current (otto {result.version})")
 
 
-kmodcov_export.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
-kmodcov_export.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+kmodcov_export.__cli_output_dir__ = False  # ty: ignore[missing-attribute]
+kmodcov_export.__cli_lab_free__ = True  # ty: ignore[missing-attribute]
 
 
 @kmodcov_app.command("check")
@@ -730,8 +730,8 @@ def kmodcov_check(
         raise typer.Exit(result.exit_code)
 
 
-kmodcov_check.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
-kmodcov_check.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+kmodcov_check.__cli_output_dir__ = False  # ty: ignore[missing-attribute]
+kmodcov_check.__cli_lab_free__ = True  # ty: ignore[missing-attribute]
 
 cov_app.add_typer(kmodcov_app, name="kmodcov")
 
@@ -784,8 +784,8 @@ def embedded_gcov_export(
         typer.echo(f"{directory}: already current ({', '.join(SHIPPED_FILES)})")
 
 
-embedded_gcov_export.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
-embedded_gcov_export.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+embedded_gcov_export.__cli_output_dir__ = False  # ty: ignore[missing-attribute]
+embedded_gcov_export.__cli_lab_free__ = True  # ty: ignore[missing-attribute]
 
 
 @embedded_gcov_app.command("check")
@@ -810,8 +810,8 @@ def embedded_gcov_check(
         raise typer.Exit(result.exit_code)
 
 
-embedded_gcov_check.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
-embedded_gcov_check.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+embedded_gcov_check.__cli_output_dir__ = False  # ty: ignore[missing-attribute]
+embedded_gcov_check.__cli_lab_free__ = True  # ty: ignore[missing-attribute]
 
 
 @embedded_gcov_app.command("finish")
@@ -841,7 +841,7 @@ def embedded_gcov_finish(
     typer.echo(f"{out_llext}: stamp {', '.join(f'{s:#x}' for s in stamps)} matches {gcno_dir}")
 
 
-embedded_gcov_finish.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
-embedded_gcov_finish.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+embedded_gcov_finish.__cli_output_dir__ = False  # ty: ignore[missing-attribute]
+embedded_gcov_finish.__cli_lab_free__ = True  # ty: ignore[missing-attribute]
 
 cov_app.add_typer(embedded_gcov_app, name="embedded-gcov")

@@ -721,7 +721,7 @@ class TestCollectCliCommandChildren:
         def y() -> None: ...
 
         mod = types.ModuleType("fake_plugin_mod")
-        mod.app = app  # ty: ignore[unresolved-attribute]
+        mod.app = app  # ty: ignore[missing-attribute]
         monkeypatch.setitem(sys.modules, "fake_plugin_mod", mod)
         register_cli_command("fptool", "fake_plugin_mod:app", help="FP.")
         try:

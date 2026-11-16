@@ -65,7 +65,7 @@ class _Aliased:
 
 @dataclasses.dataclass
 class _BadAttribute:
-    y: "os.Nope" = None  # ty: ignore[unresolved-attribute]
+    y: "os.Nope" = None  # ty: ignore[missing-attribute]
     pw: SecretStr | None = None
 
 

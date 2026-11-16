@@ -792,12 +792,12 @@ def cli_exposed(
     """
 
     def deco(f: _CliVerb) -> _CliVerb:
-        f.__cli_exposed__ = True  # ty: ignore[unresolved-attribute]
-        f.__cli_name__ = name or f.__name__.replace("_", "-")  # ty: ignore[unresolved-attribute]
-        f.__cli_help__ = help_  # ty: ignore[unresolved-attribute]
-        f.__cli_success__ = success  # ty: ignore[unresolved-attribute]
-        f.__cli_output_dir__ = output_dir  # ty: ignore[unresolved-attribute]
-        f.__cli_dry_run_preview__ = dry_run_preview  # ty: ignore[unresolved-attribute]
+        f.__cli_exposed__ = True  # ty: ignore[missing-attribute]
+        f.__cli_name__ = name or f.__name__.replace("_", "-")  # ty: ignore[missing-attribute]
+        f.__cli_help__ = help_  # ty: ignore[missing-attribute]
+        f.__cli_success__ = success  # ty: ignore[missing-attribute]
+        f.__cli_output_dir__ = output_dir  # ty: ignore[missing-attribute]
+        f.__cli_dry_run_preview__ = dry_run_preview  # ty: ignore[missing-attribute]
         return f
 
     return deco(fn) if fn is not None else deco

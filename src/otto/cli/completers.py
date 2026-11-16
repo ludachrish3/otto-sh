@@ -36,7 +36,7 @@ def completion_source(**source: Any) -> Callable[[_F], _F]:
 
     def mark(fn: _F) -> _F:
         # Decorator attribute, read by the tree serialiser (otto.config.completion_tree).
-        fn.__completion_source__ = dict(source)  # ty: ignore[unresolved-attribute]
+        fn.__completion_source__ = dict(source)  # ty: ignore[missing-attribute]
         return fn
 
     return mark

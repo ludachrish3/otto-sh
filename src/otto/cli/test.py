@@ -913,7 +913,7 @@ def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typ
     # Both, not just the signature: the completion cache serialises a command
     # from `inspect.signature`, while typer reads the ANNOTATIONS to find each
     # parameter's `typer.Option` metadata.
-    test.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
+    test.__signature__ = inspect.Signature(params)  # ty: ignore[missing-attribute]
     test.__annotations__ = {p.name: p.annotation for p in params}
     # Previews its own body under --dry-run (the collected test tree) and
     # finishes its own dry run after building the verb's options, so the

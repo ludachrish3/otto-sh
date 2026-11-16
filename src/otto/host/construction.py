@@ -153,7 +153,7 @@ def field_kind(spec: type, name: str) -> "Pass | Convert | Consume | Resolve":
                 f"{spec.__name__}.{name} declares two field kinds: {markers}; keep one"
             )
         if markers:
-            return markers[0]  # ty: ignore[invalid-return-type] — the four kinds are the only markers
+            return markers[0]  # ty: ignore[invalid-explicit-return] — the four kinds are the only markers
     return Pass()
 
 
@@ -207,7 +207,7 @@ def check_coverage(where: str, cls: type, spec: type) -> None:
     """
     problems: list[str] = []
     kinds: dict[str, object] = {}
-    for name in spec.model_fields:  # ty: ignore[unresolved-attribute] — a HostSpec subclass
+    for name in spec.model_fields:  # ty: ignore[missing-attribute] — a HostSpec subclass
         try:
             kinds[name] = field_kind(spec, name)
         except ValueError as exc:  # noqa: PERF203 — once per field at registration; every gap is reported
@@ -247,7 +247,7 @@ def check_coverage(where: str, cls: type, spec: type) -> None:
                 f"{cls.__name__}.{f.name}: RuntimeOnly supplied_by must be None or 'element', "
                 f"got {marker.supplied_by!r}"
             )
-    spec_fields = spec.model_fields  # ty: ignore[unresolved-attribute] — a HostSpec subclass
+    spec_fields = spec.model_fields  # ty: ignore[missing-attribute] — a HostSpec subclass
     for name in _required_params(cls):
         if name in kinds and kinds[name] is None:
             continue  # its two kinds are already reported
@@ -297,7 +297,7 @@ def profile_inputs(spec: type) -> frozenset[str]:
     """Return the fields a profile default may set on *spec*: all but ``os_type`` and Consume."""
     return frozenset(
         name
-        for name in spec.model_fields  # ty: ignore[unresolved-attribute] — a HostSpec subclass
+        for name in spec.model_fields  # ty: ignore[missing-attribute] — a HostSpec subclass
         if name != "os_type" and not isinstance(field_kind(spec, name), Consume)
     )
 

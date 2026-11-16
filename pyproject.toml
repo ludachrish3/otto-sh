@@ -189,7 +189,7 @@ dev = [
     "ruff>=0.15.20",
     "sphinx>=8.0",
     "doc8>=1.1",
-    "ty==0.0.95",
+    "ty==0.0.102",
     # Stub-only package for `requests`, which ships no py.typed and no
     # annotations at all: without it a checker reads `Session.verify`'s type
     # off the bare `self.verify = True` in requests/sessions.py and concludes
@@ -264,7 +264,8 @@ all = "error"
 # What would earn it back: making `Result` generic (`Result[T]`) so the payload
 # carries its type. That is a real improvement and a breaking API change across
 # ~30 files — its own workstream, not a dev-dependency bump.
-unsound-return-statement = "ignore"
+# (ty 0.0.102 renamed it from `unsound-return-statement`.)
+unsound-return = "ignore"
 
 # ty 0.0.85 added truthiness-test-of-none-union, OPT-IN upstream (default
 # level ignore) and pulled in here only by `all = "error"`. Demoted on the

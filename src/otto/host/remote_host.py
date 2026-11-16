@@ -170,7 +170,7 @@ class RemoteHost(BaseHost):
     ip: str
     """IP address of the host."""
 
-    element: "Element" = field(  # ty: ignore[invalid-mutable-override] — REQUIRED by design: a remote host always has an element; BaseHost admits None only for container/local
+    element: "Element" = field(  # ty: ignore[incompatible-mutable-override] — REQUIRED by design: a remote host always has an element; BaseHost admits None only for container/local
         repr=False,
         metadata={
             "otto": RuntimeOnly(reason="the factory's element argument", supplied_by="element")

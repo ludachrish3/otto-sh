@@ -161,7 +161,7 @@ def make_method_command(
     ctx_param = inspect.Parameter(
         "ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=typer.Context
     )
-    _cmd.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
+    _cmd.__signature__ = inspect.Signature(  # ty: ignore[missing-attribute]
         [
             ctx_param,
             *(p.replace(kind=inspect.Parameter.KEYWORD_ONLY) for p in binding.params),
@@ -349,7 +349,7 @@ def _synthesize_command(
     # `ctx.command.callback`) honours read-only verbs (exists/ls/…) that opt out.
     # Typer's own callback shim functools-wraps cmd_fn, carrying the marker
     # through to the resolved command's callback.
-    cmd_fn.__cli_output_dir__ = getattr(sample_func, "__cli_output_dir__", True)  # ty: ignore[unresolved-attribute]
+    cmd_fn.__cli_output_dir__ = getattr(sample_func, "__cli_output_dir__", True)  # ty: ignore[missing-attribute]
     # Same idiom, same reader, for the dry-run seam: whether this verb owns its
     # own preview, and how to resolve the host it names before the seam reports
     # it. Without the first line every host verb would be seam-stopped

@@ -78,7 +78,7 @@ def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
     # Drop ctx_name from __annotations__ too so get_type_hints() on the
     # wrapper doesn't see it (important when _wrap_with_options composes on top).
     wrapper.__annotations__ = {k: v for k, v in func.__annotations__.items() if k != ctx_name}
-    wrapper.__signature__ = inspect.Signature(exposed)  # ty: ignore[unresolved-attribute]
+    wrapper.__signature__ = inspect.Signature(exposed)  # ty: ignore[missing-attribute]
     return wrapper
 
 
@@ -383,7 +383,7 @@ def _wrap_with_options(
             await finish_dry_run(click_ctx, instances, preview=preview)
         return await func(**kw)
 
-    wrapper.__signature__ = inspect.Signature(new_params)  # ty: ignore[unresolved-attribute]
+    wrapper.__signature__ = inspect.Signature(new_params)  # ty: ignore[missing-attribute]
     setattr(wrapper, DRY_RUN_SELF_FINISHING_ATTR, True)
     setattr(wrapper, SENSITIVE_FIELDS_ATTR, frozenset(sensitive_names))
     return wrapper
@@ -452,8 +452,8 @@ def prepare_command_target(
     if own_cls is not None or verb is not None:
         target = _wrap_with_options(target, own_cls, verb=verb, project=project)
     if target is not func:
-        target.__otto_cli_prepared__ = True  # ty: ignore[unresolved-attribute]
-        target.__otto_handler__ = func  # ty: ignore[unresolved-attribute]
+        target.__otto_cli_prepared__ = True  # ty: ignore[missing-attribute]
+        target.__otto_handler__ = func  # ty: ignore[missing-attribute]
     return target
 
 
