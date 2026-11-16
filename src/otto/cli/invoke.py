@@ -21,6 +21,7 @@ import typer
 from rich.markup import escape
 from typing_extensions import assert_never, override
 
+from ..config._typer import get_current_context
 from ..errors import OttoError
 from ..params import (
     OptionsOrigin,
@@ -357,8 +358,6 @@ def _wrap_with_options(
         # all (a test, or a library caller reaching this callable directly)
         # -- and never having gone through the CLI seam is exactly the case a
         # dry run cannot apply to, so that IS the "not a dry run" answer here.
-        from ..config._typer import get_current_context
-
         # `typer.Context` (used everywhere else in this module) is a thin
         # subclass typer's OWN commands never actually instantiate --
         # `TyperCommand.context_class` is the vendored click base

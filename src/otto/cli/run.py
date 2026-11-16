@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import typer
 from rich import print as rprint
 
+from ..config._typer import get_current_context
 from ..instruction_catalog import INSTRUCTIONS, InstructionEntry, ProjectInstruction
 
 # Re-export: the documented import is otto.instructions; this spelling predates it.
@@ -53,7 +54,6 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
 
     async def _leaf(**kw: Any) -> Any:
         # Function-scope: the orchestrator is heavy and the CLI must stay light.
-        from ..config._typer import get_current_context
         from ..params import OptionsValidationError
         from ..project import orchestrator
         from ..run_context import get_context

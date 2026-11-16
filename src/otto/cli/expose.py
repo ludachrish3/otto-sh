@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import typer
 from typing_extensions import override
 
+from ..config._typer import UsageError
 from .invoke import RENDER_POLICY_KEY, RenderPolicy, fail
 
 if TYPE_CHECKING:
@@ -382,15 +383,7 @@ def _make_verb_command() -> "type[TyperCommand]":
         def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
             try:
                 return super().parse_args(ctx, args)
-            except (typer.Exit, typer.Abort):
-                raise  # --help and friends: not a failure, nothing to hint
-            except Exception as e:
-                # Looked up only once the parse failed, so a verb that parses (or
-                # prints its --help) never loads otto.config._typer.
-                from ..config._typer import UsageError
-
-                if not isinstance(e, UsageError):
-                    raise
+            except UsageError as e:
                 positionals = [p for p in self.params if isinstance(p, TyperArgument)]
                 if len(positionals) == 1 and e.message.startswith("Got unexpected extra argument"):
                     # The name the Usage line above shows (exec's metavar is COMMAND).

@@ -33,19 +33,18 @@ Known reaches no static rule sees, each kept on purpose:
   defined the prompt it is handed (``prompt.__module__``), which for
   ``typer.prompt`` is the vendored ``termui``. lifecycle sits below
   otto.config, so it cannot import this module; it names no Typer module.
-* ``otto.cli.main``'s root group reads ``ctx._protected_args`` in
-  ``parse_args`` (Typer stores the pending subcommand there and has no
-  public accessor) and overrides click's ``_main_shell_completion`` hook.
-  Both run on every invocation, where importing this module would cost
-  every command its file operations.
 * ``otto._shim_complete`` mirrors the vendored parser without importing it;
   the differential test (``tests/unit/shim/test_differential.py``) holds the
   two together.
 
-Importing this module imports nothing Typer has not already loaded:
-``import typer`` loads every module named below.
+Importing this module imports nothing Typer has not already loaded,
+``typing_extensions`` (for ``override``) aside: ``import typer`` loads every
+Typer module named below. The root ``otto`` group is
+built on :class:`QuietCompletionGroup`, so every invocation imports it.
 """
 
+import contextlib
+import io
 from typing import Any
 
 # Click's command, context and parameter base classes. Typer exposes its own
@@ -56,8 +55,10 @@ from typing import Any
 from typer._click.core import Command, Context, Parameter
 
 # Usage errors otto raises or catches itself. Typer re-exports only
-# ``BadParameter``, ``Exit`` and ``Abort`` (discussion fastapi/typer#1832 asks
-# for more).
+# ``BadParameter``, ``Exit``, ``Abort`` and, since fastapi/typer#1942,
+# ``TyperException``, the base of every click exception (not of ``Exit`` or
+# ``Abort``, which subclass ``RuntimeError``); discussion fastapi/typer#1832 asks
+# for the subclasses, and upstream asks for one discussion per use case.
 from typer._click.exceptions import NoSuchOption, UsageError
 
 # The running command's context, for code that is not handed one (a leaf whose
@@ -79,12 +80,15 @@ from typer._click.shell_completion import (
 # binds the name only as an incidental import of its own, not as an export. No
 # upstream request yet (#1118).
 from typer._completion_shared import Shells
+from typer.core import TyperGroup
+from typing_extensions import override
 
 __all__ = [
     "Command",
     "Context",
     "NoSuchOption",
     "Parameter",
+    "QuietCompletionGroup",
     "ShellComplete",
     "Shells",
     "UsageError",
@@ -92,6 +96,7 @@ __all__ = [
     "autocompletion_of",
     "get_completion_class",
     "get_current_context",
+    "pending_subcommand_args",
 ]
 
 
@@ -114,3 +119,51 @@ def autocompletion_of(param: Parameter) -> Any | None:
             wrapper = cell.cell_contents
             return getattr(wrapper, "__wrapped__", wrapper)
     return compat
+
+
+def pending_subcommand_args(ctx: Any) -> list[str]:
+    """Return the tokens a group's parse left for dispatch: the subcommand's name, then its args.
+
+    Typer's group parse splits them between the private ``_protected_args``
+    (the name) and ``args``, and ``invoke`` clears both, so a reader that runs
+    later needs them saved. Typer has no public accessor. No upstream request
+    yet (#1118).
+    """
+    return [*ctx._protected_args, *ctx.args]  # noqa: SLF001 — the one reader of Typer's split
+
+
+class _QuietCompletion(ShellComplete):
+    """The mixin put before a shell's completion class: its completers print to nowhere."""
+
+    @override
+    def complete(self) -> str:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return super().complete()
+
+
+class QuietCompletionGroup(TyperGroup):
+    """A Typer group whose completers' own output never reaches the shell.
+
+    The completers run user code (a plugin's ``autocompletion=``, the import of
+    a lazily loaded command module), and Typer echoes ``comp.complete()`` into
+    the stdout the shell reads. Before Typer completes, the completion class of
+    every shell it serves is replaced in click's registry by one that runs the
+    completers with a discarded stdout and returns the words, so only the words
+    reach the shell. Every shell, so this never re-derives which one was asked.
+
+    The hook is click's private ``_main_shell_completion``, which Typer calls on
+    every invocation before parsing: Typer publishes no way to look up or
+    replace a completion class. No upstream request yet (#1118).
+    """
+
+    @override
+    def _main_shell_completion(
+        self, ctx_args: Any, prog_name: str, complete_var: str | None = None
+    ) -> None:
+        for shell in Shells:
+            completer = get_completion_class(shell.value)
+            if completer is not None and not issubclass(completer, _QuietCompletion):
+                # The class is only known here; ty cannot order a base held in a variable.
+                quiet = type(completer.__name__, (_QuietCompletion, completer), {})  # ty: ignore[unsupported-dynamic-base]
+                add_completion_class(quiet, shell.value)
+        super()._main_shell_completion(ctx_args, prog_name, complete_var)

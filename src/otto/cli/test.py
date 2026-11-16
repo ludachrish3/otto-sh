@@ -172,6 +172,7 @@ from rich import print as rprint
 from typer.core import TyperCommand
 from typing_extensions import override
 
+from ..config._typer import UsageError, get_current_context
 from ..utils import MIN_INTERVAL_SECONDS
 from .completers import completion_source
 
@@ -660,8 +661,6 @@ def _check_selection(ctx: Any, params: "dict[str, Any]") -> None:
     from .invoke import usage_error_from
 
     if not params.get("names") and not params.get("markers"):
-        from ..config._typer import UsageError
-
         raise UsageError("otto test needs at least one test name or -m EXPR (see otto test --help)")
     fields = {name: params[name] for name in _RUN_FIELD_NAMES if name in params}
     for name in _PATH_FIELD_NAMES:
@@ -701,13 +700,7 @@ class _OttoTestCommand(TyperCommand):
                 _print_trees(listing)
                 ctx.exit(listing.exit_code)
             _check_selection(ctx, params)
-        except (typer.Exit, typer.Abort):
-            raise  # --list-tests exits through ctx.exit(): not a failure
-        except Exception as e:
-            from ..config._typer import UsageError  # only once something failed
-
-            if not isinstance(e, UsageError):
-                raise
+        except UsageError as e:
             # Raised with no context, click would print the error panel alone;
             # with this command's, it adds the Usage line and the Try-help hint,
             # exactly as for its own missing-argument error.
@@ -902,8 +895,6 @@ def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typ
         # context is read, not injected, so the signature is exactly the flags.
         # The cast: typer's own commands hand out the vendored click base
         # class under the `typer.Context` alias (see `otto.cli.invoke`).
-        from ..config._typer import get_current_context
-
         ctx = cast("typer.Context", get_current_context())
         names = list(kw.pop("names", None) or [])
         verb_kwargs = {name: kw.pop(name) for name in verb_names}

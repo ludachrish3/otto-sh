@@ -1,6 +1,5 @@
 """Root-group lazy resolution against the CLI command registry."""
 
-import os
 import re
 import sys
 from typing import Annotated
@@ -495,19 +494,3 @@ def test_option_value_equal_to_help_flag_is_not_sniffed(monkeypatch):
         assert "Usage" not in result.output
     finally:
         CLI_COMMANDS.unregister(name="scratch-help-value-echo")
-
-
-def test_the_quiet_completion_wrap_runs_under_any_program_names_completion_variable(monkeypatch):
-    """Typer names its completion variable after the program, so a renamed
-    executable (``otto-dev`` reads ``_OTTO_DEV_COMPLETE``) still gets its
-    completers' output kept off the shell."""
-    from otto.cli.main import _completion_may_run
-
-    for var in [k for k in os.environ if k.endswith("_COMPLETE")]:
-        monkeypatch.delenv(var)
-    assert not _completion_may_run(None)
-    monkeypatch.setenv("_OTTO_DEV_COMPLETE", "bash_complete")
-    assert _completion_may_run(None)
-    assert not _completion_may_run("_ELSEWHERE")
-    monkeypatch.setenv("_ELSEWHERE", "zsh_complete")
-    assert _completion_may_run("_ELSEWHERE")
