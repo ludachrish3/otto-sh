@@ -16,6 +16,7 @@ import ast
 import copy
 import dataclasses
 import fnmatch
+import functools
 import json
 import re
 import shlex
@@ -791,8 +792,21 @@ def classify_path(path: str) -> "str | None":
 
 _UNPARSABLE = "<unparsable>"
 
+_PARSE_CACHE_SIZE = 64
+"""Trees kept by :func:`_parse`: enough for every text one classification reads,
+the changed paths' base and head and the modules their readers open. The worst
+case, the 64 largest test modules, holds about 130 MB of trees."""
 
+
+@functools.lru_cache(maxsize=_PARSE_CACHE_SIZE)
 def _parse(source: "str | None") -> "ast.Module | None":
+    """Parse *source*, or ``None`` when it is absent or does not parse.
+
+    One classification reads the same base and head text through many readers
+    (identities, marks, structure, roots), so each distinct text is parsed once
+    and the tree shared. Every reader only walks it; the one rewriter,
+    ``_inline``, is handed a deep copy.
+    """
     if source is None:
         return None
     try:
