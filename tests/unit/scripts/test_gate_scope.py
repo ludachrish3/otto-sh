@@ -1920,6 +1920,28 @@ def test_no_tip_list_runs_the_hostless_matrix_locally():
     assert stray == [], "\n".join(stray[:40])
 
 
+def test_one_classification_parses_each_source_once(monkeypatch):
+    """Classifying a changed test module reads its base and head text many times over:
+    each distinct text is parsed once. Re-parsing it per reader was most of what put
+    `test_no_tip_list_runs_the_hostless_matrix_locally` near its timeout on CI (#1083)."""
+    import ast
+
+    parsed: list[str] = []
+    real = ast.parse
+
+    def counting(source, *args, **kwargs):
+        parsed.append(source)
+        return real(source, *args, **kwargs)
+
+    gs._parse.cache_clear()
+    monkeypatch.setattr(ast, "parse", counting)
+    path = "tests/unit/scripts/test_gate_scope.py"
+    text = (CHECKOUT_ROOT / path).read_text(encoding="utf-8")
+    gs.classify([gs.Change(path, "M")], _at_head(path, text), "base", "head", _head_paths())
+    assert parsed, "the classification parsed nothing; the count proves nothing"
+    assert len(parsed) == len(set(parsed))
+
+
 def test_the_full_gate_runs_every_static_lane_before_any_test_suite():
     """Cheap first: a lint, type or docs failure must never wait behind the suites."""
     suites = [line for line in gs.FULL_GATE if line in gs.TEST_SUITE_LANES]
