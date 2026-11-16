@@ -31,10 +31,10 @@ ELF = b"\x7fELF"
 
 def _zstd_compress():
     try:
-        from compression.zstd import compress  # ty: ignore[unresolved-import]
+        from compression.zstd import compress  # ty: ignore[import-not-found]
     except ImportError:
         try:
-            from zstandard import compress  # ty: ignore[unresolved-import]
+            from zstandard import compress  # ty: ignore[import-not-found]
         except ImportError:
             return None
     return compress

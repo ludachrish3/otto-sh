@@ -221,7 +221,7 @@ def _build_tunneled_ftp_client_cls() -> "type[aioftp.Client]":
             # compatible with asyncio's stream pair) tied directly to the SSH
             # channel — closes cleanly when aioftp closes the writer.
             conn = await self._hop.get_tunnel()
-            return await conn.open_connection(self._dest_host, port)  # ty: ignore[invalid-return-type]
+            return await conn.open_connection(self._dest_host, port)  # ty: ignore[invalid-explicit-return]
 
     _tunneled_ftp_client_cls = TunneledFtpClient
     return _tunneled_ftp_client_cls

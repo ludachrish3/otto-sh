@@ -174,7 +174,7 @@ class PosixFileOps(UserlandHost):
                 device nothing — see :func:`~otto.host.host.refuse_declined_fact`.
                 ``False`` would be a fabricated absence.
         """
-        result = await self.exec(f"test -e {self._q(path)}")  # ty: ignore[unresolved-attribute]
+        result = await self.exec(f"test -e {self._q(path)}")  # ty: ignore[missing-attribute]
         refuse_declined_fact(result, asked=f"exists({str(path)!r})")
         return result.status.is_ok
 
@@ -197,7 +197,7 @@ class PosixFileOps(UserlandHost):
                 be able to spell an empty directory.
         """
         flags = "-1A" if all else "-1"
-        result = await self.exec(f"ls {flags} {self._q(path)}")  # ty: ignore[unresolved-attribute]
+        result = await self.exec(f"ls {flags} {self._q(path)}")  # ty: ignore[missing-attribute]
         refuse_declined_fact(result, asked=f"ls({str(path)!r})")
         if not result.status.is_ok:
             return []
@@ -222,7 +222,7 @@ class PosixFileOps(UserlandHost):
             ~otto.result.CommandNotRunError: under a dry run — an empty list
                 would be a fabricated absence.
         """
-        result = await self.exec(  # ty: ignore[unresolved-attribute]
+        result = await self.exec(  # ty: ignore[missing-attribute]
             f'for p in {pattern}; do if [ -e "$p" ]; then printf \'%s\\n\' "$p"; fi; done'
         )
         # `if`/`fi`, NOT `[ -e ] &&`: with `&&`, a non-matching final iteration
@@ -246,7 +246,7 @@ class PosixFileOps(UserlandHost):
     async def mkdir(self, path: "str | Path", *, parents: bool = True) -> Result:
         """Create directory *path* (``mkdir``; *parents* adds ``-p``)."""
         flag = "-p " if parents else ""
-        result = await self.exec(f"mkdir {flag}{self._q(path)}")  # ty: ignore[unresolved-attribute]
+        result = await self.exec(f"mkdir {flag}{self._q(path)}")  # ty: ignore[missing-attribute]
         return Result(status=result.status, msg=result.value)
 
     async def _walk_remote(self, path: "str | Path") -> "RemoteListing":
@@ -264,7 +264,7 @@ class PosixFileOps(UserlandHost):
         """
         from .recursive_transfer import ListingError, parse_listing, walk_script
 
-        result = await self.exec(walk_script(self._q(path)))  # ty: ignore[unresolved-attribute]
+        result = await self.exec(walk_script(self._q(path)))  # ty: ignore[missing-attribute]
         refuse_declined_fact(result, asked=f"walk({str(path)!r})")
         if not result.status.is_ok:
             raise ListingError(f"{path}: tree listing failed: {result.value}")
@@ -287,7 +287,7 @@ class PosixFileOps(UserlandHost):
         if not paths:
             return Result(status=Status.Success)
         cmd = "mkdir -p " + " ".join(self._q(p) for p in paths)
-        result = await self.exec(cmd, user=user)  # ty: ignore[unresolved-attribute]
+        result = await self.exec(cmd, user=user)  # ty: ignore[missing-attribute]
         return Result(status=result.status, msg=result.value)
 
     @cli_exposed(help_="Remove path (`rm`); `--recursive` adds `-r`, `--force` adds `-f`.")
@@ -297,14 +297,14 @@ class PosixFileOps(UserlandHost):
         """Remove *path* (``rm``; *recursive* → ``-r``, *force* → ``-f``)."""
         flags = "".join(f for f, on in (("r", recursive), ("f", force)) if on)
         opt = f"-{flags} " if flags else ""
-        result = await self.exec(f"rm {opt}{self._q(path)}")  # ty: ignore[unresolved-attribute]
+        result = await self.exec(f"rm {opt}{self._q(path)}")  # ty: ignore[missing-attribute]
         return Result(status=result.status, msg=result.value)
 
     @cli_exposed(help_="Copy src to dst on the host (`cp`); `--recursive` adds `-r`.")
     async def cp(self, src: "str | Path", dst: "str | Path", *, recursive: bool = False) -> Result:
         """Copy *src* to *dst* on the host (``cp``; *recursive* → ``-r``)."""
         opt = "-r " if recursive else ""
-        result = await self.exec(  # ty: ignore[unresolved-attribute]
+        result = await self.exec(  # ty: ignore[missing-attribute]
             f"cp {opt}{self._q(src)} {self._q(dst)}"
         )
         return Result(status=result.status, msg=result.value)
@@ -312,7 +312,7 @@ class PosixFileOps(UserlandHost):
     @cli_exposed(help_="Move or rename src to dst on the host (`mv`).")
     async def mv(self, src: "str | Path", dst: "str | Path") -> Result:
         """Move/rename *src* to *dst* on the host (``mv``)."""
-        result = await self.exec(  # ty: ignore[unresolved-attribute]
+        result = await self.exec(  # ty: ignore[missing-attribute]
             f"mv {self._q(src)} {self._q(dst)}"
         )
         return Result(status=result.status, msg=result.value)
@@ -383,7 +383,7 @@ class PosixFileOps(UserlandHost):
                 f"device with `base64 <path>` and decoding the output locally"
             ),
         )
-        result = await self.exec(f"base64 {self._q(path)}")  # ty: ignore[unresolved-attribute]
+        result = await self.exec(f"base64 {self._q(path)}")  # ty: ignore[missing-attribute]
         if not result.status.is_ok:
             raise FileNotFoundError(f"read_file({path!r}) failed: {result.value}")
         flattened = "".join((result.value or "").split())
@@ -466,10 +466,10 @@ class PosixFileOps(UserlandHost):
         if is_dry_run():
             action = "APPEND" if append else "WRITE"
             banner = f"[DRY RUN] {action}: {len(body)} bytes -> {path}"
-            self._log_command(banner)  # ty: ignore[unresolved-attribute]
+            self._log_command(banner)  # ty: ignore[missing-attribute]
             return Result(status=Status.NotRun, msg=banner)
         encoded = base64.b64encode(body).decode()
         redirect = ">>" if append else ">"
         cmd = f"echo {encoded} | base64 -d {redirect} {self._q(path)}"
-        result = await self.exec(cmd, log=LogMode.QUIET)  # ty: ignore[unresolved-attribute]
+        result = await self.exec(cmd, log=LogMode.QUIET)  # ty: ignore[missing-attribute]
         return Result(status=result.status, msg=result.value)

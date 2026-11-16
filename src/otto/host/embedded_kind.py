@@ -133,7 +133,7 @@ class EmbeddedProduct(ShellProduct):
         that cannot carry this product is refused without touching it.
         """
         loader = self._loader(host)
-        result = await host.load(self.artifact, name=self.name)  # ty: ignore[unresolved-attribute]
+        result = await host.load(self.artifact, name=self.name)  # ty: ignore[missing-attribute]
         if not result.is_ok:
             return result
         for fn in self.call_after_load:
@@ -147,7 +147,7 @@ class EmbeddedProduct(ShellProduct):
     @override
     async def uninstall(self, host: "Host") -> Result:
         """Unload the extension, returning ``host.unload``'s result unchanged."""
-        return await host.unload(self.name)  # ty: ignore[unresolved-attribute]
+        return await host.unload(self.name)  # ty: ignore[missing-attribute]
 
     @override
     def plan(self, host: "Host") -> ProductPlan:

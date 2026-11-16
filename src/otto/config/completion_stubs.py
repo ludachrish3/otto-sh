@@ -82,7 +82,7 @@ def _build_callback(options: list[dict[str, Any]]) -> Any:
             "if a fast-path Typer leaked into real execution.",
         )
 
-    _stub.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
+    _stub.__signature__ = inspect.Signature(params)  # ty: ignore[missing-attribute]
     return _stub
 
 

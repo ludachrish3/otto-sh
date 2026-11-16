@@ -339,7 +339,7 @@ def _expect_host_summaries_conform(
         if not isinstance(n, str):
             continue
         try:
-            hosts = repository.load_lab(n).hosts  # ty: ignore[unresolved-attribute]
+            hosts = repository.load_lab(n).hosts  # ty: ignore[missing-attribute]
         except Exception:  # noqa: BLE001, S112 — load failures are reported by the caller's own rules
             continue
         loaded.add(n)

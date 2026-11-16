@@ -163,12 +163,12 @@ class _HostProxyIO:
         self._host = host
 
     async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
-        await self._host.send(text, log=log)  # ty: ignore[unresolved-attribute]
+        await self._host.send(text, log=log)  # ty: ignore[missing-attribute]
 
     async def expect(
         self, pattern: str | re.Pattern[str], *, timeout: float = DEFAULT_COMMAND_TIMEOUT
     ) -> str:
-        return await self._host.expect(pattern, timeout=timeout)  # ty: ignore[unresolved-attribute]
+        return await self._host.expect(pattern, timeout=timeout)  # ty: ignore[missing-attribute]
 
 
 def _on_credential_fd(fd: int, call: str) -> str:
@@ -228,7 +228,7 @@ class PosixPrivilege(UserlandHost):
         Whose password sudo asks for, and whether ``su`` challenges at all,
         both follow from this one answer.
         """
-        return user or self._live_session_mgr().current_user  # ty: ignore[unresolved-attribute]
+        return user or self._live_session_mgr().current_user  # ty: ignore[missing-attribute]
 
     def _acts_as_root(self, user: str | None = None) -> bool:
         """Whether a command run as :meth:`_acting_user` already runs as root.
@@ -410,7 +410,7 @@ class PosixPrivilege(UserlandHost):
             f"then (exit {_SUDO_PROBE_REFUSED_HELD}); else (exit {_SUDO_PROBE_REFUSED_UNHELD}); fi"
         )
         try:
-            r = await self._exec_one(  # ty: ignore[unresolved-attribute]
+            r = await self._exec_one(  # ty: ignore[missing-attribute]
                 question,
                 timeout=_SUDO_FORM_PROBE_TIMEOUT_S,
                 log=LogMode.NEVER,
@@ -670,7 +670,7 @@ class PosixPrivilege(UserlandHost):
             verb,
             user,
             getattr(self, "name", ""),
-            self._log_command,  # ty: ignore[unresolved-attribute]
+            self._log_command,  # ty: ignore[missing-attribute]
         )
 
     async def switch_user(self, *, user: str = "", password: str | SecretStr | None = None) -> None:
@@ -697,14 +697,14 @@ class PosixPrivilege(UserlandHost):
             self._switch_creds(),
             user,
             password,
-            self._live_session_mgr().current_user,  # ty: ignore[unresolved-attribute]
+            self._live_session_mgr().current_user,  # ty: ignore[missing-attribute]
             getattr(self, "name", ""),
             self._history_prefix(),
             # getattr, not self.term: see _su_cred's note above -- this
             # mixin also backs term-less hosts (LocalHost, DockerContainerHost).
             protocol=getattr(self, "term", None),
         )
-        self._live_session_mgr()._set_current_user(applied[-1].login or ROOT_LOGIN)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
+        self._live_session_mgr()._set_current_user(applied[-1].login or ROOT_LOGIN)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[missing-attribute]
 
     @asynccontextmanager
     async def as_user(
@@ -730,7 +730,7 @@ class PosixPrivilege(UserlandHost):
         """
         if is_dry_run():
             self._refuse_elevation("as_user", user)
-        prev = self._live_session_mgr().current_user  # ty: ignore[unresolved-attribute]
+        prev = self._live_session_mgr().current_user  # ty: ignore[missing-attribute]
         applied = await perform_switch(
             _HostProxyIO(self),
             self._switch_creds(),
@@ -741,7 +741,7 @@ class PosixPrivilege(UserlandHost):
             self._history_prefix(),
             protocol=getattr(self, "term", None),
         )
-        self._live_session_mgr()._set_current_user(applied[-1].login or ROOT_LOGIN)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
+        self._live_session_mgr()._set_current_user(applied[-1].login or ROOT_LOGIN)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[missing-attribute]
         # The undo chain is a compensating action: an interrupt landing while
         # it runs must not strand the session as the switched user (chaos
         # spec: shielded compensating actions). compensate() holds a
@@ -776,4 +776,4 @@ class PosixPrivilege(UserlandHost):
             await run_undo(
                 _HostProxyIO(self), hop, via, getattr(self, "name", ""), self._history_prefix()
             )
-        self._live_session_mgr()._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[unresolved-attribute]
+        self._live_session_mgr()._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[missing-attribute]

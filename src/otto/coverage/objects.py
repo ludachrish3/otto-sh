@@ -1238,7 +1238,7 @@ def _zstd_open(path: Path) -> bytes:
     """Decompress a ``.zst`` file; a missing decompressor or a corrupt frame is unreadable."""
     data = path.read_bytes()
     try:
-        from compression import zstd  # ty: ignore[unresolved-import]  # Python 3.14+
+        from compression import zstd  # ty: ignore[import-not-found]  # Python 3.14+
     except ImportError:
         pass
     else:
@@ -1247,7 +1247,7 @@ def _zstd_open(path: Path) -> bytes:
         except zstd.ZstdError as e:
             raise _UnreadableError(f"corrupt zstd data: {e}") from e
     try:
-        import zstandard  # ty: ignore[unresolved-import]
+        import zstandard  # ty: ignore[import-not-found]
     except ImportError:
         raise _UnreadableError(
             "no zstd decompressor is importable "

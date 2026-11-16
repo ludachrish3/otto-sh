@@ -197,7 +197,7 @@ class KmodTool(DevTool):
         made = await ensure_stage_dir(host=host, directory=directory, who=f"dev tool {self.name!r}")
         if not made.is_ok:
             return made
-        return await host.load(  # ty: ignore[unresolved-attribute]
+        return await host.load(  # ty: ignore[missing-attribute]
             self.artifact,
             name=self.module_name,
             params=self.params,

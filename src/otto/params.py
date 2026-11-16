@@ -677,7 +677,7 @@ def options(
         config = dict(getattr(target, "__pydantic_config__", None) or {})
         config.update(dataclass_kwargs.get("config") or {})
         config.setdefault("defer_build", True)
-        target.__pydantic_config__ = cast("pydantic.ConfigDict", config)  # ty: ignore[unresolved-attribute]
+        target.__pydantic_config__ = cast("pydantic.ConfigDict", config)  # ty: ignore[missing-attribute]
         call_kwargs = {k: v for k, v in dataclass_kwargs.items() if k != "config"}
         # Options records are keyword-only like every public record (spec §6.1);
         # the rule is not a default a caller can switch off.

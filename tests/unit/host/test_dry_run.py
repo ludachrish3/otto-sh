@@ -1055,7 +1055,7 @@ class TestNotRunIsStillAnObjectYouCanHandle:
         with pytest.raises(FrozenInstanceError):
             # Also stuck silently -- `host_name` is not a dataclass field, so
             # the inherited frozen __setattr__ waved both of these through.
-            nr.typo = 1  # ty: ignore[unresolved-attribute]
+            nr.typo = 1  # ty: ignore[missing-attribute]
         with pytest.raises(FrozenInstanceError):
             nr.command = "whoami"
         with pytest.raises(FrozenInstanceError):

@@ -157,7 +157,7 @@ class KmodProduct(ShellProduct):
         made = await ensure_stage_dir(host=host, directory=directory, who=f"product {self.name!r}")
         if not made.is_ok:
             return made
-        result = await host.load(  # ty: ignore[unresolved-attribute]
+        result = await host.load(  # ty: ignore[missing-attribute]
             self.artifact,
             name=self.module_name,
             params=params,

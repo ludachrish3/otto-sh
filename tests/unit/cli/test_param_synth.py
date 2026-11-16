@@ -54,7 +54,7 @@ def _built_param(param: inspect.Parameter):
 
     def command(**kwargs): ...
 
-    command.__signature__ = inspect.Signature([param])  # ty: ignore[unresolved-attribute]
+    command.__signature__ = inspect.Signature([param])  # ty: ignore[missing-attribute]
     app.command()(command)
     return next(p for p in typer.main.get_command(app).params if p.name == param.name)
 
@@ -415,7 +415,7 @@ def test_keyword_only_without_default_is_a_required_option():
     def body(**kw):
         return kw
 
-    body.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
+    body.__signature__ = inspect.Signature(  # ty: ignore[missing-attribute]
         [p.replace(kind=inspect.Parameter.KEYWORD_ONLY) for p in binding.params]
     )
     app.command()(body)

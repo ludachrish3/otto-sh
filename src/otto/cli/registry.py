@@ -374,7 +374,7 @@ def collect_test_verb_options() -> list[dict[str, Any]]:
     def verb_flags() -> None:  # pragma: no cover — only its signature is read
         """Carry the verb's parameters for :func:`serialize_options`."""
 
-    verb_flags.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
+    verb_flags.__signature__ = inspect.Signature(params)  # ty: ignore[missing-attribute]
     return serialize_options(verb_flags, command_name="test") or []
 
 

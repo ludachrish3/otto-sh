@@ -1579,6 +1579,6 @@ _GROUPS: "dict[str, typer.Typer]" = {
 }
 
 for _verb in _VERBS:
-    _verb.leaf.__cli_output_dir__ = _verb.output_dir  # ty: ignore[unresolved-attribute]
-    _verb.leaf.__cli_dry_run_preview__ = _verb.dry_run_preview  # ty: ignore[unresolved-attribute]
+    _verb.leaf.__cli_output_dir__ = _verb.output_dir  # ty: ignore[missing-attribute]
+    _verb.leaf.__cli_dry_run_preview__ = _verb.dry_run_preview  # ty: ignore[missing-attribute]
     _GROUPS[_verb.group].command(name=_verb.name, help=_verb.help)(_verb.leaf)

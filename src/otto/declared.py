@@ -449,11 +449,11 @@ class KindBuilder(Generic[T]):
             obj = factory(entry, host)
             if getattr(obj, "owner", None) is None:
                 # Product/DevTool contract: built instances carry a mutable owner attribute.
-                obj.owner = entry.owner  # ty: ignore[unresolved-attribute]
+                obj.owner = entry.owner  # ty: ignore[missing-attribute]
             # Same contract: Product/DevTool carry mutable kind/origin/source_entry attributes.
-            obj.kind = entry.kind_label  # ty: ignore[unresolved-attribute]
-            obj.origin = "declared"  # ty: ignore[unresolved-attribute]
-            obj.source_entry = entry  # ty: ignore[unresolved-attribute]
+            obj.kind = entry.kind_label  # ty: ignore[missing-attribute]
+            obj.origin = "declared"  # ty: ignore[missing-attribute]
+            obj.source_entry = entry  # ty: ignore[missing-attribute]
             out.append(obj)
             taken.add(entry.name)
         return out

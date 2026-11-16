@@ -123,7 +123,7 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
     # Both, not just the signature: the completion cache serialises a command
     # from `inspect.signature`, while typer reads the ANNOTATIONS to find each
     # parameter's `typer.Option` metadata.
-    _leaf.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
+    _leaf.__signature__ = inspect.Signature(params)  # ty: ignore[missing-attribute]
     _leaf.__annotations__ = {p.name: p.annotation for p in params}
     setattr(_leaf, DRY_RUN_SELF_FINISHING_ATTR, True)
     setattr(_leaf, SENSITIVE_FIELDS_ATTR, frozenset(sensitive_names))

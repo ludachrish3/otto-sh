@@ -379,7 +379,7 @@ def registration_boundary(fn: F) -> F:
     wrapper, not to the wrapper's own module. A helper that wraps a marked
     wrapper without the mark is itself credited as the registrant.
     """
-    _BOUNDARY_CODES.add(cast("CodeType", fn.__code__))  # ty: ignore[unresolved-attribute]
+    _BOUNDARY_CODES.add(cast("CodeType", fn.__code__))  # ty: ignore[missing-attribute]
     return fn
 
 
@@ -601,9 +601,9 @@ def _is_model_type(cls: type) -> bool:
 
 def _is_frozen_record_type(cls: type) -> bool:
     if dataclasses.is_dataclass(cls):
-        return bool(cls.__dataclass_params__.frozen)  # ty: ignore[unresolved-attribute]
+        return bool(cls.__dataclass_params__.frozen)  # ty: ignore[missing-attribute]
     if _is_model_type(cls):
-        return cls.model_config.get("frozen") is True  # ty: ignore[unresolved-attribute]
+        return cls.model_config.get("frozen") is True  # ty: ignore[missing-attribute]
     return False
 
 
@@ -611,7 +611,7 @@ def _record_fields(record: object) -> "list[tuple[str, object]]":
     """``(field name, value)`` for every field of a dataclass or model record."""
     if dataclasses.is_dataclass(record):
         return [(f.name, getattr(record, f.name)) for f in dataclasses.fields(record)]
-    names = type(record).model_fields  # ty: ignore[unresolved-attribute]
+    names = type(record).model_fields  # ty: ignore[missing-attribute]
     return [(name, getattr(record, name)) for name in names]
 
 
@@ -664,7 +664,7 @@ def _replace_fields(record: E, updates: "dict[str, object]") -> E:
     """Return a copy of *record* with *updates* applied (a dataclass or a model)."""
     if dataclasses.is_dataclass(record):
         return cast("E", dataclasses.replace(record, **updates))  # ty: ignore[invalid-argument-type]
-    return cast("E", record.model_copy(update=updates))  # ty: ignore[unresolved-attribute]
+    return cast("E", record.model_copy(update=updates))  # ty: ignore[missing-attribute]
 
 
 class Capability:
