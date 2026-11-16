@@ -105,7 +105,7 @@ function peelDataPlaneBackbone(
   // attachment can itself be peeled in a LATER round (a peel exposing a new
   // degree-1 node one hop further in).
   const peeledTo = new Map<string, string>();
-  for (;;) {
+  while (true) {
     const toPeel: [string, string][] = [];
     for (const id of remaining) {
       if (remainingDegree(id) !== 1) continue;
