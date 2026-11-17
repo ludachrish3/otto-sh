@@ -2369,9 +2369,10 @@ make import-snapshot                      # regenerate every minor's ceilings fi
 - **A release compares against the previous tag, not just the ceilings.**
   `make budget-delta` (a stage of `make release`, after `web-install`)
   measures the nearest tag and HEAD on every nox interpreter, the primary
-  first, each in a pristine worktree with its own venv, with the tip's
-  `import_budget.py` as the one instrument. It judges every minor, whatever an
-  earlier one found, then stops once if a surface costs more file operations
+  first, each in a pristine worktree with its own runtime-only venv, with
+  the tip's `import_budget.py` as the one instrument. It judges every
+  minor, whatever an earlier one found, then stops once if a surface costs
+  more file operations
   than it did at the tag — growth the 10 % headroom would have let through.
   Approvals live in the committed
   `tests/unit/import_budget/approved_growth.json`; see
@@ -2424,22 +2425,39 @@ make import-snapshot                      # regenerate every minor's ceilings fi
   legs passed or were skipped. CI runners are x86 and the dev VM is ARM64, so
   each environment compares the tag with the tip on itself; one approval
   applies to both.
+- **The measured venv holds otto's runtime dependencies only.** The gating
+  test, `--check` and `--update` measure `.venv-budget/<minor>/` of the
+  checkout (gitignored), which the harness builds on first use with `uv
+  sync --frozen --no-default-groups --python <minor>`: otto installed
+  editable, as a user installs it, and no development group. The delta
+  syncs its own holder venv the same way. The dev venv would count what
+  users never pay for: pytest loads every installed plugin (hypothesis,
+  playwright, xdist, cov, repeat) into each `otto test` surface, and the
+  headroom would move with dev-tool versions (#1150). The next run
+  re-syncs the venv, so a lock change is picked up. `.venv-budget/` is
+  safe to delete: the next run rebuilds it. `make clean` leaves it, as it
+  leaves `.venv`. `--python PATH` measures the given interpreter as it
+  is, for a one-off comparison.
 - **Regenerate every interpreter at once.** `make import-snapshot` rewrites
   every `tests/unit/import_budget/ceilings/<major>.<minor>.json` in one run,
-  each minor measured in a venv synced for it under `.venv-budget/<minor>/`.
-  It first looks up every minor's interpreter (`uv python find --system`);
-  when one is missing it names it and writes nothing, and it writes no file
-  until every minor has measured clean. A new minor first needs a file of
-  its own in that directory (any content; the run replaces it). The next
-  Python's file, read by nightly's `python-canary`, is regenerated with the
-  rest. The run needs an interpreter for every minor that has a ceilings
-  file, the next Python's included (`uv python install <minor>` adds one),
-  and takes about 30 minutes, measuring the minors one after another.
+  each minor measured in its own runtime-only venv. It first looks up every
+  minor's interpreter (`uv python find --system`); when one is missing it
+  names it and writes nothing, and it writes no file until every minor has
+  measured clean. A new minor first needs a file of its own in that
+  directory (any content; the run replaces it). The next Python's file,
+  read by nightly's `python-canary`, is regenerated with the rest.
+  The run needs an interpreter for every minor that has a ceilings file,
+  the next Python's included (`uv python install <minor>` adds one), and
+  takes about 30 minutes, measuring the minors one after another.
   `--update` moves ceilings only: a `target_ratio` breach stays red.
-- **Never regenerate to absorb a cost increase without saying so.** A
-  regeneration that raises a baseline goes in a commit whose message says
-  which surface grew, by how much, and why the verb needs it; the failure's
-  breakdown names what grew. The same holds for raising a `target_ratio`.
+- **A regeneration locks in declines; a raise needs a reason.** `make
+  import-snapshot` writes every surface as measured. Before committing,
+  restore the committed entry of each surface where any gated counter
+  (`file_ops` or `workspace`) rose, unless the commit message says which
+  surface grew, by how much, and why the verb needs it; the failure's
+  breakdown names what grew. The decision is per gated counter, and an
+  entry is kept or taken whole. The same holds for raising a
+  `target_ratio`.
 - **An advisory `NOTE` is an invitation, not a failure.** It says a counter
   now sits well under its ceiling; regenerate to pin the saving.
 

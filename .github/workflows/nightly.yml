@@ -639,10 +639,11 @@ jobs:
       # incomplete and 3.15 is not promoted. Until it climbs, this job guards
       # the climb: any rung that breaks reds it as "regressed".
       #
-      # That includes the import budget: rung 10 reads the 3.15 ceilings, so a
-      # commit that grows the budget and regenerates only the supported minors'
-      # ceilings reds here.
-      # docs/contributing.md ("Regenerate per interpreter") has the command.
+      # That includes the import budget: rung 10 reads the 3.15 ceilings, so
+      # a regeneration that skips the hand restore reds here.
+      # docs/contributing.md ("Regenerate every interpreter at once", and "A
+      # regeneration locks in declines; a raise needs a reason") has the
+      # command and the restore.
       CANARY_EXPECTED_RUNG: "10"
     steps:
       - uses: actions/checkout@v7.0.1

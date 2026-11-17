@@ -36,7 +36,10 @@ The baselines live in one file per Python minor
 interpreter's stdlib and import machinery differ, and are checked against the
 MEASURED interpreter's file; a missing baseline is a named failure, never a
 skip. The measured interpreter is the one every measured child runs
-(:func:`measured_python`), which need not be the one running this script.
+(:func:`measured_python`), which need not be the one running this script. By
+default it is a runtime-only venv :func:`build_env` syncs for the running
+interpreter's minor, so the dev-only packages of the venv running the
+harness (pytest plugins above all) never count against a surface (#1150).
 `--update` regenerates every minor that has a file, each measured in a venv
 :func:`build_env` syncs for it, and writes nothing unless every minor measured
 clean.
@@ -72,7 +75,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -850,8 +853,13 @@ def sync_argv(minor: str) -> list[str]:
 
     Run in the tree whose otto is measured, with :func:`sync_env`.
     ``--frozen`` installs exactly what the lock says, never a re-resolution.
+    ``--no-default-groups`` makes the venv runtime-only, as a user's install
+    is: a dev-only package (a pytest plugin above all, which pytest loads at
+    startup) would otherwise count against every surface that starts pytest
+    (#1150). The project itself stays installed, editable as uv installs it,
+    so otto's own files still bucket as otto's.
     """
-    return ["uv", "sync", "--frozen", "--python", minor]
+    return ["uv", "sync", "--frozen", "--no-default-groups", "--python", minor]
 
 
 def sync_env(venv: Path) -> dict[str, str]:
@@ -954,10 +962,18 @@ class EnvBuildError(RuntimeError):
 
 
 class NestedVenvLockError(RuntimeError):
-    """:func:`build_env` was called while this process holds a venv lock, which would deadlock."""
+    """This process asked again for a venv lock it holds, or built under one: a deadlock."""
 
 
-_HELD_LOCKS: "list[Path]" = []
+@dataclass(frozen=True)
+class HeldLock:
+    """A venv lock this process holds (:func:`_venv_lock`): its file, and whether shared."""
+
+    path: Path
+    shared: bool
+
+
+_HELD_LOCKS: "list[HeldLock]" = []
 """The venv locks this process holds now, innermost last (:func:`_venv_lock`)."""
 
 
@@ -973,6 +989,12 @@ def _venv_lock_path(venv: Path) -> Path:
     return venv.with_name(venv.name + ".lock")
 
 
+def _venv_gate_path(venv: Path) -> Path:
+    """Return the turnstile in front of *venv*'s lock (:func:`_venv_lock`): ``<venv>.lock.gate``."""
+    lock = _venv_lock_path(venv)
+    return lock.with_name(lock.name + ".gate")
+
+
 # Not scripts/gate_stamp_common.store_lock: the delta loads this harness by path
 # from a tip worktree, so it stays stdlib-only and reads no file outside
 # INSTRUMENT_PATHS (itself and scripts/uv_env.py).
@@ -982,25 +1004,56 @@ def _venv_lock(venv: Path, *, shared: bool) -> "Iterator[None]":
 
     ``flock`` locks belong to the open file, so two processes, or two opens in
     one, exclude each other; the lock is gone when its holder dies, so a
-    killed run never leaves the venv locked. Never nested: a second flock of
-    this process on another open of the same lock waits for the first, which
-    never lets go. :data:`_HELD_LOCKS` records what is held so
-    :func:`build_env` refuses by name instead of hanging.
+    killed run never leaves the venv locked. Never nested: an exclusive
+    second flock of this process on another open of the same lock waits
+    for the first, which never lets go, and even a nested shared one would
+    queue behind a sync waiting at the turnstile below. :data:`_HELD_LOCKS`
+    records what is held, so asking again for a lock this process holds, or
+    :func:`build_env` under any held lock, refuses by name instead of hanging.
+
+    A turnstile (:func:`_venv_gate_path`) keeps a sync from starving: Linux
+    ``flock`` grants a new shared lock while an exclusive one waits, so
+    overlapping measurements (xdist workers) could hold the venv shared
+    without a gap for as long as they keep coming. A sync holds the gate
+    exclusively while it waits for the lock; a measurement passes through
+    the gate (shared, let go at once) before it asks for the lock, so it
+    queues behind a waiting sync, which gets the lock as soon as the
+    measurements already inside finish.
     """
     lock = _venv_lock_path(venv)
+    if any(held.path == lock for held in _HELD_LOCKS):
+        raise NestedVenvLockError(
+            f"import_budget: {lock} is already held by this process; "
+            f"taking it again would wait on this process forever"
+        )
     lock.parent.mkdir(parents=True, exist_ok=True)
     with lock.open("a") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
-        _HELD_LOCKS.append(lock)
+        with _venv_gate_path(venv).open("a") as gate:
+            fcntl.flock(gate.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+            if shared:
+                fcntl.flock(gate.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+        # Leaving the gate's block closes it, so a sync lets the gate go only
+        # once it holds the lock.
+        held = HeldLock(lock, shared)
+        _HELD_LOCKS.append(held)
         try:
             yield
         finally:
-            _HELD_LOCKS.remove(lock)
+            _HELD_LOCKS.remove(held)
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _measurement_lock() -> "contextlib.AbstractContextManager[None]":
     """Hold the measured venv's lock shared, when :func:`build_env` made that venv.
+
+    Every child that runs the measured interpreter is launched under it
+    (:func:`_run_child`, and the warm-up's compile), so no sync changes the
+    venv's packages under a probe or a measurement. Reentrant within this
+    process: when this process already holds that lock shared (a
+    :func:`measure` around its children), it takes no second ``flock``. The
+    interpreter is resolved (and, the first time, built) before any lock is
+    taken, so the first build never runs under one.
 
     A venv with no lock file was not made by the builder (``uv run``'s own, or
     one the delta synced in a step of its own), so nothing can re-sync it
@@ -1012,6 +1065,8 @@ def _measurement_lock() -> "contextlib.AbstractContextManager[None]":
     """
     venv = venv_of(measured_python())
     if venv is None or not _venv_lock_path(venv).exists():
+        return contextlib.nullcontext()
+    if HeldLock(_venv_lock_path(venv), shared=True) in _HELD_LOCKS:
         return contextlib.nullcontext()
     return _venv_lock(venv, shared=True)
 
@@ -1041,7 +1096,7 @@ def build_env(minor: str, *, tree: Path = REPO_ROOT, venv: "Path | None" = None)
         raise failed
     if _HELD_LOCKS:
         raise NestedVenvLockError(
-            f"import_budget: build_env({minor!r}) called while holding {_HELD_LOCKS[-1]}; "
+            f"import_budget: build_env({minor!r}) called while holding {_HELD_LOCKS[-1].path}; "
             f"syncing under it would wait on this process forever"
         )
     try:
@@ -1426,6 +1481,7 @@ def _run_child(
     ``OTTO_HOME`` — and, when it has one, its generated project — reach the child.
 
     The child never inherits the caller's cwd; it starts in :func:`_quiet_cwd`.
+    It runs under the measured venv's shared lock (:func:`_measurement_lock`).
 
     With *trace_to*, the child runs under ``strace -f`` writing to that file.
     ``--seccomp-bpf`` means only the traced syscall classes stop the child, so
@@ -1471,17 +1527,18 @@ def _run_child(
                 str(trace_to),
                 *argv,
             ]
-        if pty_input is not None:
-            _run_under_pty(argv, child_env, pty_input)
-            return result_path.read_text()
-        out = subprocess.run(  # noqa: S603 (fixed interpreter + measured argv, no shell)
-            argv,
-            capture_output=True,
-            text=True,
-            check=True,
-            env=child_env,
-            cwd=_quiet_cwd(),
-        )
+        with _measurement_lock():
+            if pty_input is not None:
+                _run_under_pty(argv, child_env, pty_input)
+                return result_path.read_text()
+            out = subprocess.run(  # noqa: S603 (fixed interpreter + measured argv, no shell)
+                argv,
+                capture_output=True,
+                text=True,
+                check=True,
+                env=child_env,
+                cwd=_quiet_cwd(),
+            )
         if result_path.stat().st_size > 0:
             return result_path.read_text()
         # THE LAST *JSON* LINE, NOT THE LAST LINE — for the three child kinds
@@ -1832,18 +1889,24 @@ print(json.dumps({"site_packages": site.getsitepackages(),
 
 
 _MEASURED: "str | None" = None
-"""The interpreter :func:`use_python` chose; ``None`` means the harness's own."""
+"""The interpreter :func:`use_python` chose; ``None``: the default (:func:`measured_python`)."""
 
 
 def measured_python() -> str:
     """Return the interpreter every measured child runs, and every fact about one is asked of.
 
-    The harness's own interpreter unless :func:`use_python` chose another.
+    The one :func:`use_python` chose, else the runtime-only venv
+    :func:`build_env` syncs for the running interpreter's minor, built on the
+    first call and kept for the process by :func:`build_env`'s own memo
+    (:data:`_BUILT`). Every lock-taking caller asks for this before it locks
+    (:func:`_measurement_lock` resolves it to find the venv), so the first
+    build never runs under a held lock.
     Nothing measured may read the harness's ``sys.version_info`` or
     ``sys.implementation``: a harness on 3.10 measuring a 3.14 venv must key,
-    bucket and warm as 3.14 (:func:`measured_facts`).
+    bucket and warm as 3.14 (:func:`measured_facts`). Choosing the default
+    venv's minor is the one place the harness's own version decides.
     """
-    return _MEASURED or sys.executable
+    return _MEASURED or str(build_env(f"{sys.version_info[0]}.{sys.version_info[1]}"))
 
 
 def use_python(path: str) -> None:
@@ -1853,7 +1916,7 @@ def use_python(path: str) -> None:
     for the wrong interpreter; they are cleared anyway, so a process that
     measures several interpreters in turn holds only the current one's.
     """
-    global _MEASURED  # noqa: PLW0603 — the seam's one setter
+    global _MEASURED  # noqa: PLW0603 — the seam's chooser
     _MEASURED = path
     _FACTS.clear()
     _BASELINES.clear()
@@ -2638,6 +2701,19 @@ def _update_every_minor(surfaces: list[Surface]) -> int:
     return 0
 
 
+def _built_or_named_failure(build: "Callable[[], object]") -> "str | None":
+    """Run *build*; return what it built as text, or ``None`` once its failure is on stderr.
+
+    The one place a command line's "the venv could not be built" exit is
+    decided: the message the :class:`EnvBuildError` carries, then exit 1.
+    """
+    try:
+        return str(build())
+    except EnvBuildError as e:
+        print(e, file=sys.stderr, flush=True)
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Print the per-surface table; with ``--check`` enforce it, with ``--update`` record it."""
     ap = argparse.ArgumentParser(
@@ -2660,7 +2736,7 @@ def main(argv: list[str] | None = None) -> int:
         "--python",
         metavar="PATH",
         help="measure the interpreter at PATH as it is, with no venv built "
-        "(default: this script's own interpreter)",
+        "(default: a runtime-only venv synced for this interpreter's minor)",
     )
     ap.add_argument(
         "--report",
@@ -2699,6 +2775,10 @@ def main(argv: list[str] | None = None) -> int:
     surfaces.sort(key=lambda s: s.key != RATIO_FLOOR)
     if args.update:
         return _update_every_minor(surfaces)
+    # Resolved before the table: a failed build is a named exit, and the
+    # sync's own output lands above the header, not inside the table.
+    if _built_or_named_failure(measured_python) is None:
+        return 1
     rows, _measured, failed = _measure_table(surfaces, check=args.check, update=False)
     if args.report_json:
         args.report_json.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")

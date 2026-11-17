@@ -298,9 +298,13 @@ remote. Each surface has two counters:
 **Ceilings.** Each counter is gated by a ceiling: a recorded baseline plus
 headroom. The baselines are stored per surface and per Python minor, in
 `tests/unit/import_budget/ceilings/<major>.<minor>.json`, because each
-interpreter's stdlib and import machinery are part of every count. A check
-reads only the running interpreter's file, and a gated surface with no
-baseline there fails by name rather than skipping. The ceiling is
+interpreter's stdlib and import machinery are part of every count. The
+counts that gate are taken in a venv holding only otto's runtime
+dependencies, as a user installs it, never the dev venv (which venv, and
+how it is built, is in
+[Contributing](../contributing.md#the-import-budget)). A check reads only
+the measured interpreter's file, and a gated surface with no baseline
+there fails by name rather than skipping. The ceiling is
 `max(int(baseline × 1.1), baseline + 5)`: 10% headroom, with a floor of five
 operations so that the import system's one- or two-operation wobble (a
 `FileFinder` re-listing a directory another process touched) cannot trip a
@@ -363,11 +367,12 @@ interpreter can import into that directory with
 current), and every measured command reads its bytecode from there through
 `PYTHONPYCACHEPREFIX`, with bytecode writing off. Every measurement sees the
 same warm cache, the steady state of any installation after its first run.
-The cache mirrors each measured venv's paths, about 60 MB per interpreter per
-venv, and nothing prunes it; `make clean` does not touch it. Deleting the
-directory is safe: the next measurement compiles it again, which makes that
-first run slower. If the directory cannot be written, the harness fails and
-names it rather than record cold counts.
+The cache mirrors each measured venv's paths (each checkout's
+`.venv-budget/<minor>/`, and each side of the release's delta), about 60 MB
+per interpreter per venv, and nothing prunes it; `make clean` does not
+touch it. Deleting the directory is safe: the next measurement compiles it
+again, which makes that first run slower. If the directory cannot be
+written, the harness fails and names it rather than record cold counts.
 
 strace is required. Without it the budget fails with an install hint instead
 of skipping, because a guard that quietly measured less would pass the very

@@ -15,12 +15,12 @@ FAKE_MINOR = "9.98"
 
 @pytest.fixture(autouse=True)
 def _no_measured_interpreter(request, monkeypatch):
-    """Keep the pure tests here off the measured interpreter, so none starts a child.
+    """Keep the pure tests here off the measured interpreter, so none starts a child or a sync.
 
-    Asking the measured interpreter its facts runs a child, and once the
-    measured interpreter is a venv the harness builds, it builds one. A test
-    that does measure for real asks for ``real_interpreter``; one that only
-    needs an interpreter's name asks for ``fake_facts``.
+    Asking the measured interpreter its facts runs a child, and resolving the
+    default measured interpreter builds its venv (``uv sync``), so both
+    refuse. A test that does measure for real asks for ``real_interpreter``;
+    one that only needs an interpreter's name asks for ``fake_facts``.
     """
     if "real_interpreter" in request.fixturenames:
         return
@@ -28,18 +28,33 @@ def _no_measured_interpreter(request, monkeypatch):
     def refuse():
         raise AssertionError("a pure test asked the measured interpreter for its facts")
 
+    def refuse_build(*_a, **_kw):
+        raise AssertionError("a pure test built the measured interpreter's venv")
+
     monkeypatch.setattr(harness, "measured_facts", refuse)
+    monkeypatch.setattr(harness, "build_env", refuse_build)
 
 
 @pytest.fixture
 def real_interpreter():
-    """Opt a test into measuring with the real measured interpreter."""
+    """Opt a test into measuring with the real measured interpreter, resolved up front.
+
+    Resolving it builds the default venv on a process's first ask, and that
+    sync runs uv in the test's env; built here, before the test perturbs its
+    env (an unwritable ``XDG_CACHE_HOME``, say), the sync never sees it.
+    """
+    harness.measured_python()
 
 
 @pytest.fixture
 def fake_facts(_no_measured_interpreter, monkeypatch):
-    """Answer the measured interpreter's facts as :data:`FAKE_MINOR`'s, without a child."""
+    """Answer the measured interpreter's facts as :data:`FAKE_MINOR`'s, without a child or a build.
+
+    The interpreter is a chosen one, so resolving it (as ``main`` does before
+    its table) builds nothing.
+    """
     facts = {"minor": FAKE_MINOR, "cache_tag": "cpython-998"}
+    monkeypatch.setattr(harness, "_MEASURED", f"/fake/{FAKE_MINOR}/bin/python")
     monkeypatch.setattr(harness, "measured_facts", lambda: facts)
     return facts
 
@@ -47,6 +62,8 @@ def fake_facts(_no_measured_interpreter, monkeypatch):
 def test_a_pure_test_never_reaches_the_measured_interpreter():
     with pytest.raises(AssertionError, match="measured interpreter"):
         harness.interpreter_tag()
+    with pytest.raises(AssertionError, match="measured interpreter's venv"):
+        harness.build_env("9.98")
 
 
 WS = "/tmp/fixture-root/"
