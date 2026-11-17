@@ -178,10 +178,10 @@ def test_include_entries_merge_into_matching_rows_and_append_only_when_none_matc
     assert matrix_rows(everywhere) == [{"py": "3.10", "os": "x"}, {"py": "3.11", "os": "x"}]
 
 
-def test_nightly_unit_matrix_renders_five_rows_each_naming_its_sessions():
+def test_nightly_unit_matrix_renders_six_rows_each_naming_its_sessions():
     job = NIGHTLY["jobs"]["unit-matrix"]
     rows = matrix_rows(job)
-    assert len(rows) == 5
+    assert len(rows) == 6
     runs = [str(s["run"]) for s in job["steps"] if "run" in s]
     for row in rows:
         assert "sessions" in row, row
@@ -207,7 +207,7 @@ CERTIFICATES = {
         "tests_hostless-3.10",
         ["gate-admission", "tests-primary", "coverage-hostless"],
     ),
-    "hostless-canary": ("tests_hostless-3.14", ["gate-admission", "tests-canary"]),
+    "hostless-canary": ("tests_hostless-3.15", ["gate-admission", "tests-canary"]),
 }
 
 
@@ -265,8 +265,8 @@ def test_the_primary_legs_check_the_data_file_then_upload_it_and_the_fold_downlo
     }
     canary = CI["jobs"]["tests-canary"]
     assert _expand("tests-canary", canary) == [
-        "tests_hostless_unit-3.14",
-        "tests_hostless_e2e-3.14",
+        "tests_hostless_unit-3.15",
+        "tests_hostless_e2e-3.15",
     ]
     assert not any("upload-artifact" in s.get("uses", "") for s in canary["steps"])
     fold = CI["jobs"]["coverage-hostless"]
@@ -298,8 +298,8 @@ def test_report_failure_needs_every_job():
 
 
 def test_expand_renders_a_session_matrix():
-    job = {"name": "${{ matrix.session }}-3.14", "strategy": {"matrix": {"session": ["a", "b"]}}}
-    assert _expand("j", job) == ["a-3.14", "b-3.14"]
+    job = {"name": "${{ matrix.session }}-3.15", "strategy": {"matrix": {"session": ["a", "b"]}}}
+    assert _expand("j", job) == ["a-3.15", "b-3.15"]
 
 
 # --- the import-budget gate -------------------------------------------------
@@ -333,9 +333,9 @@ def test_the_budget_legs_run_only_when_the_scope_job_says_so_and_never_fail_fast
     assert job["needs"] == ["gate-admission", "budget-scope"]
     assert job["if"] == "needs.budget-scope.outputs.run == 'true'"
     assert job["strategy"]["fail-fast"] is False
-    assert job["strategy"]["matrix"]["python"] == ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    assert job["strategy"]["matrix"]["python"] == ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     assert _expand("import-budget-delta", job) == [
-        f"import-budget-delta ({m})" for m in ("3.10", "3.11", "3.12", "3.13", "3.14")
+        f"import-budget-delta ({m})" for m in ("3.10", "3.11", "3.12", "3.13", "3.14", "3.15")
     ]
     assert job["timeout-minutes"] == 45
     steps = job["steps"]

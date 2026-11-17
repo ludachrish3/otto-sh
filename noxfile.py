@@ -17,7 +17,7 @@ from pathlib import Path
 import nox
 import nox_uv
 
-PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
 
 # The single-interpreter ("pinned") Python for sessions that don't span the
 # matrix. 3.10 — the oldest supported interpreter — deliberately: it is what
@@ -31,7 +31,7 @@ PRIMARY_PYTHON = "3.10"
 # filterwarnings=error a warning only fails on versions that actually run the
 # affected code, and the newest emits them first. The Makefile's NOX_CANARY
 # mirrors this value (hand-kept, like PRIMARY_PYTHON).
-CANARY_PYTHON = "3.14"
+CANARY_PYTHON = "3.15"
 
 # The floor and the ceiling. The floor runs everything, instrumented (the
 # HOSTLESS_UNIT, HOSTLESS_E2E and HOSTLESS_GUARDS bundles below); the ceiling

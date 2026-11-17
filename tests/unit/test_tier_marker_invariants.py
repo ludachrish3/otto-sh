@@ -2346,7 +2346,7 @@ def test_the_release_trusts_the_coverage_stamp_and_runs_no_duplicate_stage():
     tests/unit/test_make_release_lanes.py, not restated here.)
 
     #566 C2/C4: `nox` (whose 3.10 session repeated `make coverage`'s
-    selection) is `nox-release` (3.11 to 3.14 only); `profile` (its 38 checks
+    selection) is `nox-release` (3.11 to 3.15 only); `profile` (its 38 checks
     run inside the coverage selection) and the trailing `build` (`wheel-check`
     already builds and checks the wheel that is published) leave. The
     fallback runs `make coverage` BEFORE any stage that commits (the

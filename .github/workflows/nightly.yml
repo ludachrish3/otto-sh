@@ -78,7 +78,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     # `make stability-unit` is a plain `uv run pytest`, and uv picks the
     # project interpreter from `.python-versions` -- whose FIRST line is 3.10
     # -- unless told otherwise. Without this every cell soaked 3.10 under its
@@ -120,7 +120,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
         include:
           - python-version: "3.10"
             sessions: tests_hostless_unit-3.10 tests_hostless_e2e-3.10 tests_hostless_guards-3.10
@@ -131,7 +131,9 @@ jobs:
           - python-version: "3.13"
             sessions: tests_hostless_unit-3.13
           - python-version: "3.14"
-            sessions: tests_hostless_unit-3.14 tests_hostless_e2e-3.14
+            sessions: tests_hostless_unit-3.14
+          - python-version: "3.15"
+            sessions: tests_hostless_unit-3.15 tests_hostless_e2e-3.15
     steps:
       - uses: actions/checkout@v7.0.1
 

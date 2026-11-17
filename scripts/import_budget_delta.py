@@ -141,7 +141,7 @@ STEPS = ["sync", "version", "report"]
 APPROVALS_PATH = Path("tests/unit/import_budget/approved_growth.json")
 """The committed approvals file, relative to the repository root."""
 
-SUPPORTED_MINORS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+SUPPORTED_MINORS = ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
 """Every minor otto supports: the Makefile's nox list, pinned by a test.
 
 An approval may name any of them; the pure verbs measure them when none are given.

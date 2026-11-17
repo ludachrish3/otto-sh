@@ -28,7 +28,7 @@ _REPEAT_STEP = "Repeat the"
 # job -> the lane session each row runs, as a template over the row.
 _CI_JOBS = {
     "tests-primary": "uv run nox -s ${{ matrix.session }}-3.10",
-    "tests-canary": "uv run nox -s ${{ matrix.session }}-3.14",
+    "tests-canary": "uv run nox -s ${{ matrix.session }}-3.15",
     "tests": "uv run nox -s tests_hostless_unit-${{ matrix.python }}",
     "dashboard": "uv run nox -k ${{ matrix.browser }}",
 }

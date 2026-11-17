@@ -512,7 +512,7 @@ def test_budget_delta_measures_the_nox_interpreters_primary_first(tmp_path: Path
     assert completed.returncode == 0, completed.stderr
     line = _delta_line(completed.stdout)
     assert " measure " in line
-    assert "--minors 3.10 3.11 3.12 3.13 3.14" in line, line
+    assert "--minors 3.10 3.11 3.12 3.13 3.14 3.15" in line, line
     assert "--approve" not in line
 
 

@@ -101,7 +101,7 @@ COVERAGE_TARGET ?= coverage-python
 # record, the lines-only history: full fold 96.27-96.31% (2026-08-25, four
 # runs); hostless 95.21-95.29% across the five CI Pythons (since 2026-09-11
 # only the PRIMARY (3.10) runs the full hostless selection, measured and gated;
-# the canary (3.14) runs the unit and e2e tiers minus the `interpreter_agnostic`
+# the canary (3.15) runs the unit and e2e tiers minus the `interpreter_agnostic`
 # family, uninstrumented, and the interior versions the unit tier only;
 # see noxfile.py HOSTLESS_E2E_CANARY_TEST_ARGS and HOSTLESS_MIDDLE_TEST_ARGS),
 # 95.18-95.22% on a local 3.14 leg.
@@ -573,7 +573,7 @@ nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. R
 	$(call bed_reap)
 	$(call bed_release)
 
-nox-hostless: ## Run the three no-testbed sessions across their Pythons: tests_hostless_unit (tests/unit minus the `interpreter_agnostic` family; instrumented on 3.10, no coverage on 3.11-3.14), tests_hostless_e2e (the no-VM e2e tier; instrumented on 3.10, no coverage on 3.14) and tests_hostless_guards (the family, 3.10 only). No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
+nox-hostless: ## Run the three no-testbed sessions across their Pythons: tests_hostless_unit (tests/unit minus the `interpreter_agnostic` family; instrumented on 3.10, no coverage on 3.11-3.15), tests_hostless_e2e (the no-VM e2e tier; instrumented on 3.10, no coverage on 3.15) and tests_hostless_guards (the family, 3.10 only). No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
 	@$(SAY) "nox: hostless CI gate, all Pythons (x$(NOX_COUNT))"
 	@uv run nox -s $(HOSTLESS_FOLD_SESSIONS) -- --count=$(NOX_COUNT) --repeat-scope=session
 
@@ -637,8 +637,8 @@ $(DASHBOARD_DIST) $(COVAPP_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 # absorb it (hostless-only, no lab VMs), so run nox-full on demand when a
 # release touches interpreter-sensitive integration surface.
 NOX_PRIMARY := 3.10
-NOX_CANARY := 3.14
-NOX_MIDDLE := 3.11 3.12 3.13
+NOX_CANARY := 3.15
+NOX_MIDDLE := 3.11 3.12 3.13 3.14
 
 # The hostless selection's three nox sessions (one per tier). CI uploads each
 # primary leg's `.coverage` under HOSTLESS_FOLD_DIR as
@@ -649,7 +649,7 @@ HOSTLESS_FOLD_SESSIONS := tests_hostless_unit tests_hostless_e2e tests_hostless_
 HOSTLESS_FOLD_DIR ?= reports/coverage/hostless
 HOSTLESS_FOLD_FILES := $(foreach s,$(HOSTLESS_FOLD_SESSIONS),$(HOSTLESS_FOLD_DIR)/coverage-$(s)-$(NOX_PRIMARY)/.coverage)
 
-nox: ## Run the full suite on the PRIMARY (3.10, the oldest supported interpreter, the `interpreter_agnostic` family included; uninstrumented — the coverage floor is `make coverage`'s) and the CANARY (3.14, newest — version-specific warnings; the family deselected, no coverage) Pythons, and the trimmed hostless slice on the middle versions. Requires dev VM with Vagrant hosts up. Not used by CI. Full cross-version matrix: `make nox-full`. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
+nox: ## Run the full suite on the PRIMARY (3.10, the oldest supported interpreter, the `interpreter_agnostic` family included; uninstrumented — the coverage floor is `make coverage`'s) and the CANARY (3.15, newest — version-specific warnings; the family deselected, no coverage) Pythons, and the trimmed hostless slice on the middle versions. Requires dev VM with Vagrant hosts up. Not used by CI. Full cross-version matrix: `make nox-full`. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
 	$(call bed_acquire,nox)
 	$(call bed_reap)
 	@$(SAY) "nox: full suite on $(NOX_PRIMARY) + $(NOX_CANARY), trimmed hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
@@ -665,10 +665,10 @@ nox-release: $(COVAPP_DIST) ## (Build & Release) The release's canary bed leg: t
 	$(call bed_reap)
 	$(call bed_release)
 
-nox-full: ## Run the FULL test suite (all environments) on 3.10 and every product test (minus the `interpreter_agnostic` family, no coverage) on 3.11–3.14 — the complete matrix. Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
+nox-full: ## Run the FULL test suite (all environments) on 3.10 and every product test (minus the `interpreter_agnostic` family, no coverage) on 3.11–3.15 — the complete matrix. Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
 	$(call bed_acquire,nox-full)
 	$(call bed_reap)
-	@$(SAY) "nox: FULL matrix — every suite on 3.10, every product test on 3.11–3.14 (x$(NOX_COUNT))"
+	@$(SAY) "nox: FULL matrix — every suite on 3.10, every product test on 3.11–3.15 (x$(NOX_COUNT))"
 	@uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
 	$(call bed_reap)
 	$(call bed_release)

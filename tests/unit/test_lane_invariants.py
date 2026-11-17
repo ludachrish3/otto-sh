@@ -1938,7 +1938,7 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
     # `release` runs `coverage_stamp.py check || $(MAKE) coverage` first: when
     # HEAD's tree carries no valid stamp the release runs `make coverage`
     # itself (Q5), so the coverage-python legs are release legs — the
-    # family's only release selection since Phase B (3.14 deselects it).
+    # family's only release selection since Phase B (3.15 deselects it).
     _Leg("Makefile:coverage-python", _COVERAGE, ()),
     _Leg("Makefile:coverage-python", _COVERAGE_SERIAL, ()),
     # nox-release → tests_bed on the canary only: the bed half of the coverage
@@ -1947,14 +1947,14 @@ RELEASE_LANES: "tuple[_Leg, ...]" = (
     # CI's tests_hostless-3.1x sessions; the primary's session is what the stamp proves.
     # The literals are the manifest's declaration; the partition test reads the noxfile.
     _Leg(
-        "noxfile.py:tests_bed@3.14",
+        "noxfile.py:tests_bed@3.15",
         "(integration or embedded) and not stability and not browser and not busybox "
         "and not conformance and not kmodcov and not release_proof "
         "and not serial_timing and not interpreter_agnostic",
         (),
     ),
     _Leg(
-        "noxfile.py:tests_bed@3.14",
+        "noxfile.py:tests_bed@3.15",
         "serial_timing and (integration or embedded) and not stability and not browser "
         "and not busybox and not conformance and not kmodcov and not release_proof "
         "and not interpreter_agnostic",
@@ -2009,7 +2009,8 @@ _LEGS_CI_PROVES = (
     "noxfile.py:tests_hostless_unit@3.11",
     "noxfile.py:tests_hostless_unit@3.12",
     "noxfile.py:tests_hostless_unit@3.13",
-    "noxfile.py:tests_all@3.14:hostless",
+    "noxfile.py:tests_hostless_unit@3.14",
+    "noxfile.py:tests_all@3.15:hostless",
     "Makefile:dashboard-all",
     "Makefile:check-ts",
     "Makefile:coverage-ts",
@@ -2236,9 +2237,9 @@ def test_the_session_reader_follows_the_interpreter() -> None:
 
     tests_hostless_unit: the UNIT pair on 3.10 (instrumented, `--cov-append` on
     the serial leg), the MIDDLE pair on 3.11 (`--no-cov`); tests_hostless_e2e:
-    the instrumented pair on 3.10, the `--no-cov` canary on 3.14. Compared on
+    the instrumented pair on 3.10, the `--no-cov` canary on 3.15. Compared on
     the RAW tokens, not the `-m` text: the 3.10 and 3.11 unit pairs and the
-    3.10 and 3.14 e2e pairs select alike, so only the tokens can show which
+    3.10 and 3.15 e2e pairs select alike, so only the tokens can show which
     branch of the `session.python` ladder was taken.
     """
 
@@ -2251,7 +2252,7 @@ def test_the_session_reader_follows_the_interpreter() -> None:
         ("unit", "3.10"): read("tests_hostless_unit", "3.10"),
         ("unit", "3.11"): read("tests_hostless_unit", "3.11"),
         ("e2e", "3.10"): read("tests_hostless_e2e", "3.10"),
-        ("e2e", "3.14"): read("tests_hostless_e2e", "3.14"),
+        ("e2e", "3.15"): read("tests_hostless_e2e", "3.15"),
     }
     assert all(len(pair) == 2 for pair in invocations.values()), invocations
     tokens = {key: {t for argv in pair for t in argv} for key, pair in invocations.items()}
@@ -2260,7 +2261,7 @@ def test_the_session_reader_follows_the_interpreter() -> None:
     }
     for instrumented, bare in (
         (("unit", "3.10"), ("unit", "3.11")),
-        (("e2e", "3.10"), ("e2e", "3.14")),
+        (("e2e", "3.10"), ("e2e", "3.15")),
     ):
         assert "--cov-append" in tokens[instrumented], tokens[instrumented]
         assert "--no-cov" not in tokens[instrumented], tokens[instrumented]
@@ -2306,7 +2307,7 @@ def test_the_session_reader_refuses_a_ladder_it_cannot_resolve(tmp_path: Path) -
         f"{bundle}P = '3.10'\ndef s(session):\n    if session.python == P:\n"
         "        session.run('pytest', *A)\n    else:\n        session.run('pytest', *B)\n"
     )
-    found = _python_pytest_invocations(readable, resolve_names=True, scope="s", python="3.14")
+    found = _python_pytest_invocations(readable, resolve_names=True, scope="s", python="3.15")
     assert found == [["pytest", "tests/e2e", "-m", "stability"]], found
     # A run on the session's DEFAULT interpreter has nothing to resolve the ladder
     # for; read with both branches it would credit a leg the run never executes.
