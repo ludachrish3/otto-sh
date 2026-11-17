@@ -384,8 +384,10 @@ export interface ReviewState {
    * (`observedAtMicros`). A state not after it is obsolete. */
   lastSourceStamp: number | null;
   /** Whether the boot has yet to conclude that no otto server serves this
-   * URL: true from the boot's start until its stream fails before it ever
-   * opened (data/bootstrap.ts). Read only while no server source is known:
+   * URL: true from the store's first state, before the boot has started
+   * (the page's first commit is painted before App's effect starts it),
+   * until its stream fails before it ever opened (data/bootstrap.ts). Read
+   * only while no server source is known:
    * once a `/api/mode` answers, its source (pending, then installed) decides
    * Import instead. While it holds with no source known, Import is withheld
    * (data/source.ts's importOffered). */
@@ -485,7 +487,7 @@ export const useReviewStore = create<ReviewState>()((set, get) => {
     activeSessionId: null,
     range: null,
     lastSourceStamp: null,
-    sourceKindUnresolved: false,
+    sourceKindUnresolved: true,
     resyncUnresolved: false,
     covered: null,
     ...sourceFields(null, null),

@@ -39,7 +39,11 @@ const record = (id: number, label: string) => ({
 });
 
 describe("eventApi", () => {
-  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    // A tab whose boot found no otto server: Import loads a file in the tab.
+    useReviewStore.setState({ sourceKindUnresolved: false });
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
     useReviewStore.setState({ sourceToken: null, mode: null });
@@ -424,7 +428,11 @@ describe("a source_changed refusal", () => {
       observed_at: stamp(n),
     });
 
-  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    // A tab whose boot found no otto server: Import loads a file in the tab.
+    useReviewStore.setState({ sourceKindUnresolved: false });
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
     const { actions } = useReviewStore.getState();

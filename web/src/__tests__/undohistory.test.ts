@@ -94,6 +94,8 @@ const toast = () => useToastStore.getState().toast;
 describe("undo history", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
+    // A tab whose boot found no otto server: Import loads a file in the tab.
+    useReviewStore.setState({ sourceKindUnresolved: false });
     useUiStore.setState({ openSpan: null });
     seam.afterRevert = null;
   });
@@ -430,6 +432,8 @@ describe("the tracked span across undo and redo", () => {
   let uninstall: () => void;
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
+    // A tab whose boot found no otto server: Import loads a file in the tab.
+    useReviewStore.setState({ sourceKindUnresolved: false });
     useUiStore.setState({ openSpan: null });
     seam.afterRevert = null;
     uninstall = installOpenSpanReconciler();
@@ -522,6 +526,8 @@ describe("the tracked span across undo and redo", () => {
 describe("the history's lifetime", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
+    // A tab whose boot found no otto server: Import loads a file in the tab.
+    useReviewStore.setState({ sourceKindUnresolved: false });
     useUiStore.setState({ openSpan: null });
     seam.afterRevert = null;
   });
