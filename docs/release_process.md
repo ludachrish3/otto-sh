@@ -310,7 +310,8 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
   dev group, nothing from `src/`) and `scripts/wheel_smoke.py` imports every
   module and runs `otto test` from it, with pytest's plugin autoload on and
   off. Every other lane runs an editable otto in the dev venv, where a
-  development dependency can hide what an installed otto lacks. CI's
+  development dependency can hide what an installed otto lacks; the import
+  budget measures an editable otto too, in a runtime-only venv. CI's
   `wheel-smoke` job runs the same target on every push.
 - **publish** uploads to PyPI via OIDC, gated by the `pypi` GitHub
   Environment.

@@ -3,10 +3,12 @@
 See ``docs/superpowers/specs/2026-06-29-import-budget-guard-design.md``.
 """
 
+import contextlib
 import fcntl
 import json
 import subprocess
 import sys
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -241,83 +243,66 @@ def test_monitor_server_still_resolves():
     # PEP 562 lazy export must still work for library users.
     result = harness.measure(["python"])
     assert "fastapi" not in result["modules"]
-    import subprocess
-    import sys
-
-    out = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from otto.monitor import MonitorServer; print(MonitorServer.__name__)",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=harness._sanitized_env(),
+    out = harness._run_child(
+        "import json; from otto.monitor import MonitorServer; "
+        "print(json.dumps([MonitorServer.__name__]))"
     )
-    assert out.stdout.strip() == "MonitorServer"
+    assert json.loads(out) == ["MonitorServer"]
 
 
 def test_suite_public_api_still_resolves():
-    import subprocess
-    import sys
-
-    out = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from otto.suite import OttoFixturesPlugin, run_tests; print('ok')",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=harness._sanitized_env(),
+    out = harness._run_child(
+        "import json; from otto.suite import OttoFixturesPlugin, run_tests; "
+        "print(json.dumps(['ok']))"
     )
-    assert out.stdout.strip() == "ok"
+    assert json.loads(out) == ["ok"]
 
 
 def test_bare_import_otto_is_lazy():
     """Bare `import otto` must not eagerly pull the CLI/config graph (Part D)."""
-    import subprocess
-    import sys
-
     code = (
-        "import sys; import otto; "
-        "print('otto.cli' in sys.modules, "
+        "import json, sys; import otto; "
+        "print(json.dumps(['otto.cli' in sys.modules, "
         "'otto.config' in sys.modules, "
-        "'otto.context' in sys.modules)"
+        "'otto.context' in sys.modules]))"
     )
-    out = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=harness._sanitized_env(),
-    )
-    assert out.stdout.strip() == "False False False", out.stdout
+    out = harness._run_child(code)
+    assert json.loads(out) == [False, False, False], out
 
 
 def test_library_use_populates_registries():
     """Lazy __init__ must not leave host/transfer registries empty for library
     users: accessing the lab API pulls otto.host, whose backends self-register."""
-    import subprocess
-    import sys
-
     code = (
-        "import otto; "
+        "import json; import otto; "
         "from otto import all_hosts; "  # triggers config -> host graph
         "from otto.host.transfer.registry import TRANSFER_BACKENDS; "
         "TRANSFER_BACKENDS.get('scp'); TRANSFER_BACKENDS.get('tftp'); "
-        "print('registries OK')"
+        "print(json.dumps(['registries OK']))"
     )
-    out = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=True,
-        env=harness._sanitized_env(),
+    out = harness._run_child(code)
+    assert json.loads(out) == ["registries OK"], out
+
+
+def test_the_measured_venv_is_runtime_only_with_the_checkout_s_otto():
+    """Two dev-only packages (hypothesis, a pytest plugin; playwright) are absent; otto is ours.
+
+    #1150: otto must be this checkout's, installed editable.
+
+    Asked of the measured child itself, the interpreter every surface runs:
+    a dev package there would load into every pytest surface, and an otto
+    from anywhere else would bucket as site-packages, not as otto's.
+    """
+    code = (
+        "import importlib.util, json; "
+        "print(json.dumps({n: importlib.util.find_spec(n) is not None "
+        "for n in ('hypothesis', 'playwright')} | "
+        "{'otto': importlib.util.find_spec('otto').origin}))"
     )
-    assert out.stdout.strip() == "registries OK", out.stdout
+    found = json.loads(harness._run_child(code))
+    assert (found["hypothesis"], found["playwright"]) == (False, False), found
+    otto = Path(found["otto"]).resolve()
+    assert otto.is_relative_to(harness.REPO_ROOT / "src"), f"{otto} is not the checkout's otto"
 
 
 # --- Project-bearing surfaces (spec 2026-09-01, Phase 0) -----------------------
@@ -695,20 +680,13 @@ def test_a_warm_surface_is_seeded_and_repeats_identically(tmp_path):
             env_extra=(*surface.env_extra, ("PYTHONPYCACHEPREFIX", str(tmp_path / "bytecode"))),
         )
 
-    import subprocess
-    import sys
-
     warm = redirect_bytecode_cache(harness.surface_by_key("help_project_warm"))
     first = harness.measure_surface(warm)["file_ops"]
     # The perturbation: a process filling the bytecode cache mid-flight, by
     # importing what root help imports with bytecode writing on.
     writer_env = dict(harness._sanitized_env(), PYTHONPYCACHEPREFIX=str(tmp_path / "bytecode"))
     writer_env.pop("PYTHONDONTWRITEBYTECODE", None)
-    subprocess.run(
-        [sys.executable, "-c", "import otto.cli.main, rich.markdown"],
-        env=writer_env,
-        check=True,
-    )
+    harness._run_child("import otto.cli.main, rich.markdown; print('[]')", writer_env)
     second = harness.measure_surface(warm)["file_ops"]
 
     assert first["workspace"] == second["workspace"], (
@@ -1100,7 +1078,7 @@ def test_the_report_rows_carry_by_path_and_the_ceilings_do_not(tmp_path, monkeyp
 # --- The measured interpreter and the venv builder (#1147) -------------------
 #
 # Pure: no strace, no uv, no measured child. Each test that switches the
-# measured interpreter restores the harness's own afterwards (`_measured`).
+# measured interpreter restores whatever was measured before (`measured`).
 
 
 @pytest.fixture
@@ -1117,8 +1095,65 @@ def _completed(argv, returncode=0):
     return subprocess.CompletedProcess(argv, returncode, "", "")
 
 
-def test_the_measured_interpreter_defaults_to_the_harness_s_own(measured):
-    assert harness.measured_python() == sys.executable
+def test_the_measured_interpreter_defaults_to_the_running_minor_s_built_venv(
+    measured, tmp_path, monkeypatch
+):
+    """Built on the first ask, for the minor running the harness; build_env's memo keeps it."""
+    syncs = []
+    monkeypatch.setattr(harness, "default_venv", lambda minor, _tree: tmp_path / minor)
+    monkeypatch.setattr(harness.subprocess, "run", lambda argv, **_kw: _sync(syncs, argv))
+    running = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    expected = str(tmp_path / running / "bin" / "python")
+    assert harness.measured_python() == expected
+    assert harness.measured_python() == expected
+    assert syncs == [harness.sync_argv(running)], "one sync per process"
+    harness.use_python("/chosen/bin/python")
+    assert harness.measured_python() == "/chosen/bin/python", "a choice overrides the default"
+    assert len(syncs) == 1
+
+
+def _sync(syncs, argv):
+    syncs.append(argv)
+    return _completed(argv)
+
+
+def test_the_first_measurement_builds_its_venv_before_it_takes_the_venv_lock(
+    measured, tmp_path, monkeypatch
+):
+    """A fresh process's first ``measure()`` resolves the interpreter, THEN locks.
+
+    The other order would sync under its own shared lock: a
+    :class:`NestedVenvLockError` at best, a wait on itself forever at worst.
+    """
+    real_build = harness.build_env
+    venv = tmp_path / ".venv-budget" / f"{sys.version_info[0]}.{sys.version_info[1]}"
+    lock = venv.with_name(venv.name + ".lock")
+    exclusive, shared = harness.HeldLock(lock, shared=False), harness.HeldLock(lock, shared=True)
+    events = []
+
+    class MeasuredError(Exception):
+        pass
+
+    def sync(argv, **_kw):
+        events.append(("sync", list(harness._HELD_LOCKS)))
+        (venv / "bin").mkdir(parents=True)
+        (venv / "pyvenv.cfg").write_text("")
+        return _completed(argv)
+
+    def child(*_a, **_kw):
+        events.append(("child", list(harness._HELD_LOCKS)))
+        raise MeasuredError
+
+    monkeypatch.setattr(harness, "build_env", lambda minor: real_build(minor, tree=tmp_path))
+    monkeypatch.setattr(harness.subprocess, "run", sync)
+    monkeypatch.setattr(harness, "_run_child", child)
+    with pytest.raises(MeasuredError):
+        harness.measure(["python"])
+    assert harness.measured_python() == str(venv / "bin" / "python")
+    assert events == [("sync", [exclusive]), ("child", [shared])], (
+        "the sync under its own exclusive lock, released; then the measurement under the shared one"
+    )
+    assert harness._HELD_LOCKS == []
 
 
 def test_use_python_switches_the_interpreter_and_clears_every_per_interpreter_cache(
@@ -1277,7 +1312,8 @@ def test_build_env_syncs_the_tree_s_lock_into_the_venv_once_per_process(
     venv = tree / ".venv-budget" / "3.13"
     assert python == venv / "bin" / "python"
     [(argv, cwd, env)] = calls
-    assert argv == ["uv", "sync", "--frozen", "--python", "3.13"]
+    assert argv == ["uv", "sync", "--frozen", "--no-default-groups", "--python", "3.13"]
+    assert "--no-install-project" not in argv, "otto stays installed, so its files bucket as otto's"
     assert argv == harness.sync_argv("3.13")
     assert cwd == tree, "the measured tree's own uv.lock"
     assert env["UV_PROJECT_ENVIRONMENT"] == str(venv)
@@ -1355,6 +1391,88 @@ def test_a_live_measurement_s_shared_lock_holds_off_a_sync(measured, tmp_path, m
         assert holder.stdout.readline().strip() == "held"
         harness.build_env("3.13", tree=tree)
     assert seen == [True], "the sync ran only once the measurement let go"
+
+
+_LOOPING_HOLDER = """
+import importlib.util, sys, time
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("budget_harness", sys.argv[1])
+harness = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(harness)
+venv, log = Path(sys.argv[2]), Path(sys.argv[3])
+cycles, period, offset = int(sys.argv[4]), float(sys.argv[5]), float(sys.argv[6])
+print("ready", flush=True)
+start = float(sys.stdin.readline().split()[1]) + offset
+time.sleep(max(0.0, start - time.monotonic()))
+for cycle in range(cycles):
+    with harness._venv_lock(venv, shared=True):
+        with log.open("a") as out:
+            out.write("x")
+        if cycle == 0:
+            print("held", flush=True)
+        # Hold until this cycle's end on a fixed schedule, so the two
+        # readers' holds stay half a period apart and always overlap.
+        time.sleep(max(0.0, start + (cycle + 1) * period - time.monotonic()))
+"""
+"""A measurement after measurement through the harness's own lock (so through its
+turnstile), as back-to-back measurements of one worker take it. It says "ready",
+waits for "go <t0>", then holds the lock shared from ``t0 + offset`` on a fixed
+schedule of *period*-long holds, each taken again as soon as the last one ends."""
+
+
+@pytest.mark.timeout(60)
+def test_overlapping_measurements_never_starve_a_sync(measured, tmp_path, monkeypatch):
+    """Two workers keep the venv shared without a gap; a sync that asks gets in at once.
+
+    The two readers hold the lock on schedules half a period apart, so one of
+    them always holds it. Both are started, both have held it, and only then
+    does the sync ask. Without the turnstile in :func:`_venv_lock`, Linux
+    grants each new shared lock past the waiting exclusive one, so the sync
+    waits for every remaining cycle. With it, the sync waits only for the
+    holds already under way: at most one new shared acquisition per reader
+    between its request and its grant.
+    """
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    venv = tree / ".venv-budget" / "3.13"
+    venv.parent.mkdir(parents=True)
+    log = tmp_path / "acquired"
+    log.write_text("")
+    cycles, period, readers = 20, 0.2, 2
+    granted_at = []
+
+    def run(argv, **_kw):
+        granted_at.append(len(log.read_text()))
+        return _completed(argv)
+
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    base = [sys.executable, "-c", _LOOPING_HOLDER, harness.__file__, str(venv), str(log)]
+    with contextlib.ExitStack() as stack:
+        holders = []
+        for index in range(readers):
+            argv = [*base, str(cycles), str(period), str(index * period / readers)]
+            holder = stack.enter_context(
+                subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            )
+            stack.callback(holder.kill)
+            assert holder.stdin is not None
+            assert holder.stdout is not None
+            assert holder.stdout.readline().strip() == "ready"
+            holders.append(holder)
+        go = time.monotonic() + 0.2
+        for holder in holders:
+            holder.stdin.write(f"go {go}\n")
+            holder.stdin.flush()
+        for holder in holders:
+            assert holder.stdout.readline().strip() == "held"
+        requested_at = len(log.read_text())
+        harness.build_env("3.13", tree=tree)
+    [granted] = granted_at
+    assert requested_at < readers * cycles - readers, "the readers were still cycling"
+    assert granted - requested_at <= readers, (
+        f"{granted - requested_at} shared holds were granted between the sync's request and "
+        f"its grant ({requested_at} -> {granted}); with the turnstile at most one per reader"
+    )
 
 
 def test_a_measurement_holds_its_venv_s_lock_shared(measured, tmp_path, monkeypatch):
@@ -1587,6 +1705,24 @@ def test_python_measures_the_named_interpreter_as_is(measured, monkeypatch):
     assert seen == ["/some/venv/bin/python"]
 
 
+@pytest.mark.parametrize("argv", [[], ["--check"], ["--report"]])
+def test_a_failed_build_is_a_named_exit_before_anything_is_measured(
+    measured, monkeypatch, capsys, argv
+):
+    """The default venv is built before the table, so a sync failure is a message, not a trace."""
+
+    def build_env(minor, **_kw):
+        raise harness.EnvBuildError(f"import_budget: `uv sync` for {minor} exited 2")
+
+    monkeypatch.setattr(harness, "build_env", build_env)
+    monkeypatch.setattr(harness, "measure_surface", lambda _s: pytest.fail("measured"))
+    assert harness.main(argv) == 1
+    out, err = capsys.readouterr()
+    assert "`uv sync` for " in err
+    assert "exited 2" in err
+    assert out == "", "no table header before the build"
+
+
 def test_a_relative_python_is_made_absolute_but_never_resolved(measured, tmp_path, monkeypatch):
     """The measured children run in another cwd, and a venv's interpreter is a link."""
     venv = tmp_path / "venv"
@@ -1624,6 +1760,85 @@ def test_build_env_under_a_held_venv_lock_refuses_instead_of_hanging(
         pytest.raises(harness.NestedVenvLockError, match=r"3\.13\.lock"),
     ):
         harness.build_env("3.13", tree=tmp_path)
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("inner_shared", [True, False])
+def test_a_venv_lock_this_process_holds_is_refused_when_asked_again(tmp_path, inner_shared):
+    """Even shared in shared would queue behind a sync waiting at the turnstile."""
+    venv = tmp_path / ".venv-budget" / "3.13"
+    with harness._venv_lock(venv, shared=True):
+        with (
+            pytest.raises(harness.NestedVenvLockError, match=r"3\.13\.lock"),
+            harness._venv_lock(venv, shared=inner_shared),
+        ):
+            pytest.fail("nested lock taken")
+        assert [h.path for h in harness._HELD_LOCKS] == [venv.with_name("3.13.lock")]
+    assert harness._HELD_LOCKS == []
+
+
+def _locked_venv(tmp_path):
+    """A venv the builder made: its interpreter's dir, its pyvenv.cfg and its lock file."""
+    venv = tmp_path / ".venv-budget" / "9.97"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("")
+    lock = venv.with_name("9.97.lock")
+    lock.write_text("")
+    return venv, lock
+
+
+def _a_sync_would_wait(lock) -> bool:
+    """Whether an exclusive flock of *lock*, as a sync takes it, would wait right now."""
+    with lock.open("a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+
+
+def test_every_probe_of_the_measured_interpreter_runs_under_the_shared_venv_lock(
+    measured, tmp_path, monkeypatch
+):
+    """The facts, the baseline and the warm-up's compile: a sync contending with each waits."""
+    venv, lock = _locked_venv(tmp_path)
+    harness.use_python(str(harness.venv_python(venv)))
+    facts = {"minor": "9.97", "cache_tag": "cpython-997", "import_dirs": []}
+    waited = {}
+
+    def run(argv, **_kw):
+        code = argv[argv.index("-c") + 1] if "-c" in argv else "compileall"
+        kind = {harness._CHILD_FACTS: "facts", harness._CHILD_BASELINE: "baseline"}.get(code, code)
+        waited[kind] = _a_sync_would_wait(lock)
+        out = "[]" if kind == "baseline" else json.dumps(facts)
+        return subprocess.CompletedProcess(argv, 0, out + "\n", "")
+
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    harness.measured_facts()
+    harness.baseline_modules()
+    with pytest.raises(RuntimeError, match="writable"):  # no otto in the empty import dirs
+        harness._warm_bytecode()
+    assert waited == {"facts": True, "baseline": True, "compileall": True}
+    assert harness._HELD_LOCKS == []
+    assert not _a_sync_would_wait(lock), "every lock is let go"
+
+
+def test_a_child_under_a_held_measurement_lock_reuses_it(measured, tmp_path, monkeypatch):
+    """Reentrant: a probe inside ``measure()``'s lock takes no second flock and never refuses."""
+    venv, lock = _locked_venv(tmp_path)
+    harness.use_python(str(harness.venv_python(venv)))
+    held = []
+
+    def run(argv, **_kw):
+        held.append(list(harness._HELD_LOCKS))
+        return subprocess.CompletedProcess(argv, 0, "[]\n", "")
+
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    with harness._measurement_lock():
+        harness.baseline_modules()
+    assert held == [[harness.HeldLock(lock, shared=True)]], "one shared lock, the outer one"
+    assert harness._HELD_LOCKS == []
 
 
 def test_a_stray_file_in_the_ceilings_directory_is_refused_by_name(

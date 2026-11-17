@@ -1870,8 +1870,7 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # `_LAZY_EXPORTS` table, which a pattern cannot read. Four parse-only tests
 # enforce them (docs/contributing.md, "Patching lazily exported names"). They
 # also run in every pytest lane; this leg puts them in the per-change gate,
-# where a targeted test run would never select them. Plain `uv run`, not
-# `--group lint`: a group sync reshapes the venv the import-budget tests count.
+# where a targeted test run would never select them.
 #
 # tach itself refuses an import cycle (forbid_circular_dependencies = true).
 # The layer test and the import-string audit ride the same leg for the same

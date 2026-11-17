@@ -732,7 +732,8 @@ jobs:
 
   # The one lane that runs otto as a user installs it: the built wheel over
   # its locked runtime dependencies, no dev group, nothing from src/. Every
-  # other job runs an editable otto in the dev venv, which is how a dev-only
+  # other job runs an editable otto in the dev venv (the import budget
+  # measures an editable otto in a runtime-only venv), which is how a dev-only
   # pytest-cov option shipped in every `otto test` session (#593). The wheel
   # needs the web assets (the build backend refuses an asset-less one), and
   # `make wheel-smoke` builds them, checks the wheel, then runs the session.

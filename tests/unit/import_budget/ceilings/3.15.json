@@ -4,7 +4,7 @@
     "bootstrap_project": {
       "by_bucket": {
         "fd": 92,
-        "other": 313,
+        "other": 318,
         "otto:*": 22,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -44,7 +44,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 34,
+        "site:*": 33,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:c787785866c7b801238d__mypyc": 2,
@@ -55,8 +55,6 @@
         "site:pydantic_settings": 114,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
@@ -65,15 +63,15 @@
         "workspace": 12
       },
       "by_process": {
-        "python": 2254
+        "python": 2247
       },
-      "file_ops": 2254,
+      "file_ops": 2247,
       "workspace": 12
     },
     "completion_project_handover": {
       "by_bucket": {
         "fd": 100,
-        "other": 195,
+        "other": 200,
         "otto:*": 29,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -124,7 +122,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 34,
+        "site:*": 33,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:c787785866c7b801238d__mypyc": 2,
@@ -135,8 +133,6 @@
         "site:pydantic_settings": 114,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
@@ -145,15 +141,15 @@
         "workspace": 35
       },
       "by_process": {
-        "python": 2439
+        "python": 2432
       },
-      "file_ops": 2439,
+      "file_ops": 2432,
       "workspace": 35
     },
     "completion_project_warm": {
       "by_bucket": {
         "fd": 24,
-        "other": 148,
+        "other": 152,
         "otto:*": 6,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -169,23 +165,21 @@
         "otto:_shim_complete.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "site:*": 18,
+        "site:*": 17,
         "site:otto_sh": 2,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "stdlib": 268,
         "workspace": 10
       },
       "by_process": {
-        "python": 505
+        "python": 497
       },
-      "file_ops": 505,
+      "file_ops": 497,
       "workspace": 10
     },
     "cov": {
       "by_bucket": {
         "fd": 62,
-        "other": 288,
+        "other": 293,
         "otto:*": 10,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -206,7 +200,7 @@
         "otto:registry.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 29,
+        "site:*": 28,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:otto_sh": 2,
@@ -214,23 +208,21 @@
         "site:pydantic_core": 28,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
         "stdlib": 561
       },
       "by_process": {
-        "python": 1596
+        "python": 1589
       },
-      "file_ops": 1596,
+      "file_ops": 1589,
       "workspace": 0
     },
     "dispatch_local_warm": {
       "by_bucket": {
         "fd": 113,
-        "other": 348,
+        "other": 356,
         "otto:*": 35,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -290,7 +282,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 34,
+        "site:*": 33,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:c787785866c7b801238d__mypyc": 2,
@@ -301,8 +293,6 @@
         "site:pydantic_settings": 114,
         "site:rich": 241,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
@@ -311,17 +301,17 @@
         "workspace": 35
       },
       "by_process": {
-        "bash": 41,
-        "python": 2799,
+        "bash": 44,
+        "python": 2792,
         "stty": 90
       },
-      "file_ops": 2930,
+      "file_ops": 2926,
       "workspace": 35
     },
     "dispatch_project_warm": {
       "by_bucket": {
         "fd": 110,
-        "other": 217,
+        "other": 222,
         "otto:*": 35,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -381,7 +371,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 34,
+        "site:*": 33,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:c787785866c7b801238d__mypyc": 2,
@@ -392,8 +382,6 @@
         "site:pydantic_settings": 114,
         "site:rich": 241,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
@@ -402,15 +390,15 @@
         "workspace": 35
       },
       "by_process": {
-        "python": 2796
+        "python": 2789
       },
-      "file_ops": 2796,
+      "file_ops": 2789,
       "workspace": 35
     },
     "docker": {
       "by_bucket": {
         "fd": 62,
-        "other": 288,
+        "other": 293,
         "otto:*": 10,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -431,7 +419,7 @@
         "otto:registry.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 29,
+        "site:*": 28,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:otto_sh": 2,
@@ -439,23 +427,21 @@
         "site:pydantic_core": 28,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
         "stdlib": 561
       },
       "by_process": {
-        "python": 1596
+        "python": 1589
       },
-      "file_ops": 1596,
+      "file_ops": 1589,
       "workspace": 0
     },
     "help": {
       "by_bucket": {
         "fd": 62,
-        "other": 288,
+        "other": 293,
         "otto:*": 10,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -476,7 +462,7 @@
         "otto:registry.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 29,
+        "site:*": 28,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:otto_sh": 2,
@@ -484,17 +470,15 @@
         "site:pydantic_core": 28,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
         "stdlib": 561
       },
       "by_process": {
-        "python": 1592
+        "python": 1585
       },
-      "file_ops": 1592,
+      "file_ops": 1585,
       "workspace": 0
     },
     "help_project": {
@@ -589,8 +573,8 @@
     },
     "help_project_warm": {
       "by_bucket": {
-        "fd": 118,
-        "other": 232,
+        "fd": 116,
+        "other": 238,
         "otto:*": 23,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -632,10 +616,9 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 38,
+        "site:*": 37,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
-        "site:attr": 60,
         "site:c787785866c7b801238d__mypyc": 2,
         "site:dotenv": 24,
         "site:markdown_it": 310,
@@ -647,8 +630,6 @@
         "site:pygments": 88,
         "site:rich": 245,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 129,
         "site:typing_extensions": 3,
@@ -657,15 +638,15 @@
         "workspace": 14
       },
       "by_process": {
-        "python": 2977
+        "python": 2909
       },
-      "file_ops": 2977,
+      "file_ops": 2909,
       "workspace": 14
     },
     "host": {
       "by_bucket": {
         "fd": 62,
-        "other": 288,
+        "other": 293,
         "otto:*": 10,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -686,7 +667,7 @@
         "otto:registry.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 29,
+        "site:*": 28,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:otto_sh": 2,
@@ -694,23 +675,21 @@
         "site:pydantic_core": 28,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
         "stdlib": 561
       },
       "by_process": {
-        "python": 1604
+        "python": 1597
       },
-      "file_ops": 1604,
+      "file_ops": 1597,
       "workspace": 0
     },
     "host_local_exec": {
       "by_bucket": {
         "fd": 113,
-        "other": 224,
+        "other": 229,
         "otto:*": 36,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -772,7 +751,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 34,
+        "site:*": 33,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:c787785866c7b801238d__mypyc": 2,
@@ -783,8 +762,6 @@
         "site:pydantic_settings": 114,
         "site:rich": 237,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
@@ -793,16 +770,16 @@
         "workspace": 35
       },
       "by_process": {
-        "python": 2823,
+        "python": 2816,
         "sh": 7
       },
-      "file_ops": 2830,
+      "file_ops": 2823,
       "workspace": 35
     },
     "host_local_get": {
       "by_bucket": {
         "fd": 110,
-        "other": 217,
+        "other": 222,
         "otto:*": 36,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -864,7 +841,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 34,
+        "site:*": 33,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:c787785866c7b801238d__mypyc": 2,
@@ -875,8 +852,6 @@
         "site:pydantic_settings": 114,
         "site:rich": 241,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
@@ -885,15 +860,15 @@
         "workspace": 53
       },
       "by_process": {
-        "python": 2846
+        "python": 2839
       },
-      "file_ops": 2846,
+      "file_ops": 2839,
       "workspace": 53
     },
     "host_local_put": {
       "by_bucket": {
         "fd": 110,
-        "other": 217,
+        "other": 222,
         "otto:*": 36,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -955,7 +930,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 34,
+        "site:*": 33,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:c787785866c7b801238d__mypyc": 2,
@@ -966,8 +941,6 @@
         "site:pydantic_settings": 114,
         "site:rich": 241,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
@@ -976,15 +949,15 @@
         "workspace": 54
       },
       "by_process": {
-        "python": 2847
+        "python": 2840
       },
-      "file_ops": 2847,
+      "file_ops": 2840,
       "workspace": 54
     },
     "host_ssh_exec": {
       "by_bucket": {
         "fd": 161,
-        "other": 277,
+        "other": 282,
         "otto:*": 36,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1046,7 +1019,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 45,
+        "site:*": 44,
         "site:_cffi_backend": 2,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
@@ -1060,8 +1033,6 @@
         "site:pydantic_settings": 114,
         "site:rich": 237,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
@@ -1072,15 +1043,15 @@
       "by_process": {
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3682
+        "python": 3675
       },
-      "file_ops": 3706,
+      "file_ops": 3699,
       "workspace": 56
     },
     "host_ssh_login": {
       "by_bucket": {
         "fd": 161,
-        "other": 277,
+        "other": 282,
         "otto:*": 36,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1142,7 +1113,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 45,
+        "site:*": 44,
         "site:_cffi_backend": 2,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
@@ -1156,8 +1127,6 @@
         "site:pydantic_settings": 114,
         "site:rich": 237,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
@@ -1168,15 +1137,15 @@
       "by_process": {
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3682
+        "python": 3675
       },
-      "file_ops": 3706,
+      "file_ops": 3699,
       "workspace": 56
     },
     "import_otto": {
       "by_bucket": {
         "fd": 22,
-        "other": 140,
+        "other": 144,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
         "otto:__init__.abi3.so": 1,
@@ -1185,22 +1154,20 @@
         "otto:__init__.cpython-315-aarch64-linux-gnu.so": 1,
         "otto:__init__.cpython-315.pyc": 1,
         "otto:__init__.so": 1,
-        "site:*": 18,
+        "site:*": 17,
         "site:otto_sh": 2,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "stdlib": 260
       },
       "by_process": {
-        "python": 462
+        "python": 454
       },
-      "file_ops": 462,
+      "file_ops": 454,
       "workspace": 0
     },
     "monitor": {
       "by_bucket": {
         "fd": 62,
-        "other": 288,
+        "other": 293,
         "otto:*": 11,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1223,7 +1190,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 29,
+        "site:*": 28,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:otto_sh": 2,
@@ -1231,23 +1198,21 @@
         "site:pydantic_core": 28,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
         "stdlib": 561
       },
       "by_process": {
-        "python": 1600
+        "python": 1593
       },
-      "file_ops": 1600,
+      "file_ops": 1593,
       "workspace": 0
     },
     "reservation": {
       "by_bucket": {
         "fd": 64,
-        "other": 290,
+        "other": 295,
         "otto:*": 11,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1269,7 +1234,7 @@
         "otto:reservations": 24,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 29,
+        "site:*": 28,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:otto_sh": 2,
@@ -1277,23 +1242,21 @@
         "site:pydantic_core": 28,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
         "stdlib": 565
       },
       "by_process": {
-        "python": 1629
+        "python": 1622
       },
-      "file_ops": 1629,
+      "file_ops": 1622,
       "workspace": 0
     },
     "run": {
       "by_bucket": {
         "fd": 62,
-        "other": 288,
+        "other": 293,
         "otto:*": 11,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1316,7 +1279,7 @@
         "otto:registry.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 29,
+        "site:*": 28,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:otto_sh": 2,
@@ -1324,23 +1287,21 @@
         "site:pydantic_core": 28,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
         "stdlib": 561
       },
       "by_process": {
-        "python": 1600
+        "python": 1593
       },
-      "file_ops": 1600,
+      "file_ops": 1593,
       "workspace": 0
     },
     "run_bootstrapped": {
       "by_bucket": {
         "fd": 86,
-        "other": 306,
+        "other": 311,
         "otto:*": 19,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1376,7 +1337,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 31,
+        "site:*": 30,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:dotenv": 24,
@@ -1386,23 +1347,21 @@
         "site:pydantic_settings": 114,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
         "stdlib": 769
       },
       "by_process": {
-        "python": 2162
+        "python": 2155
       },
-      "file_ops": 2162,
+      "file_ops": 2155,
       "workspace": 0
     },
     "schema": {
       "by_bucket": {
         "fd": 62,
-        "other": 288,
+        "other": 293,
         "otto:*": 10,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1423,7 +1382,7 @@
         "otto:registry.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 29,
+        "site:*": 28,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:otto_sh": 2,
@@ -1431,23 +1390,21 @@
         "site:pydantic_core": 28,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
         "stdlib": 561
       },
       "by_process": {
-        "python": 1596
+        "python": 1589
       },
-      "file_ops": 1596,
+      "file_ops": 1589,
       "workspace": 0
     },
     "test": {
       "by_bucket": {
         "fd": 62,
-        "other": 288,
+        "other": 293,
         "otto:*": 11,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1470,7 +1427,7 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 29,
+        "site:*": 28,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
         "site:otto_sh": 2,
@@ -1478,23 +1435,21 @@
         "site:pydantic_core": 28,
         "site:rich": 129,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
         "stdlib": 561
       },
       "by_process": {
-        "python": 1600
+        "python": 1593
       },
-      "file_ops": 1600,
+      "file_ops": 1593,
       "workspace": 0
     },
     "test_project": {
       "by_bucket": {
-        "fd": 262,
-        "other": 390,
+        "fd": 220,
+        "other": 306,
         "otto:*": 39,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1560,148 +1515,75 @@
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 82,
-        "site:..": 1,
-        "site:_hypothesis_ftz_detector": 1,
-        "site:_hypothesis_globals": 6,
-        "site:_hypothesis_pytestplugin": 6,
+        "site:*": 63,
         "site:_pytest": 366,
-        "site:aioftp": 7,
-        "site:aiosqlite": 7,
-        "site:alabaster": 7,
-        "site:annotated_doc": 23,
-        "site:annotated_types": 16,
-        "site:anyio": 293,
-        "site:appdirs": 7,
-        "site:argcomplete": 7,
-        "site:asyncssh": 7,
-        "site:attrs": 7,
-        "site:babel": 7,
-        "site:bracex": 7,
-        "site:bump_my_version": 7,
+        "site:aioftp": 6,
+        "site:aiosqlite": 6,
+        "site:annotated_doc": 22,
+        "site:annotated_types": 15,
+        "site:anyio": 292,
+        "site:asyncssh": 6,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:certifi": 7,
-        "site:cffi": 7,
-        "site:charset_normalizer": 7,
-        "site:click": 7,
-        "site:colorlog": 7,
-        "site:coverage": 7,
-        "site:cryptography": 7,
-        "site:dependency_groups": 7,
-        "site:distlib": 7,
-        "site:doc8": 7,
-        "site:docutils": 7,
+        "site:certifi": 6,
+        "site:cffi": 6,
+        "site:charset_normalizer": 6,
+        "site:click": 6,
+        "site:cryptography": 6,
         "site:dotenv": 24,
-        "site:execnet": 55,
-        "site:fastapi": 7,
-        "site:filelock": 7,
-        "site:git_cliff": 7,
-        "site:greenlet": 22,
-        "site:h11": 7,
-        "site:httpcore2": 7,
-        "site:httpx2": 7,
-        "site:humanize": 7,
-        "site:hypothesis": 643,
-        "site:idna": 7,
-        "site:imagesize": 7,
-        "site:iniconfig": 27,
-        "site:jinja2": 7,
-        "site:jsonschema": 7,
-        "site:jsonschema_specifications": 7,
-        "site:markdown_it_py": 7,
-        "site:markupsafe": 7,
-        "site:mdit_py_plugins": 7,
-        "site:mdurl": 7,
-        "site:myst_parser": 7,
-        "site:nox": 7,
-        "site:nox_uv": 7,
-        "site:opentelemetry_api": 7,
-        "site:otto_sh": 11,
-        "site:packaging": 7,
-        "site:platformdirs": 7,
-        "site:playwright": 432,
-        "site:pluggy": 47,
-        "site:prompt_toolkit": 7,
+        "site:fastapi": 6,
+        "site:h11": 6,
+        "site:idna": 6,
+        "site:iniconfig": 26,
+        "site:markdown_it_py": 6,
+        "site:mdurl": 6,
+        "site:opentelemetry_api": 6,
+        "site:otto_sh": 10,
+        "site:packaging": 6,
+        "site:pluggy": 46,
         "site:py": 3,
-        "site:py_spy": 7,
-        "site:pyasn1": 7,
-        "site:pycparser": 7,
-        "site:pydantic": 221,
-        "site:pydantic_core": 35,
-        "site:pydantic_extra_types": 7,
-        "site:pydantic_settings": 121,
-        "site:pygments": 132,
-        "site:pyinstrument": 7,
-        "site:pynetbox": 7,
-        "site:pysnmp": 7,
-        "site:pytest": 18,
-        "site:pytest_asyncio": 37,
-        "site:pytest_cov": 19,
-        "site:pytest_playwright": 39,
-        "site:pytest_randomly": 28,
-        "site:pytest_repeat": 21,
-        "site:pytest_timeout": 22,
-        "site:pytest_xdist": 16,
-        "site:python_discovery": 7,
-        "site:python_dotenv": 7,
-        "site:python_slugify": 7,
-        "site:pyyaml": 7,
-        "site:questionary": 7,
-        "site:referencing": 7,
-        "site:requests": 7,
-        "site:restructuredtext_lint": 7,
-        "site:rich": 244,
-        "site:rich_click": 7,
-        "site:roman_numerals": 7,
-        "site:rpds_py": 7,
-        "site:ruff": 7,
-        "site:shellingham": 23,
-        "site:slugify": 24,
-        "site:snowballstemmer": 7,
-        "site:sortedcontainers": 31,
-        "site:sphinx": 7,
-        "site:sphinx_immaterial": 7,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_applehelp": 7,
-        "site:sphinxcontrib_devhelp": 7,
-        "site:sphinxcontrib_htmlhelp": 7,
-        "site:sphinxcontrib_jsmath": 7,
-        "site:sphinxcontrib_jsmath-1": 2,
-        "site:sphinxcontrib_qthelp": 7,
-        "site:sphinxcontrib_serializinghtml": 7,
-        "site:sse_starlette": 7,
-        "site:starlette": 7,
-        "site:stevedore": 7,
-        "site:telnetlib3": 7,
-        "site:text_unidecode": 17,
-        "site:tomli": 9,
-        "site:tomlkit": 7,
-        "site:truststore": 7,
-        "site:ty": 7,
-        "site:typer": 132,
-        "site:types_requests": 7,
-        "site:typing_extensions": 10,
-        "site:typing_inspection": 27,
-        "site:urllib3": 7,
-        "site:uv": 7,
-        "site:uvicorn": 7,
-        "site:virtualenv": 7,
-        "site:wcmatch": 7,
-        "site:wcwidth": 7,
-        "site:xdist": 62,
-        "stdlib": 1248,
-        "workspace": 1154
+        "site:pyasn1": 6,
+        "site:pycparser": 6,
+        "site:pydantic": 220,
+        "site:pydantic_core": 34,
+        "site:pydantic_settings": 120,
+        "site:pygments": 131,
+        "site:pynetbox": 6,
+        "site:pysnmp": 6,
+        "site:pytest": 17,
+        "site:pytest_asyncio": 36,
+        "site:pytest_randomly": 27,
+        "site:pytest_timeout": 21,
+        "site:python_dotenv": 6,
+        "site:pyyaml": 6,
+        "site:requests": 6,
+        "site:rich": 243,
+        "site:shellingham": 22,
+        "site:sse_starlette": 6,
+        "site:starlette": 6,
+        "site:telnetlib3": 6,
+        "site:tomli": 8,
+        "site:tomlkit": 6,
+        "site:truststore": 6,
+        "site:typer": 131,
+        "site:typing_extensions": 9,
+        "site:typing_inspection": 26,
+        "site:urllib3": 6,
+        "site:uv": 6,
+        "site:uvicorn": 6,
+        "site:wcwidth": 6,
+        "stdlib": 1163,
+        "workspace": 1122
       },
       "by_process": {
-        "python": 7900
+        "python": 5796
       },
-      "file_ops": 7900,
-      "workspace": 1154
+      "file_ops": 5796,
+      "workspace": 1122
     },
     "version_project": {
       "by_bucket": {
         "fd": 46,
-        "other": 148,
+        "other": 152,
         "otto:*": 5,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -1715,16 +1597,14 @@
         "otto:_shim.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 20,
+        "site:*": 19,
         "site:otto_sh": 4,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "stdlib": 544
       },
       "by_process": {
-        "python": 793
+        "python": 785
       },
-      "file_ops": 793,
+      "file_ops": 785,
       "workspace": 0
     }
   }
