@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MonitorSourceState } from "../api/export.gen";
 import { type Deferred, deferred } from "./_deferred";
 import {
@@ -111,6 +111,11 @@ async function bootLive(snapshot = MINIMAL, extra: Record<string, Route> = {}) {
   expect(useReviewStore.getState().editable).toBe(true);
   return { routes, fetchMock };
 }
+
+// A tab whose boot found no otto server, whichever test the shuffle runs first.
+beforeEach(() => {
+  useReviewStore.setState({ sourceKindUnresolved: false });
+});
 
 afterEach(() => {
   useReviewStore.setState({

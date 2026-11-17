@@ -60,6 +60,8 @@ function seedStore(mode: "live" | null): void {
 let uninstallReconciler: () => void;
 beforeEach(() => {
   uninstallReconciler = installOpenSpanReconciler();
+  // A tab whose boot found no otto server: Import is offered until a source says otherwise.
+  useReviewStore.setState({ sourceKindUnresolved: false });
 });
 
 afterEach(() => {

@@ -1,14 +1,16 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { sourceState } from "../__tests__/_sourceState";
 import { useReviewStore } from "../data/reviewStore";
 import { EmptyState } from "./EmptyState";
 
-afterEach(() => {
-  cleanup();
+// Each test starts in a tab whose boot found no otto server, and says what
+// differs from that.
+beforeEach(() => {
   useReviewStore.setState({ source: null, pendingSource: null, sourceKindUnresolved: false });
 });
+afterEach(cleanup);
 
 const text = () => screen.getByTestId("empty-review-text").textContent;
 
