@@ -42,10 +42,13 @@ from scripts.api_manifest import (  # noqa: E402
 )
 from scripts.process_group import signal_group  # noqa: E402
 
+# The env a uv command runs in, and how long a sync may take: decided once, in
+# scripts/uv_env.py, which the import budget's builder uses too.
+from scripts.uv_env import SYNC_TIMEOUT, venv_clean  # noqa: E402
+
 CHILD = REPO_ROOT / "scripts" / "api_dump_child.py"
 GATE_HASH_SEED = "0"
 CHILD_TIMEOUT = 300
-SYNC_TIMEOUT = 1200
 LOCK_CHECK_TIMEOUT = 120
 # What regeneration reads from a commit, besides its manifest.
 ARCHIVE_INPUTS = ("src", "pyproject.toml", "uv.lock")
@@ -296,26 +299,12 @@ class UvDepsEnv:
             )
 
 
-# Inherited variables that would point uv at another project, lock, environment
-# or working directory, or switch `--locked` validation off, without the cache
-# key seeing them (from `uv help sync` / `uv help lock`; UV_PROJECT_ENVIRONMENT
-# is set explicitly where a sync needs it). Cache, index, network and offline
-# settings pass through: an air-gapped install relies on them.
-UV_TARGET_VARS = frozenset(
-    {
-        "VIRTUAL_ENV",
-        "UV_PROJECT",
-        "UV_WORKING_DIR",
-        "UV_PROJECT_ENVIRONMENT",
-        "UV_LOCKED",
-        "UV_FROZEN",
-    }
-)
-
-
 def _uv_env() -> "dict[str, str]":
-    """Return the ambient environment minus every :data:`UV_TARGET_VARS` entry."""
-    return {k: v for k, v in os.environ.items() if k not in UV_TARGET_VARS}
+    """Return the ambient environment as :func:`scripts.uv_env.venv_clean` leaves it.
+
+    That drops every ``UV_TARGET_VARS`` entry, and ``PYTHONHOME`` and ``PYTHONPATH`` too.
+    """
+    return venv_clean()
 
 
 def _uv_version() -> str:

@@ -5,10 +5,10 @@
 after release. This script is the release's answer: it measures the base (the
 last release tag, `git describe --tags --abbrev=0`) and the tip (HEAD), one
 throwaway venv per Python minor synced from each tree, with ONE instrument —
-the tip's `scripts/import_budget.py`, which measures whatever interpreter runs
-it (the base's venv holds the base's otto) — and STOPS the release on any
-surface that costs more file operations at the tip than at the base, on any
-minor, unless the committed approvals file
+the tip's `scripts/import_budget.py`, which measures the venv interpreter it
+is handed (the base's venv holds the base's otto) — and STOPS the release on
+any surface that costs more file operations at the tip than at the base, on
+any minor, unless the committed approvals file
 (`tests/unit/import_budget/approved_growth.json`) holds an entry for it: the
 surface, maybe one minor, the buckets and the amount each may grow by, and a
 `why`. Growth is approved when every moved bucket is named by the entry and
@@ -79,6 +79,8 @@ pairs); `measure` still judges the other minors after one failed. `validate`:
 """
 
 import argparse
+import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -164,11 +166,15 @@ a move within it is no shuffle. Totals stay exact: one operation more than the
 base is growth, so two pairs agree only on the same totals, and an approval
 covers exactly the growth measured."""
 
-INSTRUMENT_PATHS = ["scripts/import_budget.py", "tests/_fixtures"]
-"""What a measurement depends on besides the measured tree: the harness and fixtures, at the tip."""
+INSTRUMENT_PATHS = ["scripts/import_budget.py", "scripts/uv_env.py", "tests/_fixtures"]
+"""What a measurement depends on besides the measured tree: the harness, the uv env it loads
+beside itself, and the fixtures, at the tip."""
 
 Runner = Callable[["list[str]", Path, "dict[str, str]", "Path | None"], int]
-"""(argv, cwd, env, stdout file or None) -> exit status: `measure`'s one door to the world."""
+"""(argv, cwd, env, stdout file or None) -> exit status: how `measure` runs uv and interpreters.
+
+Finding an interpreter (`uv python find`) is the one exception: the harness's
+`find_interpreter` does it, so the delta and `--update` ask the same way."""
 
 
 @dataclass(frozen=True)
@@ -195,7 +201,7 @@ class Provenance:
     python: str
     """The interpreter's full version (`platform.python_version()`), not just the minor."""
     instrument: str
-    """The harness blob and fixtures tree at the tip, `<blob>:<tree>`."""
+    """The instrument at the tip (:data:`INSTRUMENT_PATHS`), `<harness>:<uv_env>:<fixtures>`."""
 
 
 @dataclass(frozen=True)
@@ -493,6 +499,42 @@ def _harness() -> "ModuleType":
     from scripts import import_budget
 
     return import_budget
+
+
+_TREE_HARNESSES: "dict[str, ModuleType]" = {}
+"""Digest of a harness and its uv_env -> that harness, loaded once (:func:`_harness_in`)."""
+
+
+def _harness_in(tree: Path) -> "ModuleType":
+    """Return *tree*'s own `scripts/import_budget.py`, loaded by path: the harness that reports.
+
+    The sync's command and env come from it, so the venv a report measures
+    is synced as THAT harness, the stamped instrument, says, never as this
+    checkout's (perhaps edited) copy does. Loaded once per distinct pair of
+    sources: the harness and the `scripts/uv_env.py` it loads from the same tree.
+    """
+    path = tree / "scripts" / "import_budget.py"
+    hashed = hashlib.sha256()
+    for part in (path, tree / "scripts" / "uv_env.py"):
+        hashed.update(part.read_bytes())
+        hashed.update(b"\0")
+    digest = hashed.hexdigest()
+    known = _TREE_HARNESSES.get(digest)
+    if known is not None:
+        return known
+    name = f"_import_budget_{digest[:16]}"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise MeasureError(f"cannot load the harness {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # a dataclass resolves its module while the file runs
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        del sys.modules[name]
+        raise MeasureError(f"cannot load the harness {path}: {e}") from e
+    _TREE_HARNESSES[digest] = module
+    return module
 
 
 def expected_exits() -> "dict[str, int | None]":
@@ -1035,7 +1077,11 @@ def measured_tree(repo: Path, sha: str) -> str:
 
 
 def instrument_id(repo: Path, sha: str) -> str:
-    """Return the instrument at *sha*: the harness blob and fixtures tree, `<blob>:<tree>`."""
+    """Return the instrument at *sha*, one git id per :data:`INSTRUMENT_PATHS` entry.
+
+    That is `<harness>:<uv_env>:<fixtures>`: the harness and uv_env blobs and
+    the fixtures tree.
+    """
     return ":".join(_git(repo, "rev-parse", f"{sha}:{path}") for path in INSTRUMENT_PATHS)
 
 
@@ -1064,21 +1110,14 @@ def _logged(runner: Runner, log: Path, elapsed: "dict[str, float]", step: str) -
     return run
 
 
-def _venv_clean() -> "dict[str, str]":
-    """Return the caller's environment without the venv or path it runs under (`uv run`'s)."""
-    return {
-        k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH")
-    }
+def _envs(harness: "ModuleType", venv: Path) -> "tuple[dict[str, str], dict[str, str]]":
+    """Return (the env uv syncs in, the env the venv's interpreter runs in), both venv-clean.
 
-
-def _envs(venv: Path) -> "tuple[dict[str, str], dict[str, str]]":
-    """Return (the env uv syncs in, the env the venv's interpreter runs in), both venv-clean."""
-    outer = _venv_clean()
-    outer["UV_PROJECT_ENVIRONMENT"] = str(venv)
-    inner = dict(
-        outer, VIRTUAL_ENV=str(venv), PATH=f"{venv / 'bin'}{os.pathsep}{outer.get('PATH', '')}"
-    )
-    return outer, inner
+    Both are *harness*'s: the sync's is the one its builder syncs in, and
+    the interpreter's has *venv* active, as every child the harness measures does.
+    """
+    outer = harness.sync_env(venv)
+    return outer, harness.activated_env(outer, venv)
 
 
 def _read_text(path: Path) -> "str | None":
@@ -1089,20 +1128,15 @@ def _read_text(path: Path) -> "str | None":
 def interpreter_version(minor: str, runner: Runner, scratch: Path) -> "str | None":
     """Return the full version of the interpreter uv syncs *minor* from today; None if none.
 
-    Asked as the sync asks: venv-clean, and `--system`, because `uv python
-    find` would otherwise answer a `.venv` in the cwd or any parent (the
-    checkout's own), which a venv the sync creates is never built from.
+    The harness finds it (`find_interpreter`, asked as the sync asks); the
+    version is read here, through *runner*, venv-clean.
     """
+    python = _harness().find_interpreter(minor)
+    if python is None:
+        return None
     scratch.mkdir(parents=True, exist_ok=True)
-    env = _venv_clean()
-    found = scratch / f"find-{minor}.txt"
-    if runner(["uv", "python", "find", "--system", minor], scratch, env, found) != 0:
-        return None
-    python = _read_text(found)
-    if not python:
-        return None
     version = scratch / f"version-{minor}.txt"
-    if runner([python, "-c", VERSION_SNIPPET], scratch, env, version) != 0:
+    if runner([python, "-c", VERSION_SNIPPET], scratch, _harness().venv_clean(), version) != 0:
         return None
     return _read_text(version)
 
@@ -1165,13 +1199,20 @@ def _fresh_holder(job: SideJob) -> Path:
 def _steps(
     job: SideJob, runner: Runner, tree: Path, harness: Path, venv: Path
 ) -> "dict[str, object]":
-    """Run the three steps, stopping at the first failure; return their statuses and timings."""
-    outer, inner = _envs(venv)
-    py = str(venv / "bin" / "python")
+    """Run the three steps, stopping at the first failure; return their statuses and timings.
+
+    The sync is the command (`sync_argv`) of the harness that reports, the
+    one in *harness*'s worktree (:func:`_harness_in`), run in the measured
+    tree, so uv reads that tree's own uv.lock whatever its harness knows. The
+    report names the venv's interpreter as the one to measure (`--python`).
+    """
+    reporting = _harness_in(harness)
+    outer, inner = _envs(reporting, venv)
+    py = str(reporting.venv_python(venv))
     elapsed: "dict[str, float]" = {}
     status: "dict[str, object]" = {"elapsed": elapsed}
     status["sync"] = _logged(runner, job.log, elapsed, "sync")(
-        ["uv", "sync", "--frozen", "--python", job.minor], tree, outer, None
+        reporting.sync_argv(job.minor), tree, outer, None
     )
     if status["sync"] != 0:
         return status
@@ -1185,12 +1226,12 @@ def _steps(
         return status
     report = job.dest / f"{job.minor}.json"
     status["report"] = _logged(runner, job.log, elapsed, "report")(
-        [py, "scripts/import_budget.py", "--report-json", str(report)],
+        [py, "scripts/import_budget.py", "--report-json", str(report), "--python", py],
         harness,
         # The harness runs under this side's otto, which may predate the
         # command-list helper; this process runs under the tip's, so it reads
         # the list once and hands it over.
-        {**inner, _harness().VERBS_ENV: ",".join(_harness().first_party_commands())},
+        {**inner, reporting.VERBS_ENV: ",".join(_harness().first_party_commands())},
         None,
     )
     return status

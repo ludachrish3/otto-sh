@@ -2017,8 +2017,8 @@ monitor-fixtures: ## (Dev) Regenerate the committed monitor dummy-data fixtures 
 	@$(SAY) "regenerating monitor fixtures → web/fixtures/"
 	@uv run python scripts/gen_monitor_fixtures.py web/fixtures
 
-import-snapshot: ## (Dev) Regenerate this interpreter's file-operation ceilings (other minors need their own run)
-	@$(SAY) "regenerating this interpreter's file-operation ceilings"
+import-snapshot: ## (Dev) Regenerate every Python minor's file-operation ceilings (each file in tests/unit/import_budget/ceilings/), each measured in a venv synced for it under .venv-budget/; refuses up front, naming each, when uv finds no interpreter for a minor, and writes nothing unless every minor measures clean
+	@$(SAY) "regenerating every minor's file-operation ceilings"
 	@uv run python scripts/import_budget.py --update
 
 api-snapshot: ## (Dev) Regenerate the public-API golden: the API dump of every namespace api/public.toml declares. Run after changing a declared name, signature, member or format, then review the diff

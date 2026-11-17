@@ -34,8 +34,12 @@ import dearer, because both sides move together.
 The baselines live in one file per Python minor
 (``tests/unit/import_budget/ceilings/<major.minor>.json``), because each
 interpreter's stdlib and import machinery differ, and are checked against the
-RUNNING interpreter's file; a missing baseline is a named failure, never a
-skip. `--update` regenerates only the running interpreter's file.
+MEASURED interpreter's file; a missing baseline is a named failure, never a
+skip. The measured interpreter is the one every measured child runs
+(:func:`measured_python`), which need not be the one running this script.
+`--update` regenerates every minor that has a file, each measured in a venv
+:func:`build_env` syncs for it, and writes nothing unless every minor measured
+clean.
 
 The ``real_entry`` surfaces run the console entry path against a GENERATED
 project, because startup I/O against an empty workspace is zero and therefore
@@ -45,15 +49,19 @@ what it measures.
 Usage:
     python scripts/import_budget.py            # print the per-surface table
     python scripts/import_budget.py --check    # enforce the ceilings; exit non-zero on a breach
-    python scripts/import_budget.py --update   # rewrite this interpreter's ceilings file
+    python scripts/import_budget.py --update   # rewrite every minor's ceilings file
+    python scripts/import_budget.py --python PATH   # measure PATH's interpreter as it is
     python scripts/import_budget.py --report   # the table (an alias of no flag)
     python scripts/import_budget.py --report-json PATH   # the same, with full breakdowns, as JSON
 """
 
 import argparse
 import atexit
+import contextlib
 import errno
+import fcntl
 import functools
+import importlib.util
 import json
 import os
 import pty
@@ -64,8 +72,10 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CEILINGS_DIR = REPO_ROOT / "tests" / "unit" / "import_budget" / "ceilings"
@@ -785,14 +795,283 @@ print(json.dumps(_non_stdlib(sorted(sys.modules))))
 
 
 def _sanitized_env() -> dict[str, str]:
-    """Env with every OTTO_* var and OTTOPATH stripped, so measurement is lab/host independent."""
+    """Return the measured child's env: :func:`venv_clean` less every OTTO_* var and OTTOPATH.
+
+    Starting from :func:`venv_clean` means the measured children and the
+    delta's sync drop the caller's venv and Python paths the same way. The
+    OTTO_* strip makes the measurement lab/host independent. The measured
+    interpreter's venv is then the active one (:func:`activated_env`), so a
+    surface that starts a tool finds the measured venv's, not the harness's.
+    An interpreter outside any venv gets no ``VIRTUAL_ENV`` at all.
+    """
     # Spelled inline, not through otto's own env-var predicate: the delta runs
     # this harness under an older release's otto, which may not have it.
-    env = {k: v for k, v in os.environ.items() if not (k.startswith("OTTO_") or k == "OTTOPATH")}
+    env = {k: v for k, v in venv_clean().items() if not (k.startswith("OTTO_") or k == "OTTOPATH")}
     env.pop(VERBS_ENV, None)  # the harness's own input, never the measured otto's
     # The measured command must set this itself, as the `otto` command does.
     env.pop("PYDANTIC_DISABLE_PLUGINS", None)
+    venv = venv_of(measured_python())
+    if venv is None:
+        return env
+    return activated_env(env, venv)
+
+
+# The measured venv: how one is made, found and entered. The delta
+# (scripts/import_budget_delta.py) runs its own sync step with these same
+# functions, so the sync command is decided here alone.
+
+
+def _load_uv_env() -> "ModuleType":
+    """Load scripts/uv_env.py from beside this file, by path.
+
+    By path, not as ``scripts.uv_env``: the delta loads this harness by path
+    from a tip worktree, where no ``scripts`` package is importable, and the
+    copy beside it is the tip's own.
+    """
+    path = Path(__file__).resolve().parent / "uv_env.py"
+    spec = importlib.util.spec_from_file_location("_import_budget_uv_env", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"import_budget: cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_UV_ENV = _load_uv_env()
+UV_TARGET_VARS: "frozenset[str]" = _UV_ENV.UV_TARGET_VARS
+"""What a uv command must not inherit (scripts/uv_env.py, its one home)."""
+SYNC_TIMEOUT: int = _UV_ENV.SYNC_TIMEOUT
+"""How long a ``uv sync`` may take (scripts/uv_env.py, its one home)."""
+venv_clean: "Callable[[], dict[str, str]]" = _UV_ENV.venv_clean
+
+
+def sync_argv(minor: str) -> list[str]:
+    """Return the command that syncs a measured venv for Python *minor* from a tree's uv.lock.
+
+    Run in the tree whose otto is measured, with :func:`sync_env`.
+    ``--frozen`` installs exactly what the lock says, never a re-resolution.
+    """
+    return ["uv", "sync", "--frozen", "--python", minor]
+
+
+def sync_env(venv: Path) -> dict[str, str]:
+    """Return the env :func:`sync_argv` runs in: venv-clean, aimed at *venv*."""
+    env = venv_clean()
+    env["UV_PROJECT_ENVIRONMENT"] = str(venv)
     return env
+
+
+def activated_env(env: dict[str, str], venv: Path) -> dict[str, str]:
+    """Return *env* with *venv* active: ``VIRTUAL_ENV`` set and its ``bin`` first on ``PATH``.
+
+    Idempotent: when ``PATH`` already leads with that ``bin`` (``uv run``'s
+    own venv measured as itself) it is not added twice, so the measured env
+    is the one the caller already had.
+    """
+    bin_dir = str(venv / "bin")
+    path = env.get("PATH", "")
+    if path.split(os.pathsep, 1)[0] != bin_dir:
+        path = f"{bin_dir}{os.pathsep}{path}"
+    return dict(env, VIRTUAL_ENV=str(venv), PATH=path)
+
+
+def venv_of(python: str) -> "Path | None":
+    """Return the venv the interpreter at *python* belongs to, or ``None`` when it has none.
+
+    A venv interpreter is :func:`venv_python`, a link that must not be
+    resolved, and ``<venv>/pyvenv.cfg`` marks the venv, as the interpreter
+    itself decides at startup.
+    """
+    venv = Path(python).parent.parent
+    return venv if (venv / "pyvenv.cfg").is_file() else None
+
+
+def venv_python(venv: Path) -> Path:
+    """Return the interpreter of the venv at *venv*: ``<venv>/bin/python``."""
+    return venv / "bin" / "python"
+
+
+def find_interpreter(minor: str) -> "str | None":
+    """Return the path of the interpreter uv would sync a *minor* venv from; ``None`` if none.
+
+    Asked as the sync asks: venv-clean, and ``--system``, because ``uv python
+    find`` would otherwise answer a ``.venv`` in the cwd or any parent (the
+    checkout's own), which a venv the sync creates is never built from.
+    """
+    try:
+        found = subprocess.run(  # noqa: S603 (fixed argv, no shell)
+            ["uv", "python", "find", "--system", minor],  # noqa: S607 (`uv` via PATH)
+            env=venv_clean(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    path = found.stdout.strip()
+    return path if found.returncode == 0 and path else None
+
+
+def default_venv(minor: str, tree: Path = REPO_ROOT) -> Path:
+    """Return the measured venv :func:`build_env` makes for *minor* in *tree* by default.
+
+    One per checkout and minor, gitignored, so parallel worktrees never share one.
+    """
+    return tree / ".venv-budget" / minor
+
+
+def _left_behind(left: "list[Path]") -> str:
+    """Return the clause naming staged files a failed write could not remove; empty when none."""
+    if not left:
+        return ""
+    return "; staged files left behind: " + ", ".join(_display_path(p) for p in left)
+
+
+class CeilingsStageError(OSError):
+    """Staging the ceilings files failed, and some staged files could not be removed."""
+
+    def __init__(self, cause: Exception, left: "list[Path]") -> None:
+        self.left = left
+        super().__init__(f"{cause}{_left_behind(left)}")
+
+
+class CeilingsReplaceError(OSError):
+    """Replacing a staged ceilings file failed, perhaps after earlier ones were replaced."""
+
+    def __init__(
+        self, replaced: "list[Path]", failed: Path, cause: OSError, left: "list[Path]"
+    ) -> None:
+        self.replaced, self.failed, self.left = replaced, failed, left
+        names = ", ".join(_display_path(p) for p in replaced) or "none"
+        super().__init__(
+            f"replacing {_display_path(failed)} failed ({cause}); replaced: {names}"
+            f"{_left_behind(left)}"
+        )
+
+
+class EnvBuildError(RuntimeError):
+    """:func:`build_env` could not sync a measured venv."""
+
+
+class NestedVenvLockError(RuntimeError):
+    """:func:`build_env` was called while this process holds a venv lock, which would deadlock."""
+
+
+_HELD_LOCKS: "list[Path]" = []
+"""The venv locks this process holds now, innermost last (:func:`_venv_lock`)."""
+
+
+_BUILT: "dict[str, Path]" = {}
+"""Venv path -> its interpreter, for every venv :func:`build_env` synced in this process."""
+
+_BUILD_FAILED: "dict[str, EnvBuildError]" = {}
+"""Venv path -> the error its sync failed with in this process, re-raised on every later ask."""
+
+
+def _venv_lock_path(venv: Path) -> Path:
+    """Return the lock file that serializes syncing *venv* against measuring it: ``<venv>.lock``."""
+    return venv.with_name(venv.name + ".lock")
+
+
+# Not scripts/gate_stamp_common.store_lock: the delta loads this harness by path
+# from a tip worktree, so it stays stdlib-only and reads no file outside
+# INSTRUMENT_PATHS (itself and scripts/uv_env.py).
+@contextlib.contextmanager
+def _venv_lock(venv: Path, *, shared: bool) -> "Iterator[None]":
+    """Hold *venv*'s lock, shared (a measurement) or exclusive (a sync), for the block.
+
+    ``flock`` locks belong to the open file, so two processes, or two opens in
+    one, exclude each other; the lock is gone when its holder dies, so a
+    killed run never leaves the venv locked. Never nested: a second flock of
+    this process on another open of the same lock waits for the first, which
+    never lets go. :data:`_HELD_LOCKS` records what is held so
+    :func:`build_env` refuses by name instead of hanging.
+    """
+    lock = _venv_lock_path(venv)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("a") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+        _HELD_LOCKS.append(lock)
+        try:
+            yield
+        finally:
+            _HELD_LOCKS.remove(lock)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _measurement_lock() -> "contextlib.AbstractContextManager[None]":
+    """Hold the measured venv's lock shared, when :func:`build_env` made that venv.
+
+    A venv with no lock file was not made by the builder (``uv run``'s own, or
+    one the delta synced in a step of its own), so nothing can re-sync it
+    concurrently and there is nothing to hold. That holds only while two
+    things stay true: nothing deletes the lock file of a venv the builder
+    made (it lives beside the venv and is never cleaned up on its own), and
+    no builder is pointed at a venv made outside it, whose measurements
+    would then run unlocked against the builder's sync.
+    """
+    venv = venv_of(measured_python())
+    if venv is None or not _venv_lock_path(venv).exists():
+        return contextlib.nullcontext()
+    return _venv_lock(venv, shared=True)
+
+
+def build_env(minor: str, *, tree: Path = REPO_ROOT, venv: "Path | None" = None) -> Path:
+    """Sync the measured venv for Python *minor* from *tree*'s uv.lock; return its interpreter.
+
+    *venv* defaults to :func:`default_venv`. The sync runs every time a
+    process first asks, never skipped because the venv exists: ``uv sync
+    --frozen`` on a current venv is a quick no-op, and on a stale one (a
+    dependency bump since it was made) it is the update. After that the
+    process reuses it (:data:`_BUILT`). The sync holds the venv's lock
+    exclusively, so it waits for every live measurement of that venv
+    (:func:`_measurement_lock`) and a concurrent builder waits for it; no
+    half-synced venv is ever measured. Called while this process holds a
+    venv lock, it raises :class:`NestedVenvLockError` rather than wait on
+    itself forever. A sync that fails, or runs past :data:`SYNC_TIMEOUT`, is
+    an :class:`EnvBuildError`, remembered for the process
+    (:data:`_BUILD_FAILED`): a later ask re-raises it rather than sync again.
+    """
+    venv = default_venv(minor, tree) if venv is None else venv
+    known = _BUILT.get(str(venv))
+    if known is not None:
+        return known
+    failed = _BUILD_FAILED.get(str(venv))
+    if failed is not None:
+        raise failed
+    if _HELD_LOCKS:
+        raise NestedVenvLockError(
+            f"import_budget: build_env({minor!r}) called while holding {_HELD_LOCKS[-1]}; "
+            f"syncing under it would wait on this process forever"
+        )
+    try:
+        _sync(minor, tree, venv)
+    except EnvBuildError as e:
+        _BUILD_FAILED[str(venv)] = e
+        raise
+    python = venv_python(venv)
+    _BUILT[str(venv)] = python
+    return python
+
+
+def _sync(minor: str, tree: Path, venv: Path) -> None:
+    """Run :func:`sync_argv` for *venv* from *tree* under its exclusive lock; raise on failure."""
+    argv = sync_argv(minor)
+    with _venv_lock(venv, shared=False):
+        try:
+            done = subprocess.run(  # noqa: S603
+                argv, cwd=tree, env=sync_env(venv), check=False, timeout=SYNC_TIMEOUT
+            )
+        except subprocess.TimeoutExpired as e:
+            raise EnvBuildError(
+                f"import_budget: `{' '.join(argv)}` timed out after {SYNC_TIMEOUT:g}s"
+            ) from e
+        except OSError as e:
+            raise EnvBuildError(f"import_budget: `{' '.join(argv)}` could not run: {e}") from e
+    if done.returncode != 0:
+        raise EnvBuildError(
+            f"import_budget: `{' '.join(argv)}` in {tree} for {venv} exited {done.returncode}"
+        )
 
 
 _STRACE_CALL = re.compile(r"^(\d+)\s+([a-z_0-9]+)\((.*)$")
@@ -949,7 +1228,7 @@ class PathBuckets:
     cannot confuse ``site-packages`` with ``site-packages-old``; a list root
     may carry both a raw and a resolved spelling, as ``_workspace_prefixes``
     does. The paths come from the measured interpreter
-    (:func:`_interpreter_paths`), not from whichever one runs the harness.
+    (:func:`measured_facts`), not from whichever one runs the harness.
     """
 
     site_packages: list[str]
@@ -1179,7 +1458,7 @@ def _run_child(
     try:
         child_env = dict(_sanitized_env() if env is None else env)
         child_env[RESULT_PATH_ENV_VAR] = str(result_path)
-        argv = [sys.executable, "-c", code]
+        argv = [measured_python(), "-c", code]
         if trace_to is not None:
             argv = [
                 strace_executable(),
@@ -1502,9 +1781,8 @@ def surface_env(surface: Surface) -> dict[str, str]:
     return env
 
 
-@functools.lru_cache(maxsize=1)
 def baseline_modules() -> frozenset[str]:
-    """Non-stdlib modules a bare interpreter already carries — never otto's doing.
+    """Non-stdlib modules the bare measured interpreter already carries — never otto's doing.
 
     Site startup executes every ``.pth`` in site-packages, and legacy
     ``-nspkg.pth`` files (setuptools-era namespace packages) inject their
@@ -1514,8 +1792,17 @@ def baseline_modules() -> frozenset[str]:
     ``__main__`` arrive the same way. Charging these to otto would make the
     module inventory depend on which unrelated dev/docs dependencies happen
     to be installed, so they are measured and subtracted rather than counted.
+    Asked once per measured interpreter (:data:`_BASELINES`).
     """
-    return frozenset(json.loads(_run_child(_CHILD_BASELINE)))
+    python = measured_python()
+    if python not in _BASELINES:
+        _BASELINES[python] = frozenset(json.loads(_run_child(_CHILD_BASELINE)))
+    return _BASELINES[python]
+
+
+_BASELINES: "dict[str, frozenset[str]]" = {}
+"""Interpreter path -> its :func:`baseline_modules`: keyed on the path, so a
+switch of interpreter is never answered from another one's entry."""
 
 
 def _is_measurement_artifact(module: str) -> bool:
@@ -1531,24 +1818,58 @@ def _is_measurement_artifact(module: str) -> bool:
     return module.endswith("__mypyc")
 
 
-_CHILD_PATHS = """
+_CHILD_FACTS = """
 import json, os, site, sys, sysconfig
 import otto
 _paths = sysconfig.get_paths()
 print(json.dumps({"site_packages": site.getsitepackages(),
                   "stdlib": [_paths["stdlib"], _paths["platstdlib"]],
                   "otto_src": os.path.dirname(os.path.realpath(otto.__file__)),
-                  "import_dirs": [p for p in sys.path if p and os.path.isdir(p)]}))
+                  "import_dirs": [p for p in sys.path if p and os.path.isdir(p)],
+                  "minor": "%d.%d" % sys.version_info[:2],
+                  "cache_tag": sys.implementation.cache_tag}))
 """
 
 
-@functools.cache
-def _interpreter_paths() -> dict:
-    """Return where the measured interpreter keeps site-packages, the stdlib and otto.
+_MEASURED: "str | None" = None
+"""The interpreter :func:`use_python` chose; ``None`` means the harness's own."""
 
-    Asked of the CHILD interpreter (``sys.executable`` in the sanitized env,
-    exactly what every measured child runs), because the harness itself may
-    be imported by another. Asked ONCE, in a child of its own that nobody
+
+def measured_python() -> str:
+    """Return the interpreter every measured child runs, and every fact about one is asked of.
+
+    The harness's own interpreter unless :func:`use_python` chose another.
+    Nothing measured may read the harness's ``sys.version_info`` or
+    ``sys.implementation``: a harness on 3.10 measuring a 3.14 venv must key,
+    bucket and warm as 3.14 (:func:`measured_facts`).
+    """
+    return _MEASURED or sys.executable
+
+
+def use_python(path: str) -> None:
+    """Measure with the interpreter at *path* from now on, forgetting every other one's facts.
+
+    The per-interpreter caches are keyed on the path, so none could answer
+    for the wrong interpreter; they are cleared anyway, so a process that
+    measures several interpreters in turn holds only the current one's.
+    """
+    global _MEASURED  # noqa: PLW0603 — the seam's one setter
+    _MEASURED = path
+    _FACTS.clear()
+    _BASELINES.clear()
+    _WARMED.clear()
+
+
+def measured_facts() -> dict:
+    """Return the measured interpreter's minor, bytecode tag and paths.
+
+    ``minor`` (``"3.14"``) keys its ceilings file, ``cache_tag`` names its
+    ``.pyc`` files, and the paths bucket its file operations.
+
+    Asked of the measured interpreter (:func:`measured_python`, in the
+    sanitized env, exactly what every measured child runs), because the
+    harness itself may run under another. Asked ONCE per interpreter
+    (:data:`_FACTS`), in a child of its own that nobody
     traces, rather than by each measured child as it writes its payload:
     ``import sysconfig`` alone costs 60-80 file operations (measured on 3.10,
     3.12, 3.13 and 3.14), and ``realpath`` one ``lstat`` per path component.
@@ -1560,7 +1881,14 @@ def _interpreter_paths() -> dict:
     compiles them, and a cached ``.pyc`` is found under the source path as
     the importer spells it.
     """
-    return json.loads(_run_child(_CHILD_PATHS))
+    python = measured_python()
+    if python not in _FACTS:
+        _FACTS[python] = json.loads(_run_child(_CHILD_FACTS))
+    return _FACTS[python]
+
+
+_FACTS: "dict[str, dict]" = {}
+"""Interpreter path -> its :func:`measured_facts`, keyed like :data:`_BASELINES`."""
 
 
 def bytecode_prefix() -> str:
@@ -1581,14 +1909,20 @@ def bytecode_prefix() -> str:
     return str(base / "otto" / "import-budget-pycache")
 
 
-@functools.cache
+_WARMED: "set[str]" = set()
+"""The interpreters :func:`_warm_bytecode` has compiled the cache for in this process."""
+
+
 def _warm_bytecode() -> None:
     """Compile every module the measured interpreter can import into :func:`bytecode_prefix`.
 
-    Once per process, before the first measurement, in a child nobody
-    traces. ``compileall`` skips a module whose cached ``.pyc`` is current,
-    so a warm cache costs only its checks. Its exit status is not checked:
-    a distribution may ship a file this interpreter cannot compile (test
+    Once per process and measured interpreter (:data:`_WARMED`), before its
+    first measurement, in a child nobody traces. The measured interpreter
+    compiles it, because a ``.pyc`` is named for the compiler's own bytecode
+    tag and the measured children look only for theirs. ``compileall`` skips
+    a module whose cached ``.pyc`` is current, so a warm cache costs only its
+    checks. Its exit status is not checked: a distribution may ship a file
+    the measured interpreter cannot compile (test
     data, another Python's syntax), which no import can load either, and
     the rest of the cache is compiled regardless. What IS checked is that
     otto's own package landed in the cache: a prefix nobody can write to
@@ -1600,27 +1934,31 @@ def _warm_bytecode() -> None:
     would otherwise switch ``compileall`` to checked-hash ``.pyc`` files,
     which cost a full source read on every import.
     """
+    python = measured_python()
+    if python in _WARMED:
+        return
     prefix = bytecode_prefix()
     env = _sanitized_env()
     env.pop("PYTHONDONTWRITEBYTECODE", None)
     env["PYTHONPYCACHEPREFIX"] = prefix
-    import_dirs = _interpreter_paths()["import_dirs"]
-    done = subprocess.run(  # noqa: S603 (fixed interpreter + fixed module, no shell)
-        [
-            sys.executable,
-            "-m",
-            "compileall",
-            "-q",
-            "--invalidation-mode",
-            "timestamp",
-            *import_dirs,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-        cwd=_quiet_cwd(),
-    )
+    import_dirs = measured_facts()["import_dirs"]
+    with _measurement_lock():
+        done = subprocess.run(  # noqa: S603 (fixed interpreter + fixed module, no shell)
+            [
+                python,
+                "-m",
+                "compileall",
+                "-q",
+                "--invalidation-mode",
+                "timestamp",
+                *import_dirs,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+            cwd=_quiet_cwd(),
+        )
     otto_init = next(
         (
             Path(d, "otto", "__init__.py")
@@ -1636,6 +1974,7 @@ def _warm_bytecode() -> None:
             f"every measurement would read cold modules. Check that {prefix} is writable "
             f"(it follows XDG_CACHE_HOME).\n{done.stderr[-2000:]}"
         )
+    _WARMED.add(python)
 
 
 def cached_bytecode(prefix: str, source: Path) -> Path:
@@ -1643,10 +1982,10 @@ def cached_bytecode(prefix: str, source: Path) -> Path:
 
     ``PYTHONPYCACHEPREFIX`` mirrors the source tree: the source's directory,
     rooted at the prefix, holding ``<name>.<cache tag>.pyc`` with no
-    ``__pycache__`` level.
+    ``__pycache__`` level. The tag is the measured interpreter's.
     """
     return Path(prefix, *source.parent.parts[1:]) / (
-        f"{source.stem}.{sys.implementation.cache_tag}.pyc"
+        f"{source.stem}.{measured_facts()['cache_tag']}.pyc"
     )
 
 
@@ -1680,7 +2019,10 @@ def measure(
 
     ``result["file_ops"]`` is :func:`parse_file_ops` over the same trace, as a
     dict, and the result also carries the interpreter paths it was bucketed
-    by (:func:`_interpreter_paths`).
+    by (:func:`measured_facts`).
+
+    The measured venv's lock is held shared throughout
+    (:func:`_measurement_lock`), so no :func:`build_env` re-syncs it mid-run.
     """
     if real_entry:
         code = _CHILD_ENTRY.format(argv=argv)
@@ -1688,11 +2030,14 @@ def measure(
         code = _CHILD_IMPORT
     else:
         code = _CHILD_CLI.format(argv=argv, bootstrap=bootstrap)
-    with tempfile.TemporaryDirectory(prefix="otto-budget-strace-") as tmp:
+    with (
+        _measurement_lock(),
+        tempfile.TemporaryDirectory(prefix="otto-budget-strace-") as tmp,
+    ):
         trace = Path(tmp) / "trace"
         result = json.loads(_run_child(code, env, trace_to=trace, pty_input=pty_input))
         text = trace.read_text(errors="replace")
-        paths = _interpreter_paths()
+        paths = measured_facts()
         result.update({key: paths[key] for key in ("site_packages", "stdlib", "otto_src")})
         result["file_ops"] = asdict(
             parse_file_ops(
@@ -1770,22 +2115,51 @@ def measure_file_ops(surface: Surface) -> FileOps:
 
 
 def interpreter_tag() -> str:
-    """Return the running interpreter's ``major.minor``, which keys a ceilings file.
+    """Return the measured interpreter's ``major.minor``, which keys a ceilings file.
 
     File-operation counts are only comparable WITHIN one Python minor: the
     interpreter's own stdlib and import machinery are part of every count, and
     they change release to release.
     """
-    return f"{sys.version_info.major}.{sys.version_info.minor}"
+    return measured_facts()["minor"]
 
 
-def ceilings_path(tag: str | None = None) -> Path:
-    """Path to the ceilings file for interpreter *tag* (``major.minor``; default: this one)."""
-    return CEILINGS_DIR / f"{tag or interpreter_tag()}.json"
+def ceilings_path(minor: str) -> Path:
+    """Path to the ceilings file for Python *minor* (``major.minor``)."""
+    return CEILINGS_DIR / f"{minor}.json"
+
+
+_MINOR_STEM = re.compile(r"^\d+\.\d+$")
+"""A ceilings file's stem: ``major.minor``."""
+
+
+def ceilings_minors() -> list[str]:
+    """Return every minor that has a ceilings file, oldest first: what ``--update`` regenerates.
+
+    Any other ``.json`` in the directory is refused by name: ``--update``
+    would otherwise either skip it silently or measure a "minor" uv cannot name.
+    """
+    paths = sorted(CEILINGS_DIR.glob("*.json"))
+    stray = [path for path in paths if not _MINOR_STEM.match(path.stem)]
+    if stray:
+        names = ", ".join(_display_path(path) for path in stray)
+        raise ValueError(
+            f"import_budget: {names} in the ceilings directory is not named <major>.<minor>.json"
+        )
+    minors = [path.stem for path in paths]
+    return sorted(minors, key=lambda m: tuple(int(part) for part in m.split(".")))
+
+
+SNAPSHOT_HOW = (
+    "`make import-snapshot`, which regenerates every minor that has a file in "
+    "tests/unit/import_budget/ceilings/ (a new minor first needs a file there: "
+    "any content, the regeneration replaces it)"
+)
+"""How to regenerate the ceilings, for every message that asks for it."""
 
 
 def read_ceilings() -> dict[str, dict]:
-    """Return the running interpreter's baselines, keyed by surface.
+    """Return the measured interpreter's baselines, keyed by surface.
 
     Each value holds ``file_ops``, ``workspace``, ``by_bucket`` and
     ``by_process``. A missing file reads as no baselines at all, which
@@ -1795,16 +2169,15 @@ def read_ceilings() -> dict[str, dict]:
     entry missing a gated counter (a hand edit), would otherwise gate
     against the wrong numbers or end in a bare ``KeyError``.
     """
-    path = ceilings_path()
+    tag = interpreter_tag()
+    path = ceilings_path(tag)
     if not path.exists():
         return {}
     data = json.loads(path.read_text())
-    tag = interpreter_tag()
     if data.get("interpreter") != tag:
         raise ValueError(
             f"import_budget: {_display_path(path)} records interpreter "
-            f"{data.get('interpreter')!r}, not {tag!r}; regenerate it with "
-            f"`make import-snapshot` under CPython {tag}"
+            f"{data.get('interpreter')!r}, not {tag!r}; regenerate it with {SNAPSHOT_HOW}"
         )
     surfaces = data["surfaces"]
     for key, baseline in surfaces.items():
@@ -1812,14 +2185,74 @@ def read_ceilings() -> dict[str, dict]:
         if missing:
             raise ValueError(
                 f"import_budget: the baseline for `{key}` in {_display_path(path)} has no "
-                f"{', '.join(missing)}; regenerate the file with `make import-snapshot` "
-                f"under CPython {tag}"
+                f"{', '.join(missing)}; regenerate the file with {SNAPSHOT_HOW}"
             )
     return surfaces
 
 
-def write_ceilings(results: dict[str, FileOps]) -> None:
-    """Write *results* as the running interpreter's baselines, for the gated surfaces only.
+def write_ceilings(minor: str, results: dict[str, FileOps]) -> None:
+    """Write *results* as Python *minor*'s baselines (:func:`write_ceilings_files` for one)."""
+    write_ceilings_files({minor: results})
+
+
+# Not scripts/gate_stamp_common.write_atomically: the delta loads this harness by
+# path from a tip worktree, so it stays stdlib-only and reads no file outside
+# INSTRUMENT_PATHS (itself and scripts/uv_env.py).
+def write_ceilings_files(results: "dict[str, dict[str, FileOps]]") -> None:
+    """Write each minor's ceilings file from *results* (minor -> its measurements).
+
+    Every file's content is staged first, each in a file of its own in
+    :data:`CEILINGS_DIR` (``.<minor>.json.staged``, never read as a minor's
+    file); only once all are staged is each moved over its file with
+    ``Path.replace`` (``rename(2)``), so each file is replaced atomically: a
+    reader sees the old file or the new one, never part of one. A failure
+    while staging (an unknown surface, a full disk) raises before any file
+    is replaced. A failure while replacing raises
+    :class:`CeilingsReplaceError`, which names the files already replaced
+    and the one that failed. Either way the staged files left are removed,
+    and a removal that fails never hides the first error: the files it
+    could not remove are named in it (:class:`CeilingsStageError` for a
+    staging failure).
+    """
+    CEILINGS_DIR.mkdir(parents=True, exist_ok=True)
+    staged: "list[tuple[Path, Path]]" = []
+    try:
+        for minor, measured in results.items():
+            text = _ceilings_text(minor, measured)
+            tmp = CEILINGS_DIR / f".{minor}.json.staged"
+            staged.append((tmp, ceilings_path(minor)))
+            tmp.write_text(text)
+    except (OSError, KeyError) as e:
+        left = _remove_staged([tmp for tmp, _target in staged])
+        if left:
+            raise CeilingsStageError(e, left) from e
+        raise
+    replaced: "list[Path]" = []
+    for index, (tmp, target) in enumerate(staged):
+        try:
+            tmp.replace(target)
+        except OSError as e:
+            left = _remove_staged([tmp for tmp, _target in staged[index:]])
+            raise CeilingsReplaceError(replaced, target, e, left) from e
+        replaced.append(target)
+
+
+def _remove_staged(staged: "list[Path]") -> "list[Path]":
+    """Remove every staged file in *staged*; return the ones that could not be removed."""
+    return [tmp for tmp in staged if not _unlinked(tmp)]
+
+
+def _unlinked(path: Path) -> bool:
+    """Remove *path* if it exists; return False, never raise, when the removal fails."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        return False
+    return True
+
+
+def _ceilings_text(minor: str, results: dict[str, FileOps]) -> str:
+    """Return the ceilings file for Python *minor* from *results*, for the gated surfaces only.
 
     The file stores BASELINES, not ceilings: :func:`ceiling` is applied at
     check time, so a headroom change never needs a regeneration. The
@@ -1827,7 +2260,8 @@ def write_ceilings(results: dict[str, FileOps]) -> None:
     package or child process grew (:func:`breakdown_diff`). A tracked surface
     is never written, because nothing reads its baseline. The whole file is
     replaced: a regeneration records one interpreter's measurement, not a
-    merge with an older one.
+    merge with an older one. *minor* names the interpreter that measured
+    *results*; the caller knows it, this function does not ask.
     """
     surfaces = {
         key: {
@@ -1839,9 +2273,8 @@ def write_ceilings(results: dict[str, FileOps]) -> None:
         for key, ops in results.items()
         if not surface_by_key(key).tracked
     }
-    CEILINGS_DIR.mkdir(parents=True, exist_ok=True)
-    payload = {"interpreter": interpreter_tag(), "surfaces": surfaces}
-    ceilings_path().write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    payload = {"interpreter": minor, "surfaces": surfaces}
+    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
 CEILING_COUNTERS: dict[str, str] = {"file_ops": "total", "workspace": "workspace"}
@@ -1940,7 +2373,7 @@ def check_surface(
          ``surface.expect_loaded``, or it measured a failure path rather than
          the surface: a misspelled host id exits 1 too, and its smaller count
          would read as a saving;
-      2. its baseline — no entry for this surface in the RUNNING
+      2. its baseline — no entry for this surface in the MEASURED
          interpreter's ceilings file (see :func:`interpreter_tag`) is a named
          failure, never a skip, because "no file for this Python" is the shape
          a newly added interpreter or surface takes;
@@ -1962,13 +2395,9 @@ def check_surface(
         tag = interpreter_tag()
         violations.append(
             f"`{surface.key}`: no baseline for CPython {tag} in "
-            f"{_display_path(ceilings_path())}. Every interpreter that runs this "
+            f"{_display_path(ceilings_path(tag))}. Every interpreter that runs this "
             f"check needs its own file (the counts are not comparable across minors). "
-            f"Regenerate it by running `make import-snapshot` UNDER CPython {tag} — "
-            f"for another minor, `uv run nox -s tests_hostless_unit-{tag} --extra-python {tag} "
-            f"--install-only`, then "
-            f"`.nox/tests_hostless_unit-{tag.replace('.', '-')}/bin/python "
-            f"scripts/import_budget.py --update`.\n"
+            f"Regenerate it with {SNAPSHOT_HOW}.\n"
             f"  measured now: file_ops {measured.total}, workspace {measured.workspace}"
         )
         return violations + ratio_violations
@@ -1980,11 +2409,12 @@ def check_surface(
             breaches.append(f"{name} {value} > ceiling {limit} (baseline {base})")
     if breaches:
         growth = "".join(f"\n  {line}" for line in breakdown_diff(baseline, measured))
+        tag = interpreter_tag()
         violations.append(
-            f"`{surface.key}`: over its ceiling on CPython {interpreter_tag()} "
-            f"({_display_path(ceilings_path())}): {'; '.join(breaches)}. If the growth "
-            f"is intended, regenerate with `make import-snapshot` under this "
-            f"interpreter and say why in the commit.{growth}"
+            f"`{surface.key}`: over its ceiling on CPython {tag} "
+            f"({_display_path(ceilings_path(tag))}): {'; '.join(breaches)}. If the growth "
+            f"is intended, regenerate with {SNAPSHOT_HOW}, and say why in the "
+            f"commit.{growth}"
         )
     return violations + ratio_violations
 
@@ -2040,12 +2470,12 @@ def advisories(surface: Surface, result: dict) -> list[str]:
         value, base = getattr(measured, attr), baseline[name]
         limit = ceiling(base, surface.headroom)
         if value < STALE_RATIO * limit and value < base - MIN_SLACK:
+            tag = interpreter_tag()
             notes.append(
                 f"`{surface.key}`: {name} {value} is below {STALE_RATIO:g}x its ceiling "
-                f"{limit} (baseline {base}) on CPython {interpreter_tag()}. A stale-high "
+                f"{limit} (baseline {base}) on CPython {tag}. A stale-high "
                 f"baseline widens the ceiling silently; consider regenerating "
-                f"{_display_path(ceilings_path())} with `make import-snapshot` under "
-                f"this interpreter."
+                f"{_display_path(ceilings_path(tag))} with {SNAPSHOT_HOW}."
             )
     return notes
 
@@ -2116,6 +2546,98 @@ def format_report_row(row: dict) -> str:
     )
 
 
+def _measure_table(
+    surfaces: list[Surface], *, check: bool, update: bool
+) -> "tuple[list[dict], dict[str, FileOps], bool]":
+    """Measure *surfaces* with the measured interpreter, printing the table as it goes.
+
+    Returns the report rows, each surface's file operations, and whether any
+    surface failed: under *check* its ceilings and ratio, under *update* its
+    ending, since a baseline recorded from a failure path would pin the cost
+    of a crash.
+    """
+    # flush=True: interleaves correctly when stdout is piped/redirected
+    # (e.g. `make profile > log`), and a row appears as soon as it is measured:
+    # the whole table takes minutes.
+    print(REPORT_HEADER, flush=True)
+    rows = []
+    measured: dict[str, FileOps] = {}
+    failed = False
+    for s in surfaces:
+        r = measure_surface(s)
+        rows.append(report_row(s, r))
+        print(format_report_row(rows[-1]), flush=True)
+        measured[s.key] = FileOps(**r["file_ops"])
+        violations: list[str] = []
+        if check:
+            floor = measured.get(RATIO_FLOOR)
+            violations = check_surface(s, r, floor_file_ops=floor.total if floor else None)
+        elif update:
+            violations = check_exit(s, r)
+        for v in violations:
+            print(f"  FAIL {v}", flush=True)
+        if check:
+            # Advisory only: printed, never counted toward `failed`.
+            for note in advisories(s, r):
+                print(f"  NOTE {note}", flush=True)
+        failed = failed or bool(violations)
+    return rows, measured, failed
+
+
+def _nothing_written(why: str) -> int:
+    print(f"\nimport budget: FAILED — {why}; nothing written.", flush=True)
+    return 1
+
+
+def _update_every_minor(surfaces: list[Surface]) -> int:
+    """Regenerate every minor's ceilings file, each measured in the venv :func:`build_env` makes.
+
+    Every minor's interpreter is looked up before anything is built, and
+    nothing is written unless every minor measured clean. Then every file is
+    staged and each replaced atomically (:func:`write_ceilings_files`); a
+    failed replacement names what was already replaced.
+    """
+    try:
+        minors = ceilings_minors()
+    except ValueError as e:
+        return _nothing_written(str(e))
+    if not minors:
+        return _nothing_written(f"no ceilings file in {_display_path(CEILINGS_DIR)} to regenerate")
+    missing = [minor for minor in minors if find_interpreter(minor) is None]
+    for minor in missing:
+        print(
+            f"no interpreter for {minor} (uv python find --system {minor}); "
+            f"install it with `uv python install {minor}`",
+            flush=True,
+        )
+    if missing:
+        return _nothing_written("every minor with a ceilings file must be measured")
+    results: dict[str, dict[str, FileOps]] = {}
+    for minor in minors:
+        try:
+            python = build_env(minor)
+        except EnvBuildError as e:
+            return _nothing_written(str(e))
+        use_python(str(python))
+        if interpreter_tag() != minor:
+            return _nothing_written(f"{python} is CPython {interpreter_tag()}, not {minor}")
+        print(f"\nCPython {minor} ({python})", flush=True)
+        _rows, measured, failed = _measure_table(surfaces, check=False, update=True)
+        if failed:
+            return _nothing_written(f"CPython {minor} failed (see FAIL lines above)")
+        results[minor] = measured
+    try:
+        write_ceilings_files(results)
+    except CeilingsReplaceError as e:
+        print(f"\nimport budget: FAILED — {e}", flush=True)
+        return 1
+    except (OSError, KeyError) as e:
+        return _nothing_written(f"staging the ceilings files failed: {e}")
+    for minor in results:
+        print(f"wrote {_display_path(ceilings_path(minor))}", flush=True)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Print the per-surface table; with ``--check`` enforce it, with ``--update`` record it."""
     ap = argparse.ArgumentParser(
@@ -2130,8 +2652,15 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument(
         "--update",
         action="store_true",
-        help="rewrite THIS interpreter's ceilings file from a fresh measurement of the gated "
-        "surfaces (other minors need their own run)",
+        help="rewrite every minor's ceilings file (each one in tests/unit/import_budget/"
+        "ceilings/), each measured in a venv synced for it; writes nothing unless every "
+        "minor's interpreter is found and measures clean",
+    )
+    ap.add_argument(
+        "--python",
+        metavar="PATH",
+        help="measure the interpreter at PATH as it is, with no venv built "
+        "(default: this script's own interpreter)",
     )
     ap.add_argument(
         "--report",
@@ -2153,48 +2682,29 @@ def main(argv: list[str] | None = None) -> int:
             "--report and --report-json only measure; they cannot be combined with "
             "--check or --update"
         )
+    if args.update and args.python:
+        ap.error(
+            "--update regenerates every interpreter's file, each in the venv it syncs; "
+            "it measures no single --python"
+        )
+    if args.python:
+        # Absolute, since the measured children run elsewhere (`_quiet_cwd`);
+        # never resolved, since a venv's interpreter is a link `venv_of` reads.
+        use_python(str(Path(args.python).absolute()))
 
     # A tracked surface has no baseline to record, so --update skips it.
     surfaces = [s for s in SURFACES if not (args.update and s.tracked)]
     # The ratio floor first (a stable sort keeps the rest in table order), so
     # every target ratio is checked against a floor from this same run.
     surfaces.sort(key=lambda s: s.key != RATIO_FLOOR)
-    # flush=True: interleaves correctly when stdout is piped/redirected
-    # (e.g. `make profile > log`), and a row appears as soon as it is measured:
-    # the whole table takes minutes.
-    print(REPORT_HEADER, flush=True)
-    rows = []
-    measured: dict[str, FileOps] = {}
-    failed = False
-    for s in surfaces:
-        r = measure_surface(s)
-        rows.append(report_row(s, r))
-        print(format_report_row(rows[-1]), flush=True)
-        measured[s.key] = FileOps(**r["file_ops"])
-        violations: list[str] = []
-        if args.check:
-            floor = measured.get(RATIO_FLOOR)
-            violations = check_surface(s, r, floor_file_ops=floor.total if floor else None)
-        elif args.update:
-            # The ending is checked here too: a baseline recorded from a
-            # failure path would pin the cost of a crash.
-            violations = check_exit(s, r)
-        for v in violations:
-            print(f"  FAIL {v}", flush=True)
-        if args.check:
-            # Advisory only: printed, never counted toward `failed`.
-            for note in advisories(s, r):
-                print(f"  NOTE {note}", flush=True)
-        failed = failed or bool(violations)
+    if args.update:
+        return _update_every_minor(surfaces)
+    rows, _measured, failed = _measure_table(surfaces, check=args.check, update=False)
     if args.report_json:
         args.report_json.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")
     if failed:
-        what = "nothing written" if args.update else "see FAIL lines above"
-        print(f"\nimport budget: FAILED — {what}.", flush=True)
+        print("\nimport budget: FAILED — see FAIL lines above.", flush=True)
         return 1
-    if args.update:
-        write_ceilings(measured)
-        print(f"\nwrote {_display_path(ceilings_path())}", flush=True)
     if args.check:
         print("\nimport budget: OK", flush=True)
     return 0
