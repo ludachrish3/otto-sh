@@ -1,0 +1,42 @@
+id: no-junit-record-fixtures-in-tests
+language: python
+severity: error
+message: otto's tests must not request `record_property`, `record_xml_attribute` or `record_testsuite_property`; put the diagnostic in the assertion's message instead.
+note: >
+  Each of pytest's three junit recording fixtures fails otto's suite in some
+  lane, and none of them carries anything a failure message cannot.
+
+  `record_property` warns under `--junitxml` with the default `junit_family`
+  (xunit2), and `filterwarnings = ["error"]` makes the warning an ERROR. pytest
+  only sets up the junit XML writer in the controlling process, never in xdist
+  workers, and the fixture only warns when that writer exists. So every
+  `-n auto` lane passes it and the first single-process lane that writes junit
+  XML errors on each parametrization: the nightly unit-repeat lane (`-n0`)
+  took 32 errors from one #935 test two days after its PR went green.
+  `record_xml_attribute` warns `PytestExperimentalApiWarning` on every use, so
+  it errors everywhere. `record_testsuite_property` never warns, but pytest
+  documents that it does not work under xdist, which every PR lane runs. A
+  value worth recording is worth naming in the failure, which is also where a
+  reader of the report looks first.
+
+  Matches the fixture's name anywhere in a parameter list (plain, annotated,
+  defaulted or keyword-only), the only way otto's tests reach a fixture by
+  name. `request.getfixturevalue("record_property")` is a string and slips
+  past; nobody spells it that way by accident.
+files:
+- tests/**
+ignores:
+# Fixture projects + firmware: user-example input data, not otto's tests
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/project1/**
+- tests/project2/**
+- tests/project3/**
+- tests/project_broken/**
+- tests/project_e2e/**
+- tests/firmware/**
+rule:
+  kind: identifier
+  regex: ^(record_property|record_xml_attribute|record_testsuite_property)$
+  inside:
+    kind: parameters
+    stopBy: end

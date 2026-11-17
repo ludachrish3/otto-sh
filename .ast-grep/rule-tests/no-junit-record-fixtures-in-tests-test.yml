@@ -1,0 +1,31 @@
+id: no-junit-record-fixtures-in-tests
+valid:
+- |
+  def test_names_the_value_in_the_failure(tmp_path):
+      stty = run("type stty")
+      assert ok(), f"stty resolved to: {stty}"
+- |
+  def test_mentions_it_in_a_body():
+      record_property = {"stty": "x"}
+- |
+  def helper(record_properties):
+      pass
+invalid:
+- |
+  def test_records(record_property):
+      record_property("stty", "x")
+- |
+  async def test_records_async(name, record_xml_attribute):
+      record_xml_attribute("a", "b")
+- |
+  def test_suite(record_testsuite_property):
+      record_testsuite_property("k", "v")
+- |
+  def test_typed(record_property: object):
+      record_property("stty", "x")
+- |
+  async def test_typed_default(name: str, record_xml_attribute: object = None):
+      pass
+- |
+  def test_kwonly(*, record_property):
+      pass

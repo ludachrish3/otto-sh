@@ -127,14 +127,18 @@ async def test_an_exec_that_never_starts_restores_no_earlier_exec_s_terminal(nam
 @pytest.mark.parametrize("restore", list(ExecRestore))
 @pytest.mark.asyncio
 async def test_a_failed_snapshot_is_no_restore_and_the_session_survives(
-    name, setup, restore, failing_stty_on_path, record_property
+    name, setup, restore, failing_stty_on_path
 ):  # M16
     async with pty_session(name, setup=setup, restore=restore, env=failing_stty_on_path) as s:
-        record_property("stty", (await s.run_cmd(cmd="type stty")).value)
+        # Which stty the shell resolved, named in any failure. Not via
+        # ``record_property``: it warns (an error here) under ``--junitxml``
+        # in a single-process run, which every xdist lane hides.
+        stty = (await s.run_cmd(cmd="type stty")).value
         r = await s.exec_("printf ok", timeout=5)
         t = await s.exec_("exec sleep 30", timeout=0.3)
-        assert (r.value, r.retcode, t.timed_out, s.alive) == ("ok", 0, True, True)
-        assert not s.exec_baseline_lost
+        got = (r.value, r.retcode, t.timed_out, s.alive)
+        assert got == ("ok", 0, True, True), f"stty resolved to: {stty}"
+        assert not s.exec_baseline_lost, f"stty resolved to: {stty}"
 
 
 _CONTROL_SHELLS = [n for n in ("dash", "busybox-sh") if n in PTY_SHELLS]
