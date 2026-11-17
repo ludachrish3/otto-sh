@@ -144,3 +144,17 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # react-aria 3.53.0-3.53.1 and react-aria-components 1.22.0-1.22.1
+      # leave an overlay mounted, `data-exiting`, for good whenever one of
+      # its exit animations is cancelled (upstream adobe/react-spectrum#10772,
+      # fix in #10783). Those releases' entry-prep hide starts an opacity
+      # transition on our `duration-*` overlays; the exit's fade-out cancels
+      # it (WebKit reliably), and the Events slide-over stayed open (#1151).
+      # We pin 3.52.1/1.21.1. Any LATER release is still proposed: before
+      # landing it, repeat #1151's webkit run, since one CI pass cannot
+      # prove an intermittent failure gone.
+      - dependency-name: "react-aria"
+        versions: ["3.53.0", "3.53.1"]
+      - dependency-name: "react-aria-components"
+        versions: ["1.22.0", "1.22.1"]
