@@ -13,6 +13,8 @@ wheels/
 
 # Virtual environments
 .venv
+# The import budget's measured venvs, one per Python minor (scripts/import_budget.py)
+.venv-budget/
 
 # Dummy files
 tests/project1/product/product

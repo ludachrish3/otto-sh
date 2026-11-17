@@ -883,7 +883,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: reports/budget/${{ needs.budget-scope.outputs.tag }}
-          key: budget-base-${{ needs.budget-scope.outputs.tag }}-${{ matrix.python }}-${{ hashFiles('scripts/import_budget.py', 'tests/_fixtures/**') }}-${{ runner.os }}-${{ steps.img.outputs.v }}
+          key: budget-base-${{ needs.budget-scope.outputs.tag }}-${{ matrix.python }}-${{ hashFiles('scripts/import_budget.py', 'scripts/uv_env.py', 'tests/_fixtures/**') }}-${{ runner.os }}-${{ steps.img.outputs.v }}
 
       - name: Measure the merge-base and the head under Python ${{ matrix.python }}
         run: uv run python scripts/import_budget_delta.py measure --minors "${{ matrix.python }}" --base-rev "${{ needs.budget-scope.outputs.base }}"
@@ -893,7 +893,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: reports/budget/${{ needs.budget-scope.outputs.tag }}
-          key: budget-base-${{ needs.budget-scope.outputs.tag }}-${{ matrix.python }}-${{ hashFiles('scripts/import_budget.py', 'tests/_fixtures/**') }}-${{ runner.os }}-${{ steps.img.outputs.v }}
+          key: budget-base-${{ needs.budget-scope.outputs.tag }}-${{ matrix.python }}-${{ hashFiles('scripts/import_budget.py', 'scripts/uv_env.py', 'tests/_fixtures/**') }}-${{ runner.os }}-${{ steps.img.outputs.v }}
 
       - name: Keep the records (the other environment's numbers for a local run)
         if: always()

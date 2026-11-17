@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from otto.utils import WaitTimeoutError, wait_for
-from scripts import api_regen
+from scripts import api_regen, uv_env
 from scripts.api_manifest import Symbol
 from tests._fixtures.api_dump import write_tree
 from tests._fixtures.gitrepo import TmpGitRepo
@@ -491,7 +491,7 @@ UV_KEPT = {
 def test_uv_env_strips_exactly_the_target_variables(monkeypatch):
     for name, value in {**UV_TARGETS, **UV_KEPT}.items():
         monkeypatch.setenv(name, value)
-    assert set(UV_TARGETS) == api_regen.UV_TARGET_VARS
+    assert set(UV_TARGETS) == uv_env.UV_TARGET_VARS
     env = api_regen._uv_env()
     assert not set(UV_TARGETS) & set(env)
     assert {k: env[k] for k in UV_KEPT} == UV_KEPT

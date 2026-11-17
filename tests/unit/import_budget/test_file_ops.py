@@ -9,6 +9,46 @@ from tests._fixtures.budget_harness import load_harness
 
 harness = load_harness()
 
+FAKE_MINOR = "9.98"
+"""The interpreter a pure test's ``fake_facts`` stand in for: no real CPython is 9.98."""
+
+
+@pytest.fixture(autouse=True)
+def _no_measured_interpreter(request, monkeypatch):
+    """Keep the pure tests here off the measured interpreter, so none starts a child.
+
+    Asking the measured interpreter its facts runs a child, and once the
+    measured interpreter is a venv the harness builds, it builds one. A test
+    that does measure for real asks for ``real_interpreter``; one that only
+    needs an interpreter's name asks for ``fake_facts``.
+    """
+    if "real_interpreter" in request.fixturenames:
+        return
+
+    def refuse():
+        raise AssertionError("a pure test asked the measured interpreter for its facts")
+
+    monkeypatch.setattr(harness, "measured_facts", refuse)
+
+
+@pytest.fixture
+def real_interpreter():
+    """Opt a test into measuring with the real measured interpreter."""
+
+
+@pytest.fixture
+def fake_facts(_no_measured_interpreter, monkeypatch):
+    """Answer the measured interpreter's facts as :data:`FAKE_MINOR`'s, without a child."""
+    facts = {"minor": FAKE_MINOR, "cache_tag": "cpython-998"}
+    monkeypatch.setattr(harness, "measured_facts", lambda: facts)
+    return facts
+
+
+def test_a_pure_test_never_reaches_the_measured_interpreter():
+    with pytest.raises(AssertionError, match="measured interpreter"):
+        harness.interpreter_tag()
+
+
 WS = "/tmp/fixture-root/"
 BUCKETS = harness.PathBuckets(
     site_packages=["/venv/lib/python3.10/site-packages/"],
@@ -119,7 +159,7 @@ def test_missing_strace_fails_by_name(monkeypatch):
         harness.strace_executable()
 
 
-def test_measure_file_ops_counts_a_real_surface():
+def test_measure_file_ops_counts_a_real_surface(real_interpreter):
     ops = harness.measure_file_ops(harness.surface_by_key("version_project"))
     assert isinstance(ops, harness.FileOps)
     assert ops.total > 0
@@ -208,7 +248,7 @@ def test_ceiling_is_ten_percent_with_a_small_absolute_floor():
     assert harness.ceiling(0, 0.10) == 5
 
 
-def test_a_gated_surface_over_its_ceiling_fails_with_a_breakdown(tmp_path, monkeypatch):
+def test_a_gated_surface_over_its_ceiling_fails_with_a_breakdown(monkeypatch, fake_facts):
     surface = harness.surface_by_key("dispatch_project_warm")
     monkeypatch.setattr(
         harness,
@@ -245,7 +285,7 @@ def test_a_tracked_surface_is_never_gated():
     assert harness.check_surface(tracked, {"exit_code": 1, "file_ops": {"total": 10**9}}) == []
 
 
-def test_shrinking_is_an_advisory_never_a_failure(monkeypatch):
+def test_shrinking_is_an_advisory_never_a_failure(monkeypatch, fake_facts):
     surface = harness.surface_by_key("dispatch_project_warm")
     monkeypatch.setattr(
         harness,
@@ -306,7 +346,9 @@ def _gate_pair(
     monkeypatch.setattr(harness, "measure_surface", lambda s: results[s.key])
 
 
-def test_a_surface_over_its_target_ratio_fails_check_and_under_it_passes(monkeypatch, capsys):
+def test_a_surface_over_its_target_ratio_fails_check_and_under_it_passes(
+    monkeypatch, capsys, fake_facts
+):
     """Through ``--check``: the same surface, red over its target and green under it.
 
     Against a floor of 1000, ``dispatch_project_warm``'s target admits exactly
@@ -329,7 +371,7 @@ def test_a_surface_over_its_target_ratio_fails_check_and_under_it_passes(monkeyp
     assert "import budget: OK" in out, out
 
 
-def test_a_ratio_failure_names_its_largest_buckets_and_its_child_processes():
+def test_a_ratio_failure_names_its_largest_buckets_and_its_child_processes(fake_facts):
     """A ratio breach need not be a ceiling breach, so it carries its own breakdown."""
     surface = harness.surface_by_key("dispatch_project_warm")
     ops = _ops(
@@ -355,7 +397,7 @@ def test_a_target_ratio_without_its_floor_is_the_callers_mistake():
     assert harness.check_ratio(harness.surface_by_key("run"), _ops(10**6), None) == []
 
 
-def test_a_stale_ceiling_prints_a_note_and_still_passes_check(monkeypatch, capsys):
+def test_a_stale_ceiling_prints_a_note_and_still_passes_check(monkeypatch, capsys, fake_facts):
     """Through ``--check`` itself: a NOTE line, no FAIL, and a passing exit."""
     _gate_pair(monkeypatch, floor_total=400, surface_total=400, baseline_total=1000)
     assert harness.main(["--check"]) == 0
@@ -412,18 +454,18 @@ def test_a_missing_baseline_fails_by_name(monkeypatch):
     assert "version_project" in message
 
 
-def test_ceilings_round_trip_gated_surfaces_only(tmp_path, monkeypatch):
+def test_ceilings_round_trip_gated_surfaces_only(tmp_path, monkeypatch, fake_facts):
     """The file stores baselines, sorted, and never a tracked surface."""
     monkeypatch.setattr(harness, "CEILINGS_DIR", tmp_path)
     ops = harness.FileOps(
         total=10, workspace=2, by_bucket={"stdlib": 10}, by_process={"python": 10}
     )
-    harness.write_ceilings({"run": ops, "tracked_init": ops})
-    path = harness.ceilings_path()
-    assert path == tmp_path / f"{harness.interpreter_tag()}.json"
+    harness.write_ceilings(FAKE_MINOR, {"run": ops, "tracked_init": ops})
+    path = harness.ceilings_path(FAKE_MINOR)
+    assert path == tmp_path / f"{FAKE_MINOR}.json"
     text = path.read_text()
     assert json.loads(text) == {
-        "interpreter": harness.interpreter_tag(),
+        "interpreter": FAKE_MINOR,
         "surfaces": {
             "run": {
                 "file_ops": 10,
@@ -457,7 +499,7 @@ def test_a_measuring_flag_never_combines_with_a_gating_one(argv, monkeypatch):
     assert exc.value.code == 2
 
 
-def test_a_measurement_warms_the_bytecode_cache_first(tmp_path, monkeypatch):
+def test_a_measurement_warms_the_bytecode_cache_first(tmp_path, monkeypatch, real_interpreter):
     """Every measured child reads a WARM cache, so measuring must compile it first.
 
     Without the warm-up every module would miss on every run: deterministic,
@@ -469,43 +511,39 @@ def test_a_measurement_warms_the_bytecode_cache_first(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     prefix = harness.bytecode_prefix()
     assert prefix.startswith(str(tmp_path)), prefix
-    otto_init = Path(harness._interpreter_paths()["otto_src"], "__init__.py")
-    harness._warm_bytecode.cache_clear()
-    try:
-        harness.measure_surface(harness.surface_by_key("import_otto"))
-        cached = harness.cached_bytecode(prefix, otto_init)
-        assert cached.is_file(), cached
-    finally:
-        # Later measurements in this worker must warm the real cache again.
-        harness._warm_bytecode.cache_clear()
+    otto_init = Path(harness.measured_facts()["otto_src"], "__init__.py")
+    # Restored afterwards, so a later measurement here still warms the real cache.
+    monkeypatch.setattr(harness, "_WARMED", set())
+    harness.measure_surface(harness.surface_by_key("import_otto"))
+    cached = harness.cached_bytecode(prefix, otto_init)
+    assert cached.is_file(), cached
 
 
-def test_an_unwritable_bytecode_cache_fails_by_name(tmp_path, monkeypatch):
+def test_an_unwritable_bytecode_cache_fails_by_name(tmp_path, monkeypatch, real_interpreter):
     """A cache nobody can write to would record cold counts as baselines; refuse instead."""
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("")
     monkeypatch.setenv("XDG_CACHE_HOME", str(blocker))
-    harness._warm_bytecode.cache_clear()
-    try:
-        with pytest.raises(RuntimeError, match="writable"):
-            harness._warm_bytecode()
-    finally:
-        harness._warm_bytecode.cache_clear()
+    monkeypatch.setattr(harness, "_WARMED", set())
+    with pytest.raises(RuntimeError, match="writable"):
+        harness._warm_bytecode()
 
 
-def test_ceilings_from_another_interpreter_fail_by_name(tmp_path, monkeypatch):
+def test_ceilings_from_another_interpreter_fail_by_name(tmp_path, monkeypatch, fake_facts):
     monkeypatch.setattr(harness, "CEILINGS_DIR", tmp_path)
-    harness.ceilings_path().write_text(json.dumps({"interpreter": "9.99", "surfaces": {}}))
+    harness.ceilings_path(FAKE_MINOR).write_text(
+        json.dumps({"interpreter": "9.99", "surfaces": {}})
+    )
     with pytest.raises(ValueError, match=r"9\.99"):
         harness.read_ceilings()
 
 
-def test_a_baseline_missing_a_counter_fails_by_name(tmp_path, monkeypatch):
+def test_a_baseline_missing_a_counter_fails_by_name(tmp_path, monkeypatch, fake_facts):
     monkeypatch.setattr(harness, "CEILINGS_DIR", tmp_path)
-    harness.ceilings_path().write_text(
+    harness.ceilings_path(FAKE_MINOR).write_text(
         json.dumps(
             {
-                "interpreter": harness.interpreter_tag(),
+                "interpreter": FAKE_MINOR,
                 "surfaces": {"run": {"file_ops": 10, "by_bucket": {}, "by_process": {}}},
             }
         )

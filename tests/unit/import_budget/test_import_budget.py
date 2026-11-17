@@ -3,7 +3,10 @@
 See ``docs/superpowers/specs/2026-06-29-import-budget-guard-design.md``.
 """
 
+import fcntl
 import json
+import subprocess
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -774,7 +777,7 @@ def test_every_gated_surface_has_a_ceiling_for_this_interpreter():
     missing = sorted(gated - set(recorded))
     assert not missing, (
         f"no baseline on CPython {harness.interpreter_tag()} for {missing} — "
-        f"run `make import-snapshot` under this interpreter"
+        f"regenerate with {harness.SNAPSHOT_HOW}"
     )
     extra = sorted(set(recorded) - gated)
     assert not extra, f"baselines for surfaces that are not gated: {extra}"
@@ -1088,7 +1091,549 @@ def test_the_report_rows_carry_by_path_and_the_ceilings_do_not(tmp_path, monkeyp
     row = harness.report_row(gated, {"file_ops": asdict(ops), "exit_code": 0})
     assert row["by_path"] == {"stdlib:os.py": 2, "stdlib:": 1}
     monkeypatch.setattr(harness, "CEILINGS_DIR", tmp_path)
-    harness.write_ceilings({gated.key: ops})
-    stored = json.loads(harness.ceilings_path().read_text())["surfaces"][gated.key]
+    harness.write_ceilings("9.98", {gated.key: ops})
+    stored = json.loads(harness.ceilings_path("9.98").read_text())["surfaces"][gated.key]
     assert "by_path" not in stored
     assert stored["by_bucket"] == {"stdlib": 3}
+
+
+# --- The measured interpreter and the venv builder (#1147) -------------------
+#
+# Pure: no strace, no uv, no measured child. Each test that switches the
+# measured interpreter restores the harness's own afterwards (`_measured`).
+
+
+@pytest.fixture
+def measured(monkeypatch):
+    """Let a test call ``use_python`` freely: the seam and its caches are put back afterwards."""
+    for name, fresh in [
+        ("_MEASURED", None), ("_WARMED", set()), ("_BUILT", {}), ("_FACTS", {}), ("_BASELINES", {}),
+        ("_BUILD_FAILED", {}),
+    ]:  # fmt: skip
+        monkeypatch.setattr(harness, name, fresh)
+
+
+def _completed(argv, returncode=0):
+    return subprocess.CompletedProcess(argv, returncode, "", "")
+
+
+def test_the_measured_interpreter_defaults_to_the_harness_s_own(measured):
+    assert harness.measured_python() == sys.executable
+
+
+def test_use_python_switches_the_interpreter_and_clears_every_per_interpreter_cache(
+    measured, monkeypatch
+):
+    """After a switch, facts, the baseline and the warm-up are each asked of the new interpreter."""
+    children = []
+    compilers = []
+
+    def child(code, env=None, **_kw):
+        children.append((code, harness.measured_python()))
+        if code == harness._CHILD_BASELINE:
+            return "[]"
+        return json.dumps({"minor": "9.97", "cache_tag": "cpython-997", "import_dirs": []})
+
+    def run(argv, **_kw):
+        compilers.append(argv[0])
+        return _completed(argv)
+
+    monkeypatch.setattr(harness, "_run_child", child)
+    monkeypatch.setattr(harness.subprocess, "run", run)
+
+    def ask_everything():
+        harness.measured_facts()
+        harness.baseline_modules()
+        # No otto in the (empty) import dirs, so the warm-up refuses; it still compiled.
+        with pytest.raises(RuntimeError, match="writable"):
+            harness._warm_bytecode()
+
+    harness.use_python("/fake/a/bin/python")
+    ask_everything()
+    harness.use_python("/fake/b/bin/python")
+    assert harness.measured_python() == "/fake/b/bin/python"
+    ask_everything()
+    asked_b = [python for code, python in children[2:]]
+    assert asked_b == ["/fake/b/bin/python"] * 2, children
+    assert {code for code, _ in children[2:]} == {harness._CHILD_FACTS, harness._CHILD_BASELINE}
+    assert compilers == ["/fake/a/bin/python", "/fake/b/bin/python"]
+
+
+def test_the_interpreter_tag_and_bytecode_tag_are_the_measured_interpreter_s(monkeypatch):
+    """A 3.10 harness measuring 3.14 keys 3.14's file and reads 3.14's ``.pyc`` names."""
+    monkeypatch.setattr(
+        harness, "measured_facts", lambda: {"minor": "9.97", "cache_tag": "cpython-997"}
+    )
+    assert harness.interpreter_tag() == "9.97"
+    assert harness.cached_bytecode("/cache", Path("/src/otto/__init__.py")) == Path(
+        "/cache/src/otto/__init__.cpython-997.pyc"
+    )
+
+
+def test_the_bytecode_warmup_compiles_with_the_measured_interpreter(measured, monkeypatch):
+    """The warm-up's "done" memo is per interpreter, and its compiler is the measured one."""
+    compilers = []
+
+    def run(argv, **_kw):
+        compilers.append(argv[0])
+        return _completed(argv)
+
+    monkeypatch.setattr(harness, "measured_facts", lambda: {"import_dirs": []})
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    for python in ("/fake/a/bin/python", "/fake/b/bin/python"):
+        harness.use_python(python)
+        # No otto in the (empty) import dirs, so the warm-up refuses; it still compiled.
+        with pytest.raises(RuntimeError, match="writable"):
+            harness._warm_bytecode()
+    assert compilers == ["/fake/a/bin/python", "/fake/b/bin/python"]
+
+
+def test_a_warm_cache_is_compiled_once_per_interpreter(measured, tmp_path, monkeypatch):
+    """A warm-up that lands otto's ``.pyc`` is remembered; a new interpreter compiles again."""
+    src = tmp_path / "src"
+    (src / "otto").mkdir(parents=True)
+    otto_init = src / "otto" / "__init__.py"
+    otto_init.write_text("")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(
+        harness,
+        "measured_facts",
+        lambda: {"import_dirs": [str(src)], "cache_tag": "cpython-997", "minor": "9.97"},
+    )
+    compilers = []
+
+    def compile_run(argv, **_kw):
+        compilers.append(argv[0])
+        cached = harness.cached_bytecode(harness.bytecode_prefix(), otto_init)
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_bytes(b"")
+        return _completed(argv)
+
+    monkeypatch.setattr(harness.subprocess, "run", compile_run)
+    harness.use_python("/fake/a/bin/python")
+    harness._warm_bytecode()
+    harness._warm_bytecode()
+    assert compilers == ["/fake/a/bin/python"], "a warm cache is not compiled twice"
+    harness.use_python("/fake/b/bin/python")
+    harness._warm_bytecode()
+    assert compilers == ["/fake/a/bin/python", "/fake/b/bin/python"], "a new interpreter compiles"
+
+
+def test_the_measured_children_and_the_sync_drop_the_same_caller_paths(
+    measured, tmp_path, monkeypatch
+):
+    """One contaminated caller env, both entry points: neither keeps the caller's Python paths."""
+    monkeypatch.setenv("PYTHONPATH", "/caller/site")
+    monkeypatch.setenv("PYTHONHOME", "/caller/home")
+    monkeypatch.setenv("VIRTUAL_ENV", "/caller/.venv")
+    monkeypatch.setenv("UV_PROJECT", "/elsewhere/project")
+    monkeypatch.setenv("UV_WORKING_DIR", "/elsewhere")
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/elsewhere/env")
+    monkeypatch.setenv("UV_CACHE_DIR", "/cache")
+    monkeypatch.setenv("OTTO_LAB", "caller-lab")
+    harness.use_python(str(tmp_path / "bare" / "python"))
+    child, sync = harness._sanitized_env(), harness.sync_env(tmp_path / "venv")
+    for env in (child, sync):
+        for name in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "UV_PROJECT", "UV_WORKING_DIR"):
+            assert name not in env, name
+        assert env["UV_CACHE_DIR"] == "/cache", "cache settings pass through"
+    assert "UV_PROJECT_ENVIRONMENT" not in child
+    assert sync["UV_PROJECT_ENVIRONMENT"] == str(tmp_path / "venv"), "set after the strip"
+    assert set(child) <= set(harness.venv_clean()), "the child's env is venv_clean's, filtered"
+    assert "OTTO_LAB" not in child
+
+
+def test_the_measured_venv_is_active_in_every_child_env(measured, tmp_path, monkeypatch):
+    """``VIRTUAL_ENV`` names the measured interpreter's venv and its ``bin`` leads ``PATH``."""
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("")
+    monkeypatch.setenv("VIRTUAL_ENV", "/caller/.venv")
+    monkeypatch.setenv("PATH", "/caller/.venv/bin:/usr/bin")
+    harness.use_python(str(venv / "bin" / "python"))
+    env = harness._sanitized_env()
+    assert env["VIRTUAL_ENV"] == str(venv)
+    assert env["PATH"] == f"{venv / 'bin'}:/caller/.venv/bin:/usr/bin"
+    assert harness.activated_env(env, venv) == env, "activating twice changes nothing"
+
+    harness.use_python(str(tmp_path / "bare" / "python"))
+    assert "VIRTUAL_ENV" not in harness._sanitized_env(), "no venv, so none is named"
+
+
+def test_build_env_syncs_the_tree_s_lock_into_the_venv_once_per_process(
+    measured, tmp_path, monkeypatch
+):
+    calls = []
+
+    def run(argv, *, cwd, env, check, timeout):
+        calls.append((argv, cwd, env))
+        return _completed(argv)
+
+    monkeypatch.setenv("VIRTUAL_ENV", "/caller/.venv")
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    python = harness.build_env("3.13", tree=tree)
+    venv = tree / ".venv-budget" / "3.13"
+    assert python == venv / "bin" / "python"
+    [(argv, cwd, env)] = calls
+    assert argv == ["uv", "sync", "--frozen", "--python", "3.13"]
+    assert argv == harness.sync_argv("3.13")
+    assert cwd == tree, "the measured tree's own uv.lock"
+    assert env["UV_PROJECT_ENVIRONMENT"] == str(venv)
+    assert "VIRTUAL_ENV" not in env, "uv must not sync the caller's venv"
+    assert harness.build_env("3.13", tree=tree) == python
+    assert len(calls) == 1, "one sync per venv per process"
+    other = tmp_path / "holder" / "venv-3.13"
+    assert harness.build_env("3.13", tree=tree, venv=other) == other / "bin" / "python"
+    assert calls[-1][2]["UV_PROJECT_ENVIRONMENT"] == str(other)
+
+
+def test_a_failed_sync_is_a_named_error_remembered_for_the_process(measured, tmp_path, monkeypatch):
+    syncs = []
+
+    def run(argv, **_kw):
+        syncs.append(argv)
+        return _completed(argv, 2)
+
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    with pytest.raises(harness.EnvBuildError, match=r"uv sync .*3\.13.* exited 2") as first:
+        harness.build_env("3.13", tree=tmp_path)
+    assert harness._BUILT == {}, "a failed venv is never handed out"
+    with pytest.raises(harness.EnvBuildError) as again:
+        harness.build_env("3.13", tree=tmp_path)
+    assert again.value is first.value, "a later ask re-raises the same failure"
+    assert len(syncs) == 1, "without syncing again"
+
+
+def test_a_sync_that_runs_too_long_is_a_named_failure(measured, tmp_path, monkeypatch):
+    seen = {}
+
+    def run(argv, **kw):
+        seen["timeout"] = kw.get("timeout")
+        raise subprocess.TimeoutExpired(argv, kw["timeout"])
+
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    with pytest.raises(harness.EnvBuildError, match=r"timed out after 1200s"):
+        harness.build_env("3.13", tree=tmp_path)
+    assert seen["timeout"] == harness.SYNC_TIMEOUT
+
+
+_SHARED_HOLDER = """
+import fcntl, sys, time
+from pathlib import Path
+lock, marker = sys.argv[1], Path(sys.argv[2])
+with open(lock, "a") as handle:
+    fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+    print("held", flush=True)
+    time.sleep(0.5)
+    marker.write_text("released")
+"""
+
+
+def test_a_live_measurement_s_shared_lock_holds_off_a_sync(measured, tmp_path, monkeypatch):
+    """Another process measuring the venv holds its lock shared; the sync waits for it."""
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    venv = tree / ".venv-budget" / "3.13"
+    lock = venv.with_name("3.13.lock")
+    lock.parent.mkdir(parents=True)
+    marker = tmp_path / "released"
+    seen = []
+
+    def run(argv, **_kw):
+        seen.append(marker.exists())
+        return _completed(argv)
+
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    with subprocess.Popen(
+        [sys.executable, "-c", _SHARED_HOLDER, str(lock), str(marker)],
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as holder:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "held"
+        harness.build_env("3.13", tree=tree)
+    assert seen == [True], "the sync ran only once the measurement let go"
+
+
+def test_a_measurement_holds_its_venv_s_lock_shared(measured, tmp_path, monkeypatch):
+    venv = tmp_path / ".venv-budget" / "3.13"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("")
+    lock = venv.with_name("3.13.lock")
+    lock.write_text("")
+    harness.use_python(str(venv / "bin" / "python"))
+    outcomes = []
+
+    class MeasuredError(Exception):
+        pass
+
+    def try_exclusive() -> bool:
+        with lock.open("a") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return True
+
+    def child(*_a, **_kw):
+        outcomes.append(try_exclusive())
+        raise MeasuredError
+
+    monkeypatch.setattr(harness, "_run_child", child)
+    with pytest.raises(MeasuredError):
+        harness.measure(["python"])
+    assert outcomes == [False], "a sync cannot take the lock mid-measurement"
+    assert try_exclusive(), "the lock is released when the measurement ends"
+
+
+def test_find_interpreter_asks_uv_for_a_system_interpreter_venv_clean(monkeypatch):
+    calls = []
+
+    def run(argv, *, env, capture_output, text, check):
+        calls.append((argv, env))
+        return subprocess.CompletedProcess(argv, 0, "/usr/bin/python3.13\n", "")
+
+    monkeypatch.setenv("VIRTUAL_ENV", "/caller/.venv")
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    assert harness.find_interpreter("3.13") == "/usr/bin/python3.13"
+    [(argv, env)] = calls
+    assert argv == ["uv", "python", "find", "--system", "3.13"]
+    assert "VIRTUAL_ENV" not in env
+    monkeypatch.setattr(harness.subprocess, "run", lambda argv, **_kw: _completed(argv, 2))
+    assert harness.find_interpreter("3.13") is None
+
+
+def test_update_takes_no_single_interpreter(monkeypatch, capsys):
+    monkeypatch.setattr(harness, "measure_surface", lambda _s: pytest.fail("measured"))
+    with pytest.raises(SystemExit) as exc:
+        harness.main(["--update", "--python", "/usr/bin/python3"])
+    assert exc.value.code == 2
+    assert "every interpreter" in capsys.readouterr().err
+
+
+def _gated_results(total: int) -> dict:
+    ops = {"total": total, "workspace": 1, "by_bucket": {}, "by_process": {}, "by_path": {}}
+    return {"exit_code": 0, "exception": None, "file_ops": ops}
+
+
+def _update_world(monkeypatch, tmp_path, minors, *, missing=(), fail_on=None):
+    """Make ``--update`` see *minors*' ceilings files and measure them without strace or uv."""
+    floor = harness.surface_by_key(harness.RATIO_FLOOR)
+    surface = harness.surface_by_key("run")
+    monkeypatch.setattr(harness, "CEILINGS_DIR", tmp_path)
+    for minor in minors:
+        (tmp_path / f"{minor}.json").write_text(f'{{"interpreter": "{minor}"}}\n')
+    monkeypatch.setattr(
+        harness, "find_interpreter", lambda m: None if m in missing else f"/usr/bin/python{m}"
+    )
+    built = []
+
+    def build_env(minor, **_kw):
+        built.append(minor)
+        return Path(f"/budget/{minor}/bin/python")
+
+    monkeypatch.setattr(harness, "build_env", build_env)
+    monkeypatch.setattr(
+        harness, "measured_facts", lambda: {"minor": harness.measured_python().split("/")[2]}
+    )
+    monkeypatch.setattr(harness, "SURFACES", [surface, floor])
+
+    def measure_surface(s):
+        minor = harness.measured_python().split("/")[2]
+        result = _gated_results(100 + int(minor.split(".")[1]))
+        if (minor, s.key) == fail_on:
+            result["exit_code"] = 3
+        return result
+
+    monkeypatch.setattr(harness, "measure_surface", measure_surface)
+    return built
+
+
+def test_update_names_every_interpreter_it_cannot_find_and_writes_nothing(
+    measured, tmp_path, monkeypatch, capsys
+):
+    built = _update_world(monkeypatch, tmp_path, ["3.10", "9.99", "9.98"], missing={"9.99", "9.98"})
+    before = {p.name: p.read_text() for p in tmp_path.iterdir()}
+    assert harness.main(["--update"]) == 1
+    out = capsys.readouterr().out
+    assert "no interpreter for 9.98 (uv python find --system 9.98)" in out
+    assert "no interpreter for 9.99 (uv python find --system 9.99)" in out
+    assert built == [], "nothing is built or measured before every interpreter is found"
+    assert {p.name: p.read_text() for p in tmp_path.iterdir()} == before
+
+
+def test_update_writes_each_interpreter_s_own_file(measured, tmp_path, monkeypatch, capsys):
+    built = _update_world(monkeypatch, tmp_path, ["3.11", "3.10"])
+    assert harness.main(["--update"]) == 0
+    assert built == ["3.10", "3.11"], "sorted, each in its own venv"
+    for minor in ("3.10", "3.11"):
+        data = json.loads((tmp_path / f"{minor}.json").read_text())
+        assert data["interpreter"] == minor
+        assert data["surfaces"]["run"]["file_ops"] == 100 + int(minor.split(".")[1])
+    out = capsys.readouterr().out
+    assert "wrote tests/unit/import_budget" not in out, (
+        "the redirected directory, not the checkout's"
+    )
+    for minor in ("3.10", "3.11"):
+        assert f"wrote {tmp_path / minor}.json" in out, out
+
+
+def test_a_failure_on_a_later_interpreter_leaves_every_file_untouched(
+    measured, tmp_path, monkeypatch, capsys
+):
+    built = _update_world(
+        monkeypatch, tmp_path, ["3.10", "3.11"], fail_on=("3.11", harness.RATIO_FLOOR)
+    )
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    assert harness.main(["--update"]) == 1
+    assert built == ["3.10", "3.11"], "3.10 measured clean before 3.11 failed"
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+    assert "nothing written" in capsys.readouterr().out
+
+
+def test_a_failure_while_staging_leaves_every_file_byte_identical(
+    measured, tmp_path, monkeypatch, capsys
+):
+    """Every minor measured clean, then staging the second file fails: no file changes."""
+    _update_world(monkeypatch, tmp_path, ["3.10", "3.11"])
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    real_text = harness._ceilings_text
+
+    def text(minor, results):
+        if minor == "3.11":
+            raise OSError("No space left on device")
+        return real_text(minor, results)
+
+    monkeypatch.setattr(harness, "_ceilings_text", text)
+    assert harness.main(["--update"]) == 1
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before, "no staged file left"
+    out = capsys.readouterr().out
+    assert "No space left on device" in out
+    assert "nothing written" in out
+
+
+def test_a_failed_replacement_names_what_was_replaced_and_what_failed(
+    measured, tmp_path, monkeypatch, capsys
+):
+    """The second rename fails: 3.10 is new, 3.11 is untouched, and the message says so."""
+    _update_world(monkeypatch, tmp_path, ["3.10", "3.11"])
+    before = (tmp_path / "3.11.json").read_bytes()
+    real_replace = Path.replace
+
+    def replace(self, target):
+        if Path(target).name == "3.11.json":
+            raise OSError("Read-only file system")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+    assert harness.main(["--update"]) == 1
+    out = capsys.readouterr().out
+    assert "nothing written" not in out, "a file was written; the message must not deny it"
+    assert "3.11.json failed (Read-only file system); replaced: " in out, out
+    assert f"replaced: {tmp_path / '3.10.json'}" in out, out
+    assert json.loads((tmp_path / "3.10.json").read_text())["interpreter"] == "3.10"
+    assert "surfaces" in json.loads((tmp_path / "3.10.json").read_text())
+    assert (tmp_path / "3.11.json").read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["3.10.json", "3.11.json"]
+
+
+def test_a_failed_cleanup_never_hides_a_failed_replacement(measured, tmp_path, monkeypatch, capsys):
+    """The second rename fails and so does removing its staged file: both are named."""
+    _update_world(monkeypatch, tmp_path, ["3.10", "3.11"])
+    staged = tmp_path / ".3.11.json.staged"
+    real_replace, real_unlink = Path.replace, Path.unlink
+
+    def replace(self, target):
+        if Path(target).name == "3.11.json":
+            raise OSError("Read-only file system")
+        return real_replace(self, target)
+
+    def unlink(self, missing_ok=False):
+        if self == staged:
+            raise PermissionError("Operation not permitted")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "replace", replace)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert harness.main(["--update"]) == 1
+    out = capsys.readouterr().out
+    assert "nothing written" not in out, out
+    assert f"replaced: {tmp_path / '3.10.json'}" in out, out
+    assert f"staged files left behind: {staged}" in out, out
+    assert staged.exists(), "the file the cleanup could not remove is still there, as named"
+
+
+def test_a_clean_update_leaves_no_staged_file(measured, tmp_path, monkeypatch):
+    _update_world(monkeypatch, tmp_path, ["3.10", "3.11"])
+    assert harness.main(["--update"]) == 0
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["3.10.json", "3.11.json"]
+
+
+def test_python_measures_the_named_interpreter_as_is(measured, monkeypatch):
+    monkeypatch.setattr(harness, "build_env", lambda *_a, **_kw: pytest.fail("built"))
+    seen = []
+    surface = harness.surface_by_key(harness.RATIO_FLOOR)
+    monkeypatch.setattr(harness, "SURFACES", [surface])
+
+    def measure_surface(_s):
+        seen.append(harness.measured_python())
+        return _gated_results(1)
+
+    monkeypatch.setattr(harness, "measure_surface", measure_surface)
+    assert harness.main(["--python", "/some/venv/bin/python"]) == 0
+    assert seen == ["/some/venv/bin/python"]
+
+
+def test_a_relative_python_is_made_absolute_but_never_resolved(measured, tmp_path, monkeypatch):
+    """The measured children run in another cwd, and a venv's interpreter is a link."""
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("")
+    harness.venv_python(venv).symlink_to(sys.executable)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(harness, "build_env", lambda *_a, **_kw: pytest.fail("built"))
+    monkeypatch.setattr(harness, "SURFACES", [harness.surface_by_key(harness.RATIO_FLOOR)])
+    seen = []
+
+    def measure_surface(_s):
+        seen.append(harness.measured_python())
+        return _gated_results(1)
+
+    monkeypatch.setattr(harness, "measure_surface", measure_surface)
+    assert harness.main(["--python", "venv/bin/python"]) == 0
+    assert seen == [str(harness.venv_python(venv))]
+    assert harness.venv_of(seen[0]) == venv, "the link is kept, so its venv is still found"
+
+
+@pytest.mark.timeout(30)
+def test_build_env_under_a_held_venv_lock_refuses_instead_of_hanging(
+    measured, tmp_path, monkeypatch
+):
+    """flock conflicts between two opens in ONE process, so nesting would wait forever."""
+    venv = tmp_path / ".venv-budget" / "3.13"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("")
+    venv.with_name("3.13.lock").write_text("")
+    harness.use_python(str(harness.venv_python(venv)))
+    monkeypatch.setattr(harness.subprocess, "run", lambda argv, **_kw: pytest.fail("synced"))
+    with (
+        harness._measurement_lock(),
+        pytest.raises(harness.NestedVenvLockError, match=r"3\.13\.lock"),
+    ):
+        harness.build_env("3.13", tree=tmp_path)
+
+
+def test_a_stray_file_in_the_ceilings_directory_is_refused_by_name(
+    measured, tmp_path, monkeypatch, capsys
+):
+    _update_world(monkeypatch, tmp_path, ["3.10"])
+    (tmp_path / "notes.json").write_text("{}")
+    with pytest.raises(ValueError, match=r"notes\.json"):
+        harness.ceilings_minors()
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    assert harness.main(["--update"]) == 1
+    assert "notes.json" in capsys.readouterr().out
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before

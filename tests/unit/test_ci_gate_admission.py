@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from scripts import local_gate_status
+from scripts.import_budget_delta import INSTRUMENT_PATHS
 from tests._fixtures.gha_matrix import expand_names as _expand
 from tests._fixtures.gha_matrix import matrix_rows, render
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -348,9 +349,11 @@ def test_the_budget_legs_run_only_when_the_scope_job_says_so_and_never_fail_fast
     # plain actions/cache saves only on success, so every re-run re-measured the base.
     key = (
         "budget-base-${{ needs.budget-scope.outputs.tag }}-${{ matrix.python }}"
-        "-${{ hashFiles('scripts/import_budget.py', 'tests/_fixtures/**') }}"
+        "-${{ hashFiles('scripts/import_budget.py', 'scripts/uv_env.py', 'tests/_fixtures/**') }}"
         "-${{ runner.os }}-${{ steps.img.outputs.v }}"
     )
+    for instrument in INSTRUMENT_PATHS:  # a change to any instrument file invalidates the cache
+        assert f"'{instrument}" in key, instrument
     path = "reports/budget/${{ needs.budget-scope.outputs.tag }}"
     caches = [s for s in steps if s.get("uses", "").startswith("actions/cache")]
     assert [s["uses"].split("@")[0] for s in caches] == [

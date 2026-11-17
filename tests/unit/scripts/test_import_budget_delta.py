@@ -56,6 +56,17 @@ TRACKED = next(s.key for s in import_budget.SURFACES if s.tracked)
 NONE: "list[Approval]" = []
 BASE_TAG = "v0.20.0"
 WHY = "the new lock-file read"
+
+
+@pytest.fixture(autouse=True)
+def _uv_finds_every_interpreter(monkeypatch):
+    """Play `uv python find`, which the harness asks on the delta's behalf (`find_interpreter`).
+
+    The interpreter it names is `/fake/python<minor>`, which `FakeRunner` plays.
+    """
+    monkeypatch.setattr(import_budget, "find_interpreter", lambda minor: f"/fake/python{minor}")
+
+
 STDLIB4 = [Approval(PLAIN, None, {"stdlib": 4}, WHY)]
 EMPTY = delta.Approvals(base=BASE_TAG, in_force=[], spent=[])
 GROWN = {"ops": {PLAIN: 504}, "buckets": {PLAIN: {"otto:*": 500, "stdlib": 4}}}
@@ -1110,14 +1121,22 @@ def _hermetic_git(monkeypatch):
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
 
 
+TIP_HARNESS = "# tip\n" + Path(import_budget.__file__).read_text()
+"""A fixture tip's harness: the real one, so its sync helpers load, first line "# tip"."""
+
+UV_ENV = (Path(import_budget.__file__).parent / "uv_env.py").read_text()
+"""The real scripts/uv_env.py, which a fixture's harness loads beside itself."""
+
+
 def _repo(tmp_path: Path) -> "tuple[TmpGitRepo, str, str]":
     """A repo with a tagged base commit and a tip commit; returns (repo, base sha, tip sha)."""
     repo = TmpGitRepo(tmp_path / "repo")
     repo.write("scripts/import_budget.py", "# base\n")
+    repo.write("scripts/uv_env.py", UV_ENV)
     repo.write("tests/_fixtures/generated_project.py", "# fixtures v1\n")
     base = repo.commit("base")
     repo.git("tag", "v1.0.0")
-    repo.write("scripts/import_budget.py", "# tip\n")
+    repo.write("scripts/import_budget.py", TIP_HARNESS)
     tip = repo.commit("tip")
     return repo, base, tip
 
@@ -1127,8 +1146,9 @@ class FakeRunner:
 
     The minor of a measurement step comes from UV_PROJECT_ENVIRONMENT's
     `venv-<minor>` suffix, as the real steps' does; a standalone interpreter
-    probe (`/fake/python<minor> -c …`, from `uv python find`) carries its minor
-    in argv[0] and is logged under `probes`, not `calls`. The TREE a report
+    probe (`/fake/python<minor> -c …`, the interpreter `find_interpreter`
+    names) carries its minor in argv[0] and is logged under `probes`, not
+    `calls`. The TREE a report
     describes is the tree the venv was synced from (`synced`, by venv), read
     from the first line of scripts/import_budget.py in the sync's cwd; the
     report step itself runs from the tip worktree, whose first line is "# tip".
@@ -1158,12 +1178,6 @@ class FakeRunner:
     def __call__(
         self, argv: "list[str]", cwd: Path, env: "dict[str, str]", out: "Path | None"
     ) -> int:
-        if argv[:3] == ["uv", "python", "find"]:
-            assert "VIRTUAL_ENV" not in env, "the probe runs venv-clean, as the sync does"
-            assert "--system" in argv, "a .venv above the cwd is not the sync's interpreter"
-            assert out is not None
-            out.write_text(f"/fake/python{argv[-1]}\n")
-            return 0
         if argv[0].startswith("/fake/python"):
             assert "VIRTUAL_ENV" not in env
             assert argv[1:3] == ["-c", delta.VERSION_SNIPPET]
@@ -1175,8 +1189,8 @@ class FakeRunner:
         venv = env["UV_PROJECT_ENVIRONMENT"]
         minor = venv.rsplit("venv-", 1)[-1]
         if argv[:2] == ["uv", "sync"]:
-            assert "--frozen" in argv
-            assert argv[argv.index("--python") + 1] == minor
+            # The exact command is the reporting harness's; the provenance tests pin it.
+            assert argv[-2:] == ["--python", minor]
             self.synced[venv] = self._tree(cwd)
             self.calls.append(("sync", self._tree(cwd), minor))
             return self.fail.get("sync", 0)
@@ -1189,6 +1203,7 @@ class FakeRunner:
             return self.fail.get("version", 0)
         if "--report-json" in argv:
             assert argv[1] == "scripts/import_budget.py"
+            assert argv[argv.index("--python") + 1] == argv[0], "it measures the venv it runs in"
             assert self._tree(cwd) == "tip", "the tip's harness, from the tip worktree"
             self.calls.append(("report", tree, minor))
             n = self.reports[(tree, minor)] = self.reports.get((tree, minor), 0) + 1
@@ -1221,7 +1236,8 @@ def _steps(runner: FakeRunner, tree: str, minor: str = "3.10") -> "list[str]":
 def _approvals_only_repo(tmp_path: Path) -> "tuple[TmpGitRepo, str, str]":
     """A tagged base commit and a tip that adds only the approvals file."""
     repo = TmpGitRepo(tmp_path / "repo")
-    repo.write("scripts/import_budget.py", "# tip\n")
+    repo.write("scripts/import_budget.py", TIP_HARNESS)
+    repo.write("scripts/uv_env.py", UV_ENV)
     repo.write("tests/_fixtures/generated_project.py", "# fixtures v1\n")
     base = repo.commit("base")
     repo.git("tag", "v1.0.0")
@@ -1364,11 +1380,12 @@ def test_base_ref_is_the_nearest_tag(tmp_path: Path):
     assert base_ref(repo.root) == "v1.0.0"
 
 
-def test_instrument_id_is_the_harness_blob_and_the_fixtures_tree(tmp_path: Path):
+def test_instrument_id_is_the_harness_and_uv_env_blobs_and_the_fixtures_tree(tmp_path: Path):
     repo, base_sha, tip_sha = _repo(tmp_path)
     blob = repo.git("rev-parse", f"{tip_sha}:scripts/import_budget.py").strip()
+    uv_env = repo.git("rev-parse", f"{tip_sha}:scripts/uv_env.py").strip()
     tree = repo.git("rev-parse", f"{tip_sha}:tests/_fixtures").strip()
-    assert instrument_id(repo.root, tip_sha) == f"{blob}:{tree}"
+    assert instrument_id(repo.root, tip_sha) == f"{blob}:{uv_env}:{tree}"
     assert instrument_id(repo.root, base_sha) != instrument_id(repo.root, tip_sha), (
         "the harness changed between them"
     )
@@ -1403,7 +1420,7 @@ def test_a_quiet_pair_passes_and_leaves_base_and_head_records(tmp_path: Path, ca
     for side in (base, head):
         assert sorted(p.name for p in side.iterdir()) == ["3.10.json", "3.10.status.json"]
     assert sorted(p.name for p in (out / "scratch").iterdir()) == [
-        "3.10.python.txt", "find-3.10.txt", "version-3.10.txt"
+        "3.10.python.txt", "version-3.10.txt"
     ]  # fmt: skip
 
 
@@ -1458,18 +1475,15 @@ def test_a_base_cache_that_is_not_the_base_or_not_this_instrument_is_measured_ag
     assert validate_side(base, "3.10", None) == []
 
 
-def test_an_interpreter_uv_cannot_find_says_the_cache_cannot_be_reused(tmp_path: Path, capsys):
-    class NoProbe(FakeRunner):
-        def __call__(self, argv, cwd, env, out):
-            if argv[:3] == ["uv", "python", "find"]:
-                return 2
-            return super().__call__(argv, cwd, env, out)
-
+def test_an_interpreter_uv_cannot_find_says_the_cache_cannot_be_reused(
+    tmp_path: Path, capsys, monkeypatch
+):
     repo, _b, _t = _repo(tmp_path)
     out = tmp_path / "out"
     assert measure(_settings(repo, out), FakeRunner()) == 0
     capsys.readouterr()
-    runner = NoProbe()
+    monkeypatch.setattr(import_budget, "find_interpreter", lambda _minor: None)
+    runner = FakeRunner()
     assert measure(_settings(repo, out), runner) == 0
     text = capsys.readouterr().out
     assert "interpreter for 3.10 not found by uv; the cache cannot be reused" in text
@@ -1814,6 +1828,75 @@ def test_measure_side_runs_the_three_steps_in_a_sanitized_env_and_names_the_side
     assert log.read_text().count("$ ") == 3
     assert re.search(r"\(\d+\.\d s\)", log.read_text()), "elapsed seconds per command"
     assert json.loads((job.dest / "3.10.status.json").read_text())["python"] == "3.10.14"
+
+
+def test_the_tip_s_sync_command_syncs_the_base_tree_s_own_lock(tmp_path: Path):
+    """The base's harness ("# base", no builder at all) is never asked how to sync.
+
+    The tip's harness decides the command; it runs in the base worktree, so uv
+    reads the base's own uv.lock. The report runs the tip's harness against
+    the venv that sync made.
+    """
+    repo, base_sha, tip_sha = _repo(tmp_path)
+    seen = []
+
+    class Spy(FakeRunner):
+        def __call__(self, argv, cwd, env, out):
+            seen.append((argv, cwd.name, env))
+            return super().__call__(argv, cwd, env, out)
+
+    measure_side(_job(repo, tmp_path, base_sha, tip_sha), Spy())
+    (sync, sync_cwd, sync_env), _version, (report, report_cwd, _env) = seen
+    venv = Path(sync_env["UV_PROJECT_ENVIRONMENT"])
+    assert sync == delta._harness_in(repo.root).sync_argv("3.10")
+    assert sync_env == delta._harness_in(repo.root).sync_env(venv)
+    assert sync_cwd == "tree-base"
+    assert report_cwd == "tree-tip"
+    assert report[report.index("--python") + 1] == str(venv / "bin" / "python")
+
+
+def test_an_inherited_uv_project_never_reaches_the_delta_s_sync(tmp_path: Path, monkeypatch):
+    """The builder's strip (``UV_TARGET_VARS``) holds for the delta's sync step too."""
+    for name, value in {
+        "UV_PROJECT": "/elsewhere/project",
+        "UV_WORKING_DIR": "/elsewhere",
+        "UV_PROJECT_ENVIRONMENT": "/elsewhere/env",
+        "UV_FROZEN": "1",
+    }.items():
+        monkeypatch.setenv(name, value)
+    repo, base_sha, tip_sha = _repo(tmp_path)
+    seen = []
+
+    class Spy(FakeRunner):
+        def __call__(self, argv, cwd, env, out):
+            seen.append(env)
+            return super().__call__(argv, cwd, env, out)
+
+    measure_side(_job(repo, tmp_path, base_sha, tip_sha), Spy())
+    sync_env = seen[0]
+    for name in ("UV_PROJECT", "UV_WORKING_DIR", "UV_FROZEN"):
+        assert name not in sync_env, name
+    assert sync_env["UV_PROJECT_ENVIRONMENT"].endswith("venv-3.10"), "the holder's venv, not ours"
+
+
+def test_the_sync_is_the_reporting_tip_harness_s_not_this_checkout_s(tmp_path: Path):
+    """The stamped instrument is the tip's harness, so the sync is asked of it, not of ours."""
+    repo, base_sha, _tip = _repo(tmp_path)
+    marked = TIP_HARNESS.replace('"--frozen", ', '"--frozen", "--tip-only-flag", ', 1)
+    assert marked != TIP_HARNESS, "the fixture must actually change the tip's sync command"
+    repo.write("scripts/import_budget.py", marked)
+    tip_sha = repo.commit("a tip whose sync command differs from this checkout's")
+    seen = []
+
+    class Spy(FakeRunner):
+        def __call__(self, argv, cwd, env, out):
+            seen.append(argv)
+            return super().__call__(argv, cwd, env, out)
+
+    measure_side(_job(repo, tmp_path, base_sha, tip_sha), Spy())
+    sync = seen[0]
+    assert "--tip-only-flag" in sync
+    assert sync != import_budget.sync_argv("3.10"), "never this checkout's own command"
 
 
 def _job(repo: TmpGitRepo, tmp_path: Path, sha: str, harness_sha: str) -> SideJob:

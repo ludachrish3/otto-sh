@@ -2363,7 +2363,7 @@ The workflow:
 make profile                              # enforce the ceilings (scripts/import_budget.py --check)
 uv run python scripts/import_budget.py    # print the table, gated and tracked surfaces, without checking
 uv run python scripts/import_budget.py --report-json budget.json   # the same, with full breakdowns
-make import-snapshot                      # regenerate THIS interpreter's ceilings file
+make import-snapshot                      # regenerate every minor's ceilings file
 ```
 
 - **A release compares against the previous tag, not just the ceilings.**
@@ -2389,8 +2389,9 @@ make import-snapshot                      # regenerate THIS interpreter's ceilin
   moved by more than two, and a move that small is no shuffle; growth
   itself is exact. The base's records are cached under
   `reports/budget/<tag>/` of the checkout that measured them (per
-  checkout, like every `reports/`) and reused while their measured tree, interpreter version and
-  instrument (the harness and `tests/_fixtures/` at the tip) still match;
+  checkout, like every `reports/`) and reused while their measured tree,
+  interpreter version and instrument (the harness, the `scripts/uv_env.py`
+  it loads and `tests/_fixtures/`, at the tip) still match;
   the tip's are cached the same way under its measured tree (the committed
   tree minus the approvals file), so a commit that edits only the approvals
   file is judged without measuring. Exit 0 is accepted (nothing grew, or every growth is approved);
@@ -2423,17 +2424,18 @@ make import-snapshot                      # regenerate THIS interpreter's ceilin
   legs passed or were skipped. CI runners are x86 and the dev VM is ARM64, so
   each environment compares the tag with the tip on itself; one approval
   applies to both.
-- **Regenerate per interpreter.** `make import-snapshot` rewrites only the
-  running interpreter's `tests/unit/import_budget/ceilings/<major>.<minor>.json`.
-  For another minor, install its nox env and run the script with that
-  interpreter: `uv run nox -s tests_hostless_unit-3.14 --install-only`, then
-  `.nox/tests_hostless_unit-3-14/bin/python scripts/import_budget.py --update`.
-  A missing-baseline failure prints the same commands for the interpreter
-  it ran on. The next Python has a ceilings file too, read by nightly's
-  `python-canary`. It is not in `noxfile.py`'s `PYTHON_VERSIONS`, so its install
-  step needs the flag: `uv run nox -s tests_hostless_unit-3.15 --extra-python
-  3.15 --install-only`. `--update` moves ceilings only: a `target_ratio` breach
-  stays red.
+- **Regenerate every interpreter at once.** `make import-snapshot` rewrites
+  every `tests/unit/import_budget/ceilings/<major>.<minor>.json` in one run,
+  each minor measured in a venv synced for it under `.venv-budget/<minor>/`.
+  It first looks up every minor's interpreter (`uv python find --system`);
+  when one is missing it names it and writes nothing, and it writes no file
+  until every minor has measured clean. A new minor first needs a file of
+  its own in that directory (any content; the run replaces it). The next
+  Python's file, read by nightly's `python-canary`, is regenerated with the
+  rest. The run needs an interpreter for every minor that has a ceilings
+  file, the next Python's included (`uv python install <minor>` adds one),
+  and takes about 30 minutes, measuring the minors one after another.
+  `--update` moves ceilings only: a `target_ratio` breach stays red.
 - **Never regenerate to absorb a cost increase without saying so.** A
   regeneration that raises a baseline goes in a commit whose message says
   which surface grew, by how much, and why the verb needs it; the failure's
