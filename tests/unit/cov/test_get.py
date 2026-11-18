@@ -154,7 +154,9 @@ def all_hosts_of(monkeypatch):
 
 class TestResolveTester:
     def test_explicit_overrides_win(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("getpass.getuser", lambda: pytest.fail("should not be called"))
+        monkeypatch.setattr(
+            "otto.utils.invoking_user_label", lambda: pytest.fail("should not be called")
+        )
         monkeypatch.setattr(
             "otto.coverage.capture.gitio.config_value",
             lambda *a: pytest.fail("should not be called"),
@@ -163,7 +165,7 @@ class TestResolveTester:
         assert tester == {"name": "Bob", "email": "bob@x.com"}
 
     def test_defaults_from_getpass_and_git_config(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("getpass.getuser", lambda: "alice")
+        monkeypatch.setenv("LOGNAME", "alice")
         monkeypatch.setattr(
             "otto.coverage.capture.gitio.config_value", lambda root, key: "alice@example.com"
         )
@@ -171,7 +173,7 @@ class TestResolveTester:
         assert tester == {"name": "alice", "email": "alice@example.com"}
 
     def test_omits_email_when_git_config_unset(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("getpass.getuser", lambda: "alice")
+        monkeypatch.setenv("LOGNAME", "alice")
         monkeypatch.setattr("otto.coverage.capture.gitio.config_value", lambda root, key: None)
         tester = _resolve_tester(None, None, tmp_path)
         assert tester == {"name": "alice"}
@@ -182,7 +184,7 @@ class TestResolveTester:
         from otto.coverage.capture.gitio import GitCommandFailedError, NotAGitRepoError
 
         exc = NotAGitRepoError if failure == "not_a_git_repo" else GitCommandFailedError
-        monkeypatch.setattr("getpass.getuser", lambda: "alice")
+        monkeypatch.setenv("LOGNAME", "alice")
 
         def boom(root, key):
             raise exc("git config user.email failed (rc=128): ...")
@@ -194,7 +196,7 @@ class TestResolveTester:
     def test_missing_git_propagates_rather_than_reading_as_no_email(self, monkeypatch, tmp_path):
         from otto.coverage.capture.gitio import GitMissingError
 
-        monkeypatch.setattr("getpass.getuser", lambda: "alice")
+        monkeypatch.setenv("LOGNAME", "alice")
 
         def boom(root, key):
             raise GitMissingError("git executable not found")

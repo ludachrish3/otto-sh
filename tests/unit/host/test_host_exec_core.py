@@ -6,15 +6,23 @@ import dataclasses
 
 import pytest
 
+from otto.host.capability_grid import OptionSupport, UserSupport
+from otto.host.errors import UnsupportedOptionError
 from otto.host.host import BaseHost, ElevatedCommand, ShellCommand
+from otto.host.limitation import Limitation
+from otto.host.local_host import LocalHost
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
 from tests.conftest import active_context
 
+_CANNOT = Limitation(kind="device", affects="an option", reason="no such thing", measured_on=["m"])
+
 
 class _Recording(BaseHost):
     """The smallest concrete host: records what `_exec_one` and `_run_one` receive."""
+
+    capabilities = LocalHost.capabilities
 
     def __init__(self, ambient: str | None = None) -> None:
         # `name` is a plain dataclass field on `BaseHost` (its own generated
@@ -28,7 +36,6 @@ class _Recording(BaseHost):
         self.id = "rec"
         self.exec_calls: list[dict] = []
         self.run_calls: list[dict] = []
-        self.refuse_exec_expects_calls = 0
         self._ambient = ambient
 
     async def get(self, *a, **k):  # pragma: no cover — transfer is not under test
@@ -36,9 +43,6 @@ class _Recording(BaseHost):
 
     async def put(self, *a, **k):  # pragma: no cover — transfer is not under test
         raise NotImplementedError
-
-    def _refuse_exec_expects(self) -> None:
-        self.refuse_exec_expects_calls += 1
 
     def _ambient_user(self) -> str | None:
         return self._ambient
@@ -96,11 +100,15 @@ class TestAmbientIdentity:
     @pytest.mark.asyncio
     async def test_the_ambient_user_is_refused_where_a_named_one_would_be(self):
         class _Refusing(_Recording):
-            def _refuse_exec_user(self, user):
-                raise NotImplementedError(f"no users here: {user}")
+            capabilities = dataclasses.replace(
+                LocalHost.capabilities,
+                run_user=UserSupport.refused,
+                exec_user=UserSupport.refused,
+                user_refusal=_CANNOT,
+            )
 
         host = _Refusing(ambient="root")
-        with pytest.raises(NotImplementedError, match="no users here: root"):
+        with pytest.raises(UnsupportedOptionError, match=r"user= is not supported .*no such thing"):
             await host.exec("id")
 
 
@@ -186,13 +194,14 @@ class TestTheSharedCore:
     @pytest.mark.asyncio
     async def test_a_family_that_cannot_elevate_refuses_above_the_dry_run_arm(self):
         class _NoSudo(_Recording):
-            def _refuse_exec_sudo(self):
-                raise NotImplementedError("no sudo on this family")
+            capabilities = dataclasses.replace(
+                LocalHost.capabilities, sudo=OptionSupport.refused(limitation=_CANNOT)
+            )
 
         host = _NoSudo()
-        with pytest.raises(NotImplementedError, match="no sudo on this family"):
+        with pytest.raises(UnsupportedOptionError, match="sudo= is not supported"):
             await host.exec("id", sudo=True)
-        with active_context(dry_run=True), pytest.raises(NotImplementedError, match="no sudo"):
+        with active_context(dry_run=True), pytest.raises(UnsupportedOptionError):
             await host.exec("id", sudo=True)
         assert host.exec_calls == []
 
@@ -213,19 +222,26 @@ class TestTheSharedCore:
         assert host.exec_calls == []
 
     @pytest.mark.asyncio
-    async def test_the_refuse_exec_expects_seam_is_called_when_a_shell_command_carries_expects(
-        self,
+    @pytest.mark.parametrize("verb", ["run", "exec"])
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["live", "dry-run"])
+    async def test_a_family_that_refuses_expects_refuses_a_shell_command_carrying_them(
+        self, verb, dry_run
     ):
-        host = _Recording()
-        sc = ShellCommand(cmd="cat", expects=[("more", " ")])
-        await host.exec(sc)
-        assert host.refuse_exec_expects_calls == 1
+        """Expects carried by a ShellCommand, not the call, are refused all the same."""
 
-    @pytest.mark.asyncio
-    async def test_the_refuse_exec_expects_seam_is_not_called_when_expects_is_empty(self):
-        host = _Recording()
-        await host.exec("id")
-        assert host.refuse_exec_expects_calls == 0
+        class _NoPrompts(_Recording):
+            capabilities = dataclasses.replace(
+                LocalHost.capabilities, expects=OptionSupport.refused(limitation=_CANNOT)
+            )
+
+        host = _NoPrompts()
+        sc = ShellCommand(cmd="cat", expects=[("more", " ")])
+        with active_context(dry_run=dry_run), pytest.raises(UnsupportedOptionError) as raised:
+            await getattr(host, verb)(sc)
+        assert raised.value.option == "expects"
+        assert host.exec_calls == host.run_calls == []
+        await getattr(host, verb)("id")
+        assert len(host.exec_calls + host.run_calls) == 1, "no expects: nothing to refuse"
 
     @pytest.mark.asyncio
     async def test_a_non_sequence_expects_is_refused_by_name(self):
@@ -312,3 +328,24 @@ class TestOneCommandDifferential:
             run_result.retcode,
             run_result.value,
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("cmd", "expected"),
+        [
+            (ShellCommand(cmd="id", timeout=2.0), 2.0),
+            (ShellCommand(cmd="id"), 7.0),
+            ("id", 7.0),
+        ],
+        ids=["the-command-s-own-wins", "a-command-without-one-inherits", "a-plain-string"],
+    )
+    async def test_exec_and_run_resolve_the_same_timeout_from_the_same_input(self, cmd, expected):
+        """A ``ShellCommand``'s own timeout wins over the call's on both verbs, else the call's.
+
+        Not observable on a result, so not an ``exec-options`` arm: both verbs
+        resolve it through ``_resolve_command``, and this drives them with one input.
+        """
+        host = _Recording()
+        await host.exec(cmd, timeout=7.0)
+        await host.run(cmd, timeout=7.0)
+        assert (host.exec_calls[0]["timeout"], host.run_calls[0]["timeout"]) == (expected, expected)

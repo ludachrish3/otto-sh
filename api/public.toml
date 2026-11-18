@@ -637,6 +637,10 @@ why = "implementer-facing"
 positional = ["data"]
 why = "implementer-facing"
 
+[symbols."otto.host.command_frame:BashFrame.clean_output"]
+positional = ["text"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:BashFrame.parse_output"]
 positional = ["buffer"]
 why = "implementer-facing"
@@ -701,6 +705,10 @@ why = "implementer-facing"
 
 [symbols."otto.host.command_frame:CommandFrame.marks_begin"]
 positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:CommandFrame.clean_output"]
+positional = ["text"]
 why = "implementer-facing"
 
 [symbols."otto.host.command_frame:CommandFrame.parse_output"]
@@ -772,6 +780,10 @@ why = "implementer-facing"
 positional = ["data"]
 why = "implementer-facing"
 
+[symbols."otto.host.command_frame:RawFrame.clean_output"]
+positional = ["text"]
+why = "implementer-facing"
+
 [symbols."otto.host.command_frame:RawFrame.parse_output"]
 positional = ["buffer"]
 why = "implementer-facing"
@@ -840,6 +852,10 @@ why = "implementer-facing"
 
 [symbols."otto.host.command_frame:ZephyrFrame.output_value"]
 positional = ["region"]
+why = "implementer-facing"
+
+[symbols."otto.host.command_frame:ZephyrFrame.clean_output"]
+positional = ["text"]
 why = "implementer-facing"
 
 [symbols."otto.host.command_frame:ZephyrFrame.parse_output"]
@@ -1400,6 +1416,10 @@ why = "implementer-facing"
 positional = ["data"]
 why = "implementer-facing"
 
+[symbols."otto.host:BashFrame.clean_output"]
+positional = ["text"]
+why = "implementer-facing"
+
 [symbols."otto.host:BashFrame.parse_output"]
 positional = ["buffer"]
 why = "implementer-facing"
@@ -1464,6 +1484,10 @@ why = "implementer-facing"
 
 [symbols."otto.host:CommandFrame.marks_begin"]
 positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host:CommandFrame.clean_output"]
+positional = ["text"]
 why = "implementer-facing"
 
 [symbols."otto.host:CommandFrame.parse_output"]
@@ -1965,6 +1989,9 @@ why = "implementer-facing"
 construct = false
 subclass = false
 
+[symbols."otto.host:OptionSupport"]
+subclass = false
+
 [symbols."otto.host:OsProfile"]
 construct = false
 subclass = false
@@ -2125,6 +2152,10 @@ why = "implementer-facing"
 
 [symbols."otto.host:RawFrame.marks_begin"]
 positional = ["data"]
+why = "implementer-facing"
+
+[symbols."otto.host:RawFrame.clean_output"]
+positional = ["text"]
 why = "implementer-facing"
 
 [symbols."otto.host:RawFrame.parse_output"]
@@ -2464,6 +2495,10 @@ why = "implementer-facing"
 
 [symbols."otto.host:ZephyrFrame.output_value"]
 positional = ["region"]
+why = "implementer-facing"
+
+[symbols."otto.host:ZephyrFrame.clean_output"]
+positional = ["text"]
 why = "implementer-facing"
 
 [symbols."otto.host:ZephyrFrame.parse_output"]

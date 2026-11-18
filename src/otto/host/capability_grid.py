@@ -1,4 +1,6 @@
-"""What each host family promises for ``user=``, progress and session identity.
+"""What each host family promises for its options, progress and session identity.
+
+The options are ``user=``, ``sudo=`` and ``expects=``.
 
 One declaration per shipped host class, read by the documentation renderer and
 by the conformance surfaces — the same shape
@@ -15,9 +17,11 @@ including the two that reach a user without passing through that registry.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import Self, final
+
+from .limitation import Limitation
 
 if TYPE_CHECKING:
     # Type-only: a runtime import here would cycle back through host.py,
@@ -78,8 +82,9 @@ class UserSupport(str, Enum):
     refused = (
         "refused",
         (
-            "The verb raises `NotImplementedError` naming the alternative, and "
-            "refuses under a dry run too."
+            "The verb raises `NotImplementedError`, and refuses under a dry run "
+            "too. On `run` and `exec` it is `UnsupportedOptionError`, carrying the "
+            "family's declared reason."
         ),
     )
 
@@ -113,6 +118,45 @@ class SessionIdentity(str, Enum):
         "none",
         ("The connection's own identity is the only identity there is; nothing switches it."),
     )
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class OptionSupport:
+    """Whether one host family honours one option of ``run`` and ``exec``.
+
+    Build it with :meth:`honoured` or :meth:`refused`. A refused option
+    carries the :class:`~otto.host.limitation.Limitation` that says why the
+    device cannot do it, and ``run`` and ``exec`` raise
+    :exc:`~otto.host.errors.UnsupportedOptionError` from that record.
+    """
+
+    limitation: "Limitation | None"
+    """The reason the option is refused; ``None`` when it is honoured."""
+
+    @classmethod
+    def honoured(cls) -> "OptionSupport":
+        """Declare the option honoured."""
+        return cls(limitation=None)
+
+    @classmethod
+    def refused(cls, *, limitation: Limitation) -> "OptionSupport":
+        """Declare the option refused, for the reason *limitation* records."""
+        return cls(limitation=limitation)
+
+
+RunOption = Literal["sudo", "expects", "user"]
+"""An option of ``run`` and ``exec`` a family may declare it cannot honour."""
+
+
+def _require_device(field_name: str, limitation: "Limitation | None") -> None:
+    """Refuse a declared refusal that is not the device's: otto would be at fault."""
+    if limitation is not None and limitation.kind != "device":
+        raise ValueError(
+            f"HostCapabilities.{field_name}: a refused option is the device's limitation "
+            f"(kind 'device'), got kind {limitation.kind!r}; a gap otto could close is a "
+            f"bug, not a refusal"
+        )
 
 
 @final
@@ -151,6 +195,20 @@ class HostCapabilities:
     session_identity: SessionIdentity
     """Where the persistent session's identity comes from, and who may change it."""
 
+    sudo: OptionSupport
+    """Whether ``run(sudo=True)`` and ``exec(sudo=True)`` elevate, or are refused."""
+
+    expects: OptionSupport
+    """Whether ``run`` and ``exec`` answer ``expects=`` prompts, or are refused."""
+
+    user_refusal: "Limitation | None"
+    """Why ``run(user=...)`` or ``exec(user=...)`` is refused on this family.
+
+    Set exactly when :attr:`run_user` or :attr:`exec_user` is
+    :attr:`UserSupport.refused`, and ``None`` otherwise. ``put`` and ``get``
+    refuse a user in their own bodies, for reasons of their own.
+    """
+
     transfer_family: str = ""
     """The :attr:`~otto.host.transfer.base.BaseFileTransfer.host_families` key
     whose registered backends this family offers.
@@ -173,8 +231,32 @@ class HostCapabilities:
     note: str = ""
     """One sentence of family-specific caveat, published beside the row."""
 
+    def option_limitation(self, *, option: "RunOption") -> "Limitation | None":
+        """Return why this family refuses the ``run``/``exec`` *option*; ``None`` if honoured.
+
+        The one map from an option's name to its declaration: :attr:`sudo`,
+        :attr:`expects`, or :attr:`user_refusal` for ``user``.
+        """
+        if option == "user":
+            return self.user_refusal
+        return (self.sudo if option == "sudo" else self.expects).limitation
+
     def __post_init__(self) -> None:
-        """Refuse a declaration whose transfer column would render empty or twice."""
+        """Refuse a declaration whose transfer column would render empty or twice.
+
+        Also refuse a refusal with no device limitation behind it, and a
+        ``user_refusal`` that disagrees with :attr:`run_user` and :attr:`exec_user`.
+        """
+        refuses_user = UserSupport.refused in (self.run_user, self.exec_user)
+        if refuses_user != (self.user_refusal is not None):
+            raise ValueError(
+                "HostCapabilities: set user_refusal exactly when run_user or exec_user "
+                f"is refused, got run_user={self.run_user.value!r} "
+                f"exec_user={self.exec_user.value!r} user_refusal={self.user_refusal!r}"
+            )
+        _require_device("user_refusal", self.user_refusal)
+        _require_device("sudo", self.sudo.limitation)
+        _require_device("expects", self.expects.limitation)
         if bool(self.transfer_family) == bool(self.transfer):
             raise ValueError(
                 "HostCapabilities: set exactly one of transfer_family (the "

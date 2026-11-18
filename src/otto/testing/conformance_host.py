@@ -24,8 +24,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..host.capability_grid import HostCapabilities, SessionIdentity, UserSupport
+from ..host.capability_grid import HostCapabilities, RunOption, SessionIdentity, UserSupport
 from ..host.construction import check_coverage
+from ..host.errors import UnsupportedOptionError
 from ..host.host import BaseHost, Host
 from ..host.os_profile import _resolve_host_spec, _validate_host_class
 from ..host.transfer.base import BaseFileTransfer, ProgressGranularity
@@ -72,8 +73,11 @@ an async context manager rather than be a coroutine function itself."""
 
 
 @contextmanager
-def _dry_run() -> "Generator[None, None, None]":
+def _dry_run(*, dry_run: bool = True) -> "Generator[None, None, None]":
     """Install a dry-run :class:`~otto.context.OttoContext` for the block.
+
+    ``dry_run=False`` installs the same context with a live policy, for the
+    probes of a call that must be refused before anything is sent.
 
     A fresh context rather than a copy of whatever is active: the probe wants
     a dry-run policy and nothing else from the caller's environment, and the
@@ -88,7 +92,7 @@ def _dry_run() -> "Generator[None, None, None]":
     from ..run_context import OttoContext, reset_context, set_context
 
     token = set_context(
-        OttoContext(lab=Lab(name="otto-conformance"), policy=RunPolicy(dry_run=True))
+        OttoContext(lab=Lab(name="otto-conformance"), policy=RunPolicy(dry_run=dry_run))
     )
     try:
         yield
@@ -151,8 +155,10 @@ def _check_signature(
     )
 
 
-def _await_probe(coro_fn: "Callable[[], Coroutine[Any, Any, object]]") -> "Exception | None":
-    """Run one probe under dry-run and return what it raised, or ``None``.
+def _await_probe(
+    coro_fn: "Callable[[], Coroutine[Any, Any, object]]", *, dry_run: bool = True
+) -> "Exception | None":
+    """Run one probe under dry-run (or live) and return what it raised, or ``None``.
 
     ``asyncio.run`` needs a thread with no running loop, which is why both
     helpers are documented as synchronous-test helpers. Catches
@@ -167,7 +173,7 @@ def _await_probe(coro_fn: "Callable[[], Coroutine[Any, Any, object]]") -> "Excep
         await coro_fn()
 
     try:
-        with _dry_run():
+        with _dry_run(dry_run=dry_run):
             asyncio.run(_run())
     except Exception as e:  # noqa: BLE001 — the probe's outcome IS the measurement
         return e
@@ -227,6 +233,79 @@ def _probe_identity(instance: object, verb: str) -> "Exception | None":
     return _await_probe(lambda: call(user=_PROBE_USER))
 
 
+_OPTION_PROBES: "dict[RunOption, dict[str, object]]" = {
+    "sudo": {"sudo": True},
+    "expects": {"expects": [("__otto_conformance_probe_prompt__", "\\n")]},
+}
+"""The keyword each declared option is probed with, on ``run`` and ``exec``."""
+
+_UNTYPED_SEAMS = ("_run_one", "_exec_one")
+"""The two :class:`~otto.host.host.BaseHost` methods every ``run`` and ``exec``
+sends a command through. A live probe of a refused option replaces them on the
+instance, so a refusal that came after a command was sent is reported."""
+
+
+def _probe_option(
+    instance: object, verb: str, kwargs: "dict[str, object]", *, live: bool
+) -> "Exception | None":
+    """Call *verb* with *kwargs*, live or under a dry run; report a command it sent."""
+    call = getattr(instance, verb)
+    if not live:
+        return _await_probe(lambda: call(_PROBE_COMMAND, **kwargs))
+    sent: "list[str]" = []
+
+    async def _sent(cmd: str, *_a: object, **_k: object) -> None:
+        sent.append(cmd)
+        raise AssertionError(f"{verb}: sent {cmd!r} before refusing")
+
+    overridden = [name for name in _UNTYPED_SEAMS if name in vars(instance)]
+    saved = {name: vars(instance)[name] for name in overridden}
+    for name in _UNTYPED_SEAMS:
+        setattr(instance, name, _sent)
+    try:
+        raised = _await_probe(lambda: call(_PROBE_COMMAND, **kwargs), dry_run=False)
+    finally:
+        for name in _UNTYPED_SEAMS:
+            if name in saved:
+                setattr(instance, name, saved[name])
+            else:
+                delattr(instance, name)
+    if sent:
+        return AssertionError(f"sent {sent!r} before refusing")
+    return raised
+
+
+def _expect_options_hold(
+    c: ExpectCollector, capabilities: HostCapabilities, instance: object
+) -> None:
+    """Probe ``sudo`` and ``expects`` on ``run`` and ``exec`` against their declaration.
+
+    A refused option must raise :exc:`~otto.host.errors.UnsupportedOptionError`
+    live and under a dry run, with no command sent; a dry run of an honoured
+    one must complete, raising nothing (it is never called live: honouring it
+    would reach the target).
+    """
+    for option, kwargs in _OPTION_PROBES.items():
+        for verb in ("run", "exec"):
+            if capabilities.option_limitation(option=option) is None:
+                raised = _probe_option(instance, verb, kwargs, live=False)
+                c.expect(
+                    raised is None,
+                    msg=f"Host.{verb}: declared {option} honoured, but a dry-run "
+                    f"{verb}({option}=...) did not complete: {_outcome(raised)}",
+                )
+                continue
+            for live in (True, False):
+                raised = _probe_option(instance, verb, kwargs, live=live)
+                mode = "live" if live else "under a dry run"
+                c.expect(
+                    isinstance(raised, UnsupportedOptionError) and raised.option == option,
+                    msg=f"Host.{verb}: declared {option} refused, so {verb}({option}=...) "
+                    f"must raise UnsupportedOptionError {mode}, before sending anything; "
+                    f"got {_outcome(raised)}",
+                )
+
+
 _IDENTITY_VERBS = ("as_user", "switch_user")
 """The two verbs that change the persistent session's identity, probed against
 :attr:`~otto.host.capability_grid.HostCapabilities.session_identity`."""
@@ -255,8 +334,16 @@ def assert_host_conforms(cls: type, *, instance: "Host | None" = None) -> None:
     :class:`~otto.context.OttoContext`, so nothing connects and no bytes move.
     A verb declared :attr:`~otto.host.capability_grid.UserSupport.refused` must
     raise :exc:`NotImplementedError` — under a dry run too, which is what
-    forces the refusal above the dry-run arm rather than behind it. A verb
-    declared anything else must not. ``as_user``/``switch_user`` are probed the
+    forces the refusal above the dry-run arm rather than behind it; on ``run``
+    and ``exec`` it must be :exc:`~otto.host.errors.UnsupportedOptionError`.
+    A verb declared anything else must not. ``sudo=`` and ``expects=`` are
+    probed on ``run`` and ``exec`` against
+    :attr:`~otto.host.capability_grid.HostCapabilities.sudo` and
+    :attr:`~otto.host.capability_grid.HostCapabilities.expects`: a refused
+    option must raise :exc:`~otto.host.errors.UnsupportedOptionError` live and
+    under a dry run, with no command sent (the probe replaces the instance's
+    ``_run_one`` and ``_exec_one`` for the call); an honoured one must not be
+    refused under a dry run. ``as_user``/``switch_user`` are probed the
     same way against
     :attr:`~otto.host.capability_grid.HostCapabilities.session_identity`:
     ``none`` must refuse; ``as_user scoped`` must either complete or decline the
@@ -426,10 +513,11 @@ def _expect_declaration_holds(
         support = getattr(capabilities, field_name)
         raised = _probe(instance, verb)
         if support is UserSupport.refused:
+            wanted = UnsupportedOptionError if verb in ("run", "exec") else NotImplementedError
             c.expect(
-                isinstance(raised, NotImplementedError),
+                isinstance(raised, wanted),
                 msg=f"Host.{verb}: declared {field_name}={support.value!r}, so "
-                f"{verb}(user=...) must raise NotImplementedError under a dry run "
+                f"{verb}(user=...) must raise {wanted.__name__} under a dry run "
                 f"too — the refusal has to sit above the dry-run arm; got "
                 f"{_outcome(raised)}",
             )
@@ -445,6 +533,7 @@ def _expect_declaration_holds(
                 msg=f"Host.{verb}: declared {field_name}={support.value!r}, but a dry-run "
                 f"{verb}(user=...) raised {_outcome(raised)}",
             )
+    _expect_options_hold(c, capabilities, instance)
     identity = capabilities.session_identity
     if identity is SessionIdentity.bound_at_open:
         # The enum speaks about run's channel, not about as_user; a container's

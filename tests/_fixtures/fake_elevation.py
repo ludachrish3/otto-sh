@@ -20,9 +20,11 @@ are refused after authenticating, as real sudo refuses them. With
 reads is counted, one line per read, in ``reads``. A command runs with
 ``FAKE_ROOT=1``, which the stand-in ``id`` reads. ``su -c CMD`` prompts
 ``Password:`` on stderr, reads root's password from fd 0 once, and runs
-``sh -c CMD``. State lives in ``$FAKE_SUDO_DIR``: ``password``, ``listing``,
-``ts``, ``per-tty`` (the timestamp is kept per controlling terminal, as
-sudo's default ``timestamp_type=tty``), ``tries``, ``no-timestamp``, ``refuse-sh``,
+``sh -c CMD``; ``su - USER`` asks nothing and starts the ``sh`` ``PATH`` resolves with
+``FAKE_USER=USER``, whom the stand-in ``id -un`` then names. State lives
+in ``$FAKE_SUDO_DIR``: ``password``, ``listing``, ``ts``, ``per-tty`` (the
+timestamp is kept per controlling terminal, as sudo's default
+``timestamp_type=tty``), ``tries``, ``no-timestamp``, ``refuse-sh``,
 ``nopasswd`` and ``reads``.
 """
 
@@ -84,7 +86,10 @@ FAKE_ROOT=1 exec "$@"
 
 FAKE_SU = r"""#!/bin/sh
 # A stand-in for su -c: root's password ($FAKE_SUDO_DIR/password) from fd 0, once.
-[ "${1-}" = -c ] || { echo "su: only -c CMD is modelled" >&2; exit 1; }
+# `su - USER` (a switch) asks nothing and becomes USER, as the stand-in id names, in
+# the `sh` PATH resolves (a BusyBox cell's own, where its applets come first).
+[ "${1-}" = - ] && [ -n "${2-}" ] && FAKE_USER=$2 exec sh
+[ "${1-}" = -c ] || { echo "su: only -c CMD and - USER are modelled" >&2; exit 1; }
 printf 'Password: ' >&2
 IFS= read -r got || exit 1
 [ "$got" = "$(cat "$FAKE_SUDO_DIR/password")" ] || {
@@ -93,8 +98,10 @@ FAKE_ROOT=1 exec sh -c "$2"
 """
 
 FAKE_ID = r"""#!/bin/sh
-# `id` as the fake sudo's command sees it: root under FAKE_ROOT, the real one otherwise.
+# `id` as the fake sudo's command sees it: root under FAKE_ROOT, the user a
+# stand-in `su - USER` became under FAKE_USER, the real one otherwise.
 if [ "${FAKE_ROOT-}" = 1 ] && [ "${1-}" = -un ]; then echo root; exit 0; fi
+if [ -n "${FAKE_USER-}" ] && [ "${1-}" = -un ]; then echo "$FAKE_USER"; exit 0; fi
 exec /usr/bin/id "$@"
 """
 

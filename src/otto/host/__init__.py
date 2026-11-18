@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from ..result import CommandResult as CommandResult
     from ..result import Results as Results
     from .capability_grid import HostCapabilities as HostCapabilities
+    from .capability_grid import OptionSupport as OptionSupport
     from .capability_grid import SessionIdentity as SessionIdentity
     from .capability_grid import UserSupport as UserSupport
     from .command_frame import BashFrame as BashFrame
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
     from .errors import MountNotFoundError as MountNotFoundError
     from .errors import RawLandingError as RawLandingError
     from .errors import SessionSetupError as SessionSetupError
+    from .errors import UnsupportedOptionError as UnsupportedOptionError
     from .factory import create_host_from_dict as create_host_from_dict
     from .factory import host_context as host_context
     from .factory import host_identity as host_identity
@@ -142,6 +144,7 @@ if TYPE_CHECKING:
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
     "HostCapabilities": "otto.host.capability_grid",
+    "OptionSupport": "otto.host.capability_grid",
     "SessionIdentity": "otto.host.capability_grid",
     "UserSupport": "otto.host.capability_grid",
     "BashFrame": "otto.host.command_frame",
@@ -181,6 +184,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "ZephyrHost": "otto.host.embedded_host",
     "HostKeyRefusal": "otto.host.errors",
     "HostKeyRefusedError": "otto.host.errors",
+    "UnsupportedOptionError": "otto.host.errors",
     "MountNotFoundError": "otto.host.errors",
     "RawLandingError": "otto.host.errors",
     "SessionSetupError": "otto.host.errors",
@@ -313,6 +317,7 @@ __all__ = [
     "NcListenerCheck",
     "NcPortStrategy",
     "Omit",
+    "OptionSupport",
     "OsProfile",
     "OsType",
     "Pass",
@@ -355,6 +360,7 @@ __all__ = [
     "TransferProgressHandler",
     "UnixHost",
     "UnixHostSpec",
+    "UnsupportedOptionError",
     "UserSupport",
     "Userland",
     "ZephyrFrame",

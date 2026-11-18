@@ -17,6 +17,7 @@ from otto.host import EmbeddedHost, RemoteHost, ZephyrHost
 from otto.host.binary_loader import LlextHexLoader
 from otto.host.command_frame import ExecInput, ZephyrFrame
 from otto.host.element import Element
+from otto.host.errors import UnsupportedOptionError
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.options import TelnetOptions
 from otto.logger.mode import LogMode
@@ -263,47 +264,33 @@ class TestNotImplemented:
         assert result.value == "z: this console has no login step; nothing to reset"
 
     @pytest.mark.asyncio
-    async def test_exec_user_refused_on_embedded(self, host: EmbeddedHost):
-        """The refusal is `_refuse_exec_user`'s, which `exec()` calls ABOVE its
-        own dry-run arm — so a dry run refuses too rather than declining as
-        though the call could have been honoured."""
-        with pytest.raises(NotImplementedError, match="a serial console has no user to switch to"):
-            await host.exec("id", timeout=5.0, user="root")
-        with (
-            active_context(dry_run=True),
-            pytest.raises(NotImplementedError, match="a serial console has no user to switch to"),
-        ):
-            await host.exec("id", timeout=5.0, user="root")
-
-    @pytest.mark.asyncio
-    async def test_exec_sudo_refused_on_embedded(self, host: EmbeddedHost):
-        """The refusal is `_refuse_exec_sudo`'s, which `exec()` calls ABOVE its
-        own dry-run arm — so a dry run refuses too rather than declining as
-        though the call could have been honoured."""
-        with pytest.raises(NotImplementedError, match="no sudo"):
-            await host.exec("kernel version", sudo=True)
-        with (
-            active_context(dry_run=True),
-            pytest.raises(NotImplementedError, match="no sudo"),
-        ):
-            await host.exec("kernel version", sudo=True)
-
-    @pytest.mark.asyncio
-    async def test_run_user_refused_on_embedded(self, host: EmbeddedHost):
-        """Inherited from `RemoteHost._run_one`, so the message names the
-        CONCRETE class — this fixture is a ZephyrHost. Call `_run_one`
-        directly — `run()`'s dry-run/timeout layers must not be able to
-        short-circuit the branch under test."""
-        assert type(host).__name__ == "ZephyrHost"
-        with pytest.raises(
-            NotImplementedError, match=r"run\(user=\.\.\.\) is not supported on ZephyrHost"
-        ):
-            await host._run_one("id", timeout=5.0, user="root")
-        with pytest.raises(
-            NotImplementedError,
-            match=r"this family has no user to switch to",
-        ):
-            await host._run_one("id", timeout=5.0, user="root")
+    @pytest.mark.parametrize("verb", ["run", "exec"])
+    @pytest.mark.parametrize(
+        ("option", "kwargs"), [("sudo", {"sudo": True}), ("user", {"user": "root"})]
+    )
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["live", "dry-run"])
+    async def test_a_declared_refusal_is_the_one_named_error(
+        self, host: EmbeddedHost, verb, option, kwargs, dry_run
+    ):
+        """`run` and `exec` refuse `sudo=` and `user=` through `_refuse_option`,
+        ABOVE their dry-run arm, reading the family's declared limitation: one
+        error type and one message shape, and nothing reaches the console."""
+        sent = AsyncMock(side_effect=AssertionError("a command was sent"))
+        host._run_one = sent  # type: ignore[method-assign]
+        host._exec_one = sent  # type: ignore[method-assign]
+        limitation = (
+            EmbeddedHost.capabilities.user_refusal
+            if option == "user"
+            else EmbeddedHost.capabilities.sudo.limitation
+        )
+        assert limitation is not None
+        with active_context(dry_run=dry_run), pytest.raises(UnsupportedOptionError) as raised:
+            await getattr(host, verb)("kernel version", **kwargs)
+        assert raised.value.option == option
+        assert str(raised.value) == (
+            f"{host.name}: {option}= is not supported on this host: {limitation.reason}"
+        )
+        sent.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_put_user_refused_on_embedded(self, host: EmbeddedHost):
@@ -836,7 +823,7 @@ async def test_exec_refuses_an_ambient_user_on_an_embedded_host(host: EmbeddedHo
     assert await host.exec("kernel uptime")  # no ambient user yet: the call goes through
 
     mgr._set_current_user("root")
-    with pytest.raises(NotImplementedError, match=r"exec\(user=\.\.\.\)"):
+    with pytest.raises(UnsupportedOptionError, match=r"user= is not supported"):
         await host.exec("kernel uptime")
 
 

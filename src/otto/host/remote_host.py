@@ -571,22 +571,13 @@ class RemoteHost(BaseHost):
 
     @override
     def _ambient_user(self) -> str | None:
-        return self._live_session_mgr().ambient_user
+        """Report a switch recorded on the session manager, as a posix host does.
 
-    @override
-    def _refuse_run_user(self, user: str) -> None:
-        """Refuse ``run(user=...)``: this family has no user to switch to.
-
-        Only a family with no user to switch to reaches this: the unix family
-        honours *user* by wrapping the whole call in
-        :meth:`~otto.host.privilege.PosixPrivilege.as_user` and calling back in
-        with ``user=None``. The message names the CONCRETE class, so an
-        embedded host's refusal says so.
+        An embedded host has no ``as_user`` of its own, yet a switch recorded
+        on its manager must still reach ``exec``, so its refusal of a user
+        catches the inherited one too.
         """
-        raise NotImplementedError(
-            f"{self.name}: run(user=...) is not supported on "
-            f"{type(self).__name__} — this family has no user to switch to"
-        ) from None
+        return self._live_session_mgr().ambient_user
 
     ####################
     #  Dest dir resolution

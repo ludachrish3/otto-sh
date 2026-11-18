@@ -208,7 +208,9 @@ that broke.
 
 For a target that should carry the frame as its default (the way `ZephyrHost`
 defaults to `ZephyrFrame`), ship a host subclass instead — see
-{doc}`custom-host-classes`.
+{doc}`custom-host-classes`. That subclass inherits `EmbeddedHost`'s refusals
+of `sudo=` and `user=`, whose measurements are Zephyr's: redeclare them with
+your own device's, as that page shows.
 
 ### Bringing a new shell up
 

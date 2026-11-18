@@ -96,6 +96,7 @@ from otto.host.errors import (
     SessionSetupError,
     StagingRefusedError,
     UnsupportedOnUserlandError,
+    UnsupportedOptionError,
 )
 from otto.host.login_proxy import LoginProxyError
 from otto.host.loop_owner import HostLoopError
@@ -233,6 +234,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (MountNotFoundError, ValueError),
     (ListingError, ValueError),
     (UnsupportedOnUserlandError, RuntimeError),
+    (UnsupportedOptionError, RuntimeError),
     (RawLandingError, RuntimeError),
     (HopTransportTornDownError, RuntimeError),
     (HostLoopError, RuntimeError),

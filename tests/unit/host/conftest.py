@@ -388,8 +388,10 @@ class PlanRecorder(UnixHost):
             results.append(CommandResult(status=Status.Success, value="", command=cmd, retcode=0))
         return Results.collect(items=results)
 
-    def _refuse_exec_sudo(self) -> None:
-        raise TypeError("the plan vocabulary has no exec(sudo=True); use run(sudo=True)")
+    async def _exec_in_turn(self, cmd, *, sudo, **kwargs):  # ty: ignore[invalid-method-override] — the recorder narrows the vocabulary
+        if sudo:
+            raise TypeError("the plan vocabulary has no exec(sudo=True); use run(sudo=True)")
+        return await super()._exec_in_turn(cmd, sudo=sudo, **kwargs)
 
     async def _exec_one(
         self,

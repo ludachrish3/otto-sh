@@ -23,20 +23,31 @@ import pytest
 
 from otto.host.capability_grid import (
     HostCapabilities,
+    OptionSupport,
     SessionIdentity,
     UserSupport,
     shipped_host_families,
 )
 from otto.host.embedded_host import EmbeddedHost
+from otto.host.limitation import Limitation
 from otto.host.os_profile import register_host_class
 from otto.host.remote_host import RemoteHost
 from otto.host.specs import EmbeddedHostSpec
 from tests._fixtures.host_classes import host_classes_in_the_tree
 
 
+def _limitation(kind: str = "device") -> Limitation:
+    return Limitation(
+        kind=kind, affects="an option", reason="the device cannot", measured_on=["a bench"]
+    )
+
+
 def _capabilities(**overrides) -> HostCapabilities:
     """A valid declaration, so a test can vary exactly one thing about it."""
     fields = {
+        "sudo": OptionSupport.honoured(),
+        "expects": OptionSupport.honoured(),
+        "user_refusal": _limitation(),
         "run_user": UserSupport.refused,
         "exec_user": UserSupport.refused,
         "put_user": UserSupport.refused,
@@ -90,6 +101,48 @@ class TestTheDeclarationItself:
     @pytest.mark.parametrize("family", shipped_host_families(), ids=lambda f: f.name)
     def test_every_shipped_family_declares_its_capabilities(self, family):
         assert isinstance(family.capabilities, HostCapabilities)
+        for option in (family.capabilities.sudo, family.capabilities.expects):
+            assert isinstance(option, OptionSupport)
+
+    @pytest.mark.parametrize(
+        ("name", "sudo_refused"),
+        [
+            ("unix", False),
+            ("local", False),
+            ("container", False),
+            ("embedded", True),
+            ("zephyr", True),
+        ],
+    )
+    def test_each_shipped_family_declares_its_options(self, name, sudo_refused):
+        caps = next(f for f in shipped_host_families() if f.name == name).capabilities
+        assert (caps.sudo.limitation is not None) is sudo_refused
+        assert caps.expects == OptionSupport.honoured()
+        assert (caps.user_refusal is not None) is sudo_refused
+        for limitation in (caps.sudo.limitation, caps.user_refusal):
+            if limitation is not None:
+                assert limitation.kind == "device"
+                assert all(
+                    "tests/measurements/zephyr_privilege/" in m for m in limitation.measured_on
+                )
+
+    def test_a_refused_user_with_no_reason_is_refused(self):
+        with pytest.raises(ValueError, match="set user_refusal exactly when"):
+            _capabilities(user_refusal=None)
+
+    def test_a_reason_for_a_user_nothing_refuses_is_refused(self):
+        with pytest.raises(ValueError, match="set user_refusal exactly when"):
+            _capabilities(run_user=UserSupport.switch, exec_user=UserSupport.switch)
+
+    @pytest.mark.parametrize("field_name", ["sudo", "expects", "user_refusal"])
+    def test_a_refusal_that_is_a_library_s_is_refused(self, field_name):
+        """A refused option is the device's; anything else otto could fix."""
+        library = _limitation(kind="library")
+        value = (
+            library if field_name == "user_refusal" else OptionSupport.refused(limitation=library)
+        )
+        with pytest.raises(ValueError, match=rf"HostCapabilities\.{field_name}: .*kind 'device'"):
+            _capabilities(**{field_name: value})
 
     def test_switch_is_a_member_with_its_own_meaning(self):
         assert UserSupport.switch.value == "switch"
@@ -152,3 +205,17 @@ def test_every_host_class_in_the_tree_is_published_by_some_row():
             f"{cls.__module__}.{cls.__name__} is a host class no row speaks for; "
             f"add it to otto.host.capability_grid.shipped_host_families()"
         )
+
+
+@pytest.mark.parametrize("family", shipped_host_families(), ids=lambda f: f.name)
+def test_an_option_s_limitation_is_read_from_its_one_field(family):
+    """``option_limitation`` maps each ``run``/``exec`` option to the field declaring it."""
+    caps = family.capabilities
+    assert caps.option_limitation(option="sudo") is caps.sudo.limitation
+    assert caps.option_limitation(option="expects") is caps.expects.limitation
+    assert caps.option_limitation(option="user") is caps.user_refusal
+
+
+def test_an_option_support_s_field_is_keyword_only():
+    with pytest.raises(TypeError):
+        OptionSupport(None)  # ty: ignore[too-many-positional-arguments] — the refusal under test

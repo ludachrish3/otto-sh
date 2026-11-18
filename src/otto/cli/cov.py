@@ -85,8 +85,9 @@ output directory. It is the single retrieval command for both automated
 
 ``--tester-name STR`` / ``--tester-email STR``
     Tester identity annotated onto each capture (manual-kind tiers only).
-    Default to ``getpass.getuser()`` and ``git config user.email``
-    respectively; an unset email is omitted rather than annotated empty.
+    Default to the invoking user's login name (``anon`` when it has none)
+    and ``git config user.email`` respectively; an unset email is omitted
+    rather than annotated empty.
 
 ``--clean``
     Zero the counters of every host that contributed a capture, after a

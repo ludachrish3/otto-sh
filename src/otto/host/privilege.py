@@ -31,11 +31,10 @@ to the built-in ``"su"``).
 
 The mixin carries no fields and declares ``__slots__ = ()`` so it composes with
 the ``@dataclass(slots=True)`` hosts. Password sourcing is host-specific:
-``_sudo_password`` defaults to ``None`` (passwordless) and
-:class:`~otto.host.unix_host.UnixHost` overrides it from ``creds``.
-``_switch_creds`` defaults to ``self.creds`` (or ``[]`` when the host has no
-``creds`` field), so ``switch_user``/``as_user`` targets resolve against the
-same cred list ``_sudo_password`` does.
+``_switch_creds`` is ``self.creds`` (or ``[]`` when the host has no
+``creds`` field), and ``_sudo_password`` looks the acting user's password up
+in that same list, so ``switch_user``/``as_user`` targets and sudo's answer
+resolve against one cred list on every posix host.
 """
 
 import logging
@@ -202,24 +201,49 @@ class PosixPrivilege(UserlandHost):
 
     __slots__ = ()
 
-    def _sudo_password(self, user: str | None = None) -> SecretStr | None:  # noqa: ARG002 — the parameter belongs to the seam: this default knows no passwords for any user
-        """Password for ``sudo -S``, or None when sudo is passwordless here.
+    def _sudo_password(self, user: str | None = None) -> SecretStr | None:
+        """Return the password ``sudo -S`` must be answered with, or None when none is known.
 
-        *user* is the identity the elevated command runs as; ``None`` means the
-        session's own current user. The default knows no passwords either way.
+        ``sudo`` authenticates the user it is typed as, so the answer is
+        :meth:`_acting_user`'s credential in :meth:`_switch_creds`, scoped by
+        the host's term where it has one. *user* is the identity the elevated
+        command runs as -- an ``exec(user=X)`` switches a pooled session to X
+        before the command, so it is X's password sudo prompts for; ``None``
+        (every ``run``, and an ``exec`` with no user) is the default session's
+        current user. A host with no creds knows no password and asks nothing
+        of its session.
         """
-        return None
+        creds = self._switch_creds()
+        if not creds:
+            return None
+        # getattr, not self.term: LocalHost has no term concept at all.
+        c = cred_for(creds, self._acting_user(user), getattr(self, "term", None))
+        return c.password if c else None
 
     def _switch_creds(self) -> list[Cred]:
         """Creds used to resolve ``switch_user``/``as_user`` targets.
 
         Default ``getattr(self, "creds", [])`` — hosts with a ``creds`` field
         (:class:`~otto.host.unix_host.UnixHost`) get real cred-chain
-        resolution for free; hosts without one (:class:`~otto.host.local_host.LocalHost`,
-        :class:`~otto.host.docker_host.DockerContainerHost`) fall back to an
-        empty list (ad-hoc, passwordless ``su`` targets).
+        resolution for free; a host without one
+        (:class:`~otto.host.docker_host.DockerContainerHost`), or whose
+        ``creds`` is ``None``, falls back to an empty list (ad-hoc,
+        passwordless ``su`` targets).
         """
-        return getattr(self, "creds", [])
+        return getattr(self, "creds", None) or []
+
+    def _ambient_user(self) -> str | None:
+        """Report the user an enclosing ``as_user()`` switched the default session to, or ``None``.
+
+        The one reading for every posix host: ``as_user`` here is real (a
+        ``su`` on the persistent session, recorded on its session manager),
+        so an ``exec`` inside one -- a pooled shell, a subprocess, a fresh
+        ``docker exec`` -- runs as that user, never as the default ``run``
+        left. ``None`` (no default session, or one still running as the user
+        it opened as) leaves the call's own default in force: a container's
+        declared ``user``, a unix host's login, the local host's invoking user.
+        """
+        return self._live_session_mgr().ambient_user  # ty: ignore[missing-attribute]
 
     def _acting_user(self, user: str | None) -> str:
         """Who an elevated command runs as before it elevates: *user*, else the session's user.

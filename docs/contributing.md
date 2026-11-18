@@ -2150,7 +2150,9 @@ owner, never in the docs:
   not inherited) when the dialect causes it, the exec route's record in
   `EXEC_ROUTES` (`src/otto/host/session.py`) when the route does, or
   `ConsoleOptions.declared_limitations` (`src/otto/host/options.py`) when a
-  console server does, keyed by the lab-data field that states it.
+  console server does, keyed by the lab-data field that states it, or the
+  host family's `HostCapabilities` (`sudo`, `expects`, `user_refusal`) when
+  the device cannot honour a `run`/`exec` option at all.
 - **The record** is a {class}`~otto.host.limitation.Limitation` with `kind`
   (`"device"` or `"library"`), `affects` (the promise, in a user's words),
   `summary` (one short line with its headline number, for the exceptions

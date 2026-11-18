@@ -1,0 +1,57 @@
+# Zephyr shell: does it have sudo, su or user accounts?
+# guest: zephyr27_fat
+# release: 2.7
+# date (UTC): 2026-11-18T11:26:22+00:00
+# method: otto host.run() over the guest's console, one command per row; value is the parsed output
+
+$ kernel version
+# retcode=0
+Zephyr version 2.7.6
+
+$ sudo true
+# retcode=-8
+sudo: command not found
+
+$ su
+# retcode=-8
+su: command not found
+
+$ whoami
+# retcode=-8
+whoami: command not found
+
+$ id
+# retcode=-8
+id: command not found
+
+$ help
+# retcode=0
+Please press the <Tab> button to see all available commands.
+You can also use the <Tab> button to prompt or auto-complete all commands or its subcommands.
+You can try to call commands with <-h> or <--help> parameter for more information.
+
+Shell supports following meta-keys:
+  Ctrl + (a key from: abcdefklnpuw)
+  Alt  + (a key from: bf)
+Please refer to shell documentation for more details.
+
+Available commands:
+  bypass    :Bypass shell
+  clear     :Clear screen.
+  date      :Date commands
+  demo      :Demo commands
+  device    :Device commands
+  devmem    :Read/write physical memory"devmem address [width [value]]
+  dynamic   :Demonstrate dynamic command usage.
+  fs        :File system commands
+  help      :Prints the help message.
+  history   :Command history.
+  kernel    :Kernel commands
+  log       :Commands for controlling logger
+  log_test  :Log test
+  pcie      :PCI(e) device information
+  resize    :Console gets terminal screen size or assumes default in case the
+[13Creadout fails. It must be executed after each terminal width change
+[13Cto ensure correct text display.
+  shell     :Useful, not Unix-like shell commands.
+  version   :Show kernel version

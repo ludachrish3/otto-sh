@@ -23,7 +23,6 @@ from otto.docker.compose import (
     StartedStack,
     _project_parent_host,
     _resolve_container_id,
-    _safe_username,
     _stack_already_up,
     compose_command,
     compose_down,
@@ -1977,17 +1976,6 @@ async def test_compose_down_swallows_host_close_error(tmp_path):
     noisy.close.assert_called_once()
     # down command succeeded, so the returned result is Success
     assert result.status is Status.Success
-
-
-# ---------------------------------------------------------------------------
-# _safe_username
-# ---------------------------------------------------------------------------
-
-
-def test_safe_username_keyerror_returns_anon():
-    """Falls back to 'anon' when getpass.getuser() raises KeyError."""
-    with patch("otto.docker.compose.getpass.getuser", side_effect=KeyError("no user")):
-        assert _safe_username() == "anon"
 
 
 # ---------------------------------------------------------------------------
