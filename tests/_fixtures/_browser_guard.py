@@ -52,3 +52,13 @@ def browser_tests_could_run(config: pytest.Config) -> bool:
         return name in BROWSER_TEST_MARKERS
 
     return Expression.compile(markexpr).evaluate(matches)
+
+
+def is_browser_test(request: pytest.FixtureRequest) -> bool:
+    """Is this test ``browser``-marked? Ask BEFORE touching any Playwright fixture.
+
+    A bare ``page`` or ``context`` parameter would force browser
+    parametrization onto a suite's non-browser tests and pull sync
+    Playwright's event loop into the shared hostless process.
+    """
+    return request.node.get_closest_marker("browser") is not None

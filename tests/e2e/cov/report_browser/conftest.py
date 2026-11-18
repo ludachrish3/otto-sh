@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from otto import _webassets
-from tests._fixtures._browser_guard import browser_tests_could_run
+from tests._fixtures._browser_guard import browser_tests_could_run, is_browser_test
 from tests._fixtures._report_fixture import build_fixture_report
 from tests._fixtures._ts_bundle_filter import bundle_filter_drift_reason
 from tests._fixtures._ts_coverage import ts_coverage, write_ts_coverage
@@ -110,7 +110,7 @@ def _pageerror_guard(request: pytest.FixtureRequest) -> Iterator[None]:
     Scoped to ``browser``-marked tests only (the ``page`` fixture doesn't
     exist otherwise).
     """
-    if request.node.get_closest_marker("browser") is None:
+    if not is_browser_test(request):
         yield
         return
     page = request.getfixturevalue("page")

@@ -41,13 +41,14 @@ from otto.monitor.collector import MetricCollector
 from otto.monitor.export import build_db_export, build_session_metric_db
 from otto.monitor.server import _dist_index_path
 from otto.monitor.session import new_frame
-from tests._fixtures._browser_guard import browser_tests_could_run
+from tests._fixtures._browser_guard import browser_tests_could_run, is_browser_test
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 from tests._fixtures._static_shell import StaticShellHarness
 from tests._fixtures._ts_bundle_filter import bundle_filter_drift_reason
 from tests._fixtures._ts_coverage import ts_coverage, write_ts_coverage
 from tests._fixtures.paths import CHECKOUT_ROOT
+from tests.e2e.monitor.dashboard._input_trail import InputTrail
 
 _FIXTURES = CHECKOUT_ROOT / "web" / "fixtures"
 
@@ -481,3 +482,36 @@ def _ts_coverage_sink() -> Iterator[list[dict]]:
 def _ts_coverage(request: pytest.FixtureRequest, _ts_coverage_sink: list[dict]) -> Iterator[None]:
     """Autouse wrapper; shared body lives in tests/_fixtures/_ts_coverage.py."""
     yield from ts_coverage(request, _ts_coverage_sink)
+
+
+@pytest.fixture
+def input_trail(request: pytest.FixtureRequest) -> InputTrail:
+    """This test's input trail (#1154): every page's focus and text input, in order."""
+    trail = InputTrail()
+    trail.install(request.getfixturevalue("context"))
+    return trail
+
+
+@pytest.fixture(autouse=True)
+def _input_trail(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Record every browser test's input trail, and report it when the test fails (#1154).
+
+    Guarded with ``is_browser_test`` before touching any Playwright fixture.
+    The outcome is pytest-playwright's own ``rep_call``, the record it keeps
+    traces by, and the trail goes into the failure report as its own section.
+
+    Ordering: tests/e2e/conftest.py's ``_generous_browser_ceilings`` has
+    already created ``page`` by now. That is fine, and must stay so:
+    ``add_init_script`` reaches the context's existing pages from their next
+    navigation, and no autouse fixture navigates before this one runs (the
+    dashboard fixtures a test requests come after every autouse one). An
+    earlier fixture that navigated would leave its first document unrecorded.
+    """
+    if not is_browser_test(request):
+        yield
+        return
+    trail: InputTrail = request.getfixturevalue("input_trail")
+    yield
+    report = getattr(request.node, "rep_call", None)
+    if report is not None and report.failed:
+        request.node.add_report_section("teardown", "input trail (#1154)", trail.report())

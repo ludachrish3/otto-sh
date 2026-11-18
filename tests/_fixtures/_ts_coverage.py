@@ -24,6 +24,7 @@ import pytest
 from playwright.sync_api import CDPSession, Page
 
 from tests._ambient_env import ambient
+from tests._fixtures._browser_guard import is_browser_test
 from tests._fixtures._ts_bundle_filter import bundle_url_matches
 from tests._fixtures.paths import CHECKOUT_ROOT
 
@@ -124,7 +125,7 @@ def ts_coverage(request: pytest.FixtureRequest, sink: list[dict]) -> Iterator[No
     """
     if (
         not ambient("OTTO_TS_COVERAGE")
-        or request.node.get_closest_marker("browser") is None
+        or not is_browser_test(request)
         or request.node.get_closest_marker("soak") is not None
     ):
         yield
