@@ -51,7 +51,7 @@ import sys
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, get_args
 
 from scripts.collate_support_matrix import FAILURE_SUMMARY_LIMIT
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from enum import Enum
 
-    from otto.host.capability_grid import HostCapabilities
+    from otto.host.capability_grid import HostCapabilities, HostFamily
     from otto.host.command_frame import CommandFrame
     from otto.host.exec_route import ExecRoute
     from otto.host.limitation import Limitation
@@ -184,6 +184,26 @@ class Branch:
 
 
 @dataclass(frozen=True)
+class Unproven:
+    """One part of a surface's promise its contract runs on no device, in a reader's words.
+
+    For a contract whose arms run on every host but not every arm on every
+    host: the page says it as a numbered note, as a domain's narrowing does.
+    """
+
+    short: str
+    """The few words the promise table's **Not checked** cell carries."""
+
+    text: str
+    """The note's full sentence, with the reason and what checks it instead."""
+
+    kinds: "list[str]" = dataclass_field(default_factory=list)
+    """The host kinds (:data:`HOST_KIND_VOICE` keys) the note is about; empty for every host.
+
+    An entry that reaches none of them does not carry the note."""
+
+
+@dataclass(frozen=True)
 class Voice:
     """How to talk about ONE SURFACE to someone holding a device.
 
@@ -250,10 +270,12 @@ class Voice:
     reader_entry_narrowed: str = ""
     """Why the domain drops an ENTRY on hosts that entry reaches, for the same reader;
     empty when :attr:`reader_narrowed` already says it (:func:`reader_entry_narrowed`)."""
+    unproven: "list[Unproven]" = dataclass_field(default_factory=list)
+    """The parts of the promise the contract proves on no device, each a note on the page."""
     branches: "tuple[Branch, ...]" = ()
     """The observables this surface can offer, when it offers more than one.
 
-    Empty for a surface with a single observable, which is fourteen of the eighteen today.
+    Empty for a surface with a single observable, which is fifteen of the nineteen today.
     Non-empty means :attr:`capability` is never used for a MEASURED cell: the cell's
     own stored ``observable`` decides which arm ran, and an observable matching no arm
     -- or more than one -- publishes NO promise and fails the docs build.
@@ -498,6 +520,40 @@ VOICE: "dict[str, Voice]" = {
             "read back, so nothing on the device could show whether a command ran; a unit "
             "test checks that a dry run writes nothing to an open Zephyr session"
         ),
+    ),
+    "exec-options": Voice(
+        short="options",
+        capability=(
+            "pass `expects=`, `sudo=` or `user=` to `run` or `exec`, alone or together, on a "
+            "`ShellCommand` or inside `as_user()`, and get the same effect on every entry; "
+            "where the device cannot honour an option, the call raises "
+            "`UnsupportedOptionError` naming it, and nothing is typed"
+        ),
+        narrowed="the contract declares such a device outside its own domain",
+        unproven=[
+            Unproven(
+                short="`expects=` on a Zephyr board",
+                text=(
+                    "On a Zephyr board `expects=` is honoured, but its shell has no command "
+                    "that prompts and reads a line, so unit tests check it, not a device."
+                ),
+                kinds=["bed-zephyr"],
+            ),
+            Unproven(
+                short="`sudo=` with `user=` on a device",
+                text=(
+                    "`sudo=` together with `user=` runs on no device: no login on the test "
+                    "bed may do it, so only a stand-in `sudo` on the local machine checks it."
+                ),
+            ),
+            Unproven(
+                short="`user=` and `as_user()` without a second user",
+                text=(
+                    "`user=` and `as_user()` are checked only on hosts whose login has a "
+                    "second user to switch to."
+                ),
+            ),
+        ],
     ),
     "transfer-roundtrip": Voice(
         short="file roundtrip",
@@ -2433,14 +2489,15 @@ class ContractRow:
 
         A "not on" note is left out when one of *entry*'s "only on" notes
         already rules its hosts out: a reader told `exec-shell` runs only on
-        SSH hosts needs no note that it skips a Zephyr board.
+        SSH hosts needs no note that it skips a Zephyr board. A note that names
+        no host (:attr:`Voice.unproven`) is never ruled out.
         """
         mine = [note for note in self.notes if note.entry in (None, entry)]
         only = [note.hosts for note in mine if note.only]
         return [
             note
             for note in mine
-            if note.only or not any(not (note.hosts & hosts) for hosts in only)
+            if note.only or not note.hosts or not any(not (note.hosts & hosts) for hosts in only)
         ]
 
 
@@ -2599,6 +2656,10 @@ def not_checked_notes(
         ):
             if left_out:
                 notes.append(_entry_note(entry, among=among, left_out=left_out, reason=reason))
+    for unproven in VOICE[surface_id].unproven:
+        about = frozenset(pair for pair in every if pair[0] in unproven.kinds)
+        if not unproven.kinds or about:
+            notes.append(NotChecked(short=unproven.short, text=unproven.text, hosts=about))
     return notes
 
 
@@ -2681,6 +2742,10 @@ class DeclaredLimitation:
     """The ``console_options`` settings declaring it, as ``escapes_iac: false``
     (:attr:`~otto.host.options.ConsoleOptions.declared_limitations`)."""
 
+    families: "list[str]" = dataclass_field(default_factory=list)
+    """The host families whose :class:`~otto.host.capability_grid.HostCapabilities`
+    declare it as a refused option (``sudo``, ``expects`` or ``user_refusal``)."""
+
     @property
     def where(self) -> str:
         """Name the declaring frames, routes and console settings for a reader."""
@@ -2692,6 +2757,9 @@ class DeclaredLimitation:
         if self.consoles:
             settings = _join(_code([f"console_options.{name}" for name in self.consoles]))
             parts.append(f"a console whose host record sets {settings}")
+        if self.families:
+            plural = "ies" if len(self.families) > 1 else "y"
+            parts.append(f"the {_join(_code(self.families))} host famil{plural}")
         return _join(parts)
 
 
@@ -2711,21 +2779,28 @@ def declared_limitations(
     frames: "list[type[CommandFrame]] | None" = None,
     routes: "dict[ExecRoute, RouteRecord] | None" = None,
     consoles: "dict[str, Limitation] | None" = None,
+    families: "list[HostFamily] | None" = None,
 ) -> "list[DeclaredLimitation]":
-    """Every limitation declared on *frames*, *routes* and *consoles*: otto's own by default.
+    """Every limitation declared on *frames*, *routes*, *consoles* and *families*: otto's own.
+
+    Each source defaults to otto's own declarations.
 
     Grouped by object identity, in first-declared order (frames, then
-    routes, then console settings): a frame's is its ``exact_output``, a
-    route's are its record's ``limitations``, and a console setting's is
-    :attr:`ConsoleOptions.declared_limitations
-    <otto.host.options.ConsoleOptions.declared_limitations>`.
+    routes, then console settings, then host families): a frame's is its
+    ``exact_output``, a route's are its record's ``limitations``, a console
+    setting's is :attr:`ConsoleOptions.declared_limitations
+    <otto.host.options.ConsoleOptions.declared_limitations>`, and a family's
+    are its refused options' (:class:`~otto.host.capability_grid.HostCapabilities`
+    ``sudo``, ``expects`` and ``user_refusal``).
     """
+    from otto.host.capability_grid import RunOption, shipped_host_families
     from otto.host.options import ConsoleOptions
     from otto.host.session import EXEC_ROUTES
 
     frames = _builtin_frames() if frames is None else frames
     routes = EXEC_ROUTES if routes is None else routes
     consoles = ConsoleOptions.declared_limitations if consoles is None else consoles
+    families = shipped_host_families() if families is None else families
     grouped: "dict[int, DeclaredLimitation]" = {}
 
     def record(limitation: "Limitation") -> DeclaredLimitation:
@@ -2743,6 +2818,11 @@ def declared_limitations(
     for name, limitation in consoles.items():
         value = "true" if ConsoleOptions.declaring_value(name) else "false"
         record(limitation).consoles.append(f"{name}: {value}")
+    for family in families:
+        caps = family.capabilities
+        for limitation in (caps.option_limitation(option=o) for o in get_args(RunOption)):
+            if limitation is not None and family.name not in record(limitation).families:
+                record(limitation).families.append(family.name)
     return list(grouped.values())
 
 
@@ -2770,7 +2850,7 @@ def _not_checked_cell(row: ContractRow, entry: str, notes: "list[str]") -> str:
     :meth:`ContractRow.notes_for` *entry*, numbered by their place in the page's
     *notes*; "--" for none.
     """
-    own = row.notes_for(entry)
+    own = sorted(row.notes_for(entry), key=lambda note: notes.index(note.text))
     if not own:
         return "--"
     return "; ".join(f"{note.short} (note {notes.index(note.text) + 1})" for note in own)
@@ -3223,9 +3303,12 @@ def _applies_to(item: DeclaredLimitation, page: CommandPage) -> bool:
 
     A frame's or a console setting's limitation holds on every route that types
     into the session or reads that console, so on every command; a route's only
-    on the commands that can take that route.
+    on the commands that can take that route. A host family's refused option is
+    refused by ``run`` and ``exec`` alike, so it reaches every command too.
     """
-    return bool(item.frames or item.consoles or set(item.routes) & set(page.routes))
+    return bool(
+        item.frames or item.consoles or item.families or set(item.routes) & set(page.routes)
+    )
 
 
 def _narrowed(rows: "list[ContractRow]") -> "list[tuple[str, Branch]]":

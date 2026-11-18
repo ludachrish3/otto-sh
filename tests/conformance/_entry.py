@@ -38,7 +38,7 @@ from typing import Any
 
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.exec_route import ExecRoute
-from otto.host.host import BaseHost
+from otto.host.host import BaseHost, ShellCommand
 from otto.host.identity import ROOT_LOGIN
 from otto.host.local_host import LocalHost
 from otto.result import CommandResult
@@ -149,11 +149,26 @@ def _has_raw_channel_to_force_off(resolved: ResolvedCell) -> bool:
     return resolved.family == UNIX and resolved.cell.term == _SSH and not resolved.proxied_login
 
 
-def expected_route(resolved: ResolvedCell) -> str:
+def expected_route(
+    resolved: ResolvedCell, *, shell_bound: bool = False, direct_user: bool = False
+) -> str:
     """The route a command issued through *resolved*'s entry must report.
 
     From the cell's facts alone; see the module docstring for why never from
-    the host's own resolver.
+    the host's own resolver. *shell_bound* is a call that needs a shell or a
+    user (``expects=``, ``sudo=``, ``user=``), which changes the answer for
+    ``exec`` only, per family:
+
+    * local: ``pooled-shell``, since a bare subprocess has no pty to answer a
+      prompt on and no identity but otto's own;
+    * unix over ssh or telnet: ``pooled-shell``, since the raw ssh channel
+      cannot answer a prompt or switch user;
+    * unix on a console, and embedded: unchanged, since the one session ``run``
+      uses is the only one the line has.
+
+    *direct_user* is a call whose only shell need is its user, who has a login
+    of their own (a proxy-less cred): on unix over ssh with a raw channel to
+    take, ``exec`` connects as that user on an ``ssh-channel`` of their own.
     """
     entry = resolved.entry
     if entry == RUN:
@@ -163,9 +178,13 @@ def expected_route(resolved: ResolvedCell) -> str:
     if entry == EXEC_SHELL:
         return ExecRoute.POOLED_SHELL.value
     if resolved.family == LOCAL_FAMILY:
-        return ExecRoute.LOCAL_SUBPROCESS.value
+        return (ExecRoute.POOLED_SHELL if shell_bound else ExecRoute.LOCAL_SUBPROCESS).value
     if resolved.family == EMBEDDED or on_console(resolved):
         return ExecRoute.DEFAULT_SESSION.value
+    if direct_user and _has_raw_channel_to_force_off(resolved):
+        return ExecRoute.SSH_CHANNEL.value
+    if shell_bound and resolved.cell.term in {_SSH, _TELNET}:
+        return ExecRoute.POOLED_SHELL.value
     if resolved.cell.term == _SSH and not resolved.proxied_login:
         return ExecRoute.SSH_CHANNEL.value
     if resolved.cell.term in {_SSH, _TELNET}:
@@ -225,28 +244,72 @@ def opened(resolved: ResolvedCell) -> "AbstractAsyncContextManager[BaseHost]":
 async def issue(
     host: BaseHost,
     resolved: ResolvedCell,
-    cmd: str,
+    cmd: "str | ShellCommand",
     *,
     route_checked: bool = True,
+    ambient_user: bool = False,
+    direct_user: bool = False,
     **kwargs: Any,
 ) -> CommandResult:
     """Issue *cmd* through *resolved*'s entry, then assert the route it took.
 
     *route_checked* False skips the route assertion, for a call that takes no
-    route at all: a dry run declines before any route is chosen.
+    route at all: a dry run declines before any route is chosen. A call that
+    carries ``expects`` (:func:`effective_expects`), ``sudo`` or ``user`` is
+    checked as shell-bound
+    (:func:`expected_route`), and so is one issued inside ``as_user()``
+    (*ambient_user*). *direct_user*: the user the call runs as has a login of
+    their own (:func:`expected_route`); a call that names the cell's second
+    user reads that from the cell, so only an ambient user needs it passed.
     """
     if resolved.entry in {EXEC, EXEC_SHELL}:
         result = await host.exec(cmd, **kwargs)
     else:
         result = (await host.run(cmd, **kwargs)).only
     if route_checked:
-        check_route(resolved, result)
+        expects = effective_expects(cmd, kwargs.get("expects"))
+        needs_shell = expects or bool(kwargs.get("sudo"))
+        shell_bound = needs_shell or ambient_user or bool(kwargs.get("user"))
+        # A call that names the cell's second user states that user's fact
+        # itself, so no contract can issue such a call and forget it.
+        named_direct = (
+            kwargs.get("user") is not None
+            and kwargs.get("user") == resolved.switch_user
+            and resolved.switch_user_direct
+        )
+        check_route(
+            resolved,
+            result,
+            shell_bound=shell_bound,
+            direct_user=(direct_user or named_direct) and not needs_shell,
+        )
     return result
 
 
-def check_route(resolved: ResolvedCell, result: CommandResult) -> None:
-    """Assert *result* ran on the route *resolved*'s entry must take."""
-    expected = expected_route(resolved)
+def effective_expects(cmd: "str | ShellCommand", call_expects: Any) -> bool:
+    """Whether *cmd*, issued with the call's *call_expects*, carries any expect pairs.
+
+    The documented rule, stated here and not asked of otto: a
+    :class:`~otto.host.host.ShellCommand` whose own ``expects`` is set
+    (an empty list included) replaces the call's; otherwise the call's apply.
+    """
+    if isinstance(cmd, ShellCommand) and cmd.expects is not None:
+        return bool(cmd.expects)
+    return bool(call_expects)
+
+
+def check_route(
+    resolved: ResolvedCell,
+    result: CommandResult,
+    *,
+    shell_bound: bool = False,
+    direct_user: bool = False,
+) -> None:
+    """Assert *result* ran on the route *resolved*'s entry must take.
+
+    *shell_bound*, *direct_user*: see :func:`expected_route`.
+    """
+    expected = expected_route(resolved, shell_bound=shell_bound, direct_user=direct_user)
     assert result.route == expected, (
         f"{cell_label(resolved)}: the command ran on route {result.route!r}, expected {expected!r}"
     )
@@ -319,6 +382,12 @@ def _login_cred(entry: "dict[str, Any]", term: str, *, family: str) -> "dict[str
     if creds is None:
         raise LookupError(f"lab entry {entry.get('name', entry)!r} declares no creds")
     return next((cred for cred in creds if term in cred.get("protocols", [term])), None)
+
+
+def login_on(entry: "dict[str, Any]", term: str, *, family: str) -> "str | None":
+    """The login *entry*'s session over *term* authenticates as; ``None`` where none applies."""
+    pick = _login_cred(entry, term, family=family)
+    return None if pick is None else pick.get("login")
 
 
 def password_sudo_on(entry: "dict[str, Any]", term: str, *, family: str) -> bool:

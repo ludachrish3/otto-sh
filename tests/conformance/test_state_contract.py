@@ -169,7 +169,9 @@ async def test_an_exec_starts_from_its_own_state_and_leaves_none(
             await issue(host, resolved_cell, terminal.change)
             terminal_reads.append((await issue(host, resolved_cell, _LONG_EXEC)).value)
             terminal_reads.append((await issue(host, resolved_cell, terminal.read)).value)
-        other = resolved_cell.switch_user
+        # A stand-in second user is an identity `id` reports, with no login, rc
+        # or profile of theirs: "set up as them" would prove nothing about them.
+        other = None if resolved_cell.switch_user_stand_in else resolved_cell.switch_user
         as_other = (
             _fields((await issue(host, resolved_cell, read, user=other)).value)
             if other is not None
@@ -195,6 +197,8 @@ async def test_an_exec_starts_from_its_own_state_and_leaves_none(
         # exec as another user: a session that is them, set up as them.
         assert (as_other.user, as_other.hook) == (other, baseline.hook)
         state += f", and by exec as {other!r}: that user, set up as them"
+    elif resolved_cell.switch_user_stand_in:
+        state += "; exec as another user not run: the second user here is a stand-in"
     if terminal is None:
         note_observable(f"{state}; no terminal on this route")
         return

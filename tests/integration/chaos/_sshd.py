@@ -83,9 +83,20 @@ def generate_keypairs(keys_dir: Path) -> "tuple[Path, Path]":
 
 
 def write_sshd_config(
-    cfg_path: Path, *, port: int, host_key: Path, authorized_keys: Path, user: str
+    cfg_path: Path,
+    *,
+    port: int,
+    host_key: Path,
+    authorized_keys: Path,
+    user: str,
+    session_env: "dict[str, str] | None" = None,
 ) -> Path:
-    """Write a minimal non-root sshd config (pubkey only, loopback only)."""
+    """Write a minimal non-root sshd config (pubkey only, loopback only).
+
+    *session_env* is set in every session the daemon starts (``SetEnv``,
+    which sshd applies after its own default ``PATH``).
+    """
+    set_env = "".join(f'SetEnv {name}="{value}"\n' for name, value in (session_env or {}).items())
     cfg_path.write_text(
         f"""\
 ListenAddress 127.0.0.1:{port}
@@ -100,7 +111,7 @@ AuthorizedKeysFile {authorized_keys}
 AllowUsers {user}
 Subsystem sftp internal-sftp
 LogLevel VERBOSE
-"""
+{set_env}"""
     )
     return cfg_path
 
@@ -187,14 +198,16 @@ class LoopbackEndpoint:
 
 
 @contextlib.contextmanager
-def loopback_sshd(root: Path) -> Iterator[LoopbackEndpoint]:
+def loopback_sshd(
+    root: Path, *, session_env: "dict[str, str] | None" = None
+) -> Iterator[LoopbackEndpoint]:
     """Keys, a reserved port, a config and a running sshd under *root*; torn down on exit.
 
     THE one open/teardown sequence for every loopback sshd in this tree (the
     chaos lane's target, the hermetic conformance cell, the docker e2e
     parent). The port stays reserved (:func:`tests._fixtures.ports.reserved_port`)
     until sshd has stopped, so no other worker can be handed it while this
-    daemon may still hold it.
+    daemon may still hold it. *session_env* is :func:`write_sshd_config`'s.
     """
     host_key, client_key = generate_keypairs(root / "keys")
     with reserved_port() as port:
@@ -204,6 +217,7 @@ def loopback_sshd(root: Path) -> Iterator[LoopbackEndpoint]:
             host_key=host_key,
             authorized_keys=root / "keys" / "authorized_keys",
             user=getpass.getuser(),
+            session_env=session_env,
         )
         sshd = LoopbackSshd(config, root / "sshd.log")
         sshd.start(port)

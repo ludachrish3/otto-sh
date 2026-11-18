@@ -132,7 +132,26 @@ class ResolvedCell:
     """A second user this cell's login can become, read off the lab entry
     (:func:`~tests.conformance._entry.switch_user_on`), or ``None``: the user
     an ``exec(user=...)`` arm runs as. Set by the venues beside
-    :attr:`proxied_login`."""
+    :attr:`proxied_login`. The hermetic venue names the stand-in's user
+    where the entry names none (``tests/conformance/_cells.py``)."""
+
+    switch_user_direct: bool = False
+    """Whether :attr:`switch_user` has a login of its own (a proxy-less cred), so a
+    plain ``exec(user=...)`` on a raw ssh channel connects as them rather than
+    opening a shell that switches. True on the bed, whose second user is read
+    off the entry by :func:`~tests.conformance._entry.switch_user_on`; False for
+    the hermetic stand-in, reached by ``su`` from the login."""
+
+    switch_user_stand_in: bool = False
+    """Whether :attr:`switch_user` is the hermetic venue's stand-in: a name the stand-in
+    ``su - USER`` sets as the identity ``id`` reports, in a shell with no login, rc
+    or profile of theirs. A contract that proves more about the user than their
+    identity does not run its user arm on such a cell."""
+
+    switch_user_may_sudo: bool = False
+    """Whether :attr:`switch_user` may run ``sudo``: a fact of the device, set by
+    the venue from what it measured (``tests/conformance/_bed.py``,
+    ``BED_SWITCH_USER_MAY_SUDO``; the hermetic stand-in's ``sudo`` lets anyone)."""
 
     open_shell_host: "Callable[[], AbstractAsyncContextManager[BaseHost]] | None" = None
     """The same host as :attr:`open_host`, built with a registered no-op

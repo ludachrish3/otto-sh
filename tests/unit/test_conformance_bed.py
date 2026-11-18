@@ -68,6 +68,7 @@ from tests.conformance import conftest as _conformance_conftest
 from tests.conformance import test_cancel_contract as _cancel_contract
 from tests.conformance import test_dry_run_contract as _dry_run_contract
 from tests.conformance import test_exec_contract as _exec_contract
+from tests.conformance import test_options_contract as _options_contract
 from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_progress_contract as _progress_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
@@ -84,7 +85,7 @@ from tests.conformance._bed import (
     bed_space,
     build_bed_host,
 )
-from tests.conformance._cells import hermetic_space
+from tests.conformance._cells import STAND_IN_USER, hermetic_space
 from tests.conformance._console_safety import (
     FAMILY_RESOURCE_NAME,
     opens_a_single_client_console,
@@ -3298,6 +3299,41 @@ def test_the_dry_run_contract_covers_every_cell_with_a_mark_it_can_read_back() -
         )
 
 
+def test_the_options_contract_has_a_second_user_on_every_hermetic_cell_and_reads_the_bed_s() -> (
+    None
+):
+    """Which cells give the options contract its user arms, pinned both ways.
+
+    Every hermetic cell names the stand-in's user, reached by ``su`` (no
+    credential entry, no login of its own), marked as a stand-in and allowed
+    sudo, so ``user=``, ``as_user()`` and sudo-as-them run on every one;
+    a bed cell names the second user its lab entry reads,
+    whose own login it is, and who may not run sudo (the measured constant).
+    The options contract declares no domain: every drawn cell runs it.
+    """
+    assert not hasattr(_options_contract, "applicable_cell")
+    for resolved in hermetic_space():
+        facts = (
+            resolved.switch_user,
+            resolved.switch_user_direct,
+            resolved.switch_user_stand_in,
+            resolved.switch_user_may_sudo,
+        )
+        assert facts == (STAND_IN_USER, False, True, True), f"{cell_label(resolved)}: {facts}"
+    space = bed_space()
+    assert any(resolved.switch_user is not None for resolved in space), (
+        "no bed cell names a second user, so the bed runs no user= arm"
+    )
+    for resolved in space:
+        facts = (
+            resolved.switch_user_direct,
+            resolved.switch_user_stand_in,
+            resolved.switch_user_may_sudo,
+        )
+        expected = (resolved.switch_user is not None, False, False)
+        assert facts == expected, f"{cell_label(resolved)}: {facts}"
+
+
 NEW_STIMULUS_FIELDS = [
     "run_state_set_command",
     "exec_state_set_command",
@@ -3321,6 +3357,10 @@ NEW_STIMULUS_FIELDS = [
     "detached_long_running_command",
     "leave_mark_template",
     "mark_left_template",
+    "prompting_command",
+    "prompting_whoami_command",
+    "prompt_text",
+    "whoami_command",
 ]
 
 
@@ -3366,6 +3406,10 @@ def test_zephyr_declares_no_blocking_signal_stdin_state_terminal_or_mark_stimulu
             "detached_long_running_command",
             "leave_mark_template",
             "mark_left_template",
+            "prompting_command",
+            "prompting_whoami_command",
+            "prompt_text",
+            "whoami_command",
         ]:
             assert getattr(words, name) is None, name
         assert "{token}" in words.distinct_answer_template

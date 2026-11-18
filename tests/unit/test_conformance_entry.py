@@ -279,3 +279,21 @@ def test_a_marked_contract_draws_projected_cells_times_its_entries(monkeypatch):
     unmarked.config = metafunc.config
     _conformance_conftest.pytest_generate_tests(unmarked)
     assert unmarked.parametrized == space
+
+
+@pytest.mark.parametrize(
+    ("cmd", "call", "carries"),
+    [
+        pytest.param("true", [("x", "y")], True, id="call-only"),
+        pytest.param(("true", [("x", "y")]), None, True, id="command-only"),
+        pytest.param(("true", []), [("x", "y")], False, id="command-overrides-call-with-none"),
+        pytest.param(("true", None), [("x", "y")], True, id="command-inherits-call"),
+        pytest.param("true", None, False, id="neither"),
+    ],
+)
+def test_the_kit_predicts_expects_from_what_the_command_resolves_to(cmd, call, carries):
+    """A command's own ``expects``, an empty list included, replaces the call's."""
+    from otto.host.host import ShellCommand
+
+    issued = cmd if isinstance(cmd, str) else ShellCommand(cmd=cmd[0], expects=cmd[1])
+    assert _entry.effective_expects(issued, call) is carries

@@ -43,7 +43,7 @@ from jsonschema import Draft202012Validator
 from otto.host import process_stop
 from otto.host.command_frame import BashFrame
 from otto.host.exec_route import ExecRoute
-from otto.host.host import BaseHost, output_log_prefix
+from otto.host.host import BaseHost, ShellCommand, output_log_prefix
 from otto.host.limitation import Limitation
 from otto.host.session import RouteRecord, ShellSession
 from otto.host.transfer import (
@@ -51,6 +51,7 @@ from otto.host.transfer import (
     ProgressGranularity,
     aggregate_transfer,
 )
+from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.logger.relay import log_lines
 from otto.result import CommandResult, Result, Results
@@ -121,6 +122,7 @@ from tests.conformance import test_concurrency_contract as _concurrency_contract
 from tests.conformance import test_dry_run_contract as _dry_run_contract
 from tests.conformance import test_exec_contract as _exec_contract
 from tests.conformance import test_log_contract as _log_contract
+from tests.conformance import test_options_contract as _options_contract
 from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_progress_contract as _progress_contract
 from tests.conformance import test_signal_contract as _signal_contract
@@ -2579,24 +2581,53 @@ class _FakeHost:
 
     name = "fake"
 
-    async def run(self, command, timeout=None, log=LogMode.NORMAL):
-        commands = [command] if isinstance(command, str) else list(command)
+    #: What the options contract reads to pick its arms: a unix host's, which honours all three.
+    capabilities = UnixHost.capabilities
+
+    async def run(self, command, timeout=None, log=LogMode.NORMAL, expects=None):
+        commands = [command] if isinstance(command, (str, ShellCommand)) else list(command)
         return Results.collect(
             items=[
                 self._logged(
-                    self._routed(self._answer(one, timeout, self._state), "default-session"), log
+                    self._routed(
+                        self._prompted(one, expects) or self._answer(one, timeout, self._state),
+                        "default-session",
+                    ),
+                    one.log if isinstance(one, ShellCommand) and one.log is not None else log,
                 )
                 for one in commands
             ]
         )
 
-    async def exec(self, command, timeout=None, log=LogMode.NORMAL) -> CommandResult:
+    async def exec(self, command, timeout=None, log=LogMode.NORMAL, expects=None) -> CommandResult:
+        if isinstance(command, ShellCommand) and command.log is not None:
+            log = command.log
+        if (prompted := self._prompted(command, expects)) is not None:
+            # A call that answers a prompt needs a shell, as on a real ssh cell.
+            return self._logged(self._routed(prompted, "pooled-shell"), log)
         witnessed = self._witnesses.long_running_path(_outside_subshell(command))
         if witnessed is not None and timeout is None:
             await self._run_until_cancelled(witnessed)
         return self._logged(
             self._routed(self._answer(command, timeout, dict(self._state)), self.exec_route), log
         )
+
+    def _prompted(self, command, expects) -> "CommandResult | None":
+        """The prompting command's answer: its prompt, then the line *expects* typed.
+
+        ``None`` for any other command. The twisted host prints one value
+        whatever was typed.
+        """
+        if isinstance(command, ShellCommand):
+            expects = command.expects or expects
+            command = command.cmd
+        if command != POSIX.prompting_command or not expects:
+            return None
+        typed = expects[0][1].rstrip("\n")
+        if "every-prompt-answers-one-value" in self._twists:
+            typed = "otto-cf-one-value"
+        value = f"{POSIX.prompt_text}{typed}"
+        return CommandResult(status=Status.Success, value=value, command=command, retcode=0)
 
     def _log_output(self, output: str, mode: LogMode = LogMode.NORMAL) -> None:
         """The real host's output seam, looked up on ``BaseHost`` at call time.
@@ -2741,6 +2772,8 @@ class _FakeHost:
     def _honest(self, command: str) -> "tuple[int, str]":  # noqa: PLR0911 — one arm per command the vocabulary names
         if command == POSIX.succeeding_command:
             return 0, ""
+        if command == POSIX.whoami_command:
+            return 0, "fake"
         if (stdin := self._stdin_answer(command)) is not None:
             return 0, stdin
         if command == POSIX.failing_command:
@@ -3089,6 +3122,7 @@ CONTROLS = {
     "exec-cancel": _cancel_contract.test_control_with_the_stop_disabled_the_command_is_seen_running,
     "exec-log": _log_contract.test_control_a_log_that_drops_blank_lines_is_refused,
     "exec-dry-run": _dry_run_contract.test_control_a_command_issued_live_leaves_its_mark,
+    "exec-options": _options_contract.test_control_an_answer_otto_did_not_type_is_refused,
     "transfer-roundtrip": (
         _transfer_contract.test_control_the_roundtrip_comparison_rejects_a_corrupted_byte
     ),
@@ -3193,6 +3227,14 @@ HOST_CASES = [
         "no command leaves a mark",
         "exec-dry-run",
         ("the-mark-is-never-left",),
+        True,
+        False,
+    ),
+    ("the prompt is answered with what otto typed", "exec-options", (), True, True),
+    (
+        "every prompt answers one value",
+        "exec-options",
+        ("every-prompt-answers-one-value",),
         True,
         False,
     ),
@@ -6937,14 +6979,14 @@ def test_a_cell_nothing_has_watched_yet_still_describes_the_promise(committed):
 
 
 def test_a_surface_with_one_observable_still_promises_it(committed):
-    """The accept-control for all of the above: fourteen of the eighteen surfaces are unbranched.
+    """The accept-control for all of the above: fifteen of the nineteen surfaces are unbranched.
 
     Without it, a `promise_of` that answered "no promise" for everything would satisfy
     every refusal above and publish a page that promises nothing at all.
     """
     page = _page(committed)
     unbranched = [surface.id for surface in SURFACES if not VOICE[surface.id].branches]
-    assert len(unbranched) == 14, f"the tree's branching surfaces have changed: {unbranched}"
+    assert len(unbranched) == 15, f"the tree's branching surfaces have changed: {unbranched}"
     for surface_id in unbranched:
         cell = committed["cells"][surface_id]["gnu"]
         assert promise_of(surface_id, cell).capability == VOICE[surface_id].capability
@@ -7987,7 +8029,9 @@ def test_a_route_limitation_is_linked_only_from_the_commands_taking_that_route()
     for item in declared_limitations():
         link = f"<{exception_label(item)}>`\n"
         for command, page in COMMAND_PAGES.items():
-            reaches = bool(item.frames or item.consoles or set(item.routes) & set(page.routes))
+            reaches = bool(
+                item.frames or item.consoles or item.families or set(item.routes) & set(page.routes)
+            )
             assert (link in pages[f"{command}.md"]) is reaches, (command, item.where)
     ssh_only = next(i for i in declared_limitations() if i.routes == ["ssh-channel"])
     assert exception_label(ssh_only) not in pages["run.md"]
@@ -8002,7 +8046,7 @@ def test_a_limitation_declared_on_two_routes_is_one_row():
         ExecRoute.DEFAULT_SESSION: RouteRecord(implemented_by="otto", limitations={"a": shared}),
         ExecRoute.SSH_CHANNEL: RouteRecord(implemented_by="asyncssh", limitations={"a": other}),
     }
-    collected = declared_limitations(frames=[], routes=routes, consoles={})
+    collected = declared_limitations(frames=[], routes=routes, consoles={}, families=[])
     # By identity: an equal object declared elsewhere is its own record.
     assert [item.routes for item in collected] == [
         ["pooled-shell", "default-session"],
@@ -8422,3 +8466,29 @@ def test_a_host_every_entry_withholds_is_not_merged_into_the_domain_note():
         note.entry == EXEC and artifact in note.text and ENTRY_REASON[EXEC] in note.text
         for note in notes
     ), notes
+
+
+def test_every_part_of_a_promise_no_device_proves_is_a_note_in_every_entry_s_table():
+    """``exec-options``' arms that run on no device are qualified on the page, per entry."""
+    from scripts.render_support_matrix import VOICE
+
+    row = next(row for row in contract_rows() if row.surface_id == "exec-options")
+    unproven = VOICE["exec-options"].unproven
+    assert len(unproven) == 3
+    everywhere = {u.text for u in unproven if not u.kinds}
+    zephyr = next(u.text for u in unproven if u.kinds == ["bed-zephyr"])
+    for entry in row.entries:
+        assert everywhere <= {note.text for note in row.notes_for(entry)}, entry
+    assert zephyr in {note.text for note in row.notes_for("run")}
+    assert zephyr not in {note.text for note in row.notes_for("exec-shell")}
+
+
+@pytest.mark.parametrize("page", ["run.md", "exec.md"])
+def test_a_not_checked_cell_lists_its_notes_in_page_order(page):
+    """The committed pages, which ``render_support_matrix --check`` keeps generated."""
+    from tests._fixtures.paths import TESTS_ROOT
+
+    text = (TESTS_ROOT.parent / "docs" / "command-contracts" / page).read_text()
+    for line in text.splitlines():
+        numbers = [int(n) for n in re.findall(r"\(note (\d+)\)", line)]
+        assert numbers == sorted(numbers), line

@@ -63,6 +63,11 @@
       "contract": "tests/conformance/test_dry_run_contract.py::test_a_dry_run_reaches_no_device_and_returns_one_shape"
     },
     {
+      "id": "exec-options",
+      "title": "exec: an option has the same effect everywhere, or is refused by name",
+      "contract": "tests/conformance/test_options_contract.py::test_an_option_has_the_same_effect_everywhere_or_is_refused_by_name"
+    },
+    {
       "id": "transfer-roundtrip",
       "title": "transfer: put/get roundtrip preserves content",
       "contract": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content"
@@ -2999,6 +3004,35 @@
       }
     },
     "exec-dry-run": {
+      "busybox-1.16.1": {
+        "status": "untested"
+      },
+      "busybox-1.21.1": {
+        "status": "untested"
+      },
+      "busybox-1.28.1": {
+        "status": "untested"
+      },
+      "busybox-1.31.0": {
+        "status": "untested"
+      },
+      "busybox-1.35.0": {
+        "status": "untested"
+      },
+      "gnu": {
+        "status": "untested"
+      },
+      "zephyr-2.7": {
+        "status": "untested"
+      },
+      "zephyr-3.7": {
+        "status": "untested"
+      },
+      "zephyr-4.4": {
+        "status": "untested"
+      }
+    },
+    "exec-options": {
       "busybox-1.16.1": {
         "status": "untested"
       },
