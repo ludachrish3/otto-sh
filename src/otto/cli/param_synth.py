@@ -7,13 +7,12 @@ assigned ``__signature__`` reconstruct the bound-method call. Typer owns parsing
 help, validation, completion, and exit codes.
 """
 
-import copy
+import functools
 import inspect
 import types
 import typing
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 import typer
@@ -22,29 +21,64 @@ from ..utils import Arg, Exclude, Opt, split_on
 from .completers import completion_source
 
 
-def coerce_scalar(value: str, target: type) -> Any:
-    """Convert a raw string value to *target* (bool, int, float, Path, or str)."""
-    if target is bool:
-        return value.lower() in ("1", "true", "yes", "on")
-    if target is int:
-        return int(value)
-    if target is float:
-        return float(value)
-    if target is Path:
-        return Path(value)
-    return value
+@functools.cache
+def _element_adapter(elem_type: Any) -> Any:
+    """Return the cached pydantic ``TypeAdapter`` for one element type, built on first use.
+
+    ``None`` when pydantic cannot build a schema for the type (a plain user
+    class): such an element passes through as its string. Cached, so that is
+    decided once per type.
+    """
+    from pydantic import PydanticSchemaGenerationError, TypeAdapter
+
+    try:
+        return TypeAdapter(elem_type)
+    except PydanticSchemaGenerationError:
+        return None
 
 
-def parse_comma_list(raw: str | None, elem_type: type) -> list[Any] | None:
+def convert_element(segment: str, elem_type: Any, *, shown: str | None = None) -> Any:
+    """Validate one stripped comma-list or ``key=value`` segment as *elem_type*.
+
+    pydantic's lax mode does the conversion, so any type it can validate is an
+    element type. A bool accepts ``1/0/true/false/yes/no/on/off/t/f/y/n`` in any
+    case; anything else is refused, never read as ``False``. A type pydantic
+    cannot build a schema for gets the stripped string.
+
+    Args:
+        segment: The raw segment; it is stripped before validation.
+        elem_type: The declared element type.
+        shown: What a refusal quotes instead of the segment (the whole
+            ``key=value`` pair for a dict value).
+
+    Raises:
+        typer.BadParameter: The segment is not a valid *elem_type*. The message
+            is one line, the quoted segment and pydantic's short reason, which
+            Typer renders as ``Invalid value for '--x': ...``.
+    """
+    from pydantic import ValidationError
+
+    value = segment.strip()
+    adapter = _element_adapter(elem_type)
+    if adapter is None:
+        return value
+    try:
+        return adapter.validate_python(value, strict=False)
+    except ValidationError as e:
+        quoted = value if shown is None else shown
+        raise typer.BadParameter(f"{quoted!r}: {e.errors()[0]['msg']}") from None
+
+
+def parse_comma_list(raw: str | None, elem_type: Any) -> list[Any] | None:
     """Parse a comma-separated string into a typed list, returning ``None`` for a ``None`` input."""
     if raw is None:
         return None
     if raw == "":
         return []
-    return [coerce_scalar(s, elem_type) for s in split_on(raw)]
+    return [convert_element(s, elem_type) for s in split_on(raw)]
 
 
-def parse_kv_dict(raw: str | None, val_type: type) -> dict[str, Any] | None:
+def parse_kv_dict(raw: str | None, val_type: Any) -> dict[str, Any] | None:
     """Parse a ``key=value,...`` string into a typed dict.
 
     Returns ``None`` when *raw* is ``None``, or an empty dict when *raw* is an empty string.
@@ -56,7 +90,7 @@ def parse_kv_dict(raw: str | None, val_type: type) -> dict[str, Any] | None:
     out: dict[str, Any] = {}
     for pair in split_on(raw):
         key, _, val = pair.partition("=")
-        out[key] = coerce_scalar(val, val_type)
+        out[key.strip()] = convert_element(val, val_type, shown=pair.strip())
     return out
 
 
@@ -124,14 +158,15 @@ class CliBinding:
 
     Holds the synthesised ``inspect.Parameter`` objects that define the CLI
     signature (``params``), parameters excluded from the CLI that carry their
-    original defaults (``excluded``), and per-parameter converters that
-    reconstruct list or dict values from the comma-delimited CLI strings
-    (``converters``).
+    original defaults (``excluded``), and the declared defaults of the
+    comma-list/``key=value`` options (``omitted_defaults``). Those options
+    convert their string in Typer's own parse step, so an omitted one reaches
+    the command as ``None`` and the command substitutes a copy of its default.
     """
 
     params: list[inspect.Parameter] = field(default_factory=list)
     excluded: dict[str, Any] = field(default_factory=dict)
-    converters: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
+    omitted_defaults: dict[str, Any] = field(default_factory=dict)
 
 
 def _split_annotation(hint: Any) -> tuple[Any, tuple[Any, ...]]:
@@ -217,7 +252,7 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
 
     Returns:
         A :class:`CliBinding` with Typer-facing parameters, excluded params,
-        and converters for list/dict options.
+        and the declared defaults of list/dict options.
 
     Raises:
         ValueError: For a positional-only parameter (the command dispatches by
@@ -315,18 +350,25 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
                     )
             elem = (get_args(base) or (str,))[-1]
             parse = parse_comma_list if origin is list else parse_kv_dict
-            # Omitted (``None`` from Typer) is the parameter's own default (§6.6),
-            # copied so a verb that mutates it never changes the next call's.
-            declared = None if default is inspect.Parameter.empty else default
-            binding.converters[name] = lambda raw, e=elem, p=parse, d=declared: (
-                copy.deepcopy(d) if raw is None else p(raw, e)
-            )
+            # Omitted (``None`` from Typer) is the parameter's own default (§6.6);
+            # the command copies it, so a verb that mutates it never changes the
+            # next call's.
+            binding.omitted_defaults[name] = None if default is inspect.Parameter.empty else default
             opt_decls = _opt_decls(opt, name) if opt is not None else []
             # `typer.Option`'s signature is `Option(default=..., *param_decls, ...)`; a
             # name override must land in the vararg slot, so the leading `...` is
             # required — it's ignored in favor of the Python parameter's own default.
+            # ``parser=`` converts in Typer's parse step, so a bad element is a
+            # usage error (exit 2) before the command resolves any host. Typer
+            # does not call it on the ``None`` default.
             ann = Annotated[
-                str | None, typer.Option(..., *opt_decls, help=opt.help if opt else None)
+                str | None,
+                typer.Option(
+                    ...,
+                    *opt_decls,
+                    help=opt.help if opt else None,
+                    parser=lambda raw, e=elem, p=parse: p(raw, e),
+                ),
             ]
             binding.params.append(
                 inspect.Parameter(

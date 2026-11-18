@@ -8,6 +8,7 @@ that registers ``MyHost`` with a ``@cli_exposed`` method gets ``otto host <id> <
 with no extra wiring (the same first/third-party symmetry otto's own verbs use).
 """
 
+import copy
 import inspect
 import sys
 from collections.abc import Callable, Iterable
@@ -105,8 +106,8 @@ def make_method_command(
             fail(f"host {getattr(host, 'id', '?')!r} does not support {verb!r}.")
         call_kw = dict(binding.excluded)
         for name, value in kw.items():
-            conv = binding.converters.get(name)
-            call_kw[name] = conv(value) if conv is not None else value
+            omitted = value is None and name in binding.omitted_defaults
+            call_kw[name] = copy.deepcopy(binding.omitted_defaults[name]) if omitted else value
         # Filter only excluded-default keys to the params the concrete method accepts;
         # CLI-sourced keys (kw) are always kept so unexpected ones raise a loud TypeError.
         # The binding is built from the first-registered sample_func; a different
