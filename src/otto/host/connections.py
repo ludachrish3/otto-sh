@@ -40,7 +40,7 @@ from typing_extensions import final, override
 from ..errors import OttoError
 from ..models.base import Cred
 from ..registry import BackendRegistry, Ref, class_backend, registration_boundary
-from .login_proxy import LoginProxyError, default_login, resolve_chain
+from .login_proxy import LoginProxyError, cred_for, default_login, resolve_chain
 from .options import ConsoleOptions, FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import (
     CONSOLE_QUIESCE_BUDGET,
@@ -892,8 +892,13 @@ class ConnectionManager:
 
         The question ``_direct_cred_for`` answers by raising. A caller
         choosing between a raw channel authenticated as *user* and a
-        switched shell needs the answer without the exception.
+        switched shell needs the answer without the exception: a *user* no
+        credential entry names has no ssh login of their own, so the answer
+        is ``False`` and the caller switches to them (``su``), as
+        ``run(user=...)`` does.
         """
+        if cred_for(self._creds, user, "ssh") is None:
+            return False
         direct, hops = resolve_chain(self._creds, target_login=user, protocol="ssh")
         return not hops and direct.login == user
 

@@ -26,8 +26,11 @@ something you call.
 The command is wrapped as `SUDO_PROMPT='otto-sudo-<random>:' sudo -S <cmd>`,
 or as `su -c '<cmd>'` on a host whose userland has `su` and no `sudo`. On a
 {class}`~otto.host.unix_host.UnixHost` the password (from `creds`: the login
-user's for sudo, root's for su) is auto-answered through the expect channel;
-`LocalHost`/Docker assume passwordless sudo by default. `exec(sudo=True)`
+user's for sudo, root's for su) is auto-answered through the expect channel.
+A {class}`~otto.host.local_host.LocalHost` answers sudo from the invoking
+user's credential when `LocalHost(creds=...)` holds one; the built-in `local`
+host is built with none, so on it sudo must not ask for a password. Docker
+assumes passwordless sudo. `exec(sudo=True)`
 on a shell session types one of two sudo forms, a per-host option
 ({ref}`sudo-form`). Caller-supplied
 `expects` are preserved (the password answer is tried first). The password
@@ -35,7 +38,10 @@ travels as the cred's own `SecretStr` and is unwrapped only inside the
 session's transport write (what a traceback then shows is
 {ref}`hidden-library-frames`); a caller's own expect may answer with a
 `SecretStr` the same way. Embedded/RTOS
-hosts raise `NotImplementedError`.
+hosts refuse `sudo=True` on `run` and `exec` with
+{class}`~otto.host.errors.UnsupportedOptionError`, under a dry run too: the
+device shell has no `sudo` or `su` (the declared exceptions are on
+{doc}`/command-contracts/index`).
 
 ### Where the password goes
 

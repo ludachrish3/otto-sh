@@ -4,14 +4,14 @@ from otto.reservations import resolve_username
 
 
 def test_holder_overrides(monkeypatch):
-    monkeypatch.setattr("getpass.getuser", lambda: "local-user")
+    monkeypatch.setenv("LOGNAME", "local-user")
     identity = resolve_username("alice")
     assert identity.username == "alice"
     assert identity.source == "--holder"
 
 
-def test_none_falls_through_to_getpass(monkeypatch):
-    monkeypatch.setattr("getpass.getuser", lambda: "local-user")
+def test_none_falls_through_to_the_login_name(monkeypatch):
+    monkeypatch.setenv("LOGNAME", "local-user")
     identity = resolve_username(None)
     assert identity.username == "local-user"
     assert identity.source == "$USER"
@@ -19,7 +19,7 @@ def test_none_falls_through_to_getpass(monkeypatch):
 
 def test_empty_string_treated_as_not_supplied(monkeypatch):
     """An empty --holder value should fall through, not impersonate "" ."""
-    monkeypatch.setattr("getpass.getuser", lambda: "local-user")
+    monkeypatch.setenv("LOGNAME", "local-user")
     identity = resolve_username("")
     assert identity.username == "local-user"
     assert identity.source == "$USER"

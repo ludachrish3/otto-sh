@@ -1,6 +1,6 @@
 """Effective-user resolution for the reservation check.
 
-Precedence: ``--holder USERNAME`` > ``getpass.getuser()``.
+Precedence: ``--holder USERNAME`` > ``otto.utils.invoking_user_label``.
 
 There is deliberately no persistent config or environment-variable source.
 A CLI flag is always visible on the command line that uses it; a sticky
@@ -10,7 +10,6 @@ under someone else's identity for weeks without realizing.  When
 banner so the override is impossible to miss.
 """
 
-import getpass
 from dataclasses import dataclass
 from typing import Literal
 
@@ -67,4 +66,6 @@ def resolve_username(holder: str | None) -> ResolvedIdentity:
     """
     if holder:
         return ResolvedIdentity(username=holder, source="--holder")
-    return ResolvedIdentity(username=getpass.getuser(), source="$USER")
+    from ..utils import invoking_user_label
+
+    return ResolvedIdentity(username=invoking_user_label(), source="$USER")

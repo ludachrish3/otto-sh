@@ -24,7 +24,7 @@ What each layer adds:
 | {class}`~otto.host.unix_host.UnixHost` | SSH/Telnet sessions, file ops, privilege, kernel modules, toolchains |
 | {class}`~otto.host.embedded_host.EmbeddedHost` | console-only exec semantics, binary load/unload, on-device filesystems |
 | {class}`~otto.host.embedded_host.ZephyrHost` | Zephyr RTOS defaults |
-| {class}`~otto.host.local_host.LocalHost` | subprocess on the machine otto runs on |
+| {class}`~otto.host.local_host.LocalHost` | subprocess on the machine otto runs on; a pooled local shell for a call that needs one |
 | {class}`~otto.host.docker_host.DockerContainerHost` | `docker exec` via a parent `UnixHost` |
 
 {class}`~otto.host.local_host.LocalHost` exists so instructions can mix local
@@ -112,17 +112,30 @@ get there.
 ### The exec pool: one free-list per user
 
 Where an `exec` cannot have a channel of its own (telnet, a proxied login, a
-`session_setup` hook, a call that needs a shell), it runs on a pooled shell
-session, and `SessionManager` keeps one free-list of idle ones per user
+`session_setup` hook, a call that needs a shell, another user), it runs on a
+pooled shell session, and `SessionManager` keeps one free-list of idle ones per user
 (`_exec_pools`, keyed by `_pool_key`: the call's `user`, else the login, so
 `exec()` and `exec(user=<the login>)` share one). A session for another user
 is opened **for** them, in `SessionManager.open_session`'s order: their own
 SSH login when they have a direct credential on an SSH host (no proxy hops),
-otherwise the login's session with its proxy hops and then a switch to them;
+otherwise the login's session with its proxy hops and then a switch to them.
+A user no credential entry names has no SSH login of their own, so `exec`
+switches to them with `su` the way `run(user=...)` does, rather than
+refusing the call;
 then the session-setup hook, which therefore sets the session up as them.
 Nothing is switched per call, and a switch that cannot be made fails the
 open. On a `console` term there is no pool: `exec(user=...)` switches the
 one session inside its line turn ({ref}`console-term`).
+
+The local host keeps the same pool over local shells. Its plain `exec` is a
+subprocess of its own; one with `expects=`, `sudo=` or `user=` (or inside an
+`as_user()` block) runs on a pooled local shell instead. The shells start as
+the invoking user, which is the login there, and a switch to another user is
+the same switch a remote host makes: the target's credential from
+`LocalHost(creds=...)` when it has one, otherwise an ad-hoc `su`. `sudo` is
+answered from the invoking user's credential when it asks, by the lookup every
+posix host shares; with none, nothing answers and the command fails as sudo
+fails.
 
 Retention: a session goes back to its user's free-list after every `exec`
 that leaves it alive, still that user, and with its terminal record intact,

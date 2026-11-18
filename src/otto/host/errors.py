@@ -360,6 +360,34 @@ class MountNotFoundError(OttoError, ValueError):
     """
 
 
+class UnsupportedOptionError(OttoError, NotImplementedError):
+    """A ``run`` or ``exec`` option the host family can never honour.
+
+    Raised before anything is sent, under a dry run too, from the family's
+    declared limitation (:attr:`~otto.host.capability_grid.HostCapabilities.sudo`,
+    :attr:`~otto.host.capability_grid.HostCapabilities.expects` or
+    :attr:`~otto.host.capability_grid.HostCapabilities.user_refusal`). The
+    message names the option, the host and the limitation's reason.
+    ``NotImplementedError``, so a caller that caught the bare refusal keeps
+    catching it.
+    """
+
+    option: str
+    """The refused option, ``sudo``, ``user`` or ``expects``."""
+
+    host: str
+    """Which host refused it, by name."""
+
+    reason: str
+    """The declared limitation's reason, which says why."""
+
+    def __init__(self, *, option: str, host: str, reason: str) -> None:
+        self.option = option
+        self.host = host
+        self.reason = reason
+        super().__init__(f"{host}: {option}= is not supported on this host: {reason}")
+
+
 # Spec: docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
 class UnsupportedOnUserlandError(OttoError, RuntimeError):
     """The host's userland provides no way to do what otto was asked to do.

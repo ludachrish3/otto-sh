@@ -303,17 +303,7 @@ class TestTheBehaviouralRule:
     def test_a_verb_declared_refused_that_honours_the_call_is_refused(self, monkeypatch):
         """Flip ``local``'s ``put_user`` promise; the class keeps refusing, so it drifts."""
         monkeypatch.setattr(
-            LocalHost,
-            "capabilities",
-            type(LocalHost.capabilities)(
-                run_user=UserSupport.refused,
-                exec_user=UserSupport.refused,
-                put_user=UserSupport.chown,
-                get_user=UserSupport.refused,
-                show_progress=False,
-                session_identity=LocalHost.capabilities.session_identity,
-                transfer="none",
-            ),
+            LocalHost, "capabilities", replace(LocalHost.capabilities, put_user=UserSupport.chown)
         )
         with pytest.raises(AssertionError, match=r"Host\.put: declared put_user='chown'"):
             assert_host_conforms(LocalHost, instance=LocalHost())
@@ -324,20 +314,20 @@ class TestTheBehaviouralRule:
         Under ``--dry-run`` such a verb reports a decline for a call the family
         could never honour, which reads to a user as "it would have worked".
         """
-        monkeypatch.setattr(LocalHost, "_refuse_exec_user", lambda self, user: None)
+        monkeypatch.setattr(ZephyrHost, "_refuse_option", lambda self, option: None)
         with pytest.raises(
             AssertionError,
             match=r"Host\.exec: declared exec_user='refused'.*above the dry-run arm",
         ):
-            assert_host_conforms(LocalHost, instance=LocalHost())
+            assert_host_conforms(ZephyrHost, instance=_embedded())
 
     def test_the_probe_reports_an_unexpected_exception_rather_than_swallowing_it(self, monkeypatch):
-        def boom(self, user):
+        def boom(self, option):
             raise RuntimeError("probe blew up")
 
-        monkeypatch.setattr(LocalHost, "_refuse_exec_user", boom)
+        monkeypatch.setattr(ZephyrHost, "_refuse_option", boom)
         with pytest.raises(AssertionError, match=r"RuntimeError: probe blew up"):
-            assert_host_conforms(LocalHost, instance=LocalHost())
+            assert_host_conforms(ZephyrHost, instance=_embedded())
 
     def test_a_keyboard_interrupt_during_a_probe_propagates_rather_than_being_reported(
         self, monkeypatch
@@ -349,12 +339,12 @@ class TestTheBehaviouralRule:
         under test had done something wrong.
         """
 
-        def stopped(self, user):
+        def stopped(self, option):
             raise KeyboardInterrupt
 
-        monkeypatch.setattr(LocalHost, "_refuse_exec_user", stopped)
+        monkeypatch.setattr(ZephyrHost, "_refuse_option", stopped)
         with pytest.raises(KeyboardInterrupt):
-            assert_host_conforms(LocalHost, instance=LocalHost())
+            assert_host_conforms(ZephyrHost, instance=_embedded())
 
     def test_an_honourable_verb_raising_something_else_is_reported_too(self):
         """The other arm of the same rule: a probe blowing up is a finding, not noise."""
@@ -373,8 +363,70 @@ class TestTheBehaviouralRule:
 
     def test_without_an_instance_only_the_structural_rules_run(self, monkeypatch):
         """The same drifted declaration passes when nothing is there to probe."""
-        monkeypatch.setattr(LocalHost, "_refuse_exec_user", lambda self, user: None)
-        assert_host_conforms(LocalHost)
+        monkeypatch.setattr(ZephyrHost, "_refuse_option", lambda self, option: None)
+        assert_host_conforms(ZephyrHost)
+
+
+class TestTheOptionRule:
+    """``sudo=`` and ``expects=`` on ``run`` and ``exec``, against their declaration."""
+
+    def test_a_declared_refusal_that_is_not_raised_is_reported(self, monkeypatch):
+        """Drop the refusal; ``sudo`` then reaches the base ``_elevate``, which is
+        not the named error, so the probe reports both verbs."""
+        monkeypatch.setattr(ZephyrHost, "_refuse_option", lambda self, option: None)
+        with pytest.raises(AssertionError) as raised:
+            assert_host_conforms(ZephyrHost, instance=_embedded())
+        for verb in ("run", "exec"):
+            assert f"Host.{verb}: declared sudo refused" in str(raised.value)
+
+    def test_a_refusal_after_a_command_was_sent_is_reported(self):
+        """The live probe replaces the two send seams; a refusal behind them is a send."""
+
+        class Late(ZephyrHost):
+            """Sends a sudo command first, then refuses it as declared."""
+
+            async def _exec_in_turn(self, cmd, **kwargs):
+                if kwargs["sudo"] and not is_dry_run():
+                    await self._exec_one(cmd, timeout=1.0)
+                return await super()._exec_in_turn(cmd, **kwargs)
+
+            async def _run_in_turn(self, cmds, **kwargs):
+                if kwargs["sudo"] and not is_dry_run():
+                    await self._run_one(cmds, timeout=1.0)
+                return await super()._run_in_turn(cmds, **kwargs)
+
+        with pytest.raises(AssertionError, match=r"got AssertionError: sent \['true'\]"):
+            assert_host_conforms(Late, instance=_embedded(Late))
+
+    def test_a_declared_honour_that_is_refused_is_reported(self):
+        """``expects`` is declared honoured; a family refusing it anyway drifts."""
+
+        class RefusesExpects(ZephyrHost):
+            def _refuse_option(self, option):
+                if option == "expects":
+                    raise NotImplementedError("no prompts here")
+                super()._refuse_option(option)
+
+        with pytest.raises(
+            AssertionError, match=r"declared expects honoured, but a dry-run run\(expects=\.\.\.\)"
+        ):
+            assert_host_conforms(RefusesExpects, instance=_embedded(RefusesExpects))
+
+    def test_a_declared_honour_that_raises_anything_is_reported(self):
+        """Honoured means a dry run completes: any exception, not only a refusal, drifts."""
+
+        class BreaksOnExpects(ZephyrHost):
+            def _refuse_option(self, option):
+                if option == "expects":
+                    raise RuntimeError("prompts break this host")
+                super()._refuse_option(option)
+
+        with pytest.raises(
+            AssertionError,
+            match=r"declared expects honoured, but a dry-run run\(expects=\.\.\.\) "
+            r"did not complete: RuntimeError: prompts break this host",
+        ):
+            assert_host_conforms(BreaksOnExpects, instance=_embedded(BreaksOnExpects))
 
 
 class TestTheSessionIdentityRule:

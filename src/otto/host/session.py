@@ -4410,8 +4410,13 @@ class SessionManager:
         session_setup: "SessionSetup | None" = None,
         landing_frame: CommandFrame | None = None,
         types_into_terminal: bool = True,
+        login_user: str = "",
     ) -> None:
         self._connections = connections
+        # Who the sessions of a manager WITHOUT a transport log in as: the
+        # local host's process user. A transport names its own login, so
+        # this is read only when there is none (`_login_user`).
+        self._loginless_user = login_user
         # Whether this manager's sessions read a command through a terminal's
         # line discipline: its session class's `reads_a_terminal` (False for
         # LocalHost, whose shell reads a pipe), which the caller passes because
@@ -4571,13 +4576,17 @@ class SessionManager:
     def _login_user(self) -> str:
         """Return the host's login username, or '' when loginless / no creds.
 
-        Prefers ``login_target`` (the *requested* login — may be a proxied
+        With no connection manager, the ``login_user`` this manager was built
+        with: the local host's invoking user, who its shells run as. Otherwise
+        prefers ``login_target`` (the *requested* login — may be a proxied
         account reached via a hop rather than the transport's direct-auth
         user). Falls back to the resolved direct cred's username, then to ''.
         Best-effort: session seeding runs this on every build, so it tolerates
         a connection manager that exposes neither attribute (e.g. minimal test
         fakes or a loginless transport).
         """
+        if self._connections is None:
+            return self._loginless_user
         login_target = getattr(self._connections, "login_target", None)
         if login_target:
             return login_target
@@ -5184,7 +5193,6 @@ class SessionManager:
             ValueError: *route* is ``UNSUPPORTED``, or a route this manager
                 does not own (a local subprocess, a container).
         """
-        assert self._connections is not None  # noqa: S101 — internal invariant: a manager that dispatches an exec route has a transport
         # NO logging here: each arm logs the command itself, exactly once.
         # The pooled arm's `HostSession.run` logs every command it sends, and
         # `exec_on` logs its own; a pre-match log would double the line.
@@ -5204,12 +5212,12 @@ class SessionManager:
                     cmd, timeout=timeout, log=log, expects=expects, user=user, exec_input=exec_input
                 )
             case ExecRoute.SSH_CHANNEL:
+                assert self._connections is not None  # noqa: S101 — internal invariant: only a host with a transport plans the ssh channel
                 ssh_conn = await self._connections.ssh()
                 return await self.exec_on(conn=ssh_conn, cmd=cmd, timeout=timeout, log=log)
             case _:
-                raise ValueError(
-                    f'{self._name}: unsupported terminal type "{self._connections.term}"'
-                )
+                term = getattr(self._connections, "term", None)
+                raise ValueError(f'{self._name}: unsupported terminal type "{term}"')
 
     @staticmethod
     def _exec_restore_for(route: ExecRoute) -> ExecRestore:
@@ -5530,7 +5538,8 @@ class SessionManager:
           other user forces *needs_shell*.
         * ``EmbeddedHost``, ``LocalHost`` and ``DockerContainerHost`` never
           ask: their ``_plan_exec`` answers ``DEFAULT_SESSION``,
-          ``LOCAL_SUBPROCESS`` and ``CONTAINER`` outright.
+          ``LOCAL_SUBPROCESS`` (``POOLED_SHELL`` for a call that needs a
+          shell or a user) and ``CONTAINER`` outright.
 
         Ask the host's plan (``BaseHost._exec_plan``), not this method, for
         the route a call takes; this answers only for the host's own

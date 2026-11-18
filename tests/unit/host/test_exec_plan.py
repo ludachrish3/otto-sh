@@ -269,15 +269,20 @@ async def test_a_not_run_result_is_returned_unstamped(build):
 async def test_a_run_plan_that_dispatches_another_primitive_is_caught(monkeypatch):
     """The route is the primitive's record, so a dispatch that disagrees with its plan raises.
 
-    The plan says ``ssh-channel``; ``LocalHost._run_plan`` runs a subprocess
-    whatever the plan says. Copying the plan's route onto the result would
-    report the channel that never opened.
+    The plan says ``ssh-channel``; the dispatch runs a subprocess whatever
+    the plan says. Copying the plan's route onto the result would report the
+    channel that never opened.
     """
+
+    async def runs_a_subprocess(self, plan, *, cmd, timeout, **_kw):
+        return await self._exec_subprocess(cmd, timeout)
+
     monkeypatch.setattr(
         LocalHost,
         "_plan_exec",
         lambda self, *, user, needs_shell: ExecPlan(route=ExecRoute.SSH_CHANNEL),
     )
+    monkeypatch.setattr(LocalHost, "_run_plan", runs_a_subprocess)
     with pytest.raises(AssertionError, match=r"planned the 'ssh-channel' route but ran on "):
         await LocalHost().exec("true")
 

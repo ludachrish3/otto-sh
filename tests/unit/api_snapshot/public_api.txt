@@ -2169,18 +2169,22 @@ member	otto.host:HostBuild.selections	field
 abstract	otto.host:HostBuild	@final @manifest:subclass=false
 name	otto.host:HostCapabilities	class
 mro	otto.host:HostCapabilities	-
-call	otto.host:HostCapabilities	sync	KO:run_user:- KO:exec_user:- KO:put_user:- KO:get_user:- KO:show_progress:- KO:session_identity:- KO:transfer_family:S:"" KO:transfer:S:"" KO:note:S:""
+call	otto.host:HostCapabilities	sync	KO:run_user:- KO:exec_user:- KO:put_user:- KO:get_user:- KO:show_progress:- KO:session_identity:- KO:sudo:- KO:expects:- KO:user_refusal:- KO:transfer_family:S:"" KO:transfer:S:"" KO:note:S:""
 member	otto.host:HostCapabilities.__eq__	method	sync	PK:other:-
 member	otto.host:HostCapabilities.__hash__	method	sync	-
 member	otto.host:HostCapabilities.exec_user	field
+member	otto.host:HostCapabilities.expects	field
 member	otto.host:HostCapabilities.get_user	field
 member	otto.host:HostCapabilities.note	field
+member	otto.host:HostCapabilities.option_limitation	method	sync	KO:option:-
 member	otto.host:HostCapabilities.put_user	field
 member	otto.host:HostCapabilities.run_user	field
 member	otto.host:HostCapabilities.session_identity	field
 member	otto.host:HostCapabilities.show_progress	field
+member	otto.host:HostCapabilities.sudo	field
 member	otto.host:HostCapabilities.transfer	field
 member	otto.host:HostCapabilities.transfer_family	field
+member	otto.host:HostCapabilities.user_refusal	field
 abstract	otto.host:HostCapabilities	@final @manifest:subclass=false
 name	otto.host:HostClassEntry	class
 mro	otto.host:HostClassEntry	-
@@ -2332,7 +2336,7 @@ call	otto.host:HostValidationError	sync	@builtin:builtins.ValueError
 abstract	otto.host:HostValidationError	-
 name	otto.host:LocalHost	class
 mro	otto.host:LocalHost	{otto.host:PosixPrivilege} {otto.host:PosixFileOps} {otto.host:BaseHost}
-call	otto.host:LocalHost	sync	KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:reboot_options:O KO:lab_info:O KO:resources:O KO:element:N KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true
+call	otto.host:LocalHost	sync	KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:reboot_options:O KO:lab_info:O KO:resources:O KO:element:N KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true KO:creds:N
 member	otto.host:LocalHost.__aenter__	method	coroutine	-
 member	otto.host:LocalHost.__aexit__	method	coroutine	PK:exc_type:- PK:exc:- PK:tb:-
 member	otto.host:LocalHost.__eq__	method	sync	PK:other:-
@@ -2344,6 +2348,7 @@ member	otto.host:LocalHost.close	method	coroutine	-
 member	otto.host:LocalHost.configured_login_user	method	sync	-
 member	otto.host:LocalHost.coverage_dirs_clean	method	coroutine	KO:owner:N
 member	otto.host:LocalHost.cp	method	coroutine	PK:src:- PK:dst:- KO:recursive:B:false
+member	otto.host:LocalHost.creds	field
 member	otto.host:LocalHost.current_user	property:g--
 member	otto.host:LocalHost.debug_log_globs	field
 member	otto.host:LocalHost.dev_tools	field
@@ -2452,6 +2457,15 @@ abstract	otto.host:MountNotFoundError	-
 name	otto.host:NcListenerCheck	alias
 name	otto.host:NcPortStrategy	alias
 name	otto.host:Omit	value
+name	otto.host:OptionSupport	class
+mro	otto.host:OptionSupport	-
+call	otto.host:OptionSupport	sync	KO:limitation:-
+member	otto.host:OptionSupport.__eq__	method	sync	PK:other:-
+member	otto.host:OptionSupport.__hash__	method	sync	-
+member	otto.host:OptionSupport.honoured	classmethod	sync	-
+member	otto.host:OptionSupport.limitation	field
+member	otto.host:OptionSupport.refused	classmethod	sync	KO:limitation:-
+abstract	otto.host:OptionSupport	@final @manifest:subclass=false
 name	otto.host:OsProfile	class
 mro	otto.host:OsProfile	-
 call	otto.host:OsProfile	sync	@manifest:construct=false
@@ -3198,6 +3212,10 @@ member	otto.host:UnixHostSpec.valid_terms	field
 member	otto.host:UnixHostSpec.valid_transfers	field
 member	otto.host:UnixHostSpec.validate_in	method	sync	PK:ctx:-
 abstract	otto.host:UnixHostSpec	-
+name	otto.host:UnsupportedOptionError	class
+mro	otto.host:UnsupportedOptionError	{otto.errors:OttoError} @builtin:builtins.NotImplementedError @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host:UnsupportedOptionError	sync	KO:option:- KO:host:- KO:reason:-
+abstract	otto.host:UnsupportedOptionError	-
 name	otto.host:UserSupport	enum
 mro	otto.host:UserSupport	@builtin:builtins.str
 enum	otto.host:UserSupport	authenticate	S:"authenticate"

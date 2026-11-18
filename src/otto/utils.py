@@ -86,6 +86,46 @@ def utc_instant(value: datetime | None) -> datetime | None:
     return as_utc(value).astimezone(timezone.utc)
 
 
+def passwd_name(uid: int) -> str | None:
+    """Return the name of *uid*'s passwd entry, or ``None`` when it has none.
+
+    The one guarded lookup of an account name, under both of otto's answers
+    about who runs it (:func:`process_user`, :func:`invoking_user_label`). A
+    uid with no entry is ``docker run -u 12345:12345``'s.
+    """
+    import pwd
+
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return None
+
+
+def process_user() -> str | None:
+    """Return the user this process, and every shell it spawns, runs as; ``None`` if nameless.
+
+    Decided by the effective uid, never the environment: a ``USER`` or
+    ``LOGNAME`` left over from another account (``su`` to root keeps them)
+    names someone the shells are not.
+    """
+    return passwd_name(os.geteuid())
+
+
+def invoking_user_label() -> str:
+    """Return the name to label otto's work with: the person running it, else ``anon``.
+
+    For attribution only (a reservation holder, a compose project's suffix,
+    a coverage tester), never for an identity a shell has:
+    :func:`getpass.getuser`'s rule, the first of ``LOGNAME``, ``USER``,
+    ``LNAME`` and ``USERNAME`` set in the environment, else the real uid's
+    passwd entry (:func:`passwd_name`); ``anon`` when neither names anyone.
+    """
+    for variable in ("LOGNAME", "USER", "LNAME", "USERNAME"):
+        if name := os.environ.get(variable):
+            return name
+    return passwd_name(os.getuid()) or "anon"
+
+
 def anchor_path(value: Path, root: Path, *, quote: bool = True) -> Path:
     """Expand ``~``, then anchor a still-relative path to *root*.
 

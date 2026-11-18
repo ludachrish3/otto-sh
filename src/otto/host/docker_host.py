@@ -41,7 +41,7 @@ from typing_extensions import final, override
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
-from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
+from .capability_grid import HostCapabilities, OptionSupport, SessionIdentity, UserSupport
 from .command_frame import ExecInput
 from .connections import teardown_step
 from .errors import (
@@ -480,6 +480,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     """
 
     capabilities = HostCapabilities(
+        sudo=OptionSupport.honoured(),
+        expects=OptionSupport.honoured(),
+        user_refusal=None,
         run_user=UserSupport.chown,
         exec_user=UserSupport.chown,
         put_user=UserSupport.chown,
@@ -853,21 +856,6 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """Per-call beats declared; neither → ``None`` (the image's ``USER`` prevails)."""
         return user if user is not None else self.user
 
-    @override
-    def _ambient_user(self) -> "str | None":
-        """Report a switch made on the container's persistent channel.
-
-        The container's ``as_user`` is real — ``PosixPrivilege`` runs ``su``
-        on the in-container shell and records it on the session manager — so
-        an enclosing ``async with container.as_user("app")`` must reach
-        ``exec`` as well, which runs on a fresh ``docker exec`` of its own and
-        would otherwise land on the DECLARED default while ``run`` ran as
-        ``app``. ``None`` (no default channel, or one still running as the
-        user it opened as) leaves :meth:`_effective_user` to apply the
-        declared default exactly as before.
-        """
-        return self._live_session_mgr().ambient_user
-
     def mount_for(self, *, container_path: "str | Path") -> "Mount | None":
         """Return the mount covering *container_path*, or ``None`` if it is not shared.
 
@@ -1011,12 +999,6 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         flags = "-i" if not interactive else "-it"
         u = f" -u {shlex.quote(user)}" if user is not None else ""
         return f"docker exec {flags}{u} {self.container_id} sh -c {shlex.quote(cmd)}"
-
-    @override
-    def _refuse_exec_sudo(self) -> None:
-        # Nothing to refuse: sudo on a container is `docker exec -u root`.
-        # user+sudo is refused in `exec` below, where both values are known.
-        return
 
     @override
     @cli_exposed

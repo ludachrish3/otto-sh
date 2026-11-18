@@ -32,6 +32,7 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Literal,
     Protocol,
     TypeGuard,
     TypeVar,
@@ -61,7 +62,7 @@ from ..utils import (
 # ``otto.errors`` for ``construction``), so none adds an edge beyond itself.
 from .capability_grid import UserSupport
 from .construction import RuntimeOnly
-from .exec_route import ran_route
+from .exec_route import ExecRoute, ran_route
 from .identity import ROOT_LOGIN
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
@@ -72,7 +73,7 @@ from .toolchain import Toolchain, toolchain_removal_command
 if TYPE_CHECKING:
     from ..invocation import HostRegistration
     from .app_shell import AppShell
-    from .capability_grid import HostCapabilities
+    from .capability_grid import HostCapabilities, RunOption
     from .command_frame import ExecInput
     from .dev_tool import DevTool
     from .element import Element
@@ -1020,9 +1021,8 @@ class Host(Protocol):
             cmd: The command, or a :class:`ShellCommand` carrying its own
                 expects/timeout/log (call-level values are its defaults).
             expects: ``(pattern, response)`` pair(s) for interactive prompts,
-                searched as :meth:`run`'s are. Families whose raw channel has
-                no pty to answer one on refuse; ``run(expects=...)`` answers on
-                the persistent shell instead.
+                searched as :meth:`run`'s are. A family whose ``exec``
+                otherwise takes a raw channel answers them on a pooled shell.
             timeout: Seconds before the command is abandoned.
             log: Logging disposition for this call.
             sudo: Elevate through the host's resolved mechanism. Families
@@ -1974,10 +1974,10 @@ class BaseHost(ABC):
 
     def _elevate(
         self,
-        cmd: str,
-        user: str | None = None,
+        cmd: str,  # noqa: ARG002 — the seam's signature; this refusing default never reads it
+        user: str | None = None,  # noqa: ARG002 — the seam's signature
         *,
-        exec_input: "ExecInput | None" = None,
+        exec_input: "ExecInput | None" = None,  # noqa: ARG002 — the seam's signature
     ) -> ElevatedCommand:
         """Return the command line that runs *cmd* elevated, with its password answer.
 
@@ -1998,8 +1998,9 @@ class BaseHost(ABC):
         Synchronous by contract, which is why :meth:`_prepare_elevation`
         exists: an implementation needing an awaited answer resolves it there.
         """
+        self._refuse_option("sudo")
         raise NotImplementedError(
-            f"sudo/elevation is not supported on '{self.__class__.__name__}'"
+            f"{type(self).__name__} declares sudo honoured and implements no _elevate"
         ) from None
 
     async def _prepare_elevation(self) -> None:
@@ -2209,7 +2210,7 @@ class BaseHost(ABC):
         """Refuse a console-only verb (``logout``, ``login --force``) off a console.
 
         Called above the verbs' dry-run arms, with the same contract as
-        :meth:`_refuse_exec_user`: a dry run of a call this host could never
+        :meth:`_refuse_option`: a dry run of a call this host could never
         honour refuses rather than declining as though it could have.
         Synchronous and side-effect free — the answer is the host's own
         configured term. *verb* is how the refusal names the request
@@ -2343,9 +2344,17 @@ class BaseHost(ABC):
         """Run :meth:`run`'s body, inside the turn :meth:`run` took."""
         timeout = _validate_timeout(timeout)
         default_expects = _normalize_expects(expects)
+        capabilities = type(self).capabilities
+        single = isinstance(cmds, (str, ShellCommand))
+        resolved = [
+            _resolve_command(c, default_expects, timeout if single else None, log)
+            for c in ([cmds] if isinstance(cmds, (str, ShellCommand)) else cmds)
+        ]
+        self._refuse_options(
+            resolved, call_expects=default_expects, sudo=sudo, user=user, verb="run"
+        )
         if user is not None:
-            _validate_user(user)
-            if type(self).capabilities.run_user is UserSupport.switch and not is_dry_run():
+            if capabilities.run_user is UserSupport.switch and not is_dry_run():
                 # A per-call user on a family whose persistent session switches
                 # identity: the whole call runs inside as_user(), which restores
                 # the previous user after. Under a dry run the call declines
@@ -2359,7 +2368,7 @@ class BaseHost(ABC):
                     return await self.run(
                         cmds, expects=expects, timeout=timeout, log=log, sudo=sudo
                     )
-            if type(self).capabilities.run_user is UserSupport.switch:
+            if capabilities.run_user is UserSupport.switch:
                 user = None
         if sudo:
             # ABOVE the single-vs-sequence split, not inside either arm. This is
@@ -2373,20 +2382,18 @@ class BaseHost(ABC):
             # a STATEMENT-POSITION rule plus a behavioural test driving both
             # shapes, in `tests/unit/host/test_privilege.py`.
             await self._prepare_elevation()
-        if isinstance(cmds, (str, ShellCommand)):
-            sc = _resolve_command(cmds, default_expects, timeout, log)
-            single = self._apply_sudo(sc) if sudo else _prepared(sc)
+        if single:
+            one = self._apply_sudo(resolved[0]) if sudo else _prepared(resolved[0])
             result = await self._run_one(
-                single.cmd,
-                expects=single.expects,
+                one.cmd,
+                expects=one.expects,
                 # _resolve_command collapsed the None sentinel into a concrete float.
-                timeout=single.timeout if single.timeout is not None else timeout,
-                log=single.log,
+                timeout=one.timeout if one.timeout is not None else timeout,
+                log=one.log,
                 user=user,
             )
             return Results.collect(items=[result])
 
-        resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
         prepared = [self._apply_sudo(sc) if sudo else _prepared(sc) for sc in resolved]
 
         async def _run_pc(pc: _PreparedCommand, t: float) -> CommandResult:
@@ -2441,13 +2448,10 @@ class BaseHost(ABC):
         ``run()`` from two coroutines at once corrupts the session's output
         (:meth:`exec` is the concurrent shape). The arms, in order:
 
-        1. ``_refuse_run_user``: a family that can never honour *user* refuses
-           here, ABOVE the dry-run arm, so a dry run of such a call refuses
-           rather than declining as though it could have.
-        2. The dry-run decline (``_dry_run_result``), which contacts nothing.
-        3. ``_prepare_live_session``: the container host resolves its
+        1. The dry-run decline (``_dry_run_result``), which contacts nothing.
+        2. ``_prepare_live_session``: the container host resolves its
            container on the daemon here; every other family does nothing.
-        4. The command on the session manager, inside ``_run_user_binding``:
+        3. The command on the session manager, inside ``_run_user_binding``:
            the container host declares the user the channel open must bind.
 
         A family contributes those hooks and nothing else; the line turn
@@ -2463,20 +2467,14 @@ class BaseHost(ABC):
             expects: ``(pattern, response)`` pairs for interactive prompts,
                 matched against the output as it arrives.
             log: Logging disposition for this call, folded with the host's own.
-            user: Run as this user. Refused by the local and remote families
-                (``_refuse_run_user``), bound by the container family
-                (``_run_user_binding``).
+            user: Run as this user. Bound by the container family
+                (``_run_user_binding``); a family that refuses *user* refused
+                it in :meth:`run`, above this.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
             Exit code 0 → ``Status.Success``; non-zero → ``Status.Failed``.
-
-        Raises:
-            NotImplementedError: *user* is not None on a family that has no
-                user to switch to.
         """
-        if user is not None:
-            self._refuse_run_user(user)
         if is_dry_run():
             return self._dry_run_result(cmd, log)
         await self._prepare_live_session()
@@ -2484,16 +2482,6 @@ class BaseHost(ABC):
             return await self._live_session_mgr().run_cmd(
                 cmd=cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
             )
-
-    def _refuse_run_user(self, user: str) -> None:  # noqa: B027 — an empty default is the POINT: the families that honour user= have nothing to refuse
-        """Refuse a ``run(user=...)`` this family can never honour, above the dry-run arm.
-
-        The ``run`` twin of :meth:`_refuse_exec_user`, with the same contract:
-        synchronous, no I/O, answered from the host's own configuration. The
-        default refuses nothing; the local family (otto already runs as the
-        invoking user) and the remote family (no user to switch to) override
-        it with the message that names them.
-        """
 
     def _run_user_binding(self, user: "str | None") -> "AbstractContextManager[None]":  # noqa: ARG002 — the hook's signature; the default binds nothing
         """Wrap the live command in the family's user binding; nothing, for most families.
@@ -2556,9 +2544,8 @@ class BaseHost(ABC):
             cmd: The command, or a :class:`ShellCommand` carrying its own
                 expects/timeout/log (call-level values are its defaults).
             expects: ``(pattern, response)`` pair(s) for interactive prompts.
-                Families whose raw channel has no pty to answer one on
-                refuse; ``run(expects=...)`` answers on the persistent shell
-                instead.
+                A family whose ``exec`` otherwise takes a raw channel answers
+                them on a pooled shell.
             timeout: Seconds before the command is abandoned. Defaults to
                 :data:`DEFAULT_COMMAND_TIMEOUT`; ``float("inf")`` for a
                 deliberately unbounded command.
@@ -2599,15 +2586,11 @@ class BaseHost(ABC):
         shared line the probe and the command it serves are one turn.
         """
         user = self._effective_exec_user(user)
-        if user is not None:
-            _validate_user(user)
-            self._refuse_exec_user(user)
-        if sudo:
-            self._refuse_exec_sudo()
         timeout = _validate_timeout(timeout)
         sc = _resolve_command(cmd, _normalize_expects(expects), timeout, log)
-        if sc.expects:
-            self._refuse_exec_expects()
+        self._refuse_options(
+            [sc], call_expects=_normalize_expects(expects), sudo=sudo, user=user, verb="exec"
+        )
         if sudo:
             await self._prepare_exec_elevation(user)
         # Imported here: the frame module is needed only once a command runs.
@@ -2632,52 +2615,70 @@ class BaseHost(ABC):
             exec_input=exec_input,
         )
 
-    def _refuse_exec_user(self, user: str) -> None:  # noqa: B027 — an empty default is the POINT: most families honour user= and have nothing to refuse
-        """Refuse an ``exec(user=...)`` this family can never honour, before anything else.
+    def _refuse_options(
+        self,
+        resolved: "Sequence[ShellCommand]",
+        *,
+        call_expects: "list[Expect] | None",
+        sudo: bool,
+        user: str | None,
+        verb: Literal["run", "exec"],
+    ) -> None:
+        """Refuse what a ``run`` or ``exec`` call asks of this family that it declares it cannot do.
 
-        ``run``, ``put`` and ``get`` refuse in the first line of their own
-        bodies, above their own dry-run arm, so a dry run of a call the family
-        could never honour refuses rather than declining as though it could
-        have. ``exec`` cannot get that ordering for free: its dry-run arm lives
-        here in :meth:`exec`, ABOVE the family's ``_run_plan``, so a refusal
-        written there is unreachable under ``--dry-run``. A family that cannot
-        act on *user* overrides this instead, and the refusal lands above the
-        arm like every other verb's.
-
-        Synchronous and side-effect free by construction: the answer comes from
-        the host's own configuration, never from the target, so refusing costs
-        no I/O. The default has nothing to refuse.
+        The one answer to "which options does this call carry", shared by both
+        verbs: read off the *resolved* commands (:func:`_resolve_command`, so a
+        command's own ``expects`` replace the call's), *sudo*, and *user*,
+        validated here, refused when *verb*'s own ``*_user`` field says so.
+        With no command at all, the call's own options are what it carries:
+        *call_expects* then decides, as *sudo* and *user* always do, since a
+        command's override can only matter when there is a command. Each
+        option carried goes to :meth:`_refuse_option`.
         """
+        if user is not None:
+            _validate_user(user)
+            capabilities = type(self).capabilities
+            support = capabilities.run_user if verb == "run" else capabilities.exec_user
+            if support is UserSupport.refused:
+                self._refuse_option("user")
+        if sudo:
+            self._refuse_option("sudo")
+        if any(sc.expects for sc in resolved) if resolved else call_expects:
+            self._refuse_option("expects")
 
-    def _refuse_exec_sudo(self) -> None:  # noqa: B027 — an empty default is the POINT: most families honour sudo and have nothing to refuse
-        """Refuse an ``exec(sudo=True)`` this family can never honour, above the dry-run arm.
+    def _refuse_option(self, option: "RunOption") -> None:
+        """Refuse *option* if this family declares it can never be honoured.
 
-        The same contract as :meth:`_refuse_exec_user`: synchronous, no I/O,
-        answered from the host's own configuration. The default refuses
-        nothing; a family whose ``exec`` has no pty to answer a prompt on
-        overrides it naming ``run(sudo=True)``.
+        The one refusal of a ``run`` or ``exec`` option, read off the family's
+        :class:`~otto.host.capability_grid.HostCapabilities`
+        (:attr:`~otto.host.capability_grid.HostCapabilities.sudo`,
+        :attr:`~otto.host.capability_grid.HostCapabilities.expects`,
+        :attr:`~otto.host.capability_grid.HostCapabilities.user_refusal`).
+        Both verbs call it above their dry-run arm, so a dry run of a call the
+        family could never honour refuses rather than declining as though it
+        could have. Synchronous and side-effect free: the answer is declared,
+        never asked of the target. ``user`` is asked only by a verb whose own
+        ``*_user`` field is :attr:`~otto.host.capability_grid.UserSupport.refused`.
+
+        Raises:
+            ~otto.host.errors.UnsupportedOptionError: the option is declared refused.
         """
+        limitation = type(self).capabilities.option_limitation(option=option)
+        if limitation is not None:
+            from .errors import UnsupportedOptionError  # a refusal only: off the startup graph
 
-    def _refuse_exec_expects(self) -> None:  # noqa: B027 — an empty default is the POINT: most families honour expects and have nothing to refuse
-        """Refuse an ``exec(expects=...)`` this family can never honour, above the dry-run arm.
-
-        The same contract as :meth:`_refuse_exec_sudo`: synchronous, no I/O,
-        answered from the host's own configuration. The default refuses
-        nothing; a family whose ``exec`` has no pty to answer a prompt on
-        overrides it naming ``run(expects=...)``.
-        """
+            raise UnsupportedOptionError(option=option, host=self.name, reason=limitation.reason)
 
     def _ambient_user(self) -> str | None:  # noqa: B027 — an empty default is the POINT: most families have no switchable default session
         """Report the user an enclosing ``as_user()`` switched the default session to, or ``None``.
 
-        ``exec`` runs on a session it does not keep, so a switch made on the
-        default session is invisible to it unless the family reports it here.
-        FAMILIES WHOSE DEFAULT SESSION CAN SWITCH IDENTITY REPORT IT — the
-        remote families and the container family both do, because both have a
-        real ``as_user``. The default is no ambient identity, which is right
-        for a family that cannot switch at all and for
-        :class:`~otto.host.local_host.LocalHost`, whose ``exec`` refuses
-        ``user=`` outright.
+        ``exec`` runs on a session it does not keep -- a pooled shell, a
+        subprocess, a fresh ``docker exec`` -- so a switch made on the default
+        session is invisible to it unless the family reports it here. The
+        families whose default session can switch identity (every
+        :class:`~otto.host.privilege.PosixPrivilege` host, and the remote
+        family) report it from their session manager. The default is no ambient identity, which is
+        right for a family that cannot switch at all.
         """
 
     @final
@@ -2783,6 +2784,34 @@ class BaseHost(ABC):
         *exec_input* to its session; a process route ignores it.
         """
         raise NotImplementedError from None
+
+    async def _exec_on_manager_route(
+        self,
+        route: ExecRoute,
+        *,
+        cmd: str,
+        timeout: float,
+        log: LogMode,
+        user: str | None,
+        expects: "list[Expect | CredentialExpect] | None",
+        exec_input: "ExecInput | None",
+    ) -> CommandResult:
+        """Run *cmd* on *route* through this host's session manager: the one such dispatch.
+
+        Every family whose plan names a session route (the pooled shell, the
+        default session, the host's own ssh channel) runs it here, so the
+        call's *exec_input*, the folded log mode and *user* reach the manager
+        the same way from each.
+        """
+        return await self._live_session_mgr().exec_on_route(
+            route=route,
+            cmd=cmd,
+            timeout=timeout,
+            log=self._effective_log(log),
+            expects=expects,
+            user=user,
+            exec_input=exec_input,
+        )
 
     async def open_session(
         self,

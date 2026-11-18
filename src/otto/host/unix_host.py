@@ -71,7 +71,7 @@ from ..utils import (
     wait_for_async,
 )
 from .capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
-from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
+from .capability_grid import HostCapabilities, OptionSupport, SessionIdentity, UserSupport
 from .command_frame import ExecInput, build_command_frame
 from .connections import (
     ConnectionManager,
@@ -266,6 +266,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """
 
     capabilities = HostCapabilities(
+        sudo=OptionSupport.honoured(),
+        expects=OptionSupport.honoured(),
+        user_refusal=None,
         run_user=UserSupport.switch,
         exec_user=UserSupport.switch,
         put_user=UserSupport.authenticate,
@@ -395,19 +398,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ####################
     #  Privilege
     ####################
-
-    @override
-    def _sudo_password(self, user: str | None = None) -> SecretStr | None:
-        """Return the password ``sudo -S`` must be answered with.
-
-        *user* is the identity the elevated command runs as — an
-        ``exec(user=X)`` switches a pooled session to X before the command,
-        so it is X's password sudo prompts for. ``None`` (every ``run``, and
-        an ``exec`` with no user) falls back to the default session's current
-        user.
-        """
-        c = cred_for(self.creds, self._acting_user(user), self.term)
-        return c.password if c else None
 
     @override
     def _userland(self) -> Userland:
@@ -1073,13 +1063,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return await mgr.exec_on(
                 conn=conn, cmd=cmd, timeout=timeout, log=self._effective_log(log)
             )
-        return await mgr.exec_on_route(
-            route=plan.route,
+        return await self._exec_on_manager_route(
+            plan.route,
             cmd=cmd,
             timeout=timeout,
-            log=self._effective_log(log),
-            expects=expects,
+            log=log,
             user=user,
+            expects=expects,
             exec_input=exec_input,
         )
 

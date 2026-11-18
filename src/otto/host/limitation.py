@@ -17,8 +17,10 @@ implements the code:
   intrinsically, and otto cannot change it without replacing the library.
 
 The places that declare are :attr:`otto.host.command_frame.CommandFrame.exact_output`,
-:data:`otto.host.session.EXEC_ROUTES`, and a console server's own facts in
-:class:`otto.host.options.ConsoleOptions` (:attr:`~otto.host.options.ConsoleOptions.exact_output`).
+:data:`otto.host.session.EXEC_ROUTES`, a console server's own facts in
+:class:`otto.host.options.ConsoleOptions` (:attr:`~otto.host.options.ConsoleOptions.exact_output`),
+and a host family's refused options in
+:class:`otto.host.capability_grid.HostCapabilities`.
 
 This module is a leaf: it imports nothing from otto, so any module may
 declare a limitation without creating an import cycle.

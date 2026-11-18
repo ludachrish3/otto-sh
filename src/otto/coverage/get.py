@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 def _resolve_tester(name: str | None, email: str | None, root: Path) -> dict[str, str]:
     """Resolve tester identity for a manual capture (spec decision 15).
 
-    ``name`` defaults to :func:`getpass.getuser`; ``email`` defaults to
+    ``name`` defaults to ``otto.utils.invoking_user_label``; ``email`` defaults to
     ``git config user.email`` read *in the project's checkout* (so the identity comes
     from the project being tested, not whatever git repository the process CWD happens to
     be in) and is omitted entirely (not annotated empty) when the key is
@@ -41,11 +41,10 @@ def _resolve_tester(name: str | None, email: str | None, root: Path) -> dict[str
     has already proven git runs — so the top-level caller is the right place
     for the case where it is not.
     """
-    import getpass
-
+    from ..utils import invoking_user_label
     from .capture.gitio import GitCommandFailedError, NotAGitRepoError, config_value
 
-    resolved_name = name or getpass.getuser()
+    resolved_name = name or invoking_user_label()
     resolved_email = email
     if not resolved_email:
         try:

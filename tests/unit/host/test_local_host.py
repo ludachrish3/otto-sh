@@ -1,10 +1,15 @@
 import asyncio
 import logging
+import os
+import pwd
+import re
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import SecretStr
 
+from otto.host.exec_route import ExecRoute
 from otto.host.host import (
     SuppressCommandOutput,
     _HostFilter,
@@ -12,11 +17,14 @@ from otto.host.host import (
 )
 from otto.host.inventory_ref import InventoryRef
 from otto.host.local_host import LocalHost
+from otto.host.login_proxy import Cred
 from otto.host.output_codec import READ_CHUNK
+from otto.host.session import SessionManager
 from otto.invocation import current_policy
 from otto.logger.mode import LogMode
 from otto.utils import Status
 from tests.conftest import active_context
+from tests.unit.host.conftest import FAKE_ELEVATION_PASSWORD
 
 # ---------------------------------------------------------------------------
 # Basic construction
@@ -174,62 +182,157 @@ async def test_exec_is_stateless():
     assert "empty" in result.value
 
 
-@pytest.mark.asyncio
-async def test_exec_user_refused_on_local():
-    """The refusal is `_refuse_exec_user`'s, which `exec()` calls ABOVE its own
-    dry-run arm — so a dry run refuses too rather than declining as though the
-    call could have been honoured."""
-    host = LocalHost()
-    with pytest.raises(NotImplementedError, match="otto already runs as the invoking user"):
-        await host.exec("id", timeout=5.0, user="root")
-    with (
-        active_context(dry_run=True),
-        pytest.raises(NotImplementedError, match="otto already runs as the invoking user"),
-    ):
-        await host.exec("id", timeout=5.0, user="root")
+# ---------------------------------------------------------------------------
+# exec / run with expects=, sudo= and user=: the pooled local shell
+# ---------------------------------------------------------------------------
+
+_INVOKING = pwd.getpwuid(os.geteuid()).pw_name
+_OTHER = "otto-cf-svc"
+"""A user no machine has: only the stand-in ``su - USER`` can become them."""
+
+
+@pytest.fixture
+def stand_in_elevation(fake_sudo_on_path, monkeypatch):
+    """The stand-in ``sudo``, ``su`` and ``id`` first on ``PATH`` for every shell otto spawns.
+
+    Its ``sudo`` asks for :data:`FAKE_ELEVATION_PASSWORD`; its ``reads`` file
+    counts every password line it read.
+    """
+    for name, value in fake_sudo_on_path.items():
+        monkeypatch.setenv(name, value)
+    return Path(fake_sudo_on_path["FAKE_SUDO_DIR"])
+
+
+def _password_reads(state: Path) -> int:
+    reads = state / "reads"
+    return len(reads.read_text().splitlines()) if reads.exists() else 0
 
 
 @pytest.mark.asyncio
-async def test_exec_sudo_refused_on_local_naming_run():
+async def test_exec_answers_a_prompt_with_expects_on_the_pooled_shell():
     host = LocalHost()
-    with pytest.raises(NotImplementedError, match=r"run\(sudo=True\)"):
-        await host.exec("id", timeout=5.0, sudo=True)
-    with (
-        active_context(dry_run=True),
-        pytest.raises(NotImplementedError, match=r"run\(sudo=True\)"),
-    ):
-        await host.exec("id", timeout=5.0, sudo=True)
+    try:
+        r = await host.exec(
+            "printf 'name? '; read n; echo got-$n", timeout=5, expects=[(r"name\? ", "otto\n")]
+        )
+    finally:
+        await host.close()
+    assert (r.status, r.route, r.value.endswith("got-otto")) == (
+        Status.Success,
+        ExecRoute.POOLED_SHELL.value,
+        True,
+    )
 
 
 @pytest.mark.asyncio
-async def test_exec_expects_refused_on_local():
-    """A bare subprocess has no pty to answer a prompt on — the refusal
-    sits above `exec`'s dry-run arm, like `sudo` and `user`, and
-    `_exec_subprocess` must never be reached."""
+async def test_exec_sudo_is_answered_once_from_the_invoking_user_s_credential(stand_in_elevation):
+    host = LocalHost(creds=[Cred(login=_INVOKING, password=FAKE_ELEVATION_PASSWORD)])
+    try:
+        r = await host.exec("id -un", timeout=10, sudo=True)
+    finally:
+        await host.close()
+    # The prompt otto answered is the shell's output, ahead of the command's.
+    # The prompt is fresh per call (otto-sudo- and 16 letters and digits).
+    assert (r.status, r.route, bool(re.fullmatch(r"otto-sudo-[A-Za-z0-9]{16}:root", r.value))) == (
+        Status.Success,
+        ExecRoute.POOLED_SHELL.value,
+        True,
+    ), r.value
+    assert FAKE_ELEVATION_PASSWORD not in r.value
+    assert _password_reads(stand_in_elevation) == 1
+
+
+@pytest.mark.asyncio
+async def test_exec_sudo_without_a_credential_fails_as_sudo_fails_within_the_timeout(
+    stand_in_elevation,
+):
+    """No credential: nothing answers the prompt, sudo reads end of file and fails; never a hang."""
     host = LocalHost()
-    with patch.object(host, "_exec_subprocess", wraps=host._exec_subprocess) as subprocess_spy:
-        with pytest.raises(NotImplementedError, match=r"run\(expects=\.\.\.\)"):
-            await host.exec("id", timeout=5.0, expects=[("more", " ")])
+    try:
+        r = await host.exec("id -un", timeout=5, sudo=True)
+    finally:
+        await host.close()
+    assert (r.status, r.timed_out, r.retcode != 0) == (Status.Failed, False, True)
+    assert not r.value.endswith("root")
+
+
+@pytest.mark.asyncio
+async def test_run_and_exec_with_user_run_as_that_user(stand_in_elevation):
+    host = LocalHost()
+    try:
+        ran = (await host.run("id -un", timeout=10, user=_OTHER)).only
+        execd = await host.exec("id -un", timeout=10, user=_OTHER)
+        after = (await host.run("id -un", timeout=10)).only
+    finally:
+        await host.close()
+    assert (ran.value, execd.value, execd.route) == (_OTHER, _OTHER, ExecRoute.POOLED_SHELL.value)
+    assert after.value == _INVOKING  # run(user=) restores the session's user after
+
+
+@pytest.mark.asyncio
+async def test_exec_inside_as_user_runs_as_the_switched_user(stand_in_elevation):
+    host = LocalHost()
+    try:
+        async with host.as_user(user=_OTHER):
+            inside = await host.exec("id -un", timeout=10)
+        outside = await host.exec("id -un", timeout=10)
+    finally:
+        await host.close()
+    assert (inside.value, inside.route) == (_OTHER, ExecRoute.POOLED_SHELL.value)
+    assert (outside.value, outside.route) == (_INVOKING, ExecRoute.LOCAL_SUBPROCESS.value)
+
+
+@pytest.mark.asyncio
+async def test_unix_and_local_hosts_answer_sudo_from_one_lookup():
+    """The same creds give the same answer: the acting user's password, through one lookup."""
+    from otto.host.element import Element
+    from otto.host.unix_host import UnixHost
+
+    creds = [
+        Cred(login=_INVOKING, password="mine"),
+        Cred(login=_OTHER, password="theirs"),
+    ]
+    unix = UnixHost(ip="10.0.0.1", element=Element(name="box"), creds=creds, log=LogMode.QUIET)
+    local = LocalHost(creds=creds)
+    assert unix._sudo_password() == local._sudo_password() == SecretStr("mine")
+    assert unix._sudo_password(_OTHER) == local._sudo_password(_OTHER) == SecretStr("theirs")
+    assert unix._sudo_password("nobody-here") is local._sudo_password("nobody-here") is None
+    assert LocalHost()._sudo_password() is None
+
+
+@pytest.mark.asyncio
+async def test_a_plain_exec_spawns_one_process_and_opens_no_session():
+    host = LocalHost()
+    try:
         with (
-            active_context(dry_run=True),
-            pytest.raises(NotImplementedError, match=r"run\(expects=\.\.\.\)"),
+            patch.object(host, "_exec_subprocess", wraps=host._exec_subprocess) as spawn,
+            patch.object(SessionManager, "open_session", autospec=True) as open_session,
         ):
-            await host.exec("id", timeout=5.0, expects=[("more", " ")])
-        subprocess_spy.assert_not_called()
+            r = await host.exec("true", timeout=5)
+    finally:
+        await host.close()
+    assert (r.status, spawn.call_count, open_session.call_count) == (Status.Success, 1, 0)
 
 
 @pytest.mark.asyncio
-async def test_run_user_refused_on_local():
-    """Call `_run_one` directly — `run()`'s dry-run/timeout layers must not
-    be able to short-circuit the branch under test. The refusal also sits
-    ABOVE `_run_one`'s own dry-run arm, so a dry run refuses too."""
+async def test_two_optioned_execs_share_one_pooled_session():
     host = LocalHost()
-    with pytest.raises(
-        NotImplementedError, match=r"run\(user=\.\.\.\) is not supported on LocalHost"
-    ):
-        await host._run_one("id", timeout=5.0, user="root")
-    with pytest.raises(NotImplementedError, match="otto already runs as the invoking user"):
-        await host._run_one("id", timeout=5.0, user="root")
+    try:
+        with (
+            patch.object(host, "_exec_subprocess", wraps=host._exec_subprocess) as spawn,
+            patch.object(
+                SessionManager,
+                "open_session",
+                autospec=True,
+                side_effect=SessionManager.open_session,
+            ) as open_session,
+        ):
+            for _ in range(2):
+                r = await host.exec("echo hi", timeout=5, expects=[("never-printed", "x\n")])
+                assert (r.status, r.value) == (Status.Success, "hi")
+    finally:
+        await host.close()
+    assert (open_session.call_count, spawn.call_count) == (1, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -885,3 +988,39 @@ async def test_decoded_chunks_keep_one_decoder_across_reads(data: bytes, text: s
     for c in await _chunks_of(data):
         out.feed(c)
     assert out.raw() == text
+
+
+@pytest.mark.asyncio
+async def test_a_login_name_in_the_environment_never_stands_for_the_shells_user(
+    stand_in_elevation, monkeypatch
+):
+    """``LOGNAME``/``USER`` name the second user: ``exec(user=)`` and ``as_user()`` still switch."""
+    monkeypatch.setenv("LOGNAME", _OTHER)
+    monkeypatch.setenv("USER", _OTHER)
+    host = LocalHost()
+    try:
+        assert host.configured_login_user() == _INVOKING
+        named = await host.exec("id -un", timeout=10, user=_OTHER)
+        async with host.as_user(user=_OTHER):
+            inside = await host.exec("id -un", timeout=10)
+    finally:
+        await host.close()
+    assert (named.value, inside.value) == (_OTHER, _OTHER)
+
+
+@pytest.mark.asyncio
+async def test_a_stale_root_user_in_the_environment_still_elevates_through_sudo(
+    stand_in_elevation, monkeypatch
+):
+    """``USER=root``, a non-root process: sudo is typed and answered from that user's cred."""
+    if _INVOKING == "root":
+        pytest.fail("this test needs a non-root process user; the dev VM runs as one")
+    monkeypatch.setenv("USER", "root")
+    monkeypatch.setenv("LOGNAME", "root")
+    host = LocalHost(creds=[Cred(login=_INVOKING, password=FAKE_ELEVATION_PASSWORD)])
+    try:
+        r = (await host.run("id -un", timeout=10, sudo=True)).only
+    finally:
+        await host.close()
+    assert re.fullmatch(r"otto-sudo-[A-Za-z0-9]{16}:root", r.value), r.value
+    assert _password_reads(stand_in_elevation) == 1

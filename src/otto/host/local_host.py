@@ -27,10 +27,11 @@ from typing import TYPE_CHECKING, Annotated
 from typing_extensions import final, override
 
 from ..logger.mode import LogMode
+from ..models.base import Cred
 from ..result import CommandResult, Result
-from ..utils import Arg, Exclude, Opt, Status, cli_exposed
+from ..utils import Arg, Exclude, Opt, Status, cli_exposed, process_user
 from . import process_stop
-from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
+from .capability_grid import HostCapabilities, OptionSupport, SessionIdentity, UserSupport
 from .exec_route import ExecRoute
 from .exit_status import exit_status_of, no_return_code_result
 from .file_ops import PosixFileOps
@@ -196,26 +197,42 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     Shell state (working directory, environment variables) persists across ``run``
     calls through a :class:`~otto.host.session.SessionManager`-backed local
     session; ``exec`` bypasses it and spawns an independent subprocess, making
-    concurrent calls safe. File transfers delegate to :class:`LocalFileTransfer`.
+    concurrent calls safe. An ``exec`` that needs a shell (``expects=``,
+    ``sudo=``) or another user (``user=``, or an enclosing ``as_user()``) runs
+    on a pooled local shell instead, as on a remote host. File transfers
+    delegate to :class:`LocalFileTransfer`.
+
+    The shells run as the invoking user. ``user=`` switches them exactly as on
+    a remote host: with the target's credential from *creds* when there is
+    one, otherwise as an ad-hoc ``su`` target; ``sudo`` is answered from the
+    invoking user's credential when it asks.
     """
 
     capabilities = HostCapabilities(
-        run_user=UserSupport.refused,
-        exec_user=UserSupport.refused,
+        sudo=OptionSupport.honoured(),
+        expects=OptionSupport.honoured(),
+        user_refusal=None,
+        run_user=UserSupport.switch,
+        exec_user=UserSupport.switch,
         put_user=UserSupport.refused,
         get_user=UserSupport.refused,
         show_progress=False,
         session_identity=SessionIdentity.as_user_scoped,
         transfer="`shutil.copy2` on the machine's own filesystem, one file at a time",
         note=(
-            "otto already runs as the invoking user and local copies keep that "
-            "user's ownership, so no verb takes `user=`; `as_user()` still "
-            "switches the persistent session."
+            "`run` and `exec` switch from the invoking user as a unix host "
+            "switches from its login; local copies keep the invoking user's "
+            "ownership, so `put` and `get` take no `user=`."
         ),
     )
     """What this family promises. See :class:`~otto.host.capability_grid.HostCapabilities`."""
 
     name: str = field(default="localhost", init=False)
+
+    creds: list[Cred] | None = None
+    """Credentials for switching user and answering ``sudo``, looked up as a
+    unix host's are: the invoking user's answers ``sudo``, a target's answers
+    the switch to it. ``None`` knows none: every target is an ad-hoc ``su``."""
 
     _file_transfer: LocalFileTransfer = field(init=False, repr=False)
     """Local copy via shutil, routed through BaseFileTransfer so progress
@@ -239,9 +256,12 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             log_output=self._log_output,
             fold_log=self._session_fold(),
             session_factory=LocalSession,
-            creds=[],
+            creds=self._switch_creds(),
             host_id=self.id,
             types_into_terminal=LocalSession.reads_a_terminal,
+            # The shells this host spawns run as the user otto runs as,
+            # resolved once per manager; "" (unknown) for a user with no name.
+            login_user=process_user() or "",
         )
         self._file_transfer = LocalFileTransfer(name=self.name)
 
@@ -255,18 +275,17 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
 
     @override
-    def _refuse_run_user(self, user: str) -> None:
-        """Refuse ``run(user=...)``: otto already runs as the invoking user."""
-        raise NotImplementedError(
-            f"{self.name}: run(user=...) is not supported on LocalHost — otto "
-            f"already runs as the invoking user; as_user() still switches the "
-            f"persistent session"
-        ) from None
-
-    @override
     def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
-        """Every ``exec`` here is a fresh local subprocess."""
-        return ExecPlan(route=ExecRoute.LOCAL_SUBPROCESS)
+        """Plan a fresh local subprocess, unless the call needs a shell or a user.
+
+        *user* is the call's effective user (an enclosing ``as_user()``
+        included). A call that needs a shell (*expects*, *sudo*) or runs as
+        another user is ``POOLED_SHELL``: a pooled local shell, opened as that
+        user, answers the prompt and keeps the identity a bare process cannot.
+        """
+        if not needs_shell and user is None:
+            return ExecPlan(route=ExecRoute.LOCAL_SUBPROCESS)
+        return ExecPlan(route=ExecRoute.POOLED_SHELL)
 
     @override
     async def _run_plan(
@@ -280,43 +299,24 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         expects: "list[Expect | CredentialExpect] | None",
         exec_input: "ExecInput | None",
     ) -> CommandResult:
-        """Run a command in a fresh subprocess (stateless, concurrent-safe).
+        """Run *cmd* on the route :meth:`_plan_exec` chose.
 
-        Each call spawns an independent process — no state persists between
-        calls, and multiple exec() calls can run concurrently via
-        asyncio.gather().
-
-        The *user* refusal is :meth:`_refuse_exec_user`'s, not this method's,
-        so it lands above ``exec``'s dry-run arm. *expects* is accepted here
-        for signature parity; a subprocess has no pty to answer a prompt on.
+        A subprocess is stateless and concurrent-safe: each call spawns an
+        independent process, and several ``exec()`` calls can run at once via
+        ``asyncio.gather()``. The pooled shell is the session manager's, as on
+        every family that plans one.
         """
-        return await self._exec_subprocess(cmd, timeout, log=self._effective_log(log))
-
-    @override
-    def _refuse_exec_user(self, user: str) -> None:
-        """Refuse ``exec(user=...)``: otto already runs as the invoking user."""
-        raise NotImplementedError(
-            f"{self.name}: exec(user=...) is not supported on LocalHost — "
-            f"otto already runs as the invoking user"
-        ) from None
-
-    @override
-    def _refuse_exec_sudo(self) -> None:
-        """Refuse ``exec(sudo=True)``: a bare subprocess has no pty to answer sudo on."""
-        raise NotImplementedError(
-            f"{self.name}: exec(sudo=True) is not supported on LocalHost — a bare "
-            f"subprocess has no pty to answer sudo on; run(sudo=True) elevates on "
-            f"the persistent session"
-        ) from None
-
-    @override
-    def _refuse_exec_expects(self) -> None:
-        """Refuse ``exec(expects=...)``: a bare subprocess has no pty to answer a prompt on."""
-        raise NotImplementedError(
-            f"{self.name}: exec(expects=...) is not supported on LocalHost — a bare "
-            f"subprocess has no pty to answer a prompt on; run(expects=...) answers "
-            f"prompts on the persistent shell"
-        ) from None
+        if plan.route is ExecRoute.LOCAL_SUBPROCESS:
+            return await self._exec_subprocess(cmd, timeout, log=self._effective_log(log))
+        return await self._exec_on_manager_route(
+            plan.route,
+            cmd=cmd,
+            timeout=timeout,
+            log=log,
+            user=user,
+            expects=expects,
+            exec_input=exec_input,
+        )
 
     async def _exec_subprocess(
         self,

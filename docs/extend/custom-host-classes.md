@@ -84,9 +84,44 @@ three overrides join a positional signature, taking `ip`, `os_type`,
 
 Your class must also declare a `capabilities`
 ({class}`~otto.host.capability_grid.HostCapabilities`) saying what its verbs
-promise for `user=`, progress and session identity — `register_host_class`
-refuses a class that does not.  Subclassing `EmbeddedHost` or `UnixHost`
-inherits theirs; redeclare only where yours differs.
+promise for `user=`, `sudo=`, `expects=`, progress and session identity —
+`register_host_class` refuses a class that does not.  Subclassing
+`EmbeddedHost` or `UnixHost` inherits theirs; redeclare only where yours
+differs.
+
+`sudo` and `expects` are each an {class}`~otto.host.capability_grid.OptionSupport`:
+`OptionSupport.honoured()`, or `OptionSupport.refused(limitation=...)` with the
+{class}`~otto.host.limitation.Limitation` (kind `device`, with its
+measurement) that says why the device cannot do it.  `user_refusal` is that
+limitation for `user=`, set exactly when `run_user` or `exec_user` is
+`refused`, `None` otherwise.  `run` and `exec` then refuse a declared option
+for you, above their dry-run arm, with
+{class}`~otto.host.errors.UnsupportedOptionError` (a `NotImplementedError`)
+naming the option, the host and the limitation's reason; the command contract
+pages list each declared refusal as an exception ({doc}`../command-contracts/index`).
+`EmbeddedHost`'s refusals of `sudo=` and `user=` are measured on Zephyr's
+shell: a family for another RTOS redeclares them with its own measurement, as
+below, even where the answer is the same.
+
+```python
+import dataclasses
+
+from otto.host import EmbeddedHost, OptionSupport
+from otto.host.limitation import Limitation
+
+NO_SUDO = Limitation(
+    kind="device",
+    affects="`sudo=` on `run` and `exec`",
+    reason="The RTOS shell has no privilege levels.",
+    measured_on=["2026-11-18, my-rtos 1.2: `sudo` answers `command not found`"],
+)
+
+
+class MyRtosHost(EmbeddedHost):
+    capabilities = dataclasses.replace(
+        EmbeddedHost.capabilities, sudo=OptionSupport.refused(limitation=NO_SUDO)
+    )
+```
 
 `ZephyrHost` in `otto.host.embedded_host` is the in-tree worked example — it
 re-declares `os_type`, `os_name`, and `command_frame` as class-level field
@@ -321,9 +356,13 @@ def test_a_gadget_converts_its_buffer():
 depends on — read off the `Host` protocol itself, so a parameter added there is
 asked of your class rather than silently skipped — and, given an `instance`,
 probes each verb against what your `capabilities` promise for it: a verb
-declared `refused` must raise `NotImplementedError`, and one declared anything
-else must not.  The probes run inside a dry-run context, so nothing connects and
-no bytes move; what each value means is in {doc}`../cli/host/families`.  Call
+declared `refused` must raise `NotImplementedError` (on `run` and `exec`,
+`UnsupportedOptionError`), and one declared anything else must not.  A
+`sudo` or `expects` declared refused must raise `UnsupportedOptionError` on
+`run` and `exec`, live and under a dry run, before any command is sent; one
+declared honoured must not be refused.  The probes run inside a dry-run
+context (the live refusal probe stops the call before it sends anything), so
+nothing connects and no bytes move; what each value means is in {doc}`../cli/host/families`.  Call
 it from a synchronous test — the probes drive their own event loop — and
 close the `instance` afterwards (`asyncio.run(instance.close())`): the helper
 leaves that to the caller.

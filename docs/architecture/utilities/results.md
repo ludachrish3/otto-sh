@@ -236,18 +236,16 @@ output look like output until the END record arrives, so the newest lines
 (three on 3.7 and later, two on 2.7) wait for it, and at END the rest of
 `value`'s lines are logged. An output that ends without a newline arrives
 with the prompt glued to its last line, which is one of those held, so that
-line is logged without the prompt. Prompts a plain
+line is logged without the prompt: a synthetic transcript shows this, not one
+recorded on a device. Prompts a plain
 expect answered are output like any other and appear inside their line.
 
 Three things are delimited on purpose:
 
 - **A timed-out command** logs the complete lines it printed before the
-  deadline, and nothing from its END record on. There are two gaps. A timeout
-  that lands while otto is typing an expect's answer leaves the lines of the
-  read that prompt was matched in in `value` only, and for a
-  {class}`~otto.host.host.CredentialExpect` the prompt's line can reach the
-  log (the answer never does). A timeout that lands before otto has read the
-  command's first output logs nothing, though `value` may hold lines. The `Command timed out after <N>s` line and the unfinished last
+  deadline, and nothing from its END record on. There is one gap: a timeout
+  that lands before otto has read the command's first output logs nothing,
+  though `value` may hold lines. The `Command timed out after <N>s` line and the unfinished last
   line are in its `value` ({ref}`timed out <timed-out-command-result>`), not in the log. A line that was waiting
   for the next one is logged when the command stops, and the log is then the
   complete lines of what its timed-out `value` shows, each once, on every

@@ -59,7 +59,7 @@ from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .binary_loader import BinaryLoader
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
-from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
+from .capability_grid import HostCapabilities, OptionSupport, SessionIdentity, UserSupport
 from .command_frame import CommandFrame, ExecInput, ZephyrFrame
 from .connections import ConnectionManager, TermContext, build_term_backend
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
@@ -74,6 +74,7 @@ from .host import (
     is_dry_run,
     refuse_declined_fact,
 )
+from .limitation import Limitation
 from .power import power_control_from_spec
 from .remote_host import OsType, RemoteHost
 from .session import (
@@ -93,6 +94,47 @@ logger = logging.getLogger(__name__)
 # than the bash default (10 s). Passed to the SessionManager as the family's
 # ``default_init_timeout``, so OTTO_INIT_TIMEOUT replaces it as it does bash's.
 _EMBEDDED_INIT_TIMEOUT = 15.0
+
+
+_ZEPHYR_PRIVILEGE_MEASUREMENTS = [
+    (
+        f"2026-11-18, Zephyr {version} ({guest}): `sudo true`, `su`, `whoami` and `id` "
+        f"each answer `<name>: command not found` (retcode -8); `help` lists no user or "
+        f"privilege command (tests/measurements/zephyr_privilege/{guest}.txt)"
+    )
+    for version, guest in [
+        ("2.7.6", "zephyr27_fat"),
+        ("3.7.2", "zephyr37_fat"),
+        ("4.4.1", "zephyr44_lfs"),
+    ]
+]
+"""The bed transcripts behind both embedded option refusals."""
+
+_NO_SUDO = Limitation(
+    kind="device",
+    affects="elevating a command with `sudo=` on `run` and `exec`",
+    reason=(
+        "The device shell has no privilege levels to elevate between: it offers no "
+        "`sudo` or `su`, and every command already runs with the shell's one identity. "
+        "Measured on Zephyr; a family for another RTOS declares its own measurement."
+    ),
+    measured_on=_ZEPHYR_PRIVILEGE_MEASUREMENTS,
+    summary="no `sudo` or `su` on the device shell",
+)
+"""Why an embedded host refuses ``sudo=``."""
+
+_NO_USERS = Limitation(
+    kind="device",
+    affects="running a command as another `user=` on `run` and `exec`",
+    reason=(
+        "The device shell has no user accounts to switch to: it offers no `su`, "
+        "`whoami` or `id`, and the console's one identity is the only one there is. "
+        "Measured on Zephyr; a family for another RTOS declares its own measurement."
+    ),
+    measured_on=_ZEPHYR_PRIVILEGE_MEASUREMENTS,
+    summary="no user accounts on the device shell",
+)
+"""Why an embedded host refuses ``user=`` on ``run`` and ``exec``."""
 
 
 @dataclass(slots=True, kw_only=True)
@@ -118,6 +160,9 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     """
 
     capabilities = HostCapabilities(
+        sudo=OptionSupport.refused(limitation=_NO_SUDO),
+        expects=OptionSupport.honoured(),
+        user_refusal=_NO_USERS,
         run_user=UserSupport.refused,
         exec_user=UserSupport.refused,
         put_user=UserSupport.refused,
@@ -437,8 +482,9 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         ``exec`` holds). It exists for API parity; use ``run`` for stateful
         workflows.
 
-        The *user* refusal is :meth:`_refuse_exec_user`'s, not this method's,
-        so it lands above ``exec``'s dry-run arm. This family always runs on
+        The *user* and *sudo* refusals are
+        :meth:`~otto.host.host.BaseHost._refuse_option`'s, not this method's,
+        so they land above ``exec``'s dry-run arm. This family always runs on
         the shared shell, so the plan has nothing to choose.
         """
         return await self._live_session_mgr().run_cmd(
@@ -448,22 +494,6 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             log=self._effective_log(log),
             exec_input=exec_input,
         )
-
-    @override
-    def _refuse_exec_user(self, user: str) -> None:
-        """Refuse ``exec(user=...)``: a serial console has no user to switch to."""
-        raise NotImplementedError(
-            f"{self.name}: exec(user=...) is not supported on EmbeddedHost — "
-            f"a serial console has no user to switch to"
-        ) from None
-
-    @override
-    def _refuse_exec_sudo(self) -> None:
-        """Refuse ``exec(sudo=True)``: a serial console has no sudo."""
-        raise NotImplementedError(
-            f"{self.name}: exec(sudo=True) is not supported on EmbeddedHost — a "
-            f"serial console has no sudo"
-        ) from None
 
     def _require_loader(self) -> BinaryLoader:
         """Return this host's binary loader, or fail loud if none is declared."""

@@ -6,6 +6,8 @@ import copy
 import dataclasses
 import json
 import logging
+import os
+import pwd
 import re
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
@@ -2663,11 +2665,12 @@ class TestTheDeclinedHandleIsUsableAndNeverMistakenForALiveOne:
                 f"declined={declined.current_user!r} live={live.current_user!r}"
             )
 
-        # A loginless family answers "" -- the same thing its real sessions do,
-        # which is the point: the decline tracks the real path rather than
-        # picking its own answer.
+        # The local family answers the invoking user -- the same thing its real
+        # sessions do, which is the point: the decline tracks the real path
+        # rather than picking its own answer.
+        invoking = pwd.getpwuid(os.geteuid()).pw_name
         with active_context(dry_run=True):
-            assert (await _local().open_session("mon")).current_user == ""
+            assert (await _local().open_session("mon")).current_user == invoking
 
     @pytest.mark.asyncio
     async def test_an_unoverridden_method_still_declines_at_the_point_of_use(self):

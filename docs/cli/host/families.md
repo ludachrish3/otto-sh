@@ -24,7 +24,7 @@ A class registered from your own repository must declare one too:
 | `chown` | The verb runs under the login identity's privilege and switches the result to the named user -- a `chown` over files that have landed, or `docker exec -u` for a command. The named user's own credentials are never needed. |
 | `switch` | The verb runs in a shell session switched to that user, reached the way an interactive login reaches them -- directly, or by replaying the proxy hops their cred declares. On an SSH host, a user with a direct cred is instead authenticated on a connection of their own. |
 | `ignored` | The argument is accepted and validated, and has no other effect. |
-| `refused` | The verb raises `NotImplementedError` naming the alternative, and refuses under a dry run too. |
+| `refused` | The verb raises `NotImplementedError`, and refuses under a dry run too. On `run` and `exec` it is `UnsupportedOptionError`, carrying the family's declared reason. |
 
 ## Where a session's identity comes from
 
@@ -50,7 +50,7 @@ are published with the backends themselves, in {ref}`matrix-progress-promises`.
 | `embedded` | `os_type: embedded` | `refused` | `refused` | `refused` | `refused` | yes | none | `console` and `tftp` | A serial console has no user to switch to, and transfer ownership follows the connection's own identity. Refuses `put`/`get` with `--recursive`; moves one file at a time, so `--concurrent` is a no-op. |
 | `zephyr` | `os_type: zephyr` | `refused` | `refused` | `refused` | `refused` | yes | none | `console` and `tftp` | A serial console has no user to switch to, and transfer ownership follows the connection's own identity. Refuses `put`/`get` with `--recursive`; moves one file at a time, so `--concurrent` is a no-op. |
 | `container` | a `[docker]` service, started by `otto docker compose up` (see {doc}`../docker/index`) | `chown` | `chown` | `chown` | `ignored` | no | bound at open | the parent host's own backend for the staging leg, then `docker cp` across the container boundary, `--concurrent` governing the staging leg | `user=` defaults to the service's declared user, and falls back to the image's own `USER` when neither is set. |
-| `local` | implicit -- the machine otto itself runs on | `refused` | `refused` | `refused` | `refused` | no | as_user scoped | `shutil.copy2` on the machine's own filesystem, one file at a time | otto already runs as the invoking user and local copies keep that user's ownership, so no verb takes `user=`; `as_user()` still switches the persistent session. |
+| `local` | implicit -- the machine otto itself runs on | `switch` | `switch` | `refused` | `refused` | no | as_user scoped | `shutil.copy2` on the machine's own filesystem, one file at a time | `run` and `exec` switch from the invoking user as a unix host switches from its login; local copies keep the invoking user's ownership, so `put` and `get` take no `user=`. |
 
 The CLI pages for the verbs themselves — {doc}`exec`,
 {doc}`put`, {doc}`get` — say how to pass `--user`; this

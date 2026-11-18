@@ -11,7 +11,6 @@ The public surface (re-exported from :mod:`otto.docker`) is:
 
 import asyncio
 import contextlib
-import getpass
 import logging
 import re
 import shlex
@@ -34,7 +33,7 @@ from ..host.host import Host, is_dry_run, refuse_declined_fact
 from ..host.mount import Mount
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError, CommandResult, Result
-from ..utils import Status, WaitTimeoutError, wait_for_async
+from ..utils import Status, WaitTimeoutError, invoking_user_label, wait_for_async
 
 if TYPE_CHECKING:
     from ..labs.loader import Lab
@@ -131,7 +130,7 @@ def get_user_compose_project(*, project_name: str, suffix: str | None = None) ->
 
     # Fresh OttoEnvSettings() (not the get_env() singleton) so OTTO_COMPOSE_SUFFIX
     # is re-read each call — callers/tests set it per-invocation.
-    raw_suffix = suffix or OttoEnvSettings().compose_suffix or _safe_username()
+    raw_suffix = suffix or OttoEnvSettings().compose_suffix or invoking_user_label()
     return f"otto-{project_name}-{raw_suffix}".lower()
 
 
@@ -161,16 +160,9 @@ def use_case_project(lab_name: str, use_case: str, suffix: "str | None" = None) 
     # Same deferred-import + fresh-read rationale as get_user_compose_project.
     from ..models.settings import OttoEnvSettings
 
-    raw = suffix or OttoEnvSettings().compose_suffix or _safe_username()
+    raw = suffix or OttoEnvSettings().compose_suffix or invoking_user_label()
     project = "-".join(_slug_segment(part) for part in (lab_name, use_case, raw))
     return project.lstrip("-_") or _slug_segment(use_case)
-
-
-def _safe_username() -> str:
-    try:
-        return getpass.getuser()
-    except KeyError:
-        return "anon"
 
 
 def is_docker_capable(host: object) -> "TypeGuard[UnixHost]":
