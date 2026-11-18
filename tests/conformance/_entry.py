@@ -222,13 +222,25 @@ def opened(resolved: ResolvedCell) -> "AbstractAsyncContextManager[BaseHost]":
     return resolved.open_host()
 
 
-async def issue(host: BaseHost, resolved: ResolvedCell, cmd: str, **kwargs: Any) -> CommandResult:
-    """Issue *cmd* through *resolved*'s entry, then assert the route it took."""
+async def issue(
+    host: BaseHost,
+    resolved: ResolvedCell,
+    cmd: str,
+    *,
+    route_checked: bool = True,
+    **kwargs: Any,
+) -> CommandResult:
+    """Issue *cmd* through *resolved*'s entry, then assert the route it took.
+
+    *route_checked* False skips the route assertion, for a call that takes no
+    route at all: a dry run declines before any route is chosen.
+    """
     if resolved.entry in {EXEC, EXEC_SHELL}:
         result = await host.exec(cmd, **kwargs)
     else:
         result = (await host.run(cmd, **kwargs)).only
-    check_route(resolved, result)
+    if route_checked:
+        check_route(resolved, result)
     return result
 
 

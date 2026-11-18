@@ -270,6 +270,23 @@ class Vocabulary:
     *there is not one now*.
     """
 
+    leave_mark_template: str | None
+    """Leaves a durable mark at ``{path}``: a command a later one can tell ran.
+
+    The dry-run contract's stimulus. ``None`` where no stock command makes an
+    effect a later one reads back: the Zephyr shells this lab records have no
+    command that creates a file (only ``fs rm`` and a failing ``fs cat`` are
+    recorded), and some guests have no filesystem at all.
+    """
+
+    mark_left_template: str | None
+    """Exits 0 exactly when :attr:`leave_mark_template`'s mark is at ``{path}``, 1 when it is not.
+
+    ``None`` exactly when :attr:`leave_mark_template` is. Any other answer
+    (a timeout, a transport error, another code) answers neither. The mark
+    is removed with :attr:`remove_file_template`.
+    """
+
     long_running_seconds: float | None
     """How long :attr:`long_running_command` runs. ``None`` exactly when it is.
 
@@ -394,6 +411,8 @@ POSIX = Vocabulary(
     single_line_pattern=None,
     sentinel_plant_command=f"printf '%s\\n' {OTTO_SENTINEL_PREFIX}conformance_control__",
     remove_file_template="rm {path}",
+    leave_mark_template="touch {path}",
+    mark_left_template="test -e {path}",
     long_running_command=f"sleep {_UNIX_LONG_RUNNING_S}",
     long_running_seconds=float(_UNIX_LONG_RUNNING_S),
     run_state_set_command="cd /dev && export OTTO_CF_RUN=run && set -f",
@@ -489,6 +508,8 @@ _ZEPHYR_BASE = Vocabulary(
     # `echo` and no `printf`. Measured on all seven bed guests.
     sentinel_plant_command=f"{OTTO_SENTINEL_PREFIX}conformance_control__",
     remove_file_template="fs rm {path}",
+    leave_mark_template=None,
+    mark_left_template=None,
     long_running_command=None,
     long_running_seconds=None,
     run_state_set_command=None,
