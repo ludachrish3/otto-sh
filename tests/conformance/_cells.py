@@ -78,7 +78,7 @@ from tests.conformance._entry import LOCAL_FAMILY, family_of, hooked, proxied_on
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._venue import BED, current_venue
 from tests.conformance._vocabulary import POSIX
-from tests.integration.chaos._sshd import loopback_sshd
+from tests.integration.chaos._sshd import LoopbackEndpoint, loopback_sshd
 from tests.integration.chaos._target import make_loopback_target
 
 LOCAL = "local"
@@ -209,7 +209,12 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
     with tempfile.TemporaryDirectory(prefix="conformance-resolve-") as tmp:
         root = Path(tmp)
         make_loopback_target(
-            root, port=_RESOLVE_TIME_PORT, client_key=root / "unused-at-resolve-time"
+            root,
+            LoopbackEndpoint(
+                port=_RESOLVE_TIME_PORT,
+                client_key=root / "unused-at-resolve-time",
+                known_hosts=root / "unused-at-resolve-time-known-hosts",
+            ),
         )
         entry = _loopback_entry(root)
         host = create_host_from_dict(entry_of(entry), element=element_of(entry))
@@ -289,7 +294,7 @@ def _loopback_opener(
             loopback_sshd(Path(tmp)) as endpoint,
         ):
             root = Path(tmp)
-            make_loopback_target(root, port=endpoint.port, client_key=endpoint.client_key)
+            make_loopback_target(root, endpoint)
             # `term`/`transfer` are the spec's optional ACTIVE PIN, not a
             # menu edit: the host still validates them against the menu it
             # resolved, so a pair this venue drew but the host does not
