@@ -7,7 +7,7 @@ conformance space (``bed_space``) keeps refusing it.
 """
 
 import contextlib
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from dataclasses import replace
 
 import pytest
@@ -17,14 +17,19 @@ from tests.conformance import _bed, _vocabulary
 
 
 @pytest.fixture
-def no_recordings(monkeypatch: pytest.MonkeyPatch) -> "Iterator[None]":
+def no_recordings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every recording missing, as for a bed nothing has been recorded on."""
+    # The two cached readers are REPLACED for the test, never cleared: their
+    # caches hold the vocabulary objects other modules took at import and
+    # compare by identity, so clearing them here would change what a later
+    # test in this process sees.
     monkeypatch.setattr(_vocabulary, "recordings", dict)
-    _vocabulary._zephyr_recordings.cache_clear()
-    _vocabulary._zephyr_shell_of.cache_clear()
-    yield
-    _vocabulary._zephyr_recordings.cache_clear()
-    _vocabulary._zephyr_shell_of.cache_clear()
+    monkeypatch.setattr(_vocabulary, "_zephyr_recordings", dict)
+
+    def no_shell(element: str) -> None:
+        raise KeyError(element)
+
+    monkeypatch.setattr(_vocabulary, "_zephyr_shell_of", no_shell)
 
 
 class _OpenedError(Exception):
