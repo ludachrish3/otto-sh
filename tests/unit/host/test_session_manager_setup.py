@@ -21,7 +21,7 @@ from otto.host.element import Element
 from otto.host.errors import RawLandingError, UnsupportedOnUserlandError
 from otto.host.exec_route import ExecRoute
 from otto.host.login_proxy import Cred
-from otto.host.session import SessionManager, ShellSession
+from otto.host.session import ShellSession
 from otto.host.session_setup import (
     SESSION_SETUPS,
     SessionSetup,
@@ -33,6 +33,7 @@ from otto.logger.mode import LogMode
 from otto.utils import Status
 from tests._fixtures.dialect_shell import DialectSession, DialectShell
 from tests.conftest import active_context
+from tests.unit.host._sessions import session_manager
 
 _PW = SecretStr("pw")
 """The password every fake ``credentials`` pair here carries."""
@@ -94,7 +95,7 @@ class _Harness:
             self.sessions.append(s)
             return s
 
-        self.mgr = SessionManager(
+        self.mgr = session_manager(
             # login_target is the LAST hop's login, as
             # ConnectionManager.proxy_hops guarantees (both are derived from
             # one resolve_chain): a fixture that left it at the direct cred
@@ -459,7 +460,7 @@ async def test_a_host_without_a_hook_is_unchanged():
         built.append(s)
         return s
 
-    mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+    mgr = session_manager(connections=conn, name="h", session_factory=factory, host_id="h")
     await mgr._ensure_session()
     readies = [w for w in built[0].shell.writes if "READY__" in w]
     assert len(readies) == 1
@@ -757,7 +758,7 @@ async def test_every_transport_arm_builds_the_session_with_the_landing_frame(
 
     landing = BashFrame() if has_landing else None
     command = ZephyrFrame()
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=_term_conn(term),
         name="h",
         host_id="h",
@@ -782,7 +783,7 @@ def test_the_raw_channel_does_not_win_on_a_hooked_host():
     register_session_setup("t5-exec-route", _export, overwrite=True)
 
     try:
-        hooked = SessionManager(
+        hooked = session_manager(
             connections=_conn(),
             name="h",
             host_id="h",
@@ -791,7 +792,7 @@ def test_the_raw_channel_does_not_win_on_a_hooked_host():
         assert hooked.exec_route() is ExecRoute.POOLED_SHELL
         # The same manager without the hook still takes the fast path, so this
         # cannot be satisfied by pooling everything.
-        plain = SessionManager(connections=_conn(), name="h", host_id="h")
+        plain = session_manager(connections=_conn(), name="h", host_id="h")
         assert plain.exec_route() is ExecRoute.SSH_CHANNEL
     finally:
         SESSION_SETUPS.unregister(name="t5-exec-route")

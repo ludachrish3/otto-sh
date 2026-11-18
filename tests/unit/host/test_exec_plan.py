@@ -23,6 +23,7 @@ from otto.result import CommandResult, NotRunResult
 from otto.utils import Status
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.conftest import active_context
+from tests.unit.host._sessions import session_manager
 from tests.unit.host.test_docker_host import _make_container
 from tests.unit.host.test_embedded_host import _embedded_console
 from tests.unit.host.test_unix_host import _unix_host
@@ -303,14 +304,13 @@ async def test_the_ssh_channel_primitive_records_its_route():
 
     from pydantic import SecretStr
 
-    from otto.host.session import SessionManager
     from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn
     from tests.unit.host.test_session import _StubExecSession
 
     conn = SimpleNamespace(
         credentials=("alice", SecretStr("pw")), login_target="alice", proxy_hops=[], term="ssh"
     )
-    mgr = SessionManager(connections=conn, session_factory=_StubExecSession, host_id="h")
+    mgr = session_manager(connections=conn, session_factory=_StubExecSession, host_id="h")
     channel = FakeConn(FakeChannelProcess(["out\n"]))
     result = await mgr.exec_on(conn=channel, cmd="id", timeout=10.0)
     assert result.route == "ssh-channel"
@@ -382,7 +382,6 @@ def _route_of_page_case(case_id: str, stack) -> str:
     nothing here decides a route, so a routing change shows as a mismatch with
     what the page says.
     """
-    from otto.host.session import SessionManager
     from otto.host.session_setup import SessionSetup
     from tests._fixtures.session_setup_hooks import noop_session_setup
     from tests.unit.host.test_session_manager_setup import _conn
@@ -397,14 +396,19 @@ def _route_of_page_case(case_id: str, stack) -> str:
             return plan(_unix_host(term="telnet"))
         case "proxied":
             hop = Cred(login="app", proxy="su", via="admin")
-            mgr = SessionManager(
-                connections=_conn(hops=[hop], login_target="app"), name="h", host_id="h"
+            mgr = session_manager(
+                connections=_conn(hops=[hop], login_target="app"),
+                name="h",
+                host_id="h",
             )
             return mgr.exec_route().value
         case "hook":
             name = stack.enter_context(noop_session_setup("page-case-hook"))
-            mgr = SessionManager(
-                connections=_conn(), name="h", host_id="h", session_setup=SessionSetup(name=name)
+            mgr = session_manager(
+                connections=_conn(),
+                name="h",
+                host_id="h",
+                session_setup=SessionSetup(name=name),
             )
             return mgr.exec_route().value
         case "needs-shell":

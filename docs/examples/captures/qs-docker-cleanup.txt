@@ -16,6 +16,7 @@ INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf
          f=$?
          find /tmp/quickstart-docker/banner -depth -type d -exec rmdir {} \; 2>/dev/null
          echo "otto-cov-end 0 $f"'
+INFO     @docker-host > |
 INFO     @docker-host > | otto-cov-remove
 INFO     @docker-host > | otto-cov-begin 0
 INFO     @docker-host > | otto-cov-end 0 0
@@ -28,7 +29,7 @@ INFO     @docker-host   | printf '\n%s\n' otto-cov-probe
          printf "otto-ls-failed %s\n" "$1"; exit 1; }; if [ -z "$entries" ]; then printf "%s\n"
          "$1"; fi' sh {} \; 2>&1; s=$?
          echo "otto-cov-end 0 $r $s"
-INFO
+INFO     @docker-host > |
 INFO     @docker-host > | otto-cov-probe
 INFO     @docker-host > | otto-cov-begin 0
 INFO     @docker-host > | find: '/tmp/quickstart-docker/banner': No such file or directory

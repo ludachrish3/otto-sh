@@ -1,5 +1,6 @@
 """Tests for dry-run mode on hosts (via OttoContext)."""
 
+import asyncio
 import base64
 import copy
 import dataclasses
@@ -18,9 +19,10 @@ from otto.host.app_shell import AppShell
 from otto.host.command_frame import ZephyrFrame
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
-from otto.host.embedded_host import EmbeddedHost
+from otto.host.embedded_host import EmbeddedHost, ZephyrHost
+from otto.host.exec_route import ExecRoute
 from otto.host.file_ops import refuse_if_base64_is_absent
-from otto.host.host import _HostFilter, is_dry_run
+from otto.host.host import ShellCommand, _HostFilter, is_dry_run
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.power import PowerController, PowerState
@@ -32,7 +34,9 @@ from otto.logger.mode import LogMode
 from otto.result import CommandNotRunError, CommandResult, NotRunResult, Result, Results
 from otto.utils import Status
 from tests._fixtures.fake_shell import ShellModel
+from tests.conformance._log import records_containing
 from tests.conftest import active_context
+from tests.unit.host._sessions import session_manager
 
 
 class TestGlobalDryRun:
@@ -638,6 +642,461 @@ class TestDryRunHonoursTheCallersLogMode:
         )
         assert not any("hunter2" in ln for ln in verbose.lines()), (
             f"a NEVER send reached a sink under dry run: {verbose.lines()}"
+        )
+
+
+_RESTRICTIVENESS = [LogMode.NORMAL, LogMode.QUIET, LogMode.NEVER]
+"""Least to most restrictive: the order a folded mode takes the most restrictive of."""
+
+
+async def _only(results):
+    return (await results).only
+
+
+async def _issue_on(host, entry: str, cmd, *, log: LogMode):
+    """*cmd* through *entry* (``run`` or ``exec``) of *host*."""
+    if entry == "exec":
+        return await host.exec(cmd, log=log)
+    return (await host.run(cmd, log=log)).only
+
+
+class TestADryRunLogsWithTheCommandsOwnMode:
+    """A :class:`ShellCommand`'s own ``log`` wins over the call's, dry exactly as live.
+
+    The live arms read the resolved command's mode; a dry-run arm that read
+    the call's instead announced, at ``NORMAL``, a command its caller marked
+    ``NEVER`` -- the dry run showing more than the real thing.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("standing", list(LogMode), ids=lambda m: m.name)
+    @pytest.mark.parametrize("call", list(LogMode), ids=lambda m: f"call-{m.name}")
+    @pytest.mark.parametrize(
+        "own", [None, *LogMode], ids=lambda m: f"own-{m.name if m else 'unset'}"
+    )
+    async def test_every_entry_announces_one_command_under_one_mode(self, own, call, standing):
+        """``host.run``, ``host.exec`` and a named session's ``run``: the same records, one shape.
+
+        The expected mode is this test's own statement of the rule: the
+        command's mode when it sets one, else the call's, then the most
+        restrictive of that and the host's standing mode; ``NEVER`` logs no
+        record at all.
+        """
+        chosen = own if own is not None else call
+        expected = max(chosen, standing, key=_RESTRICTIVENESS.index)
+        host = _local(log=standing)
+        host._session_mgr._session_factory = _RecordingShellSession
+        session = await host.open_session("worker")
+        cmd = ShellCommand(cmd="otto-one-decline", log=own)
+        seen = {}
+        try:
+            for name, issue in [
+                ("run", lambda: _issue_on(host, "run", cmd, log=call)),
+                ("exec", lambda: _issue_on(host, "exec", cmd, log=call)),
+                ("session", lambda: _only(session.run(cmd, log=call))),
+            ]:
+                with active_context(dry_run=True), _two_sided_sinks() as (_console, verbose):
+                    result = await issue()
+                records = [
+                    getattr(r, "log_mode", LogMode.NORMAL)
+                    for r in verbose.records
+                    if "[DRY RUN] otto-one-decline" in r.getMessage()
+                ]
+                with pytest.raises(CommandNotRunError):
+                    _ = result.value
+                seen[name] = (records, result.status, result.retcode, result.route, result.command)
+        finally:
+            await session.close()
+            await host.close()
+
+        records = [] if expected is LogMode.NEVER else [expected]
+        want = (records, Status.NotRun, -1, "", "otto-one-decline")
+        assert seen == {"run": want, "exec": want, "session": want}
+
+    @pytest.mark.asyncio
+    async def test_a_sequence_announces_each_command_under_its_own_mode_on_every_run(self):
+        cmds = [
+            ShellCommand(cmd="otto-seq-never", log=LogMode.NEVER),
+            ShellCommand(cmd="otto-seq-quiet", log=LogMode.QUIET),
+            "otto-seq-call",
+        ]
+        host = _local()
+        host._session_mgr._session_factory = _RecordingShellSession
+        session = await host.open_session("worker")
+        announced = {}
+        try:
+            for name, runner in [("host", host), ("session", session)]:
+                with active_context(dry_run=True), _two_sided_sinks() as (_console, verbose):
+                    await runner.run(cmds, log=LogMode.NORMAL)
+                announced[name] = [
+                    (r.getMessage().rsplit(" ", 1)[-1], getattr(r, "log_mode", LogMode.NORMAL))
+                    for r in verbose.records
+                    if "[DRY RUN] otto-seq-" in r.getMessage()
+                ]
+        finally:
+            await session.close()
+            await host.close()
+
+        want = [("otto-seq-quiet", LogMode.QUIET), ("otto-seq-call", LogMode.NORMAL)]
+        assert announced == {"host": want, "session": want}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("dry", [True, False], ids=["dry", "live"])
+    async def test_a_sequence_logs_only_the_lines_of_the_command_not_marked_never(self, dry):
+        cmds = [
+            ShellCommand(cmd="printf '%s\\n' otto-own-never", log=LogMode.NEVER),
+            "printf '%s\\n' otto-call-normal",
+        ]
+        host = LocalHost()
+        try:
+            with active_context(dry_run=dry), _two_sided_sinks() as (_console, verbose):
+                await host.run(cmds, log=LogMode.NORMAL)
+        finally:
+            await host.close()
+
+        assert any("otto-call-normal" in ln for ln in verbose.lines()), (
+            f"the command logged at NORMAL reached no sink; saw {verbose.lines()}"
+        )
+        assert not any("otto-own-never" in ln for ln in verbose.lines()), (
+            f"a {'dry' if dry else 'live'} run logged a command whose own mode is NEVER: "
+            f"{verbose.lines()}"
+        )
+
+
+class TestALiveCommandLogsUnderOneModeOnEveryEntry:
+    """The live counterpart: the records a command's echo and output reach, from every entry.
+
+    ``host.run`` is the reference; ``host.exec`` and a named session's
+    ``run`` must log the same records for the same command, call mode and
+    standing mode, and return the same ``value``.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("standing", list(LogMode), ids=lambda m: m.name)
+    @pytest.mark.parametrize("call", list(LogMode), ids=lambda m: f"call-{m.name}")
+    @pytest.mark.parametrize(
+        "own", [None, *LogMode], ids=lambda m: f"own-{m.name if m else 'unset'}"
+    )
+    async def test_every_entry_logs_one_command_under_one_mode(self, own, call, standing):
+        chosen = own if own is not None else call
+        expected = max(chosen, standing, key=_RESTRICTIVENESS.index)
+        host = _local(log=standing)
+        session = await host.open_session("worker")
+        cmd = ShellCommand(cmd="printf '%s\\n' otto-live-out", log=own)
+        seen = {}
+        try:
+            for name, issue in [
+                ("run", lambda: _issue_on(host, "run", cmd, log=call)),
+                ("exec", lambda: _issue_on(host, "exec", cmd, log=call)),
+                ("session", lambda: _only(session.run(cmd, log=call))),
+            ]:
+                with _two_sided_sinks() as (_console, verbose):
+                    result = await issue()
+                records = [
+                    (
+                        "output" if getattr(r, "relayed", None) == "otto-live-out" else "echo",
+                        getattr(r, "log_mode", LogMode.NORMAL),
+                    )
+                    for r in verbose.records
+                    if "otto-live-out" in r.getMessage()
+                ]
+                seen[name] = (records, result.status, result.value)
+        finally:
+            await session.close()
+            await host.close()
+
+        # A command logging under NEVER reaches no sink, and its value is still its output.
+        records = [] if expected is LogMode.NEVER else [("echo", expected), ("output", expected)]
+        want = (records, Status.Success, "otto-live-out")
+        assert seen == {"run": want, "exec": want, "session": want}
+
+    @pytest.mark.asyncio
+    async def test_a_never_command_asks_the_transport_to_redact_on_every_entry(self, monkeypatch):
+        """NEVER redacts the transport's own trace, not just otto's records.
+
+        ``host.run`` asks the session's transport to redact a command whose
+        resolved mode is NEVER (``ShellSession.run_cmd(redact=True)``), and a
+        named session's ``run`` must ask the same for the same input; a NORMAL
+        command asks on neither. ``host.exec`` on a local host spawns its own
+        process and reaches no shell transport, so it has no request to make:
+        pinned as none, so an exec that starts riding a shell session shows up
+        here and must then ask like the other two. An exec on the pooled shell
+        route types into a session, so it asks as ``run`` does.
+        """
+        from tests.unit.host.test_session_exec_pooled import _mgr
+
+        asked: list[bool] = []
+        real = ShellSession.run_cmd
+
+        async def recording(self, *args, **kwargs):
+            asked.append(kwargs.get("redact", False))
+            return await real(self, *args, **kwargs)
+
+        from tests.unit.host.test_session import _StubExecSession
+
+        stub = _StubExecSession.run_cmd
+
+        async def stub_recording(self, *args, **kwargs):
+            asked.append(kwargs.get("redact", False))
+            return await stub(self, *args, **kwargs)
+
+        monkeypatch.setattr(ShellSession, "run_cmd", recording)
+        # The pooled route's stub session answers a canned "OUT" of its own.
+        monkeypatch.setattr(_StubExecSession, "run_cmd", stub_recording)
+        host = _local()
+        session = await host.open_session("worker")
+        pooled = _mgr()
+        seen = {}
+        try:
+            for mode in (LogMode.NEVER, LogMode.NORMAL):
+                cmd = ShellCommand(cmd="printf '%s\\n' otto-redact", log=mode)
+                for name, issue in [
+                    ("run", lambda cmd=cmd: _issue_on(host, "run", cmd, log=LogMode.NORMAL)),
+                    ("exec", lambda cmd=cmd: _issue_on(host, "exec", cmd, log=LogMode.NORMAL)),
+                    ("session", lambda cmd=cmd: _only(session.run(cmd, log=LogMode.NORMAL))),
+                    (
+                        "pooled-exec",
+                        lambda cmd=cmd: pooled.exec_on_route(
+                            route=ExecRoute.POOLED_SHELL, cmd=cmd.cmd, timeout=30, log=cmd.log
+                        ),
+                    ),
+                ]:
+                    asked.clear()
+                    result = await issue()
+                    seen[(name, mode)] = (asked[-1:], result.value)
+        finally:
+            await session.close()
+            await host.close()
+            await pooled.close_all()
+
+        assert seen == {
+            (name, mode): (
+                [] if name == "exec" else [mode is LogMode.NEVER],
+                "OUT" if name == "pooled-exec" else "otto-redact",
+            )
+            for mode in (LogMode.NEVER, LogMode.NORMAL)
+            for name in ("run", "exec", "session", "pooled-exec")
+        }
+
+
+#: Every shipped family that opens a named session: its builder (taking the
+#: standing mode) and whether that session folds the standing mode in. A
+#: container does not fold yet (``DockerContainerHost._session_fold``
+#: says so), and the row pins that until the container work decides it.
+_NAMED_SESSION_FAMILIES = {
+    "local": (lambda log: _local(log=log), True),
+    "unix": (lambda log: _unix(log=log), True),
+    "embedded": (
+        lambda log: EmbeddedHost(
+            ip="192.0.2.1", element=Element(name="e"), log=log, command_frame=ZephyrFrame()
+        ),
+        True,
+    ),
+    "zephyr": (lambda log: ZephyrHost(ip="192.0.2.1", element=Element(name="z"), log=log), True),
+    "container": (lambda log: _docker(log=log), False),
+}
+
+
+def test_every_shipped_family_has_a_named_session_log_row():
+    from otto.host.capability_grid import shipped_host_families
+
+    assert sorted(_NAMED_SESSION_FAMILIES) == sorted(f.name for f in shipped_host_families())
+
+
+class TestANamedSessionFoldsTheHostsStandingMode:
+    """A named session's ``run`` and ``send`` log under the host's standing mode, per family."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("opened", ["live", "before-a-dry-run", "during-a-dry-run"])
+    @pytest.mark.parametrize("standing", [LogMode.QUIET, LogMode.NEVER], ids=lambda m: m.name)
+    @pytest.mark.parametrize("family", sorted(_NAMED_SESSION_FAMILIES))
+    async def test_run_and_send_log_under_the_folded_mode(self, family, standing, opened):
+        """Live, or announced by a dry run on a session opened before it or during it."""
+        build, folds = _NAMED_SESSION_FAMILIES[family]
+        host = build(standing)
+        mgr = host._session_mgr
+        mgr._session_factory = _RecordingShellSession
+        mgr._named_session_factory = None
+        if opened == "during-a-dry-run":
+            with active_context(dry_run=True):
+                session = await host.open_session("worker")
+        else:
+            session = await mgr.open_session(name="worker")
+        try:
+            with (
+                active_context(dry_run=opened != "live"),
+                _two_sided_sinks() as (_console, verbose),
+            ):
+                await session.run("otto-fold-run")
+                await session.send("otto-fold-send\n")
+        finally:
+            await session.close()
+        modes = [
+            getattr(r, "log_mode", LogMode.NORMAL)
+            for r in verbose.records
+            if "otto-fold-" in r.getMessage()
+        ]
+        if not folds:
+            expected = [LogMode.NORMAL, LogMode.NORMAL]
+        elif standing is LogMode.NEVER:
+            expected = []
+        else:
+            expected = [standing, standing]
+        assert modes == expected, f"{family} on a {standing.name} host logged {modes}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("standing", [LogMode.QUIET, LogMode.NEVER], ids=lambda m: m.name)
+    async def test_a_dry_send_announces_under_the_folded_mode(self, standing):
+        """A named session's dry ``send`` folds the standing mode, as the host's does.
+
+        The host-level counterpart is
+        :meth:`TestDryRunHonoursTheCallersLogMode.test_send_keeps_quiet_text_off_the_console`:
+        a QUIET host announces the send at QUIET, a NEVER host not at all.
+        """
+        host = _local(log=standing)
+        mgr = host._session_mgr
+        mgr._session_factory = _RecordingShellSession
+        session = await mgr.open_session(name="worker")
+        try:
+            with active_context(dry_run=True), _two_sided_sinks() as (console, verbose):
+                await session.send("otto-dry-send\n")
+        finally:
+            await session.close()
+            await host.close()
+        announced = [
+            getattr(r, "log_mode", LogMode.NORMAL)
+            for r in verbose.records
+            if "[DRY RUN] send(" in r.getMessage() and "otto-dry-send" in r.getMessage()
+        ]
+        expected = [] if standing is LogMode.NEVER else [standing]
+        assert announced == expected, f"a {standing.name} host's dry send announced {announced}"
+        assert not any("otto-dry-send" in ln for ln in console.lines())
+
+
+class TestTheHostsExpectFoldsAsItsSendDoes:
+    """A host-level ``expect`` logs what it read under the mode its ``send`` logs under.
+
+    Both are the host's default session, so both take the host's fold, in every
+    family -- a container included, whose exemption covers its NAMED sessions
+    only. The scenario is a terminal echoing a password the caller typed with
+    ``send``: on a ``NEVER`` host neither the send nor the echo reaches a sink.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("standing", [LogMode.QUIET, LogMode.NEVER], ids=lambda m: m.name)
+    @pytest.mark.parametrize("family", sorted(_NAMED_SESSION_FAMILIES))
+    async def test_send_then_expect_log_under_the_hosts_mode(self, family, standing):
+        build, _folds = _NAMED_SESSION_FAMILIES[family]
+        host = build(standing)
+        host._session_mgr._session_factory = lambda: _RecordingShellSession(
+            match="mysql -potto-secret\nmysql> "
+        )
+        if isinstance(host, DockerContainerHost):
+            host._ensure_running = AsyncMock()
+        try:
+            with (
+                records_containing("otto-secret") as leaked,
+                _two_sided_sinks() as (_console, verbose),
+            ):
+                await host.send("mysql -potto-secret\n")
+                await host.expect("mysql> ")
+        finally:
+            await host.close()
+        hits = [r for r in verbose.records if "otto-secret" in r.getMessage()]
+        if standing is LogMode.NEVER:
+            # Every otto logger, at every level: a DEBUG line is a leak too.
+            assert leaked == [], f"{family} on a NEVER host logged {leaked}"
+        else:
+            # The reader that must stay empty under NEVER does see the secret here.
+            assert leaked, f"{family}: the all-levels reader saw nothing on a QUIET host"
+            modes = [getattr(r, "log_mode", LogMode.NORMAL) for r in hits]
+            assert len(modes) == 2, f"{family}: expected the send and its echo, got {modes}"
+            assert set(modes) == {LogMode.QUIET}, f"{family} on a QUIET host logged {modes}"
+
+
+class _ReachedError(Exception):
+    """A spy below the dry-run arm was called."""
+
+
+_BUILDS = [*_FAMILIES, pytest.param(_embedded, id="embedded")]
+
+
+class TestADryRunOnAColdHostReachesNothing:
+    """``run`` and ``exec`` under a dry run, on a host never opened, open and spawn nothing.
+
+    The spies are the seams every family's live path goes through: a session
+    the manager builds, a route the manager executes on, an ssh connect and a
+    local subprocess. The control drives the same host with no dry run and
+    requires a spy to be reached, so a spy that is never on the path cannot
+    pass the dry half.
+    """
+
+    @pytest.fixture
+    def reached(self, monkeypatch) -> "list[str]":
+        seen: list[str] = []
+
+        def spy(name: str):
+            async def reach(*_args, **_kwargs):
+                seen.append(name)
+                raise _ReachedError(name)
+
+            return reach
+
+        monkeypatch.setattr(SessionManager, "_build_session", spy("session"))
+        monkeypatch.setattr(SessionManager, "exec_on_route", spy("exec route"))
+        monkeypatch.setattr("otto.host.connections.ssh_connect", spy("ssh connect"))
+        # The loop's own spawns, under every higher-level helper.
+        monkeypatch.setattr(asyncio.BaseEventLoop, "subprocess_exec", spy("subprocess"))
+        monkeypatch.setattr(asyncio.BaseEventLoop, "subprocess_shell", spy("subprocess"))
+        return seen
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("entry", ["run", "exec"])
+    @pytest.mark.parametrize("build", _BUILDS)
+    async def test_nothing_is_opened_or_spawned(self, build, entry, reached):
+        host = build()
+        with active_context(dry_run=True):
+            declined = await _issue_on(host, entry, "uname -a", log=LogMode.NORMAL)
+        assert declined.status is Status.NotRun
+        assert reached == [], f"a dry-run {entry} reached {reached}"
+
+        with pytest.raises(_ReachedError):  # POSITIVE CONTROL, same host, live
+            await _issue_on(host, entry, "uname -a", log=LogMode.NORMAL)
+        assert reached, "the live call reached no spy, so the dry half proves nothing"
+
+
+class TestADryRunOnAnOpenedEmbeddedHostWritesNothing:
+    """A Zephyr shell has no stock command that leaves an effect a later one reads back.
+
+    So the device-side witness of the dry-run contract has no stimulus there,
+    and this stands for it: an embedded host whose session is open, driven by
+    ``run`` and ``exec`` under a dry run, writes nothing to that session; the
+    same calls live do.
+    """
+
+    @pytest.mark.asyncio
+    async def test_run_and_exec_reach_the_open_session_only_live(self):
+        host = _embedded()
+        transport = _RecordingShellSession()
+        host._session_mgr._session_factory = lambda: transport
+        await host.run("kernel version")
+        transport.ran.clear()
+
+        with active_context(dry_run=True):
+            for entry in ["run", "exec"]:
+                declined = await _issue_on(host, entry, "kernel uptime", log=LogMode.NORMAL)
+                assert declined.status is Status.NotRun
+        assert (transport.ran, transport.sent) == ([], []), (
+            f"a dry run wrote to the open session: ran {transport.ran}, sent {transport.sent}"
+        )
+
+        for entry in ["run", "exec"]:  # POSITIVE CONTROL, same session, live
+            await _issue_on(host, entry, "kernel uptime", log=LogMode.NORMAL)
+        await host.send("otto-raw\n")
+        assert transport.ran == ["kernel uptime", "kernel uptime"]
+        assert transport.sent == ["otto-raw\n"], (
+            f"a live send reached no `sent` spy, so the dry half's empty `sent` proves "
+            f"nothing: {transport.sent}"
         )
 
 
@@ -1805,7 +2264,7 @@ async def _live_session(host) -> "tuple[HostSession, _RecordingShellSession]":
     a closed front door.
     """
     transport = _RecordingShellSession()
-    mgr = SessionManager(
+    mgr = session_manager(
         name=host.name,
         log_command=host._log_command,
         log_output=host._log_output,

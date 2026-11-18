@@ -316,3 +316,22 @@ async def test_a_lost_record_is_reported_once_and_never_re_snapshotted(name, cap
         assert (await s.run_cmd(cmd="echo ${__otto_base+set}")).value == ""
     lost = [r for r in caplog.records if "baseline lost" in r.getMessage()]
     assert len(lost) == 1
+
+
+class _SinkError(Exception):
+    """The host log's sink failed on a command's output."""
+
+
+@pytest.mark.parametrize("name", TERMINAL_SHELLS)
+@pytest.mark.asyncio
+async def test_a_lost_record_is_noted_before_a_failing_sink_sees_the_output(name):
+    """A sink that fails on the unfinished tail costs log lines, never the session's health."""
+
+    def failing(line: str) -> None:
+        raise _SinkError(line)
+
+    async with pty_session(name) as s:
+        await s.run_cmd(cmd="unset __otto_base")
+        with pytest.raises(_SinkError):
+            await s.exec_("printf one", on_output=failing)
+        assert s.exec_baseline_lost

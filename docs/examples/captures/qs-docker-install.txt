@@ -7,7 +7,7 @@ INFO     @docker-host   | docker container inspect --format '{"status":{{json
 INFO     @docker-host   | docker ps -q --filter
          label=com.docker.compose.project=example_lab-quickstart-docs --filter
          label=com.docker.compose.service=tools --filter label=com.docker.compose.oneoff=False
-INFO
+INFO     @docker-host > |
 INFO     @docker-host > | Error response from daemon: No such container: quickstart-banner
 INFO     @docker-host   | banner: staged
 INFO     @docker-host   | command -v docker

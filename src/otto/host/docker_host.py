@@ -26,7 +26,7 @@ import asyncio
 import re
 import shlex
 import uuid
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import (
     dataclass,
@@ -72,6 +72,7 @@ from .session import (
     SessionManager,
     ShellSession,
     _DockerSshSession,
+    identity_fold,
 )
 from .shell_quote import path_operand, shell_operand
 from .transfer.registry import connection_protocol
@@ -586,6 +587,17 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         self._session_mgr = self._build_session_mgr()
         self._ensure_lock = asyncio.Lock()
 
+    @override
+    def _session_fold(self) -> "Callable[[LogMode], LogMode]":
+        """Return the identity: a container's named sessions do not fold the standing mode yet.
+
+        A container's ``run``, ``exec``, ``send`` and ``expect`` (its default
+        session) fold it on the host side, as every family's do; its named
+        sessions, live and declined, keep the mode they are given until the
+        container conformance work decides otherwise.
+        """
+        return identity_fold
+
     def _build_session_mgr(self) -> SessionManager:
         """Build a fresh SessionManager wired to this host.
 
@@ -621,6 +633,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             name=self.name,
             log_command=self._log_command,
             log_output=self._log_output,
+            fold_log=self._session_fold(),
             session_factory=_make_session,
             # Named auxiliary sessions open as the same user the run channel
             # would open as right now, but record nothing — see

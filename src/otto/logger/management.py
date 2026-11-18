@@ -58,6 +58,7 @@ from .formatters import (
     RichFormatter,
     _SuppressedPackages,
     capture_exception,
+    display_text,
     format_log_time,
 )
 
@@ -1104,6 +1105,7 @@ class _ConsoleHandler(RichHandler):
         from rich.text import Text
 
         use_markup = getattr(record, "markup", self.markup)
+        message = display_text(message, getattr(record, "relayed", None))
         if use_markup:
             message_text = Text.from_markup(message, emoji=getattr(record, "emoji", True))
         else:

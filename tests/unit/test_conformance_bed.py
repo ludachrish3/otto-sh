@@ -66,6 +66,7 @@ from tests.conformance import _bed, _console_safety, _lab_context
 from tests.conformance import _vocabulary as _vocabulary_module
 from tests.conformance import conftest as _conformance_conftest
 from tests.conformance import test_cancel_contract as _cancel_contract
+from tests.conformance import test_dry_run_contract as _dry_run_contract
 from tests.conformance import test_exec_contract as _exec_contract
 from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_progress_contract as _progress_contract
@@ -3273,6 +3274,30 @@ def test_the_cancel_contract_covers_every_cell_it_can_watch_from_a_second_connec
         )
 
 
+def test_the_dry_run_contract_covers_every_cell_with_a_mark_it_can_read_back() -> None:
+    """Which cells the dry-run contract's domain includes and excludes, pinned.
+
+    Outside: the ``bed-zephyr`` cells, whose vocabulary has no command that
+    leaves a mark a later command reads back, and nothing else. Both
+    directions, and no hermetic cell is narrowed.
+    """
+    space = bed_space()
+    outside = {cell_label(rc) for rc in space if not _dry_run_contract.applicable_cell(rc)}
+    expected = {cell_label(rc) for rc in space if rc.kind == BED_ZEPHYR}
+    assert outside == expected, (
+        f"the dry-run contract's domain excludes {sorted(outside)}, not exactly the Zephyr "
+        f"cells {sorted(expected)}"
+    )
+    assert expected, "the bed space has no Zephyr cell, so the exclusion pins nothing"
+    assert len(outside) < len(space)
+
+    for resolved in hermetic_space():
+        assert _dry_run_contract.applicable_cell(resolved), (
+            f"{cell_label(resolved)} is a POSIX shell with `touch`; the dry-run contract "
+            f"must not have narrowed the hermetic venue"
+        )
+
+
 NEW_STIMULUS_FIELDS = [
     "run_state_set_command",
     "exec_state_set_command",
@@ -3294,6 +3319,8 @@ NEW_STIMULUS_FIELDS = [
     "process_state_template",
     "witness_cleanup_template",
     "detached_long_running_command",
+    "leave_mark_template",
+    "mark_left_template",
 ]
 
 
@@ -3322,7 +3349,7 @@ def test_the_terminal_change_moves_away_from_the_handshake_baseline():
     assert POSIX.terminal_baseline_answer == "noecho icanon"
 
 
-def test_zephyr_declares_no_blocking_signal_stdin_state_or_terminal_stimulus():
+def test_zephyr_declares_no_blocking_signal_stdin_state_terminal_or_mark_stimulus():
     for words in ZEPHYR_SHELLS.values():
         for name in [
             "pid_long_running_template",
@@ -3337,6 +3364,8 @@ def test_zephyr_declares_no_blocking_signal_stdin_state_or_terminal_stimulus():
             "process_state_template",
             "witness_cleanup_template",
             "detached_long_running_command",
+            "leave_mark_template",
+            "mark_left_template",
         ]:
             assert getattr(words, name) is None, name
         assert "{token}" in words.distinct_answer_template

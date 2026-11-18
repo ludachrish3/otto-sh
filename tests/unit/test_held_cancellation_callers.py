@@ -230,13 +230,14 @@ def _host_session(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     from otto.host import session
     from otto.host.login_proxy import Cred
+    from tests.unit.host._sessions import host_session
     from tests.unit.host.test_session import _realistic_shell_expect
 
     shell = _AsyncMock(spec=session.ShellSession)
     shell.current_user = "alice"
     _realistic_shell_expect(shell)
     monkeypatch.setattr(session, "run_undo", _failing_run_undo)
-    return session.HostSession(
+    return host_session(
         "n",
         shell,
         lambda *_: None,

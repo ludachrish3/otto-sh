@@ -21,6 +21,7 @@ from otto.host import telnet as telnet_mod
 from otto.host.telnet import ReadGateClosed, TelnetClient
 from otto.utils import wait_for_async
 from tests._fixtures.loopback_servers import closed_port
+from tests.unit.host._sessions import session_manager
 from tests.unit.host._telnet_fakes import RecordingReader, SilentTelnetPeer, fake_stream
 
 
@@ -607,7 +608,6 @@ def _cancel_in_establishment(monkeypatch) -> None:
 async def _open_through(path: str, options) -> None:
     from otto.host.connections import ConnectionManager
     from otto.host.login_proxy import Cred
-    from otto.host.session import SessionManager
 
     cm = ConnectionManager(
         ip="127.0.0.1",
@@ -620,7 +620,7 @@ async def _open_through(path: str, options) -> None:
     if path == "manager":
         await cm.telnet()
     else:
-        await SessionManager(connections=cm, name="h1")._open_transport_session(named=True)
+        await session_manager(connections=cm, name="h1")._open_transport_session(named=True)
 
 
 @pytest.mark.usefixtures("_empty_registry")

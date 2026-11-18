@@ -22,9 +22,10 @@ import pytest
 
 from otto.host.command_frame import IDENTITY_MARK_PREFIX, BashFrame, ExecInput
 from otto.host.login_proxy import LoginProxyError, prove_identity
-from otto.host.session import NEVER_RAN, _SessionProxyIO
+from otto.host.session import NEVER_RAN
 from tests._fixtures.interactive_shell import SHELLS
 from tests.unit.host._pty_session import PTY_SHELLS, PtySession, pty_session
+from tests.unit.host._sessions import proxy_io, session_manager
 
 GUARD_SHELLS = [name for name in PTY_SHELLS if name in {"bash", "dash", "busybox-sh", "mksh"}]
 """The shells the guard is checked on: bash, dash, BusyBox ash and mksh, as the pty matrix has
@@ -49,7 +50,7 @@ async def _switch_and_mark(
         assert done.retcode == 0, done
     mark = "0123abcd4567ef89"
     await prove_identity(
-        _SessionProxyIO(session, lambda *_: None, lambda *_: None),
+        proxy_io(session, lambda *_: None, lambda *_: None),
         host_id="pty",
         user=user,
         marking=BashFrame().identity_mark_statement(mark=mark),
@@ -145,7 +146,7 @@ async def test_a_shell_that_cannot_say_who_it_is_is_no_proof():
         await session.send(f"{_inner('bash')}\n")
         assert (await session.run_cmd(cmd="PATH=/nonexistent", timeout=5)).retcode == 0
         proven = await prove_identity(
-            _SessionProxyIO(session, lambda *_: None, lambda *_: None),
+            proxy_io(session, lambda *_: None, lambda *_: None),
             host_id="pty",
             user=_ME,
             marking=BashFrame().identity_mark_statement(mark="0123abcd4567ef89"),
@@ -212,7 +213,7 @@ def pool():
             term="ssh",
             ssh=AsyncMock(),
         )
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=conn,
             session_factory=lambda **_kw: PtySession("bash"),
             host_id="pty",

@@ -54,7 +54,9 @@ where its **Not checked** column says otherwise; the numbered notes below say wh
 | run an `exec` without `expects=` and have its command read end of file on stdin, rather than wait on a terminal nobody types into | not on a Zephyr board (note 4); not on BusyBox's applets run on the local machine (note 1) | `exec-stdin` |
 | gather several `exec` calls on one host and have each return its own command's output, never another call's | not on BusyBox's applets run on the local machine (note 1) | `exec-concurrent` |
 | cancel an `exec` and have otto stop its command before the cancellation reaches you (on the local machine: its leader ended and its process group hung up, as the known gaps below say), with the host answering the next command | not on a Zephyr board, a BusyBox device over `console` and a GNU/Linux machine over `console` (note 5); not on BusyBox's applets run on the local machine (note 1) | `exec-cancel` |
-| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on a Zephyr board (note 6); not on BusyBox's applets run on the local machine (note 1) | `timeout` |
+| read the host log and find the lines of each command's `value`, one record per line, blank lines and a program's own `\r` kept, under `log=NORMAL` and `log=QUIET`, and nothing under `log=NEVER` | not on BusyBox's applets run on the local machine (note 1) | `exec-log` |
+| run a command under a dry run and have it reach no device, getting back a `NotRun` result with `retcode == -1`, no route, `command` the line a live call would type, and a `value` that raises `CommandNotRunError` | not on a Zephyr board (note 6); not on BusyBox's applets run on the local machine (note 1) | `exec-dry-run` |
+| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on a Zephyr board (note 7); not on BusyBox's applets run on the local machine (note 1) | `timeout` |
 
 On some devices a promise above is narrower: see
 {ref}`Where a device gets a narrower promise <command-contracts-narrower>`.
@@ -72,15 +74,17 @@ notes on the table below do not apply to them.
 
 | With `exec` sent through a shell session you can | Not checked | {ref}`Promise id <command-contracts-promise-id>` |
 | --- | --- | --- |
-| run a command and trust the exit code otto hands back | only on some hosts (note 7) | `exec-exit-code` |
-| read a command's output without otto's own prompts, echo and markers mixed into it | only on some hosts (note 7) | `exec-framing` |
-| read a command's output exactly as the command wrote it -- blank lines, spaces, tabs and carriage returns intact -- with only the one final newline removed | only on some hosts (note 7) | `exec-output-exact` |
-| read `retcode` 128+N for a command killed by signal N, as a shell reports it, and keep using the host afterwards | only on some hosts (note 7) | `exec-signal-exit` |
-| run an `exec` that starts from the state its session was set up with (a console's narrower promise is linked below the table), and trust that its `cd`, variables, options, `exit` and, where it runs on a terminal, its terminal settings reach no later `exec` or `run` | only on some hosts (note 7) | `exec-isolated` |
-| run an `exec` without `expects=` and have its command read end of file on stdin, rather than wait on a terminal nobody types into | only on some hosts (note 7) | `exec-stdin` |
-| gather several `exec` calls on one host and have each return its own command's output, never another call's | only on some hosts (note 7) | `exec-concurrent` |
-| cancel an `exec` and have otto stop its command before the cancellation reaches you (on the local machine: its leader ended and its process group hung up, as the known gaps below say), with the host answering the next command | only on some hosts (note 7) | `exec-cancel` |
-| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | only on some hosts (note 7) | `timeout` |
+| run a command and trust the exit code otto hands back | only on some hosts (note 8) | `exec-exit-code` |
+| read a command's output without otto's own prompts, echo and markers mixed into it | only on some hosts (note 8) | `exec-framing` |
+| read a command's output exactly as the command wrote it -- blank lines, spaces, tabs and carriage returns intact -- with only the one final newline removed | only on some hosts (note 8) | `exec-output-exact` |
+| read `retcode` 128+N for a command killed by signal N, as a shell reports it, and keep using the host afterwards | only on some hosts (note 8) | `exec-signal-exit` |
+| run an `exec` that starts from the state its session was set up with (a console's narrower promise is linked below the table), and trust that its `cd`, variables, options, `exit` and, where it runs on a terminal, its terminal settings reach no later `exec` or `run` | only on some hosts (note 8) | `exec-isolated` |
+| run an `exec` without `expects=` and have its command read end of file on stdin, rather than wait on a terminal nobody types into | only on some hosts (note 8) | `exec-stdin` |
+| gather several `exec` calls on one host and have each return its own command's output, never another call's | only on some hosts (note 8) | `exec-concurrent` |
+| cancel an `exec` and have otto stop its command before the cancellation reaches you (on the local machine: its leader ended and its process group hung up, as the known gaps below say), with the host answering the next command | only on some hosts (note 8) | `exec-cancel` |
+| read the host log and find the lines of each command's `value`, one record per line, blank lines and a program's own `\r` kept, under `log=NORMAL` and `log=QUIET`, and nothing under `log=NEVER` | only on some hosts (note 8) | `exec-log` |
+| run a command under a dry run and have it reach no device, getting back a `NotRun` result with `retcode == -1`, no route, `command` the line a live call would type, and a `value` that raises `CommandNotRunError` | only on some hosts (note 8) | `exec-dry-run` |
+| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | only on some hosts (note 8) | `timeout` |
 
 On some devices a promise above is narrower: see
 {ref}`Where a device gets a narrower promise <command-contracts-narrower>`.
@@ -92,8 +96,9 @@ On some devices a promise above is narrower: see
 3. Not checked on a Zephyr board, so not promised there: otto has not measured whether one `exec` on a Zephyr board can change the shell state the next one sees, so this is not checked there.
 4. Not checked on a Zephyr board, so not promised there: the Zephyr shell runs each command on its own thread rather than as a process with a stdin, so there is nothing to read there.
 5. Not checked on a Zephyr board, a BusyBox device over `console` and a GNU/Linux machine over `console`, so not promised there: otto checks a cancelled `exec` on a Zephyr board and on a console with unit tests rather than on a device. The bed firmware has no command that blocks (issue #1066), and a Zephyr guest is never driven to a cancellation (issue #260); and a console takes one client, so otto cannot watch the command from a second connection while it cancels it.
-6. Not checked on a Zephyr board, so not promised there: otto does not test what happens when a Zephyr command runs longer than its timeout, so it promises nothing about it. The Zephyr shell runs one command at a time, on its own thread, so a command made to outlive its budget would block the very shell the test then has to find still answering; and the bed firmware has no command that blocks for a chosen time (issue #1066).
-7. Checked only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH: only there does `exec` otherwise get an SSH channel of its own, which `exec-shell` sends through a shell session instead.
+6. Not checked on a Zephyr board, so not promised there: the Zephyr shell has no stock command that leaves an effect a later command can read back, so nothing on the device could show whether a command ran; a unit test checks that a dry run writes nothing to an open Zephyr session.
+7. Not checked on a Zephyr board, so not promised there: otto does not test what happens when a Zephyr command runs longer than its timeout, so it promises nothing about it. The Zephyr shell runs one command at a time, on its own thread, so a command made to outlive its budget would block the very shell the test then has to find still answering; and the bed firmware has no command that blocks for a chosen time (issue #1066).
+8. Checked only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH: only there does `exec` otherwise get an SSH channel of its own, which `exec-shell` sends through a shell session instead.
 
 ## Declared exceptions and undefined behaviour
 

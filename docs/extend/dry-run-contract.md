@@ -83,6 +83,12 @@ a bug. The announcement appears twice: once from the library layer, which is
 what a script or a test sees, and once from the renderer, so it reaches the
 console even on a host whose standing log mode is quiet.
 
+A declined `run` or `exec` logs its `[DRY RUN]` line under the mode a live call
+would log that command with: a `ShellCommand`'s own `log` when it sets one,
+otherwise the call's `log`, composed with the host's standing mode as
+{ref}`log-mode-knob` defines. A command marked `LogMode.NEVER` is announced
+nowhere, dry or live.
+
 Verbs with nothing to preview keep the seam default and print the ordinary
 block — `ls` among them:
 

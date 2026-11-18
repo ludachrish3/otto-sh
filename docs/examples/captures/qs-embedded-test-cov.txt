@@ -22,19 +22,19 @@ INFO     @dut > | op_clamp_lo=0
 INFO     === test_result_is_printed[op_clamp_in-op_clamp_in=7] ===
 INFO     @dut   | llext list
 INFO     @dut > | | Name             | Size         |
-         @dut > | |          mathops |        48752 |
+INFO     @dut > | |          mathops |        48752 |
 INFO     @dut   | llext call_fn mathops op_clamp_in
 INFO     @dut > | op_clamp_in=7
 INFO     === test_result_is_printed[op_div_ok-op_div_ok=0,5] ===
 INFO     @dut   | llext list
 INFO     @dut > | | Name             | Size         |
-         @dut > | |          mathops |        48752 |
+INFO     @dut > | |          mathops |        48752 |
 INFO     @dut   | llext call_fn mathops op_div_ok
 INFO     @dut > | op_div_ok=0,5
 INFO     === test_result_is_printed[op_div_zero-op_div_zero=-1,0] ===
 INFO     @dut   | llext list
 INFO     @dut > | | Name             | Size         |
-         @dut > | |          mathops |        48752 |
+INFO     @dut > | |          mathops |        48752 |
 INFO     @dut   | llext call_fn mathops op_div_zero
 INFO     @dut > | op_div_zero=-1,0
 INFO     Connection closed to <Peer 127.0.0.1 <port>>
@@ -45,13 +45,13 @@ INFO     Dumping embedded coverage for mathops from dut via 'llext call_fn matho
 INFO     Connected to <Peer 127.0.0.1 <port>>
 INFO     @dut   | llext call_fn mathops cov_dump
 INFO     @dut > | gcov_exit
-         @dut > | Emitting 2208 bytes for
+INFO     @dut > | Emitting 2208 bytes for
          /tmp/otto-gs/quickstart-embedded/build/ext/CMakeFiles/mathops_llext_lib.dir/src/ext.c.gcda
-         @dut > | <gcda hexdump>
-         @dut > |
-         @dut > |
+INFO     @dut > | <gcda hexdump>
+INFO     @dut > |
+INFO     @dut > |
          /tmp/otto-gs/quickstart-embedded/build/ext/CMakeFiles/mathops_llext_lib.dir/src/ext.c.gcda
-         @dut > | Gcov End
+INFO     @dut > | Gcov End
 INFO     Decoded 1 .gcda file(s) for mathops from dut into
          /tmp/otto-gs/xdir/quickstart-embedded/e2e/cov/dut/mathops
 INFO     Coverage data collected to /tmp/otto-gs/xdir/quickstart-embedded/e2e/cov (1 product dir(s))

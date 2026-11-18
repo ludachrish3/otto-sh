@@ -56,6 +56,7 @@ from tests.unit.host._session_feed import (
     identity_handshake_reply,
     zephyr_handshake_reply,
 )
+from tests.unit.host._sessions import host_session, session_manager
 
 
 class MockSession(FeedAfterWriteMixin, _PatternReaderTransport, ShellSession):
@@ -1123,10 +1124,8 @@ class TestCommandLogging:
         await feed_task
 
         assert result.status == Status.Success
-        assert "installed ok" in logged
-        # Expect prompt text should NOT appear in logged output
-        for line in logged:
-            assert "Password:" not in line
+        # The prompt an expect answered is output: it is logged inside its line.
+        assert logged == ["Password:", "installed ok"]
 
     @pytest.mark.asyncio
     async def test_partial_output_before_timeout(
@@ -1318,18 +1317,16 @@ class TestSingleClientConsoleIsDeclared:
 
 
 def test_session_manager_current_user_falls_back_to_login():
-    from otto.host.session import SessionManager
 
     conn = MagicMock(spec=["credentials"])
     conn.credentials = ("alice", "pw")
-    mgr = SessionManager(connections=conn, name="h")
+    mgr = session_manager(connections=conn, name="h")
     assert mgr.current_user == "alice"  # no default session built yet
 
 
 def test_session_manager_current_user_empty_without_connections():
-    from otto.host.session import SessionManager
 
-    mgr = SessionManager(name="local")  # connections=None (e.g. LocalHost)
+    mgr = session_manager(name="local")  # connections=None (e.g. LocalHost)
     assert mgr.current_user == ""
 
 
@@ -1339,9 +1336,7 @@ def test_session_manager_current_user_tolerates_connections_without_credentials(
     transports) must fall back to '' rather than raise."""
     import types
 
-    from otto.host.session import SessionManager
-
-    mgr = SessionManager(connections=types.SimpleNamespace(), name="h")
+    mgr = session_manager(connections=types.SimpleNamespace(), name="h")
     assert mgr._login_user() == ""
     assert mgr.current_user == ""
     s = MockSession()
@@ -1350,22 +1345,20 @@ def test_session_manager_current_user_tolerates_connections_without_credentials(
 
 
 def test_session_manager_seed_user_stamps_login_user():
-    from otto.host.session import SessionManager
 
     conn = MagicMock(spec=["credentials"])
     conn.credentials = ("alice", "pw")
-    mgr = SessionManager(connections=conn, name="h")
+    mgr = session_manager(connections=conn, name="h")
     s = MockSession()
     mgr._seed_user(s)
     assert s.current_user == "alice"
 
 
 def test_session_manager_set_current_user_updates_default_session():
-    from otto.host.session import SessionManager
 
     conn = MagicMock(spec=["credentials"])
     conn.credentials = ("alice", "pw")
-    mgr = SessionManager(connections=conn, name="h")
+    mgr = session_manager(connections=conn, name="h")
     s = MockSession()
     mgr._session = s
     mgr._set_current_user("root")
@@ -1375,29 +1368,26 @@ def test_session_manager_set_current_user_updates_default_session():
 
 def test_session_manager_accepts_creds_arg():
     from otto.host.login_proxy import Cred
-    from otto.host.session import SessionManager
 
-    mgr = SessionManager(name="h", creds=[Cred(login="root", password="pw")], host_id="h")
+    mgr = session_manager(name="h", creds=[Cred(login="root", password="pw")], host_id="h")
     assert mgr._creds == [Cred(login="root", password="pw")]
     assert mgr._host_id == "h"
 
 
 @pytest.mark.asyncio
 async def test_host_session_current_user_delegates_to_shell():
-    from otto.host.session import HostSession
 
     shell = MockSession()
     shell.current_user = "alice"
-    hs = HostSession("n", shell, lambda *_: None, lambda *_: None, lambda _: None)
+    hs = host_session("n", shell, lambda *_: None, lambda *_: None, lambda _: None)
     assert hs.current_user == "alice"
 
 
 @pytest.mark.asyncio
 async def test_host_session_switch_user_without_resolver_raises():
-    from otto.host.session import HostSession
 
     shell = MockSession()
-    hs = HostSession("n", shell, lambda *_: None, lambda *_: None, lambda _: None)
+    hs = host_session("n", shell, lambda *_: None, lambda *_: None, lambda _: None)
     with pytest.raises(NotImplementedError):
         await hs.switch_user(user="root")
 
@@ -1428,12 +1418,11 @@ def _realistic_shell_expect(shell, **model_kw) -> None:
 @pytest.mark.asyncio
 async def test_host_session_switch_user_elevates_and_stamps():
     from otto.host.login_proxy import Cred
-    from otto.host.session import HostSession
 
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
     _realistic_shell_expect(shell)
-    hs = HostSession(
+    hs = host_session(
         "n",
         shell,
         lambda *_: None,
@@ -1453,12 +1442,11 @@ async def test_host_session_switch_user_elevates_and_stamps():
 @pytest.mark.asyncio
 async def test_host_session_as_user_restores_previous():
     from otto.host.login_proxy import Cred
-    from otto.host.session import HostSession
 
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
     _realistic_shell_expect(shell)
-    hs = HostSession(
+    hs = host_session(
         "n",
         shell,
         lambda *_: None,
@@ -1478,7 +1466,6 @@ async def test_host_session_as_user_undo_survives_cancellation():
     cancellation landing while the undo chain runs must still restore the
     prior user before re-raising."""
     from otto.host.login_proxy import Cred
-    from otto.host.session import HostSession
 
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
@@ -1495,7 +1482,7 @@ async def test_host_session_as_user_undo_survives_cancellation():
         await model_send(*a, **k)
 
     shell.send.side_effect = _yielding_send
-    hs = HostSession(
+    hs = host_session(
         "n",
         shell,
         lambda *_: None,
@@ -1530,8 +1517,6 @@ async def test_default_session_seeds_current_user_from_login():
     """The default session is stamped with the login user at build time."""
     import types
 
-    from otto.host.session import SessionManager
-
     conn = types.SimpleNamespace(credentials=("alice", SecretStr("pw")))
     built: list[MockSession] = []
     feeders: list[asyncio.Task[None]] = []
@@ -1546,7 +1531,7 @@ async def test_default_session_seeds_current_user_from_login():
         )
         return s
 
-    mgr = SessionManager(connections=conn, name="h", session_factory=factory)
+    mgr = session_manager(connections=conn, name="h", session_factory=factory)
     task = asyncio.create_task(mgr.send("hello\n"))  # triggers default-session build
     await task
     await asyncio.gather(*feeders)
@@ -1559,8 +1544,6 @@ async def test_default_session_seeds_current_user_from_login():
 async def test_open_session_seeds_named_session_current_user_from_login():
     """A freshly opened named session is stamped with the login user."""
     import types
-
-    from otto.host.session import SessionManager
 
     conn = types.SimpleNamespace(credentials=("alice", SecretStr("pw")))
     built: list[MockSession] = []
@@ -1575,7 +1558,7 @@ async def test_open_session_seeds_named_session_current_user_from_login():
         )
         return s
 
-    mgr = SessionManager(connections=conn, name="h", session_factory=factory)
+    mgr = session_manager(connections=conn, name="h", session_factory=factory)
     task = asyncio.create_task(mgr.open_session(name="mon"))
     hs = await task
     await asyncio.gather(*feeders)
@@ -1586,14 +1569,13 @@ async def test_open_session_seeds_named_session_current_user_from_login():
 async def test_named_session_elevation_does_not_touch_default():
     """Elevating a named session leaves another (default) session untouched."""
     from otto.host.login_proxy import Cred
-    from otto.host.session import HostSession
 
     default_shell = MockSession()
     default_shell.current_user = "alice"
     named_shell = AsyncMock(spec=ShellSession)
     named_shell.current_user = "alice"
     _realistic_shell_expect(named_shell)
-    hs = HostSession(
+    hs = host_session(
         "mon",
         named_shell,
         lambda *_: None,
@@ -1611,12 +1593,11 @@ async def test_named_session_elevation_does_not_touch_default():
 async def test_host_session_as_user_nested_restores_each_level():
     """Nested as_user blocks restore the prior user at each level."""
     from otto.host.login_proxy import Cred
-    from otto.host.session import HostSession
 
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
     _realistic_shell_expect(shell)
-    hs = HostSession(
+    hs = host_session(
         "mon",
         shell,
         lambda *_: None,
@@ -1644,7 +1625,6 @@ async def test_host_session_as_user_undo_via_ordering_observable():
     built-in proxy (``su``, no custom undo) can never exercise.
     """
     from otto.host.login_proxy import Cred, register_login_proxy
-    from otto.host.session import HostSession
 
     captured: list[tuple[str, str, str | None]] = []
 
@@ -1673,7 +1653,7 @@ async def test_host_session_as_user_undo_via_ordering_observable():
         switch_re=re.compile(r"^\s*become\b(.*)$", re.MULTILINE),
         exit_re=re.compile(r"^\s*leave\s*$", re.MULTILINE),
     )
-    hs = HostSession(
+    hs = host_session(
         "mon",
         shell,
         lambda *_: None,
@@ -1805,7 +1785,12 @@ class TestLoginProxyAtSessionEstablishment:
             built.append(s)
             return s
 
-        mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+        mgr = session_manager(
+            connections=conn,
+            name="h",
+            session_factory=factory,
+            host_id="h",
+        )
         await mgr._ensure_session()
 
         assert mgr._session is built[0]
@@ -1824,7 +1809,12 @@ class TestLoginProxyAtSessionEstablishment:
             built.append(s)
             return s
 
-        mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+        mgr = session_manager(
+            connections=conn,
+            name="h",
+            session_factory=factory,
+            host_id="h",
+        )
         await mgr._ensure_session()
 
         assert mgr._session.current_user == "alice"
@@ -1838,7 +1828,7 @@ class TestLoginProxyAtSessionEstablishment:
         conn = _proxy_connections([hop])
         logged_cmds: list[tuple[str, LogMode]] = []
 
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=conn,
             name="h",
             session_factory=_ImmediateSession,
@@ -1869,7 +1859,7 @@ class TestLoginProxyAtSessionEstablishment:
         def factory() -> _ImmediateSession:
             return _ImmediateSession(prompts=True)
 
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=conn,
             name="h",
             session_factory=factory,
@@ -1925,7 +1915,7 @@ class TestLoginProxyAtSessionEstablishment:
         # against (the full cred, incl. password) — the same list HostSession
         # elevation uses. The via accounts must carry passwords here so a bare
         # Cred(login=...) regression is observable.
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=conn,
             name="h",
             session_factory=factory,
@@ -1960,7 +1950,12 @@ class TestLoginProxyAtSessionEstablishment:
             built.append(s)
             return s
 
-        mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+        mgr = session_manager(
+            connections=conn,
+            name="h",
+            session_factory=factory,
+            host_id="h",
+        )
 
         with pytest.raises(LoginProxyError):
             await mgr._ensure_session()
@@ -1981,7 +1976,12 @@ class TestLoginProxyAtSessionEstablishment:
             built.append(s)
             return s
 
-        mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+        mgr = session_manager(
+            connections=conn,
+            name="h",
+            session_factory=factory,
+            host_id="h",
+        )
         hs = await mgr.open_session(name="mon")
 
         assert hs.current_user == "mysql"
@@ -2004,7 +2004,12 @@ class TestLoginProxyAtSessionEstablishment:
             built.append(s)
             return s
 
-        mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+        mgr = session_manager(
+            connections=conn,
+            name="h",
+            session_factory=factory,
+            host_id="h",
+        )
 
         with pytest.raises(LoginProxyError):
             await mgr.open_session(name="mon")
@@ -2015,7 +2020,7 @@ class TestLoginProxyAtSessionEstablishment:
     @pytest.mark.asyncio
     async def test_apply_login_proxy_tolerates_connections_without_proxy_hops(self):
         """A minimal connections fake with no proxy_hops/login_target attrs is a no-op."""
-        mgr = SessionManager(connections=SimpleNamespace(), name="h")
+        mgr = session_manager(connections=SimpleNamespace(), name="h")
         s = _ImmediateSession()
         s.current_user = "alice"
         await mgr._apply_login_proxy(s)
@@ -2106,7 +2111,11 @@ class TestExecProxyRouting:
         """Existing fast path preserved: no proxy_hops on ssh -> the raw channel."""
         conn = _proxy_connections([], login_target="alice", credentials=("alice", "alicepw"))
         conn.term = "ssh"
-        mgr = SessionManager(connections=conn, session_factory=_StubExecSession, host_id="h")
+        mgr = session_manager(
+            connections=conn,
+            session_factory=_StubExecSession,
+            host_id="h",
+        )
 
         assert mgr.exec_route() is ExecRoute.SSH_CHANNEL
 
@@ -2117,7 +2126,11 @@ class TestExecProxyRouting:
         conn = _proxy_connections([hop], login_target="mysql", credentials=("admin", "adminpw"))
         conn.term = "ssh"
         conn.ssh = AsyncMock()
-        mgr = SessionManager(connections=conn, session_factory=_StubExecSession, host_id="h")
+        mgr = session_manager(
+            connections=conn,
+            session_factory=_StubExecSession,
+            host_id="h",
+        )
 
         route = mgr.exec_route()
         assert route is ExecRoute.POOLED_SHELL
@@ -2145,7 +2158,7 @@ class TestExecProxyRouting:
             term="ssh",
             ssh=AsyncMock(),
         )
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=conn,
             session_factory=_StubExecSession,
             host_id="h",
@@ -2190,7 +2203,7 @@ class TestExecLogsCommandExactlyOnce:
     """
 
     def _mgr(self, conn, logged: list[tuple[str, LogMode]]) -> SessionManager:
-        return SessionManager(
+        return session_manager(
             connections=conn,
             session_factory=_StubExecSession,
             log_command=lambda cmd, mode: logged.append((cmd, mode)),
@@ -2281,8 +2294,8 @@ class TestExecOnDropsTheEofPartial:
             pytest.param(["a\n", "\n"], "a\n", ["a", ""], id="blank-tail-no-phantom"),
             pytest.param(["abc", ""], "abc", ["abc"], id="partial-phantom"),
             pytest.param(["abc"], "abc", ["abc"], id="partial-no-phantom"),
-            pytest.param(["\n", ""], "", [""], id="newline-phantom"),
-            pytest.param(["\n"], "", [""], id="newline-no-phantom"),
+            pytest.param(["\n", ""], "", [], id="newline-phantom"),
+            pytest.param(["\n"], "", [], id="newline-no-phantom"),
         ],
     )
     @pytest.mark.asyncio
@@ -2290,7 +2303,7 @@ class TestExecOnDropsTheEofPartial:
         self, raw: list[str], value: str, output_lines: list[str]
     ) -> None:
         logged: list[str] = []
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=SimpleNamespace(),
             session_factory=_StubExecSession,
             log_command=lambda *_: None,
@@ -2332,7 +2345,7 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
     )
     @pytest.mark.asyncio
     async def test_ssh_exec_channel(self, raw_lines: list[str], value: str) -> None:
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=SimpleNamespace(),
             session_factory=_StubExecSession,
             log_command=lambda *_: None,
@@ -2368,7 +2381,7 @@ class TestOneLineDecisionOnBothLineReadingExecRoutes:
         ``_deliver_data`` raises it. So a channel opened without
         ``errors="replace"`` fails this test with that error.
         """
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=SimpleNamespace(),
             session_factory=_StubExecSession,
             log_command=lambda *_: None,
@@ -2472,7 +2485,7 @@ def fake_console_connections() -> SimpleNamespace:
 async def test_console_term_builds_a_telnet_session_over_the_console_client(
     fake_console_connections,
 ):
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=fake_console_connections,
         name="test2",
         log_command=lambda *_: None,
@@ -2488,7 +2501,7 @@ async def test_console_term_builds_a_telnet_session_over_the_console_client(
 
 @pytest.mark.asyncio
 async def test_named_sessions_are_refused_on_a_console_term(fake_console_connections):
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=fake_console_connections,
         name="test2",
         log_command=lambda *_: None,
@@ -2505,7 +2518,7 @@ async def test_the_pool_is_never_built_on_a_console_term_and_exec_still_succeeds
     fake_console_connections,
 ):
     """exec on a console is one command on the default session: no pool, no second dial."""
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=fake_console_connections,
         name="test2",
         log_command=lambda *_: None,
@@ -2533,7 +2546,7 @@ async def test_the_pool_is_never_built_on_a_console_term_and_exec_still_succeeds
 @pytest.mark.asyncio
 async def test_the_exec_pool_backstop_still_refuses_on_a_console_term(fake_console_connections):
     """exec never asks for a pool session on a console; if anything did, it is refused."""
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=fake_console_connections,
         name="test2",
         log_command=lambda *_: None,
@@ -2799,7 +2812,12 @@ class TestConsoleHandshakeFailure:
         logout_spy = AsyncMock()
         monkeypatch.setattr(client, "logout", logout_spy)
         conn = _console_connections(client)
-        mgr = SessionManager(connections=conn, name="test2", init_timeout=0.05, retry_backoff=0)
+        mgr = session_manager(
+            connections=conn,
+            name="test2",
+            init_timeout=0.05,
+            retry_backoff=0,
+        )
         monkeypatch.setattr(TelnetSession, "_init_probe_interval", 0.01)
 
         with pytest.raises(ConsoleError, match="login refused for 'test'"):
@@ -2818,7 +2836,12 @@ class TestConsoleHandshakeRetry:
     async def test_a_logged_in_console_is_not_retried(self, monkeypatch):
         """A retry re-runs the login: the password would be typed into the line a second time."""
         conn = _dialling_console_connections(lambda: _console_client(b"welcome to test2\r\n"))
-        mgr = SessionManager(connections=conn, name="test2", init_timeout=0.05, retry_backoff=0)
+        mgr = session_manager(
+            connections=conn,
+            name="test2",
+            init_timeout=0.05,
+            retry_backoff=0,
+        )
         monkeypatch.setattr(TelnetSession, "_init_probe_interval", 0.01)
         monkeypatch.setattr(ConsoleClient, "logout", AsyncMock())
 
@@ -2831,7 +2854,12 @@ class TestConsoleHandshakeRetry:
     async def test_a_console_without_a_login_keeps_its_one_retry(self, monkeypatch):
         """The control: a login=False console (Zephyr's slot race) is still retried once."""
         conn = _dialling_console_connections(lambda: _console_client(b"uart:~$ ", login=False))
-        mgr = SessionManager(connections=conn, name="test2", init_timeout=0.05, retry_backoff=0)
+        mgr = session_manager(
+            connections=conn,
+            name="test2",
+            init_timeout=0.05,
+            retry_backoff=0,
+        )
         monkeypatch.setattr(TelnetSession, "_init_probe_interval", 0.01)
 
         with pytest.raises(ConnectionError, match="never became ready"):
@@ -2861,7 +2889,12 @@ class TestOpenBudget:
         conn = MagicMock()
         conn.connect_allowance.return_value = 3.0
         conn.release_allowance.return_value = 2.0
-        mgr = SessionManager(connections=conn, name="h", init_timeout=4.0, retry_backoff=1.0)
+        mgr = session_manager(
+            connections=conn,
+            name="h",
+            init_timeout=4.0,
+            retry_backoff=1.0,
+        )
         assert mgr.open_budget() == 2 * (3.0 + 4.0 + 2.0) + 1.0
         conn.connect_allowance.assert_called_once_with(term=None)
         conn.release_allowance.assert_called_once_with(term=None)
@@ -2871,7 +2904,12 @@ class TestOpenBudget:
         conn.connect_allowance.return_value = 3.0
         conn.release_allowance.return_value = 0.0
         conn.retries_failed_open.return_value = False
-        mgr = SessionManager(connections=conn, name="h", init_timeout=4.0, retry_backoff=1.0)
+        mgr = session_manager(
+            connections=conn,
+            name="h",
+            init_timeout=4.0,
+            retry_backoff=1.0,
+        )
         assert mgr.open_budget(term="console") == 3.0 + 4.0
         conn.retries_failed_open.assert_called_once_with(term="console")
 
@@ -2879,7 +2917,7 @@ class TestOpenBudget:
         conn = MagicMock()
         conn.connect_allowance.return_value = 0.0
         conn.release_allowance.return_value = 0.0
-        SessionManager(connections=conn, name="h").open_budget(term="telnet")
+        session_manager(connections=conn, name="h").open_budget(term="telnet")
         conn.connect_allowance.assert_called_once_with(term="telnet")
         conn.release_allowance.assert_called_once_with(term="telnet")
 
@@ -2887,15 +2925,18 @@ class TestOpenBudget:
         # The class attribute is what a session without an override waits,
         # and the seam tests patch, so the budget follows it.
         monkeypatch.setattr(ShellSession, "_init_timeout", 7.0)
-        mgr = SessionManager(name="h", retry_backoff=0.5)
+        mgr = session_manager(name="h", retry_backoff=0.5)
         assert mgr.open_budget() == 2 * 7.0 + 0.5
 
     def test_the_dialects_single_client_flag_adds_nothing(self):
         # Whether a release drains is the client's decision, read from the
         # connection options (ConnectionManager.release_allowance); the
         # frame's flag is diagnostic only.
-        mgr = SessionManager(
-            name="h", init_timeout=4.0, retry_backoff=1.0, command_frame=ZephyrFrame()
+        mgr = session_manager(
+            name="h",
+            init_timeout=4.0,
+            retry_backoff=1.0,
+            command_frame=ZephyrFrame(),
         )
         assert mgr.open_budget() == 2 * 4.0 + 1.0
 
@@ -2915,7 +2956,12 @@ class TestOpenBudget:
             host_id="h",
             console_options=ConsoleOptions(server="s", port=1),
         )
-        mgr = SessionManager(connections=conns, name="h", init_timeout=4.0, retry_backoff=1.0)
+        mgr = session_manager(
+            connections=conns,
+            name="h",
+            init_timeout=4.0,
+            retry_backoff=1.0,
+        )
         frame = mgr._session_frame
         assert frame is None or not frame.single_client_console
         assert mgr.open_budget(term="console") == (
@@ -2938,14 +2984,14 @@ class TestInitTimeoutFromTheEnvironment:
 
     def test_the_open_budget_uses_it(self, monkeypatch):
         monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, "30")
-        assert SessionManager(name="h", retry_backoff=1.0).open_budget() == 2 * 30.0 + 1.0
+        assert session_manager(name="h", retry_backoff=1.0).open_budget() == 2 * 30.0 + 1.0
 
     def test_it_replaces_a_family_default_and_a_host_value_beats_both(self, monkeypatch):
         assert resolve_init_timeout(None, 15.0) == 15.0
         monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, "30")
         assert resolve_init_timeout(None, 15.0) == 30.0
         assert resolve_init_timeout(4.0, 15.0) == 4.0
-        mgr = SessionManager(name="h", default_init_timeout=15.0, retry_backoff=1.0)
+        mgr = session_manager(name="h", default_init_timeout=15.0, retry_backoff=1.0)
         assert mgr.open_budget() == 2 * 30.0 + 1.0
 
     @pytest.mark.asyncio
@@ -2954,19 +3000,26 @@ class TestInitTimeoutFromTheEnvironment:
         # must hand it the deadline it resolved, for default and named
         # sessions alike, or the budget sizes an open the session never waits.
         monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, "30")
-        mgr = SessionManager(
-            name="h", session_factory=MockSession, init_timeout=4.0, retry_backoff=0
+        mgr = session_manager(
+            name="h",
+            session_factory=MockSession,
+            init_timeout=4.0,
+            retry_backoff=0,
         )
         assert (await mgr._build_session())._init_timeout == 4.0
         assert mgr._from_factory(MockSession)._init_timeout == 4.0
         assert mgr.open_budget() == 2 * 4.0
-        family = SessionManager(name="h", session_factory=MockSession, default_init_timeout=15.0)
+        family = session_manager(
+            name="h",
+            session_factory=MockSession,
+            default_init_timeout=15.0,
+        )
         assert (await family._build_session())._init_timeout == 30.0
 
     def test_an_explicit_deadline_beats_it(self, monkeypatch):
         monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, "30")
         assert resolve_init_timeout(4.0) == 4.0
-        mgr = SessionManager(name="h", init_timeout=4.0, retry_backoff=1.0)
+        mgr = session_manager(name="h", init_timeout=4.0, retry_backoff=1.0)
         assert mgr.open_budget() == 2 * 4.0 + 1.0
 
     @pytest.mark.parametrize("raw", ["abc", "30s", "0", "-1", "inf", "nan"])
@@ -2987,7 +3040,7 @@ class TestInitTimeoutFromTheEnvironment:
         conn.ssh = AsyncMock()
         conn.console = AsyncMock()
         conn.telnet_target = AsyncMock()
-        mgr = SessionManager(connections=conn, name="h")
+        mgr = session_manager(connections=conn, name="h")
         with pytest.raises(OttoError, match="OTTO_INIT_TIMEOUT"):
             await mgr._open_transport_session(named=True)
         conn.telnet_target.assert_not_called()
@@ -3033,7 +3086,7 @@ class TestBridgeSetup:
     """`otto login`'s hook bridge gets a bundle the manager builds from its own session fields."""
 
     def test_no_hook_means_no_bridge_setup(self):
-        assert SessionManager(connections=MagicMock(), name="h")._bridge_setup() is None
+        assert session_manager(connections=MagicMock(), name="h")._bridge_setup() is None
 
     def test_the_bundle_carries_the_manager_fields(self):
         from otto.host.command_frame import BashFrame, RawFrame
@@ -3041,7 +3094,7 @@ class TestBridgeSetup:
 
         creds = [Cred(login="admin", password="pw")]
         setup = SessionSetup(name="t-bridge")
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=MagicMock(),
             name="h",
             creds=creds,
@@ -3113,7 +3166,7 @@ async def test_default_telnet_session_close_goes_through_shared_client():
     reader, writer, _ = fake_stream(events)
     client = stream_client(reader, writer)
     _recording_close(client, events)
-    mgr = SessionManager(connections=_telnet_connections(client), name="h")
+    mgr = session_manager(connections=_telnet_connections(client), name="h")
     session = await mgr._open_transport_session(named=False)
 
     await session.close()
@@ -3219,7 +3272,7 @@ async def test_each_production_session_shares_its_clients_gate(monkeypatch):
     # The default session: the manager's cached client.
     reader, writer, _ = fake_stream([])
     shared = stream_client(reader, writer)
-    mgr = SessionManager(connections=_telnet_connections(shared), name="h")
+    mgr = session_manager(connections=_telnet_connections(shared), name="h")
     default = await mgr._open_transport_session(named=False)
     assert default._read_gate is shared._read_gate
 
@@ -3240,12 +3293,12 @@ async def test_each_production_session_shares_its_clients_gate(monkeypatch):
         telnet_target=AsyncMock(return_value=SimpleNamespace(host="127.0.0.1", port=23)),
         telnet_options=shared.options,
     )
-    named = await SessionManager(connections=conn, name="h")._open_transport_session(named=True)
+    named = await session_manager(connections=conn, name="h")._open_transport_session(named=True)
     assert named._read_gate is owned[0]._read_gate
 
     # The console: its client.
     console = _console_client(b"")
-    on_console = await SessionManager(
+    on_console = await session_manager(
         connections=_console_connections(console), name="h"
     )._open_transport_session(named=False)
     assert on_console._read_gate is console._read_gate

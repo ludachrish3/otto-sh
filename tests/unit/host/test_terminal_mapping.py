@@ -23,7 +23,7 @@ from collections.abc import Coroutine
 import pytest
 
 from otto.host.command_frame import AshFrame, BashFrame, SessionMarkers, ZephyrFrame
-from otto.host.session import HostSession, ready_pattern
+from otto.host.session import ready_pattern
 from otto.host.terminal_mapping import (
     CALIBRATION_COMMAND,
     ECHO_OFF_COMMAND,
@@ -34,6 +34,7 @@ from otto.host.terminal_mapping import (
 )
 from otto.utils import wait_for_async
 from tests._fixtures.fake_shell import probe_marker
+from tests.unit.host._sessions import host_session
 from tests.unit.host.test_session import MockSession
 
 M = SessionMarkers.for_session(session_id="cafef00d")
@@ -451,7 +452,7 @@ class TestTheSessionMeasures:
         s = MockSession()
         await s.open_transport()
         await _handshake(s, onlcr_reply(s.markers.ready))
-        handle = HostSession(
+        handle = host_session(
             "n",
             s,
             log_command=lambda *_: None,

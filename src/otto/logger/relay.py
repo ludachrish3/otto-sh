@@ -27,6 +27,35 @@ through ``otto.console.literal_cell`` (a table cell) or
 import logging
 
 
+def log_lines(value: str) -> list[str]:
+    r"""Return the lines the host log shows for a command whose ``value`` is *value*.
+
+    *value* split on ``\n`` and on nothing else: a blank line, leading and
+    trailing spaces and a program's own ``\r`` are kept, and an empty *value*
+    has no lines. The one statement of the rule every route logs by; see
+    :ref:`command-output-log`.
+
+    >>> from otto.logger.relay import log_lines
+    >>> log_lines("a\rb\n\n c "), log_lines("")
+    (['a\rb', '', ' c '], [])
+    """
+    return value.split("\n") if value else []
+
+
+def host_output_prefix(name: str) -> str:
+    """Return the plain text every output line of the host named *name* starts with.
+
+    The one spelling of the ``@<host> > |`` preamble: the host log adds its
+    markup around it (:func:`otto.host.host.output_log_prefix`), an
+    interactive session's own log file writes it as is.
+
+    >>> from otto.logger.relay import host_output_prefix
+    >>> host_output_prefix("h1")
+    '@h1 > | '
+    """
+    return f"@{name} > | "
+
+
 def escape_relayed(text: str) -> str:
     r"""Return *text* with its brackets escaped so Rich prints them as written.
 
@@ -52,7 +81,7 @@ def log_relayed(
     extra: dict[str, object] | None = None,
     per_line: bool = False,
 ) -> None:
-    r"""Log otto's markup *prefix* followed by *text*, which every sink shows verbatim.
+    r"""Log otto's markup *prefix* followed by *text*, which every sink shows as written.
 
     *prefix* is otto's own markup and is used as is: a style that runs to the
     end of the line (``"[yellow]@host > | "``). It must not carry foreign text.
@@ -62,7 +91,9 @@ def log_relayed(
     *text* is escaped (:func:`escape_relayed`) and the record is sent with
     ``markup=True, emoji=False``, so its brackets and colon-words reach the
     console and both log files as written. Escaped once and rendered once by
-    each sink, so no sink shows the escape character.
+    each sink, so no sink shows the escape character. A ``\r`` in *text* is
+    kept in the record and shown by a sink as a line break
+    (:func:`~otto.logger.formatters.display_text`).
 
     Example::
 
@@ -73,20 +104,24 @@ def log_relayed(
         level: the record's level.
         prefix: otto's markup for the start of the line.
         text: the relayed text: device output, a command line, a hook's message.
-        extra: record attributes besides ``markup`` and ``emoji``, which the
-            helper owns.
-        per_line: when true, *prefix* starts every line of *text* and the lines
-            form one multi-line record.
+        extra: record attributes besides ``markup``, ``emoji`` and
+            ``relayed``, which the helper owns. ``relayed`` is the record's
+            foreign text as given, before escaping, for a reader that needs
+            the text rather than the markup (see "Literal text" in
+            :doc:`/contributing`).
+        per_line: when true, each line of *text* (split on ``\n`` only, as
+            :func:`log_lines` splits a value) is a record of its own with
+            *prefix* in front; a blank line is the prefix alone. *text* is
+            one or more lines here, never a value: an empty value has no
+            lines, and the caller does not log it.
     """
     if not logger.isEnabledFor(level):
         return
-    if per_line:
-        message = "\n".join(f"{prefix}{escape_relayed(line)}" for line in text.splitlines())
-    else:
-        message = f"{prefix}{escape_relayed(text)}"
-    logger.log(
-        level,
-        message,
-        extra={**(extra or {}), "markup": True, "emoji": False},
-        stacklevel=2,
-    )
+    lines = text.split("\n") if per_line else [text]
+    for line in lines:
+        logger.log(
+            level,
+            f"{prefix}{escape_relayed(line)}",
+            extra={**(extra or {}), "markup": True, "emoji": False, "relayed": line},
+            stacklevel=2,
+        )

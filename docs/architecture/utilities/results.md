@@ -164,9 +164,8 @@ that session looks like. The session measured its terminal when it opened, and
 it doesn't measure again until a new session opens. What otto leaves
 undefined is listed once, on {ref}`Command contracts <command-contracts>`.
 
-The log is a separate view. Live output lines are cleaned for reading, so
-carriage returns are removed and the shell route skips blank lines. `value` is
-the record.
+The log is a separate view of the same output: what it shows is in
+{ref}`command-output-log`. `value` is the record.
 
 `send()` writes to the raw stream and `expect()` reads it raw, with `\r\n`
 kept: the fold applies only to a command's `value`.
@@ -184,6 +183,89 @@ returns (CRLF files, progress lines) now keeps them.
 
 NVT decoding also changes what `expect()` patterns see on telnet and console:
 a pattern that matched telnet's padding NULs (`\r\x00`) must drop them.
+```
+
+(command-output-log)=
+
+## What the host log shows of a command's output
+
+The host log receives the lines of the command's `value`
+({ref}`command-output-contract`): `value` split on its newlines and nothing
+else, one `@<host> > |` record per line. A blank line is a record of its own,
+leading and trailing spaces are kept, and a program's own carriage return
+stays inside its line (it never splits a record). A command whose `value` is
+empty logs no output line. The rule is
+{func}`otto.logger.relay.log_lines`, and it is the same for the same command
+and `log=` mode on every route: the ssh channel, local `exec`, and every shell
+session. What {meth}`~otto.host.session.ShellSession.expect` read is logged
+by the same rule: the terminal mapping undone, one trailing newline removed,
+one record per line. Under an unknown terminal mapping there is no mapping to
+undo, so such a record keeps the terminal's `\r`.
+
+What the record holds and what a sink shows can differ:
+
+- **The record** holds the line as the program printed it: its message and
+  its `relayed` attribute keep every `\r`, tab, control character and ANSI
+  escape sequence. A {class}`logging.Handler` or filter of your own reads
+  this.
+- **A sink** (the console, `console.log`, `verbose.log`, and `otto login`'s
+  `session.log`) cannot overwrite a line, so it shows each `\r`-separated
+  part of a record as a line of its own, every one with the `@<host> > |`
+  prefix. An empty part beside a non-empty one shows no line: `10%\r20%\r`
+  and `\r10%\r20%` show as `@h > | 10%` and `@h > | 20%`, and `line\r\r`
+  as `@h > | line`. A line with no non-empty part (a blank line, or a lone
+  `\r`, which is how a blank line arrives under an unknown terminal mapping)
+  shows as one prefixed blank line. `session.log` records the terminal of
+  `otto login`, not a record, and its line reader drops a line that is empty
+  once its ANSI escape sequences and final `\r` are removed: a blank output
+  line leaves no line in `session.log`. A record that is not host output (a warning quoting a tool's
+  progress, say) is shown the same way, without a prefix. Rich then expands
+  tabs to spaces and drops BEL, backspace, vertical tab and form feed when it
+  renders the line, and an ANSI escape sequence is rendered as the sink
+  renders it. {func}`otto.logger.formatters.display_text` is the rule.
+
+When a line is logged depends on the frame. A shell frame that streams (bash,
+ash) and the process routes log each line as it completes. On a shell whose
+terminal mapping is unknown, the newest line waits for the next line or the
+end of the command, since only then is it known whether its final `\r` is the
+terminal's (cut from `value`) or the program's (kept). A frame that does not
+declare its output clean line by line buffers: it logs the lines once, when
+the command ends. otto's Zephyr and raw frames buffer today, which is how the
+frame is written, not a measured property of the devices. Prompts a plain
+expect answered are output like any other and appear inside their line.
+
+Three things are delimited on purpose:
+
+- **A timed-out command** logs the complete lines it printed before the
+  deadline, and nothing from its END record on. There are two gaps. A timeout
+  that lands while otto is typing an expect's answer leaves the lines of the
+  read that prompt was matched in in `value` only, and for a
+  {class}`~otto.host.host.CredentialExpect` the prompt's line can reach the
+  log (the answer never does). A timeout that lands before otto has read the
+  command's first output logs nothing, though `value` may hold lines. The `Command timed out after <N>s` line and the unfinished last
+  line are in its `value` ({ref}`timed out <timed-out-command-result>`), not in the log. A line that was waiting
+  for the next one is logged when the command stops; a buffered frame logs
+  then the complete lines of what its timed-out `value` shows. On a shell whose
+  terminal mapping is unknown, that line keeps its final `\r`: with no end
+  marker, otto cannot tell the terminal's CR from the program's.
+- **A credential answer** stays out of the log: the read a
+  {class}`~otto.host.host.CredentialExpect`'s prompt was matched in is cut
+  from its line, so text before the prompt in that same read is cut too
+  (`[sudo] password for u: ` read at once, with the pattern
+  `password for \w+: `, loses `[sudo] ` as well); what follows the read on
+  that line is logged, and a line left empty is not. Only a
+  `CredentialExpect` is cut: a plain `(pattern, response)` expect is output
+  like any other, even when its response is a password.
+- **A command that never ran** (its end record came with no BEGIN marker)
+  logs no output line on any frame: its `value` is otto's sentence, not
+  output.
+
+```{admonition} Upgrading
+A shell-routed command's log used to drop blank lines, strip leading and
+trailing spaces, delete carriage returns and leave out what an expect had
+matched; and a carriage return split a record on every route. The log is now
+the lines of `value`, as above, and a sink shows each carriage-return part of
+a line as a line of its own.
 ```
 
 ## Which route ran a command
