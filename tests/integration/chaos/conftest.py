@@ -38,4 +38,4 @@ def chaos_target(tmp_path_factory: pytest.TempPathFactory) -> "Iterator[ChaosTar
 
     root = tmp_path_factory.mktemp("chaos")
     with loopback_sshd(root) as endpoint:
-        yield make_loopback_target(root, port=endpoint.port, client_key=endpoint.client_key)
+        yield make_loopback_target(root, endpoint)

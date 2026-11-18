@@ -18,6 +18,8 @@ from tests._fixtures.labdata import flat_hosts, write_lab_json
 from tests._fixtures.paths import TESTS_ROOT
 from tests._fixtures.project_scaffold import make_project
 
+from ._sshd import LoopbackEndpoint
+
 _PROJECT_E2E = TESTS_ROOT / "project_e2e"
 
 
@@ -33,8 +35,14 @@ class ChaosTarget:
     ssh_password: "str | None"
 
 
-def make_loopback_target(root: Path, *, port: int, client_key: Path) -> ChaosTarget:
-    """Generate the project + lab data for the loopback host and return the target."""
+def make_loopback_target(root: Path, endpoint: LoopbackEndpoint) -> ChaosTarget:
+    """Generate the project + lab data for the loopback host and return the target.
+
+    The lab entry and the project both name *endpoint*'s own known-hosts file,
+    so an in-process host built from the entry and an otto subprocess run in
+    the project check the daemon's key against that daemon's record alone.
+    """
+    port, client_key = endpoint.port, endpoint.client_key
     user = getpass.getuser()
     tech_dir = root / "labdata" / "chaostech"
     tech_dir.mkdir(parents=True)
@@ -54,6 +62,7 @@ def make_loopback_target(root: Path, *, port: int, client_key: Path) -> ChaosTar
                 "ssh_options": {
                     "port": port,
                     "client_keys": [str(client_key)],
+                    "known_hosts": str(endpoint.known_hosts),
                 },
             }
         ],
@@ -61,7 +70,7 @@ def make_loopback_target(root: Path, *, port: int, client_key: Path) -> ChaosTar
     sut = make_project(
         root / "sut",
         name="chaos_harness",
-        known_hosts=root / "known_hosts",
+        known_hosts=endpoint.known_hosts,
         version="0.1.0",
         extra=f"""\
 [[lab.sources]]

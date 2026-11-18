@@ -76,7 +76,11 @@ def loopback_parent(work_dir: Path) -> Iterator[UnixHost]:
             term="ssh",
             transfer="sftp",
             docker_capable=True,
-            ssh_options=SshOptions(port=endpoint.port, client_keys=[str(endpoint.client_key)]),
+            ssh_options=SshOptions(
+                port=endpoint.port,
+                client_keys=[str(endpoint.client_key)],
+                known_hosts=str(endpoint.known_hosts),
+            ),
         )
 
 

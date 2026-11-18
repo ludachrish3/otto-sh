@@ -170,10 +170,20 @@ class LoopbackSshd:
 
 @dataclasses.dataclass(frozen=True)
 class LoopbackEndpoint:
-    """Where a running :func:`loopback_sshd` answers, and the key it lets in."""
+    """Where a running :func:`loopback_sshd` answers, the key it lets in, and its key record.
+
+    *known_hosts* is the file every client of THIS daemon records and checks its
+    host key in (``ssh_options.known_hosts``). It lives under the daemon's own
+    root, so it lasts exactly as long as the daemon's key does: each daemon
+    generates a new host key, and otto records a key by host ID and port
+    (``[loopback]:<port>``), so a record shared between daemons -- the
+    per-worker hermetic default -- holds the previous daemon's key whenever a
+    later one is handed the same port, and the connection is refused (#1106).
+    """
 
     port: int
     client_key: Path
+    known_hosts: Path
 
 
 @contextlib.contextmanager
@@ -198,6 +208,8 @@ def loopback_sshd(root: Path) -> Iterator[LoopbackEndpoint]:
         sshd = LoopbackSshd(config, root / "sshd.log")
         sshd.start(port)
         try:
-            yield LoopbackEndpoint(port=port, client_key=client_key)
+            yield LoopbackEndpoint(
+                port=port, client_key=client_key, known_hosts=root / "known_hosts"
+            )
         finally:
             sshd.stop()

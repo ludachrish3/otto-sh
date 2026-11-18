@@ -4,6 +4,8 @@ If these fail, every scenario test in this package is meaningless — fix
 here first. Sequential (xdist_group) like the whole chaos suite.
 """
 
+import contextlib
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -54,3 +56,29 @@ def test_start_terminates_hung_child_before_raising(
 
     assert sshd._proc is not None
     assert sshd._proc.poll() is not None, "start()'s timeout branch leaked the child process"
+
+
+@pytest.mark.asyncio
+async def test_two_loopback_daemons_on_one_port_each_keep_their_own_host_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (#1106): every loopback sshd generates a NEW host key, and
+    otto records first-use keys by host ID and port (``[loopback]:<port>``). With
+    one record shared by every daemon in the process, a later daemon handed a
+    port an earlier one used was refused with ``HostKeyRefusedError``. Forced
+    here: two daemons on the SAME port, one after the other, opened through the
+    conformance venue's own loopback opener.
+    """
+    from tests.conformance._cells import _loopback_opener
+
+    with reserved_port() as port:
+
+        @contextlib.contextmanager
+        def same_port() -> "Iterator[int]":
+            yield port
+
+        monkeypatch.setattr(_sshd, "reserved_port", same_port)
+        for marker in ("first-daemon", "second-daemon"):
+            async with _loopback_opener("ssh", "sftp")() as host:
+                result = await host.run(f"echo {marker}")
+                assert marker in result.only.value
