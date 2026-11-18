@@ -91,9 +91,22 @@ command passes every value by keyword, which cannot reach it), a `*args`
 (spell a variadic as a positional list parameter), or more than one positional
 list parameter.
 
-`bool` flag strings — the strings `1`, `true`, `yes`, `on` (case-insensitive)
-map to `True`; everything else maps to `False`.  `Path`/`int`/`float` are
-coerced from strings automatically.
+Each element of a `--opt a,b,c` list, and each value of a `--opt K=V` dict,
+is stripped of surrounding whitespace (so are the keys) and validated as its
+declared `T` by pydantic in lax mode (its
+[conversion table](https://docs.pydantic.dev/latest/concepts/conversion_table/)),
+so any type pydantic can validate works: `int`, `float`, `Path`, `str`, an
+`ipaddress.IPv4Address`, a string `Literal` or an `Enum`.  A
+`Literal[1, 2]` refuses every command-line value, because pydantic does not
+turn a string into a `Literal` int.  A `bool` element accepts `1`/`0`, `true`/`false`, `yes`/`no`,
+`on`/`off`, `t`/`f` and `y`/`n`, in any case.  A type pydantic cannot validate
+(a plain class) gets the stripped string.  A value that does not validate is
+a usage error (exit 2) naming the option and the bad element (the whole
+`K=V` pair for a dict), raised before otto touches the host:
+
+```text
+Invalid value for '--ports': 'x': Input should be a valid integer, unable to parse string as an integer
+```
 
 ### Presentation markers: `Arg`, `Opt`, `Exclude`
 

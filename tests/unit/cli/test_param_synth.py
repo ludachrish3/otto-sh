@@ -11,33 +11,106 @@ import typer.models
 
 from otto.cli.param_synth import (
     build_cli_binding,
-    coerce_scalar,
+    convert_element,
     parse_comma_list,
     parse_kv_dict,
 )
 from otto.utils import Arg, Exclude, Opt
 
 
-def test_coerce_scalar_types():
-    assert coerce_scalar("true", bool) is True
-    assert coerce_scalar("0", bool) is False
-    assert coerce_scalar("7", int) == 7
-    assert coerce_scalar("1.5", float) == 1.5
-    assert coerce_scalar("/x", Path) == Path("/x")
-    assert coerce_scalar("hi", str) == "hi"
+@pytest.mark.parametrize(
+    ("raw", "elem", "want"),
+    [
+        ("1,2", int, [1, 2]),
+        ("1.5,2", float, [1.5, 2.0]),
+        ("/x,y", Path, [Path("/x"), Path("y")]),
+        ("a,b,c", str, ["a", "b", "c"]),
+        ("1,0,true,False,YES,no,on,off,t,f,y,n", bool, [True, False] * 6),
+    ],
+)
+def test_parse_comma_list_converts_each_element(raw, elem, want):
+    assert parse_comma_list(raw, elem) == want
 
 
-def test_parse_comma_list():
-    assert parse_comma_list("a,b,c", str) == ["a", "b", "c"]
-    assert parse_comma_list("1,2", int) == [1, 2]
+@pytest.mark.parametrize(
+    ("raw", "elem", "want"),
+    [
+        ("K=1,K2=2", int, {"K": 1, "K2": 2}),
+        ("K=1.5", float, {"K": 1.5}),
+        ("K=on,K2=0", bool, {"K": True, "K2": False}),
+        ("K=/x", Path, {"K": Path("/x")}),
+        ("K=V,K2=V2", str, {"K": "V", "K2": "V2"}),
+    ],
+)
+def test_parse_kv_dict_converts_each_value(raw, elem, want):
+    assert parse_kv_dict(raw, elem) == want
+
+
+def test_empty_and_omitted_collections_keep_their_shape():
     assert parse_comma_list("", str) == []
     assert parse_comma_list(None, str) is None
-
-
-def test_parse_kv_dict():
-    assert parse_kv_dict("K=V,K2=V2", str) == {"K": "V", "K2": "V2"}
-    assert parse_kv_dict(None, str) is None
     assert parse_kv_dict("", str) == {}
+    assert parse_kv_dict(None, str) is None
+
+
+def test_an_unrecognised_bool_is_refused_never_false():
+    with pytest.raises(typer.BadParameter, match="'garbage'"):
+        parse_comma_list("yes,garbage", bool)
+
+
+def test_a_bad_list_element_is_refused_naming_the_segment():
+    with pytest.raises(typer.BadParameter) as excinfo:
+        parse_comma_list("1,x", int)
+    message = excinfo.value.message
+    assert "'x'" in message
+    assert "valid integer" in message
+    assert "pydantic" not in message  # no docs URL
+    assert "\n" not in message
+
+
+def test_a_bad_dict_value_is_refused_naming_the_pair():
+    with pytest.raises(typer.BadParameter, match="'B=x'"):
+        parse_kv_dict("A=1,B=x", int)
+
+
+def test_every_segment_is_stripped():
+    assert parse_comma_list("a, b", str) == ["a", "b"]
+    assert parse_comma_list(" yes", bool) == [True]
+    assert parse_kv_dict(" k = 3 ", int) == {"k": 3}
+
+
+class _Plain:
+    """A user class pydantic cannot build a schema for."""
+
+
+def test_a_type_pydantic_cannot_validate_passes_through_as_a_string():
+    assert parse_comma_list("a, b", _Plain) == ["a", "b"]
+    assert parse_kv_dict("k=v", _Plain) == {"k": "v"}
+
+
+def test_any_pydantic_type_is_an_element():
+    import ipaddress
+    from typing import Literal
+
+    assert convert_element("10.0.0.1", ipaddress.IPv4Address) == ipaddress.IPv4Address("10.0.0.1")
+    assert convert_element("b", Literal["a", "b"]) == "b"
+    with pytest.raises(typer.BadParameter):
+        convert_element("c", Literal["a", "b"])
+    # pydantic never turns a string into a Literal int.
+    with pytest.raises(typer.BadParameter):
+        convert_element("1", Literal[1, 2])
+
+
+def test_an_enum_element_is_validated_by_value():
+    import enum
+
+    class Color(enum.Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    assert parse_comma_list("red,blue", Color) == [Color.RED, Color.BLUE]
+    with pytest.raises(typer.BadParameter, match="'green'"):
+        parse_comma_list("green", Color)
 
 
 def _names(binding):
@@ -127,14 +200,15 @@ def test_opt_marker_on_a_keyword_only_parameter_is_an_option():
     assert _has_typer(_by_name(b, "timeout"), typer.models.OptionInfo)
 
 
-def test_list_option_uses_str_with_converter():
+def test_list_option_is_a_str_option_parsed_by_typer():
     async def f(self, *, tags: list[str] = []):  # noqa: B006 — function never called; type must stay list[str] for synthesizer
         ...
 
     b = build_cli_binding(f)
-    _by_name(b, "tags")
-    assert "tags" in b.converters
-    assert b.converters["tags"]("a,b") == ["a", "b"]
+    meta = get_args(_by_name(b, "tags").annotation)[1:]
+    option = next(m for m in meta if isinstance(m, typer.models.OptionInfo))
+    assert option.parser("a,b") == ["a", "b"]
+    assert b.omitted_defaults == {"tags": []}
 
 
 def test_opt_name_renames_the_flag():
@@ -437,7 +511,7 @@ def test_keyword_only_with_default_is_an_option():
     binding = build_cli_binding(verb)
     assert _shape(binding) == ["timeout:--opt", "tags:--opt"]
     assert _by_name(binding, "timeout").default == 5.0
-    assert "tags" in binding.converters
+    assert "tags" in binding.omitted_defaults
 
 
 def test_a_positional_union_list_is_the_variadic_argument():
@@ -541,50 +615,123 @@ def test_the_arg_record_has_no_variadic_field():
     assert "variadic" not in {f.name for f in dataclasses.fields(Arg)}
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("raw", "tags", "env"),
-    [
-        (None, ["default"], {}),  # omitted: the declared default
-        ("a,b", ["a", "b"], {}),
-        ("", [], {}),
-        ("k=v", ["default"], {"k": "v"}),
-    ],
-)
-async def test_a_collection_option_reaches_the_verb_with_its_declared_default(raw, tags, env):
-    """Spec §6.6: an omitted list/dict option is the parameter's own default, not ``None``.
+def _collection_verb_app(monkeypatch, default_ports, seen, resolved):
+    """A ``host``-style app whose one verb takes ``ports: list[int]`` and ``env: dict[str, int]``.
 
-    Driven through :func:`otto.cli.expose.make_method_command`, the dispatch every
-    exposed host verb runs. ``raw`` goes to ``env`` in the last row, so ``tags``
-    there is omitted too.
+    The verb is synthesized by :func:`otto.cli.expose.make_method_command`, the
+    dispatch every exposed host verb runs, and the host resolver is a spy, so a
+    test sees whether the host was ever resolved.
     """
-    from typing import ClassVar
     from unittest.mock import AsyncMock
 
+    from otto.cli import host as cli_host
     from otto.cli.expose import make_method_command
     from otto.utils import cli_exposed
 
-    default_tags = ["default"]
+    class _Host:
+        id = "h1"
+        close = AsyncMock()
+
+        async def tag(self, *, ports: list[int] = default_ports, env: dict[str, int] = {}):  # noqa: B006 — the defaults under test
+            seen.update(ports=ports, env=env)
+
+    def _resolve(ctx):
+        resolved.append(ctx)
+        return _Host()
+
+    monkeypatch.setattr(cli_host, "resolve_cli_host", _resolve)
+
+    @cli_exposed
+    async def tag(self, *, ports: list[int] = default_ports, env: dict[str, int] = {}): ...  # noqa: B006 — never called
+
+    app = typer.Typer()
+
+    @app.callback()
+    def main() -> None: ...
+
+    app.command("tag")(make_method_command("tag", tag))
+    return app
+
+
+@pytest.mark.parametrize(
+    ("argv", "ports", "env"),
+    [
+        ([], [1], {}),  # omitted: the declared default
+        (["--ports", "1,2"], [1, 2], {}),
+        (["--ports", ""], [], {}),
+        (["--env", "k=3"], [1], {"k": 3}),
+    ],
+)
+def test_a_collection_option_reaches_the_verb_converted(monkeypatch, argv, ports, env):
+    """Spec §6.6: an omitted list/dict option is the parameter's own default, not ``None``."""
+    from tests._fixtures.dispatch import DispatchRunner
+
+    default_ports = [1]
+    seen: dict = {}
+    resolved: list = []
+    app = _collection_verb_app(monkeypatch, default_ports, seen, resolved)
+    r = DispatchRunner().invoke(app, ["tag", *argv], spec_name="host")
+    assert r.exit_code == 0, r.output
+    assert resolved  # positive control: the resolver spy sees a resolution
+    assert seen == {"ports": ports, "env": env}
+    assert seen["ports"] is not default_ports  # a copy: the verb may mutate it
+
+
+@pytest.mark.parametrize(
+    ("argv", "option", "segment"),
+    [
+        (["--ports", "1,x"], "--ports", "'x'"),
+        (["--env", "A=1,B=x"], "--env", "'B=x'"),
+    ],
+)
+def test_a_bad_collection_element_is_a_usage_error_before_the_host(
+    monkeypatch, argv, option, segment
+):
+    """A bad element fails in the option's parse step: exit 2, the option named, no host."""
+    from tests._fixtures.dispatch import DispatchRunner
+
+    seen: dict = {}
+    resolved: list = []
+    app = _collection_verb_app(monkeypatch, [1], seen, resolved)
+    r = DispatchRunner().invoke(app, ["tag", *argv], spec_name="host")
+    assert r.exit_code == 2, r.output
+    assert f"Invalid value for '{option}'" in r.output
+    assert segment in r.output
+    assert "Traceback" not in r.output
+    assert "pydantic.dev" not in r.output
+    assert resolved == []
+    assert seen == {}
+
+
+def test_a_list_of_a_plain_class_reaches_the_verb_as_strings(monkeypatch):
+    """A type pydantic cannot build a schema for passes each element through as its string."""
+    from unittest.mock import AsyncMock
+
+    from otto.cli import host as cli_host
+    from otto.cli.expose import make_method_command
+    from otto.utils import cli_exposed
+    from tests._fixtures.dispatch import DispatchRunner
+
     seen: dict = {}
 
     class _Host:
         id = "h1"
         close = AsyncMock()
 
-        async def tag(self, *, tags: list[str] = default_tags, env: dict[str, str] = {}):  # noqa: B006 — the defaults under test
-            seen.update(tags=tags, env=env)
+        async def take(self, *, items: list[_Plain] = []):  # noqa: B006 — never mutated
+            seen["items"] = items
 
-    class _Ctx:
-        obj = _Host()
-        meta: ClassVar[dict] = {}
+    monkeypatch.setattr(cli_host, "resolve_cli_host", lambda ctx: _Host())
 
     @cli_exposed
-    async def tag(self, *, tags: list[str] = default_tags, env: dict[str, str] = {}): ...  # noqa: B006 — never called
+    async def take(self, *, items: list[_Plain] = []): ...  # noqa: B006 — never called
 
-    cmd = make_method_command("tag", tag)
-    if env:
-        await cmd(_Ctx(), tags=None, env=raw)
-    else:
-        await cmd(_Ctx(), tags=raw, env=None)
-    assert seen == {"tags": tags, "env": env}
-    assert seen["tags"] is not default_tags  # a copy: the verb may mutate it
+    app = typer.Typer()
+
+    @app.callback()
+    def main() -> None: ...
+
+    app.command("take")(make_method_command("take", take))
+    r = DispatchRunner().invoke(app, ["take", "--items", "a,b"], spec_name="host")
+    assert r.exit_code == 0, r.output
+    assert seen == {"items": ["a", "b"]}
