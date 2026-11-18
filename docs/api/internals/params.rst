@@ -9,8 +9,6 @@ and the reference can link them. The public names are on :doc:`/api/params`.
 
 .. autofunction:: otto.params.build_options
 
-.. autofunction:: otto.params.drop_unset_secrets
-
 .. autofunction:: otto.params.contains_secret_type
 
 .. autofunction:: otto.params.sensitive_field_names

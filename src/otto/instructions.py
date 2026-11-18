@@ -62,7 +62,7 @@ def bind_handler_kwargs(
     """
     from typing import get_type_hints
 
-    from .params import build_options, drop_unset_secrets, verb_option_classes
+    from .params import build_options, verb_option_classes
     from .run_context import OttoContext
 
     handler = _handler_of(entry)
@@ -80,7 +80,7 @@ def bind_handler_kwargs(
         own_instance = ctx.options(own_cls)
     elif own_cls is not None and own_instance is None:
         own_kw = {k: v for k, v in kwargs.items() if k in own_fields}
-        own_instance = build_options(own_cls, drop_unset_secrets(own_cls, own_kw))
+        own_instance = build_options(own_cls, own_kw)
     hints = get_type_hints(handler)
     bound: dict[str, Any] = {}
     for name in inspect.signature(handler).parameters:
