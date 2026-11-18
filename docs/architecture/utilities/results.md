@@ -230,8 +230,13 @@ terminal mapping is unknown, the newest line waits for the next line or the
 end of the command, since only then is it known whether its final `\r` is the
 terminal's (cut from `value`) or the program's (kept). A frame that does not
 declare its output clean line by line buffers: it logs the lines once, when
-the command ends. otto's Zephyr and raw frames buffer today, which is how the
-frame is written, not a measured property of the devices. Prompts a plain
+the command ends. otto's raw frame buffers. otto's Zephyr frames stream with
+their tail held back: the prompt and exit-code lines the shell sends after the
+output look like output until the END record arrives, so the newest lines
+(three on 3.7 and later, two on 2.7) wait for it, and at END the rest of
+`value`'s lines are logged. An output that ends without a newline arrives
+with the prompt glued to its last line, which is one of those held, so that
+line is logged without the prompt. Prompts a plain
 expect answered are output like any other and appear inside their line.
 
 Three things are delimited on purpose:
@@ -244,8 +249,11 @@ Three things are delimited on purpose:
   log (the answer never does). A timeout that lands before otto has read the
   command's first output logs nothing, though `value` may hold lines. The `Command timed out after <N>s` line and the unfinished last
   line are in its `value` ({ref}`timed out <timed-out-command-result>`), not in the log. A line that was waiting
-  for the next one is logged when the command stops; a buffered frame logs
-  then the complete lines of what its timed-out `value` shows. On a shell whose
+  for the next one is logged when the command stops, and the log is then the
+  complete lines of what its timed-out `value` shows, each once, on every
+  frame (a buffered one, or one that held its tail back). On Zephyr a
+  timed-out `value` can show the shell's prompt and exit-code lines, when they
+  arrived before the deadline but END did not; the log shows them too. On a shell whose
   terminal mapping is unknown, that line keeps its final `\r`: with no end
   marker, otto cannot tell the terminal's CR from the program's.
 - **A credential answer** stays out of the log: the read a

@@ -27,6 +27,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
 
     type_name = "zephyr-inline"
     shell_lines_after_begin = 3  # the BEGIN rejection, its retCode line, the prompt
+    live_hold_lines = 2  # the command's retCode line and the prompt after it
 
     def handshake(self, m: SessionMarkers, *, prefix: str = "") -> str:
         """Disable shell echo, then emit the readiness probe.

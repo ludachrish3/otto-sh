@@ -1619,7 +1619,12 @@ class ShellSession(ABC):
             output.feed(taken[len(loggable) :])
             await self._stop_under_bound(restore=restore)
             result = timed_out_result(cmd=cmd, timeout=timeout, output=output, route=None)
-            if line_log.begun:
+            if line_log.holds:
+                # The complete lines of the timed-out value not yet logged,
+                # whatever the frame held: the log is the value's lines.
+                line_log.stop(unread)
+                line_log.stop_settled(_timed_out_value_lines(output))
+            elif line_log.begun:
                 # The complete lines the reader still held before any END
                 # record are the command's.
                 line_log.stop(unread)
@@ -1684,8 +1689,17 @@ class ShellSession(ABC):
         return text
 
     def _line_log(self, on_output: Callable[[str], None]) -> "OutputLog":
-        """Return a command's line logger, begun at its BEGIN line (:meth:`_begin_line_log`)."""
-        return OutputLog(on_output, fold=self._undo_terminal_mapping, begun=False)
+        """Return a command's line logger, begun at its BEGIN line (:meth:`_begin_line_log`).
+
+        Each line is folded as the frame's parse folds its output: the
+        terminal mapping undone, then what the frame's shell adds removed
+        (:meth:`~otto.host.command_frame.CommandFrame.clean_output`).
+        """
+        return OutputLog(
+            on_output,
+            fold=lambda raw: self._frame.clean_output(self._undo_terminal_mapping(raw)),
+            begun=False,
+        )
 
     def _begin_line_log(self, line_log: "OutputLog", data: str) -> None:
         """Begin *line_log* at the read *data* that holds the command's BEGIN line.
@@ -1698,7 +1712,11 @@ class ShellSession(ABC):
         """
         folded = self._undo_terminal_mapping(data)
         start = folded.rfind(self._markers.begin) + len(self._markers.begin)
-        line_log.begin(hold_newest=begin_line_ending(folded, start) == "\r\n")
+        line_log.begin(
+            hold_newest=begin_line_ending(folded, start) == "\r\n",
+            hold=self._frame.live_hold_lines,
+            skip=self._frame.live_skip_lines,
+        )
 
     def _logged_lines(self, text: str) -> list[str]:
         """Return the lines the host log shows for *text* this session read outside a command.
@@ -1836,10 +1854,12 @@ class ShellSession(ABC):
         Output is read line-by-line. How it reaches ``on_output`` depends on the
         frame's :attr:`~otto.host.command_frame.CommandFrame.streams_output_live`:
         a *live* frame (e.g. bash) emits each content line as it arrives, with
-        sentinels and echoed command text stripped; a *buffered* frame (e.g.
-        Zephyr) emits nothing mid-stream and surfaces ``parse_output(buffer)``
-        once on completion, so shell prompts and retcode scaffolding never reach
-        the log. ``on_output`` is the per-command sink (the host's logger, or a
+        sentinels and echoed command text stripped, and one that holds its
+        newest lines back (Zephyr, whose prompts and retcode line follow the
+        output) logs the rest of its value's lines at END; a *buffered* frame
+        emits nothing mid-stream and surfaces ``parse_output(buffer)`` once on
+        completion, so shell prompts and retcode scaffolding never reach the
+        log. ``on_output`` is the per-command sink (the host's logger, or a
         no-op when the effective mode is ``LogMode.NEVER``). Every chunk read
         is fed to *read*, the command's :class:`ExecOutput`, which the caller
         still holds when a timeout cancels this read.
@@ -1923,17 +1943,16 @@ class ShellSession(ABC):
                     if live:
                         self._begin_line_log(line_log, data)
 
-                answered_with = await self._answer_expect(
-                    data, expects or [], seen_begin=seen_begin, answered=answered, redact=redact
+                answering = self._matched_expect(
+                    data, expects or [], seen_begin=seen_begin, answered=answered
                 )
 
-                # Stream each content line to the callback. A line a credential
-                # was typed into stays out of the log.
+                # Stream each content line to the callback, before the answer
+                # is typed: a timeout inside that write finds them logged.
                 if line_log.begun and began_before:
-                    if isinstance(answered_with, CredentialExpect):
-                        line_log.withhold_read(start, data)
-                    for raw in completed:
-                        line_log.line(raw)
+                    _log_read(line_log, completed, start, data, answering)
+                if answering is not None:
+                    await self._answer_expect(answering, redact=redact)
         except BaseException:
             # Timed out, cancelled or refused: the complete lines held are logged.
             line_log.stop()
@@ -1972,7 +1991,11 @@ class ShellSession(ABC):
         # prompts or the retcode scaffolding. A command that never ran
         # printed nothing: its value is otto's sentence, never logged as
         # output, on every frame.
-        if line_log.begun:
+        if line_log.holds:
+            # A frame that held its newest lines back logs the rest of its
+            # value's lines: what it held may be its tail.
+            line_log.end(ended, before_end.tail(), log_lines(output))
+        elif line_log.begun:
             for raw in ended:
                 line_log.line(raw)
             line_log.finish(before_end.tail())
@@ -2019,16 +2042,15 @@ class ShellSession(ABC):
         self._exec_baseline_lost = True
         logger.warning(f"{self._log_tag}: exec terminal baseline lost; not restoring")
 
-    async def _answer_expect(
+    def _matched_expect(
         self,
         data: str,
         expects: list[Expect | CredentialExpect],
         *,
         seen_begin: bool,
         answered: set[int],
-        redact: bool,
     ) -> "Expect | CredentialExpect | None":
-        """Answer the first expect whose pattern is in *data*; return it, or ``None``.
+        """Return the first expect whose pattern is in *data*, to be answered; or ``None``.
 
         Nothing is answered before the command's BEGIN marker, on any frame:
         what precedes it is the shell's (the echoed command line, a console
@@ -2038,19 +2060,12 @@ class ShellSession(ABC):
         into *answered*. A later
         match raises :exc:`_CredentialRefusedError` when the pair is
         ``refused_on_repeat``, and is plain output otherwise.
-
-        The DEBUG line names the pattern and the answer's length, never the
-        answer; under ``LogMode.NEVER`` (*redact*) there is no line at all.
         """
         if not seen_begin:
             return None
         for i, expect in enumerate(expects):
-            if isinstance(expect, CredentialExpect):
-                pattern, response = expect.pattern, expect.response
-            else:
-                pattern, response = expect
-            pat = re.compile(pattern) if isinstance(pattern, str) else pattern
-            if not pat.search(data):
+            pattern = expect.pattern if isinstance(expect, CredentialExpect) else expect[0]
+            if not re.search(pattern, data):
                 continue
             if isinstance(expect, CredentialExpect):
                 if i in answered:
@@ -2058,14 +2073,26 @@ class ShellSession(ABC):
                         raise _CredentialRefusedError(expect)
                     continue  # answered once already: this match is output
                 answered.add(i)
-            await self.write_transport(data=response)
-            if not redact:
-                logger.debug(
-                    f"{self._log_tag}: expect matched "
-                    f"pattern={pat.pattern!r} response=<{len(response)} chars>"
-                )
             return expect
         return None
+
+    async def _answer_expect(self, expect: "Expect | CredentialExpect", *, redact: bool) -> None:
+        """Type *expect*'s answer.
+
+        The DEBUG line names the pattern and the answer's length, never the
+        answer; under ``LogMode.NEVER`` (*redact*) there is no line at all.
+        """
+        if isinstance(expect, CredentialExpect):
+            pattern, response = expect.pattern, expect.response
+        else:
+            pattern, response = expect
+        await self.write_transport(data=response)
+        if not redact:
+            shown = pattern if isinstance(pattern, str) else pattern.pattern
+            logger.debug(
+                f"{self._log_tag}: expect matched "
+                f"pattern={shown!r} response=<{len(response)} chars>"
+            )
 
     def _build_combined_pattern(
         self,
@@ -3945,6 +3972,14 @@ class OutputLog:
     (:meth:`withhold_read`) is cut from the line it lands on; the rest of that
     line is logged, and a line left with nothing is not.
 
+    A frame whose own tail follows its output holds that many newest lines
+    to the end (:meth:`begin`'s *hold*), when the value says which of them
+    are output (:meth:`settle`). That is exact because every line of the
+    stream takes one place in order, cut or not, complete or the unfinished
+    last one (:meth:`end`), and a read's complete lines take theirs before
+    any answer is typed: the value's lines then match the places one to
+    one, and a place cut by a credential is logged from its cut text.
+
     >>> from otto.host.session import OutputLog
     >>> logged = []
     >>> log = OutputLog(logged.append)
@@ -3966,8 +4001,11 @@ class OutputLog:
         self._hold_newest = hold_newest
         self._fold = fold
         self._begun = begun
-        self._held: str | None = None
+        self._held: list[_HeldLine] = []
+        self._hold = 0
+        self._skip = 0
         self._count = 0
+        self._logged = 0
         # The reads to cut from the line in progress, as (start, length) in
         # its raw characters; a read that runs past the line's end carries
         # on into the next line from its start.
@@ -3982,9 +4020,17 @@ class OutputLog:
         """
         return self._begun
 
-    def begin(self, *, hold_newest: bool) -> None:
-        """Begin logging lines, holding each newest one when *hold_newest* (see the class)."""
+    def begin(self, *, hold_newest: bool, hold: int = 0, skip: int = 0) -> None:
+        """Begin logging lines, holding each newest one when *hold_newest* (see the class).
+
+        *skip* lines that follow are the shell's, never logged. *hold* is
+        how many of the newest lines wait for the end of the command
+        (:meth:`settle`), as a streaming frame's
+        :attr:`~otto.host.command_frame.CommandFrame.live_hold_lines` says.
+        """
         self._hold_newest = hold_newest
+        self._hold = hold
+        self._skip = skip
         self._begun = True
 
     def withhold_read(self, start: int, read: str) -> None:
@@ -4015,18 +4061,38 @@ class OutputLog:
 
     def line(self, raw: str) -> None:
         """Log the complete raw line *raw*, or hold it until the next one."""
-        self._release()
+        self._release(self._hold)
+        slot = self._slot(raw)
+        if slot is None:
+            return
+        if slot.text is None:
+            if self._hold:
+                # Still one of the value's lines: it takes its place, logging nothing.
+                self._held.append(slot)
+                self._release(self._hold)
+            return
+        self._held.append(slot)
+        newest = self._hold_newest or (self._count == 1 and not slot.text)
+        self._release(max(self._hold, 1 if newest else 0))
+
+    def _slot(self, raw: str) -> "_HeldLine | None":
+        """Return the place the complete raw line *raw* takes in the value, its cuts applied.
+
+        ``None``: *raw* is no line of the value (one of the shell's skipped
+        lines, or not output at all). A line a credential read was cut from
+        takes its place even when the cut took all of it, its newline too.
+        """
         raw, cut = self._cut(raw)
+        if self._skip:
+            self._skip -= 1
+            return None
         line = output_line(self._fold(raw))
-        if line is None:
-            return
+        if line is None and not cut:
+            return None
         self._count += 1
-        if cut and not line.rstrip("\r"):
-            return
-        if self._hold_newest or (self._count == 1 and not line):
-            self._held = line
-        else:
-            self._on_output(line)
+        if cut and not (line or "").rstrip("\r"):
+            return _HeldLine(None, cut=True)
+        return _HeldLine(line, cut=cut)
 
     def finish(self, tail: str) -> None:
         r"""Log what is left once the command ended: the held line and *tail*, its unfinished line.
@@ -4037,21 +4103,71 @@ class OutputLog:
         value's line ending, and a lone blank first line is an empty value,
         which logs nothing.
         """
-        held, self._held = self._held, None
+        held = self._held.pop().text if self._held else None
         if tail:
             if held is not None:
-                self._on_output(held)
+                self._emit(held)
             line, cut = self._cut(tail)
             line = self._fold(line)
             if line or not cut:
-                self._on_output(line)
+                self._emit(line)
             return
         if held is None:
             return
         if self._hold_newest:
             held = held.removesuffix("\r")
         if self._count > 1 or held:
-            self._on_output(held)
+            self._emit(held)
+
+    @property
+    def holds(self) -> bool:
+        """Whether this log holds its newest lines back to the end (:meth:`settle`)."""
+        return self._begun and bool(self._hold)
+
+    def end(self, ended: Iterable[str], tail: str, lines: Iterable[str]) -> None:
+        """Log the rest of a held log once the command ended: :meth:`settle` after the END read.
+
+        *ended* are the complete raw lines the END record's read brought,
+        *tail* the unfinished line before the record: each takes its place,
+        its cuts applied as :meth:`line` and :meth:`finish` apply them, so
+        :meth:`settle` walks every line of the stream.
+        """
+        for raw in ended:
+            slot = self._slot(raw)
+            if slot is not None:
+                self._held.append(slot)
+        if tail:
+            line, cut = self._cut(tail)
+            line = self._fold(line)
+            self._held.append(_HeldLine(line if line or not cut else None, cut=cut))
+        self.settle(lines)
+
+    def settle(self, lines: Iterable[str]) -> None:
+        """Log the command's *lines* not yet logged, once it ended: a frame that held lines back.
+
+        *lines* are the lines of its ``value`` (:func:`~otto.logger.relay.log_lines`),
+        or the complete ones of a timed-out ``value``. It is exact because it
+        is positional: every line of the stream after the shell's skipped
+        ones, cut or not, takes one place in order, either already logged
+        (counted, a line cut to nothing among them) or held. So the first of
+        *lines* are the ones logged, and each line after them is the held
+        line in the same place: logged from *lines*, except that one a
+        credential read was cut from is logged as cut (or not at all, when
+        nothing was left), since the value still holds what was withheld. A
+        line is never logged twice nor dropped, and a withheld read never
+        logged. What was held beyond *lines* is the shell's tail, and is
+        dropped.
+        """
+        held, self._held = self._held, []
+        for at, line in enumerate(list(lines)[self._logged :]):
+            if at < len(held) and held[at].cut:
+                self._emit(held[at].text)
+            else:
+                self._emit(line)
+
+    def stop_settled(self, lines: Iterable[str]) -> None:
+        """:meth:`settle` for a command that stopped unfinished; a failing sink is reported."""
+        self._reported(lambda: self.settle(lines))
 
     def stop(self, lines: Iterable[str] = ()) -> None:
         """Log the complete lines left, nothing unfinished: the command stopped without finishing.
@@ -4064,20 +4180,67 @@ class OutputLog:
         nothing raised while reporting it replaces the exception or the
         result.
         """
-        try:
+
+        def log_rest() -> None:
             for raw in lines:
                 self.line(raw)
             self._release()
+
+        self._reported(log_rest)
+
+    def _reported(self, log: Callable[[], None]) -> None:
+        """Run *log*; a sink that fails in it is reported, never raised."""
+        try:
+            log()
         except (
             Exception
         ):  # the exception being raised, or the result, is what must reach the caller
             with suppress(Exception):  # a handler that fails the report fails it alone
                 logger.warning("the held output line could not be logged", exc_info=True)
 
-    def _release(self) -> None:
-        if self._held is not None:
-            held, self._held = self._held, None
-            self._on_output(held)
+    def _release(self, keep: int = 0) -> None:
+        """Log the oldest held lines until *keep* are left.
+
+        A blank first line that held lines follow waits for one more: only a
+        line after it that is itself output says the value is not empty.
+        """
+        while len(self._held) > keep + self._blank_first_waits():
+            self._emit(self._held.pop(0).text)
+
+    def _blank_first_waits(self) -> int:
+        first = self._held[0].text if self._held else None
+        return int(bool(self._hold) and self._logged == 0 and first == "")
+
+    def _emit(self, line: str | None) -> None:
+        """Log *line* in the value's next place; ``None`` takes the place and logs nothing."""
+        self._logged += 1
+        if line is not None:
+            self._on_output(line)
+
+
+def _log_read(
+    line_log: OutputLog,
+    completed: list[str],
+    start: int,
+    data: str,
+    answering: "Expect | CredentialExpect | None",
+) -> None:
+    """Log the lines *completed* by the read *data*, which began *start* characters into its line.
+
+    A read a credential is typed into (*answering*) stays out of the log.
+    """
+    if isinstance(answering, CredentialExpect):
+        line_log.withhold_read(start, data)
+    for raw in completed:
+        line_log.line(raw)
+
+
+@dataclass(frozen=True)
+class _HeldLine:
+    """A line :class:`OutputLog` holds: its text (``None``: cut to nothing), and if it was cut."""
+
+    text: str | None
+    cut: bool
 
 
 def timed_out_result(
@@ -4110,10 +4273,15 @@ def _timed_out_lines(output: ExecOutput) -> list[str]:
     when *output* ended mid-line: the complete lines printed before the
     deadline, as a streaming frame has logged them.
     """
+    return [f"{line}\n" for line in _timed_out_value_lines(output)]
+
+
+def _timed_out_value_lines(output: ExecOutput) -> list[str]:
+    """Return the complete lines of a timed-out command's value (*output*'s), as logged."""
     lines = log_lines(output.value())
     if output.tail() and lines:
         lines.pop()
-    return [f"{line}\n" for line in lines]
+    return lines
 
 
 async def drain_exec_output(

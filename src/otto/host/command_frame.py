@@ -43,7 +43,7 @@ import re
 import shlex
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from typing_extensions import final, override
 
@@ -293,12 +293,51 @@ class CommandFrame(ABC):
     not a line of its own (Zephyr's is an error message) is unaffected."""
 
     streams_output_live: ClassVar[bool] = False
-    """Whether this dialect's raw inter-marker byte stream is already clean
-    line-by-line and can be streamed to the log as it arrives. Default False:
-    the session buffers to the END sentinel and logs ``parse_output(buffer)`` —
-    so the log shows exactly the command's parsed output, with no shell prompts
-    or retcode scaffolding. A dialect sets this True only when its raw stream
-    has no scaffolding to strip (e.g. bash with echo off)."""
+    """Whether the session logs this dialect's output line by line as it arrives.
+
+    Default False: the session buffers to the END sentinel and logs the lines
+    of ``parse_output(buffer)`` once, so the log shows exactly the command's
+    parsed output, with no shell prompts or retcode scaffolding. True: each
+    line is logged as it completes, after the
+    :attr:`~otto.host.command_frame.CommandFrame.live_skip_lines`, through
+    :meth:`~otto.host.command_frame.CommandFrame.clean_output`, with the newest
+    :attr:`~otto.host.command_frame.CommandFrame.live_hold_lines` held back. The
+    lines logged must be the lines of what
+    :meth:`~otto.host.command_frame.CommandFrame.parse_output` returns. Bash with
+    echo off streams as its raw stream arrives; Zephyr streams with its tail
+    held back."""
+
+    live_hold_lines: ClassVar[int] = 0
+    """How many of the newest complete lines a streaming dialect holds until END.
+
+    The lines the shell sends after the command's output and before END (a
+    prompt, an exit-code line) look like output until END arrives; holding
+    this many keeps them out of the log. ``0`` (the default) holds none. A
+    dialect that holds lines logs, at END, the lines of ``parse_output``'s
+    value not yet logged, and drops what it held; at a timeout it logs the
+    complete lines of the timed-out value not yet logged. Read by the
+    session's log only, when
+    :attr:`~otto.host.command_frame.CommandFrame.streams_output_live`: never
+    by a parse, so it changes what is logged when, never a value."""
+
+    @property
+    def live_skip_lines(self) -> int:
+        """How many shell lines follow the BEGIN line before a streaming dialect's output.
+
+        ``0`` by default: the output starts on the line after BEGIN's. Read
+        only when :attr:`~otto.host.command_frame.CommandFrame.streams_output_live`.
+        """
+        return 0
+
+    def clean_output(self, text: str) -> str:
+        """Return *text*, raw output with the terminal mapping undone, less what the shell adds.
+
+        The one per-line cleaning of a streaming dialect: the session applies
+        it to each line before logging it, so a dialect whose ``parse_output``
+        removes bytes the shell adds to the output removes them through this
+        too. The default removes nothing.
+        """
+        return text
 
     exact_output: ClassVar["Limitation | None"] = None
     """``None``: :meth:`parse_output` follows the exact-output rule -- a
@@ -1254,6 +1293,11 @@ def strip_zephyr_levels(output: str) -> str:
     return _SHELL_LEVEL_RE.sub("", output)
 
 
+_ZEPHYR_TAIL_PIECES = 3
+"""The pieces :meth:`ZephyrFrame.parse_output` cuts before END: ``retval``'s line,
+the prompt that runs END, and END's own piece."""
+
+
 class ZephyrFrame(CommandFrame):
     r"""Stock Zephyr RTOS shell dialect (3.7 / 4.4 LTS).
 
@@ -1284,6 +1328,36 @@ class ZephyrFrame(CommandFrame):
 
     type_name = "zephyr"
 
+    streams_output_live = True
+
+    live_hold_lines: ClassVar[int] = _ZEPHYR_TAIL_PIECES
+    """The shell's tail, which is the prompt after the output, ``retval``'s integer
+    line and the prompt that runs END: as many lines as :meth:`parse_output`
+    cuts, so the line the output ends on stays held when the prompt arrives
+    glued to it. Set from the parse's own count, which never reads it: a
+    subclass that holds more or fewer changes its log, never its value."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Refuse a subclass that streams with a hold below the tail its parse cuts.
+
+        Such a frame would log its prompt and ``retval`` lines as output. A
+        subclass with its own ``parse_output`` finds its own tail and is not
+        checked here.
+        """
+        super().__init_subclass__(**kwargs)
+        if (
+            cls.parse_output is ZephyrFrame.parse_output
+            and cls.streams_output_live
+            and cls.live_hold_lines < _ZEPHYR_TAIL_PIECES
+        ):
+            raise TypeError(
+                f"{cls.__qualname__}: streams_output_live is True but live_hold_lines is "
+                f"{cls.live_hold_lines}, below the {_ZEPHYR_TAIL_PIECES} lines its "
+                f"parse_output cuts, so the shell's prompt and retval lines would be "
+                f"logged as output: hold at least {_ZEPHYR_TAIL_PIECES}, or set "
+                f"streams_output_live = False to log the output once, at END"
+            )
+
     single_client_console = True
     """Zephyr's ``shell_telnet`` backend accepts exactly one client per device
     and the console has no login at all — see ``tests/conformance/
@@ -1302,6 +1376,17 @@ class ZephyrFrame(CommandFrame):
     The BEGIN rejection and the prompt that follows it; a dialect that also
     reports each exit code inline (the getting-started 2.7 frame) has three.
     :meth:`parse_output` and :meth:`parse_partial_output` both read it."""
+
+    @property
+    @override
+    def live_skip_lines(self) -> int:
+        """The :attr:`shell_lines_after_begin` lines after the BEGIN line's own."""
+        return self.shell_lines_after_begin - 1
+
+    @override
+    def clean_output(self, text: str) -> str:
+        r"""Remove the level colouring (``strip_zephyr_levels``) and each ``\r\n``'s ``\r``."""
+        return strip_zephyr_levels(text).replace("\r\n", "\n")
 
     @override
     def frame(self, cmd: str, *, m: SessionMarkers) -> str:
@@ -1355,10 +1440,12 @@ class ZephyrFrame(CommandFrame):
         remains after BEGIN goes to :meth:`output_value`.
         """
         lines = self.region_before_end(buffer, m=m)
-        if len(lines) < 3:  # noqa: PLR2004 -- the prompt, retval and END pieces
+        if len(lines) < _ZEPHYR_TAIL_PIECES:
             return ""
         prompt = lines[-2]
-        region = "\r\n".join(lines[:-3]).removesuffix(prompt)
+        # The last pieces are retval's line, the prompt that runs END and
+        # END's own piece; the prompt before retval ends what remains.
+        region = "\r\n".join(lines[:-_ZEPHYR_TAIL_PIECES]).removesuffix(prompt)
         return self.output_value(region, m=m, lines_after_begin=self.shell_lines_after_begin)
 
     @override
@@ -1404,8 +1491,7 @@ class ZephyrFrame(CommandFrame):
                 if end == -1:
                     return ""
                 start = end + 2
-        output = strip_zephyr_levels(region[start:])
-        return command_value(output.replace("\r\n", "\n"))
+        return command_value(self.clean_output(region[start:]))
 
     def region_before_end(self, buffer: str, *, m: SessionMarkers) -> list[str]:
         r"""Return the buffer up to (not including) the END token, split into lines.
