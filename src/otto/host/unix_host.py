@@ -545,6 +545,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             name=self.name,
             log_command=self._log_command,
             log_output=self._log_output,
+            fold_log=self._session_fold(),
             command_frame=self.command_frame,
             creds=self.creds,
             host_id=self.id,

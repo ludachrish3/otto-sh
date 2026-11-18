@@ -18,12 +18,13 @@ INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf '"'"'\n
          /tmp/qs_wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo
          otto-gcda-absent; else LC_ALL=C find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f
          -print 2>&1; fi'
+INFO     @dut > |
 INFO     @dut > | otto-gcda-check
 INFO     @dut > | otto-gcda-absent
 INFO     @dut   | printf '\n%s\n' otto-cov-presence
          if test -d /tmp/qs_wordcount; then echo 'otto-cov 0 present'; else echo 'otto-cov 0
          absent'; fi
-INFO
+INFO     @dut > |
 INFO     @dut > | otto-cov-presence
 INFO     @dut > | otto-cov 0 absent
 INFO     coverage counters cleared before the run on 1 product(s) across 1 host(s)
@@ -86,6 +87,7 @@ INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf '"'"'\n
          /tmp/qs_wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo
          otto-gcda-absent; else LC_ALL=C find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f
          -print 2>&1; fi'
+INFO     @dut > |
 INFO     @dut > | otto-gcda-check
 INFO     @dut > | otto-gcda-absent
 INFO     coverage counters cleared after collection on 1 product(s) across 1 host(s)

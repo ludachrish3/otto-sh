@@ -566,6 +566,59 @@ def _normalize_expects(
     return pairs
 
 
+def command_log_mode(own: "LogMode | None", call: LogMode = LogMode.NORMAL) -> LogMode:
+    """Return the mode a command logs under: its own when it sets one, else the call's.
+
+    A command issued with no call-level mode (a named session's decline, a
+    prepared command) takes *call*'s default, ``NORMAL``: the one statement
+    of that default.
+
+    The one answer for every entry -- ``run``, ``exec`` and a named session's
+    ``run``, dry and live. The host's standing mode is folded in at the emit
+    seam (the host's ``_effective_log``), never here.
+    """
+    return own if own is not None else call
+
+
+def _announce_dry_send(
+    log_command: "Callable[[str, LogMode], None]", text: "str | SecretStr", mode: LogMode
+) -> None:
+    """Announce a ``send`` a dry run will not write, under *mode*, the send's folded mode.
+
+    The one announcement of a declined ``send``, for the host's ``send``, a
+    named session's and a declined session's. The folded mode, not the
+    default NORMAL: a dry run must not put a send on the console that a real
+    run keeps off it. No NEVER guard here on purpose -- ``_log_command``
+    returns before it logs on NEVER, and that is the ONE home for the
+    decision. Building the f-string first costs nothing that matters: ``repr``
+    of a ``str`` only copies it, and of a ``SecretStr`` (a password answer)
+    gives its mask, so the announcement never carries a password.
+    """
+    log_command(f"[DRY RUN] send({text!r})", mode)
+
+
+def decline_command(
+    cmd: str,
+    mode: LogMode,
+    *,
+    host_name: str,
+    log_command: "Callable[[str, LogMode], None]",
+    fold: "Callable[[LogMode], LogMode]",
+) -> CommandResult:
+    """Announce *cmd* a dry run will not send, and return the one decline every entry returns.
+
+    The one dry-run decline of a command, shared by a host's ``run`` and
+    ``exec`` (the host's ``_dry_run_result``) and a named session's ``run``
+    (``HostSession``). *mode* is the command's (:func:`command_log_mode`);
+    *fold* folds in the host's standing mode, so the announcement is logged
+    exactly as a live call would log the command. The result is
+    ``Status.NotRun``, ``retcode`` -1, no route, and a ``value`` that raises
+    :exc:`~otto.result.CommandNotRunError`.
+    """
+    log_command(f"[DRY RUN] {cmd}", fold(mode))
+    return NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=host_name)
+
+
 def _resolve_command(
     item: "str | ShellCommand",
     default_expects: "Expect | list[Expect] | None",
@@ -591,7 +644,7 @@ def _resolve_command(
         cmd=item.cmd,
         expects=item.expects if item.expects is not None else default_expects,
         timeout=(_validate_timeout(item.timeout) if item.timeout is not None else default_timeout),
-        log=item.log if item.log is not None else default_log,
+        log=command_log_mode(item.log, default_log),
     )
 
 
@@ -608,7 +661,8 @@ class _PreparedCommand:
     cmd: str
     expects: "list[Expect | CredentialExpect] | None"
     timeout: float | None
-    log: "LogMode | None"
+    log: LogMode
+    """:func:`command_log_mode` of the command's own mode and the call's, decided once."""
     reads_credential_fd: bool = False
     """The elevation's :attr:`ElevatedCommand.reads_credential_fd`; ``False`` unelevated."""
 
@@ -618,12 +672,12 @@ def _prepared(sc: ShellCommand, elevated: ElevatedCommand | None = None) -> _Pre
     caller = _normalize_expects(sc.expects)
     if elevated is None:
         plain: list[Expect | CredentialExpect] | None = None if caller is None else [*caller]
-        return _PreparedCommand(sc.cmd, plain, sc.timeout, sc.log)
+        return _PreparedCommand(sc.cmd, plain, sc.timeout, command_log_mode(sc.log))
     return _PreparedCommand(
         elevated.command,
         [*elevated.expects, *(caller or [])],
         sc.timeout,
-        sc.log,
+        command_log_mode(sc.log),
         reads_credential_fd=elevated.reads_credential_fd,
     )
 
@@ -1736,8 +1790,13 @@ class BaseHost(ABC):
         from the console and ``console.log``; it still reaches ``verbose.log``,
         which carries no ``_HostFilter``.
         """
-        self._log_command(f"[DRY RUN] {cmd}", self._effective_log(log))
-        return NotRunResult(status=Status.NotRun, command=cmd, retcode=-1, host_name=self.name)
+        return decline_command(
+            cmd,
+            log,
+            host_name=self.name,
+            log_command=self._log_command,
+            fold=self._effective_log,
+        )
 
     def _dry_run_transfer(
         self,
@@ -1904,6 +1963,7 @@ class BaseHost(ABC):
             name=name,
             log_command=self._log_command,
             log_output=self._log_output,
+            fold_log=self._session_fold(),
             host_id=self.name,
             current_user=login_user,
         )
@@ -2321,8 +2381,7 @@ class BaseHost(ABC):
                 expects=single.expects,
                 # _resolve_command collapsed the None sentinel into a concrete float.
                 timeout=single.timeout if single.timeout is not None else timeout,
-                # _resolve_command collapsed the None sentinel into a concrete LogMode.
-                log=single.log if single.log is not None else LogMode.NORMAL,
+                log=single.log,
                 user=user,
             )
             return Results.collect(items=[result])
@@ -2335,12 +2394,25 @@ class BaseHost(ABC):
                 pc.cmd,
                 expects=pc.expects,
                 timeout=t,
-                # _resolve_command collapsed the None sentinel into a concrete LogMode.
-                log=pc.log if pc.log is not None else LogMode.NORMAL,
+                log=pc.log,
                 user=user,
             )
 
         return await _run_cmds_with_budget(_run_pc, prepared, timeout)
+
+    def _session_fold(self) -> "Callable[[LogMode], LogMode]":
+        """Return the fold this family's sessions use: how a session's mode takes the host's.
+
+        The one decision for every session this host builds or declines: the
+        live session manager's named sessions and login hops, and a dry run's
+        :class:`~otto.host.session.DeclinedSession`, so a session folds the
+        same way whether it was opened before a dry run or during one. Every
+        family but a container folds the standing mode in
+        (:meth:`_effective_log`). The host's default session is not under
+        this seam: the host-level ``send``, ``expect`` and ``run`` fold with
+        :meth:`_effective_log` in every family, a container included.
+        """
+        return self._effective_log
 
     def _effective_log(self, log: LogMode) -> LogMode:
         """Most-restrictive of this host's standing mode, the per-command mode, and a suppression.
@@ -2549,11 +2621,11 @@ class BaseHost(ABC):
         pc = self._apply_sudo(sc, user, exec_input=exec_input) if sudo else _prepared(sc)
         exec_input = replace(exec_input, credential=pc.reads_credential_fd)
         if is_dry_run():
-            return self._dry_run_result(pc.cmd, log)
+            return self._dry_run_result(pc.cmd, pc.log)
         return await self._exec_one(
             pc.cmd,
             timeout=pc.timeout if pc.timeout is not None else timeout,
-            log=pc.log if pc.log is not None else log,
+            log=pc.log,
             user=user,
             expects=pc.expects,
             needs_shell=sudo or bool(pc.expects),
@@ -2830,16 +2902,7 @@ class BaseHost(ABC):
         self._refuse_establishing("send")
         effective = self._effective_log(log)
         if is_dry_run():
-            # The folded mode, not the default NORMAL: a dry run must not put a
-            # send on the console that a real run keeps off it. No NEVER guard
-            # here on purpose -- `_log_command` returns before it logs on NEVER,
-            # and that is the ONE home for the decision; a second copy here
-            # reads as redundant and gets deleted, taking the real one's twin
-            # with it. Building the f-string first costs nothing that matters:
-            # `repr` of a `str` only copies it, and of a `SecretStr` (a
-            # password answer) gives its mask, so the announcement never
-            # carries a password.
-            self._log_command(f"[DRY RUN] send({text!r})", effective)
+            _announce_dry_send(self._log_command, text, effective)
             return
         await self._prepare_live_session()
         await self._live_session_mgr().send(text, log=effective)
@@ -2884,7 +2947,9 @@ class BaseHost(ABC):
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
         await self._prepare_live_session()
-        return await self._live_session_mgr().expect(pattern, timeout=timeout)
+        return await self._live_session_mgr().expect(
+            pattern, timeout=timeout, log=self._effective_log(LogMode.NORMAL)
+        )
 
     ####################
     #  File transfer
@@ -4412,18 +4477,31 @@ class BaseHost(ABC):
         """Log *output* one yellow line per device line, each with its brackets kept."""
         if mode is LogMode.NEVER:
             return
-        from rich.markup import escape
-
         from ..logger.relay import log_relayed
 
         log_relayed(
             logger,
             INFO,
-            f"[yellow]@{escape(self.name)} > | ",
+            output_log_prefix(self.name),
             output,
             extra={"host": self, "log_mode": _quieted(self, mode)},
             per_line=True,
         )
+
+
+def output_log_prefix(name: str) -> str:
+    """Return the markup every output record of the host named *name* starts with.
+
+    One output line follows it, escaped as
+    :func:`~otto.logger.relay.log_relayed` escapes relayed text. A reader of
+    the host log that needs to tell a host's output from its command lines
+    strips this, and nothing else.
+    """
+    from rich.markup import escape
+
+    from ..logger.relay import host_output_prefix
+
+    return f"[yellow]{host_output_prefix(escape(name))}"
 
 
 @final

@@ -130,6 +130,26 @@ class TestSessionLogFile:
         assert "hello world" in content
         assert "@router1 > |" in content
 
+    @pytest.mark.parametrize(
+        ("line", "shown"),
+        [
+            ("10%\r20%\r", ["10%", "20%"]),
+            ("\r10%\r20%", ["10%", "20%"]),
+            ("", [""]),
+            ("\r", [""]),
+        ],
+    )
+    def test_write_line_shows_each_carriage_return_segment_as_a_line(
+        self, tmp_path: Path, line: str, shown: list[str]
+    ):
+        """``session.log`` is a sink: it shows a line as every other sink does."""
+        log = _SessionLogFile(tmp_path / "session.log", host_name="router1")
+        log.write_line(line)
+        log.close()
+        content = (tmp_path / "session.log").read_text()
+        assert "\r" not in content
+        assert [ln.partition("@router1 > | ")[2] for ln in content.splitlines()] == shown
+
     def test_write_marker_uses_bookend_preamble(self, tmp_path: Path):
         log = _SessionLogFile(tmp_path / "session.log", host_name="router1")
         log.write_marker("Entering interactive session")

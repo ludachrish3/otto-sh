@@ -22,7 +22,7 @@ import pytest
 
 import otto.host.session as session_mod
 from otto.host import process_stop
-from otto.host.session import LocalSession, SessionManager
+from otto.host.session import LocalSession
 from otto.utils import Status, wait_for_async
 from scripts.process_group import proc_stat, signal_group
 from tests._fixtures.witness_shell import (
@@ -34,6 +34,7 @@ from tests._fixtures.witness_shell import (
     observe,
     witness_write_template,
 )
+from tests.unit.host._sessions import session_manager
 
 pytestmark = [pytest.mark.asyncio]
 
@@ -167,7 +168,7 @@ async def test_a_dead_session_is_stopped_by_the_next_default_session_operation(
     tmp_path: Path, short_recovery: None
 ) -> None:
     w = tmp_path / "w"
-    mgr = SessionManager(name="local", session_factory=LocalSession)
+    mgr = session_manager(name="local", session_factory=LocalSession)
     with _reaping([w]):
         try:
             result = await mgr.run_cmd(

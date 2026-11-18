@@ -214,6 +214,8 @@ class NotRunResult(CommandResult):
     """
 
     host_name: str = ""
+    """Names the host the declined command was for. A host's ``run`` or ``exec``
+    puts the host's name here, a named session's ``run`` the session's host id."""
 
     def __init__(self, *args: Any, host_name: str = "", **kwargs: Any) -> None:
         object.__setattr__(self, "host_name", host_name)

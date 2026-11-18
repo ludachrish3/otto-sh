@@ -23,6 +23,7 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
 from tests.conftest import active_context
+from tests.unit.host._sessions import session_manager
 
 
 @pytest.fixture
@@ -824,16 +825,11 @@ async def test_exec_refuses_an_ambient_user_on_an_embedded_host(host: EmbeddedHo
     manager would let the ambient lookup return whatever the mock pleased,
     which is exactly the hole this pins.
     """
-    from otto.host.session import SessionManager
     from tests.unit.host.test_session import _proxy_connections, _StubExecSession
 
     conn = _proxy_connections([], login_target="admin", credentials=("admin", SecretStr("pw")))
     conn.term = "telnet"
-    mgr = SessionManager(
-        connections=conn,
-        session_factory=_StubExecSession,
-        host_id="z",
-    )
+    mgr = session_manager(connections=conn, session_factory=_StubExecSession, host_id="z")
     host._session_mgr = mgr
 
     await mgr.run_cmd(cmd="kernel version")  # opens the default session; baseline = admin
@@ -883,7 +879,7 @@ async def test_an_embedded_exec_gets_the_console_default_session_s_restore(frame
             return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
     def manager(frame) -> SessionManager:
-        return SessionManager(
+        return session_manager(
             connections=cast("object", SimpleNamespace(term="console", proxy_hops=[])),  # type: ignore[arg-type]
             name="z",
             command_frame=frame,

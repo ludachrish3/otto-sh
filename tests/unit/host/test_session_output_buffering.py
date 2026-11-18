@@ -10,6 +10,7 @@ import pytest_asyncio
 
 from otto.host.command_frame import ZephyrFrame
 from otto.host.session import ShellSession
+from otto.utils import wait_for_async
 from tests.unit.host._session_feed import FeedAfterWriteMixin, handshake_reply
 
 
@@ -208,3 +209,169 @@ class TestWriteProgress:
 
         assert seen == [cb]  # set during the framed write
         assert s._write_progress is None  # cleared afterward
+
+
+class _UnreadKeepingSession(FrameMockSession):
+    """A FrameMockSession whose cancelled read leaves what it held for ``_take_unread``."""
+
+    def __init__(self, command_frame=None) -> None:
+        super().__init__(command_frame=command_frame)
+        self._held = ""
+
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+        assert self._out_reader is not None
+        while not pattern.search(self._held):
+            chunk = await self._out_reader.read(1)
+            if not chunk:
+                raise asyncio.IncompleteReadError(self._held.encode(), None)
+            self._held += chunk.decode()
+        data, self._held = self._held, ""
+        return data
+
+    async def _take_unread(self) -> str:
+        held, self._held = self._held, ""
+        return held
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("printed", "logged"),
+    [
+        pytest.param("one\r\ntwo\r\nunfini", ["one", "two"], id="mid-line"),
+        pytest.param("one\r\ntwo\r\n", ["one", "two"], id="at-a-line-end"),
+    ],
+)
+async def test_a_timed_out_buffered_frame_logs_the_complete_lines_of_its_value(
+    monkeypatch: pytest.MonkeyPatch, printed: str, logged: list[str]
+):
+    s = _UnreadKeepingSession(command_frame=ZephyrFrame())
+    await _init(s)
+
+    async def no_stop(*, restore=None, held=None) -> None:
+        return None
+
+    monkeypatch.setattr(s, "_stop_under_bound", no_stop)
+    run = asyncio.create_task(s.run_cmd(cmd="long", timeout=0.3))
+    await wait_for_async(
+        lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="the command was never written"
+    )
+    s.feed(f"\r\n{s._begin_marker}: command not found\r\n~$ \r\n{printed}")
+    result = await run
+    assert result.timed_out
+    shown = result.value.partition("\n")[2]
+    assert shown.startswith("one\ntwo")
+    assert s.emitted == logged
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("frame", ["bash", "zephyr"])
+async def test_a_command_that_never_ran_logs_no_output_on_any_frame(frame: str):
+    from otto.host.session import NEVER_RAN
+
+    s = FrameMockSession(command_frame=ZephyrFrame() if frame == "zephyr" else None)
+    await _init(s)
+    end = (
+        f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
+        if frame == "zephyr"
+        else f"{s._end_marker_prefix}0__\n"
+    )
+    feed_task = asyncio.create_task(s.feed_after_write(end))
+    result = await s.run_cmd(cmd="never")
+    await feed_task
+    assert result.value == NEVER_RAN
+    assert s.emitted == []
+
+
+class _SinkError(Exception):
+    """The host log's sink failed on a line of output."""
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_buffered_frame_returns_its_result_when_the_sink_fails(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A sink that fails on the timed-out lines costs those lines, never the timed-out result."""
+    s = _UnreadKeepingSession(command_frame=ZephyrFrame())
+    await _init(s)
+
+    def failing(line: str) -> None:
+        raise _SinkError(line)
+
+    async def no_stop(*, restore=None, held=None) -> None:
+        return None
+
+    s._on_output = failing
+    monkeypatch.setattr(s, "_stop_under_bound", no_stop)
+    run = asyncio.create_task(s.run_cmd(cmd="long", timeout=0.3))
+    await wait_for_async(
+        lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="the command was never written"
+    )
+    s.feed(f"\r\n{s._begin_marker}: command not found\r\n~$ \r\none\r\n")
+    result = await run
+    assert result.timed_out
+
+
+class _UnreadAtTimeoutSession(FrameMockSession):
+    """A live frame's read: the BEGIN line, then a wait with lines it has not handed over.
+
+    What a reader holds past its last match when the budget runs out: the
+    timeout takes it with ``_take_unread``.
+    """
+
+    def __init__(self, unread: str) -> None:
+        super().__init__()
+        self._unread = unread
+        self._begun = False
+
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+        if not self._initialized or self._begun:
+            if self._begun:
+                await asyncio.Event().wait()
+            return await super().read_transport_until(pattern)
+        self._begun = True
+        return f"{self._begin_marker}\r\n"
+
+    async def _take_unread(self) -> str:
+        unread, self._unread = self._unread, ""
+        return unread
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_live_frame_logs_the_complete_lines_it_had_not_read(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from otto.host.terminal_mapping import ONLCR, Measurement
+
+    s = _UnreadAtTimeoutSession("one\r\ntwo\r\nunfini")
+    await _init(s)
+    s._terminal = Measurement(ONLCR, calibrated=True)
+
+    async def no_stop(*, restore=None, held=None) -> None:
+        return None
+
+    monkeypatch.setattr(s, "_stop_under_bound", no_stop)
+    result = await s.run_cmd(cmd="long", timeout=0.3)
+    assert result.timed_out
+    assert result.value.partition("\n")[2] == "one\ntwo\nunfini"
+    assert s.emitted == ["one", "two"]
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_live_frame_logs_nothing_from_the_end_record_on(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The END record, and what the shell printed after it, are never the command's lines."""
+    from otto.host.terminal_mapping import ONLCR, Measurement
+
+    s = _UnreadAtTimeoutSession("")
+    s._unread = f"out\r\n{s._end_marker_prefix}0__\r\n~$ more\r\n"
+    await _init(s)
+    s._terminal = Measurement(ONLCR, calibrated=True)
+
+    async def no_stop(*, restore=None, held=None) -> None:
+        return None
+
+    monkeypatch.setattr(s, "_stop_under_bound", no_stop)
+    result = await s.run_cmd(cmd="long", timeout=0.3)
+    assert result.timed_out
+    assert s.emitted == ["out"]

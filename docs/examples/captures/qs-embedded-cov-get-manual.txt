@@ -4,13 +4,13 @@ INFO     Dumping embedded coverage for mathops from dut via 'llext call_fn matho
 INFO     Connected to <Peer 127.0.0.1 <port>>
 INFO     @dut   | llext call_fn mathops cov_dump
 INFO     @dut > | gcov_exit
-         @dut > | Emitting 2208 bytes for
+INFO     @dut > | Emitting 2208 bytes for
          /tmp/otto-gs/quickstart-embedded/build/ext/CMakeFiles/mathops_llext_lib.dir/src/ext.c.gcda
-         @dut > | <gcda hexdump>
-         @dut > |
-         @dut > |
+INFO     @dut > | <gcda hexdump>
+INFO     @dut > |
+INFO     @dut > |
          /tmp/otto-gs/quickstart-embedded/build/ext/CMakeFiles/mathops_llext_lib.dir/src/ext.c.gcda
-         @dut > | Gcov End
+INFO     @dut > | Gcov End
 INFO     Decoded 1 .gcda file(s) for mathops from dut into
          /tmp/otto-gs/xdir/cov/<run>_get/cov/dut/mathops
 INFO     Coverage data collected to /tmp/otto-gs/xdir/cov/<run>_get/cov (1 product

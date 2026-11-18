@@ -301,6 +301,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             name=self.name,
             log_command=self._log_command,
             log_output=self._log_output,
+            fold_log=self._session_fold(),
             command_frame=self.command_frame,
             default_init_timeout=_EMBEDDED_INIT_TIMEOUT,
             # This family was the only one omitting it, so every session-layer

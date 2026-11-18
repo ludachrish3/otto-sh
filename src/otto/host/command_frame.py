@@ -96,6 +96,22 @@ def command_value(output: str, *, line_ending: str = "\n") -> str:
     return output.removesuffix(line_ending)
 
 
+def begin_line_ending(buffer: str, start: int) -> str:
+    r"""Return the line ending the BEGIN marker's line ends in at *start* of *buffer*.
+
+    ``"\r\n"`` when the terminal's CR is still in the folded buffer (a
+    session that left an unknown mapping unfolded), else ``"\n"``. The same
+    ending is the one cut from the end of the output, so a session that logs
+    lines as they arrive decides from this whether a line's final ``\r`` may
+    be the terminal's.
+
+    >>> from otto.host.command_frame import begin_line_ending
+    >>> begin_line_ending("B\r\nx", 1), begin_line_ending("B\nx", 1)
+    ('\r\n', '\n')
+    """
+    return "\r\n" if buffer.startswith("\r\n", start) else "\n"
+
+
 READY_SUFFIX = "READY__"
 """The fixed end of :attr:`SessionMarkers.ready`, where :func:`whole_line_echo` splits it.
 
@@ -1110,8 +1126,7 @@ class BashFrame(CommandFrame):
         line_ending = "\n"
         if begin_idx != -1:
             start = begin_idx + len(m.begin)
-            if buffer.startswith("\r\n", start):
-                line_ending = "\r\n"
+            line_ending = begin_line_ending(buffer, start)
             if buffer.startswith(line_ending, start):
                 start += len(line_ending)
         else:

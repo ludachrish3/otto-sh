@@ -20,10 +20,10 @@ from otto.host.element import Element
 from otto.host.embedded_host import ZephyrHost
 from otto.host.errors import SessionSetupError
 from otto.host.host import BaseHost
-from otto.host.session import SessionManager
 from otto.host.session_setup import SESSION_SETUPS, SessionSetup, register_session_setup
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
+from tests.unit.host._sessions import session_manager
 from tests.unit.host.conftest import InFlight, recording_as_user
 from tests.unit.host.test_session_manager_setup import _recording_transport, _term_conn
 
@@ -88,8 +88,11 @@ def _install_mgr(host: UnixHost, setup: SessionSetup, monkeypatch: pytest.Monkey
     """Give *host* a real SessionManager that opens a no-I/O session and runs *setup*'s hook."""
     recorded = _recording_transport([])
     monkeypatch.setattr(session_mod, "SshSession", recorded)
-    host._session_mgr = SessionManager(
-        connections=_term_conn("ssh"), name=host.name, host_id=host.id, session_setup=setup
+    host._session_mgr = session_manager(
+        connections=_term_conn("ssh"),
+        name=host.name,
+        host_id=host.id,
+        session_setup=setup,
     )
 
 
@@ -533,7 +536,7 @@ async def test_an_embedded_hook_re_entry_through_a_file_op_is_refused_by_name(
 
     recorded = _recording_transport([])
     monkeypatch.setattr(session_mod, "SshSession", recorded)
-    host._session_mgr = SessionManager(
+    host._session_mgr = session_manager(
         connections=_term_conn("ssh"),
         name=host.name,
         host_id=host.id,

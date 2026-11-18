@@ -34,11 +34,12 @@ from otto.host import telnet as telnet_mod
 from otto.host.connections import ConnectionManager
 from otto.host.element import Element
 from otto.host.options import TelnetOptions
-from otto.host.session import SessionManager, TelnetSession
+from otto.host.session import TelnetSession
 from otto.host.telnet import TelnetClient
 from otto.logger.mode import LogMode
 from otto.utils import wait_for_async
 from tests._fixtures.registry import registered_ids
+from tests.unit.host._sessions import session_manager
 from tests.unit.host._telnet_fakes import (
     RecordingReader,
     RecordingWriter,
@@ -158,7 +159,7 @@ def _telnet_manager(client: TelnetClient | None = None) -> ConnectionManager:
 
 async def _default_session(mgr: ConnectionManager) -> Any:
     """The default session a real :class:`SessionManager` builds on *mgr*'s cached client."""
-    return await SessionManager(connections=mgr, name="box")._open_transport_session(named=False)
+    return await session_manager(connections=mgr, name="box")._open_transport_session(named=False)
 
 
 async def _turns(n: int = 10) -> None:

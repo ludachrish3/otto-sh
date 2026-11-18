@@ -73,6 +73,7 @@ from otto.host.userland import (
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
+from tests.unit.host._sessions import session_manager
 
 if TYPE_CHECKING:
     from otto.host.connections import ConnectionManager
@@ -140,7 +141,7 @@ def _manager(frame, *, term: str = "ssh", name: str = "bb1", echoes: bool = Fals
         sessions.append(session)
         return session
 
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=cast("ConnectionManager", SimpleNamespace(term=term, proxy_hops=[])),
         name=name,
         command_frame=frame,
@@ -427,7 +428,7 @@ class TestTheRefusalIsScoped:
         async def _ssh():
             return object()
 
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=cast(
                 "ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=[], ssh=_ssh)
             ),
@@ -568,7 +569,7 @@ class TestTheExecLineBudget:
         predicted the budget from ``term == "telnet"`` would hand this host
         ``None`` and emit exactly the line that wedges.
         """
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=cast("ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=["v"])),
             name="bb1",
             command_frame=BashFrame(),
@@ -642,7 +643,7 @@ class TestTheExecLineBudget:
         was built is the wrong answer in the expensive direction.
         """
         connections = SimpleNamespace(term="ssh", proxy_hops=[])
-        mgr = SessionManager(
+        mgr = session_manager(
             connections=cast("ConnectionManager", connections),
             name="bb1",
             command_frame=BashFrame(),
@@ -826,7 +827,7 @@ class TestTheMeasuredEchoOfAHost:
         def named() -> _StubSession:
             return _StubSession(command_frame=AshFrame(), echoes=named_echoes)
 
-        return SessionManager(
+        return session_manager(
             connections=cast("ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=[])),
             name="bb1",
             command_frame=AshFrame(),

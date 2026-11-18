@@ -21,7 +21,14 @@ import secrets
 import uuid
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Iterable,
+    Sequence,
+)
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -39,6 +46,7 @@ from .command_frame import (
     ExecRestore,
     RawFrame,
     SessionMarkers,
+    begin_line_ending,
     command_value,
     frame_or_default,
     handshake_prefix,
@@ -106,6 +114,7 @@ import logging
 from typing_extensions import final
 
 from ..logger.mode import LogMode
+from ..logger.relay import log_lines
 from ..result import CommandNotRunError, CommandResult, NotRunResult, Results
 from ..utils import Status
 from . import process_stop
@@ -115,6 +124,7 @@ from .host import (
     CredentialExpect,
     Expect,
     ShellCommand,
+    _announce_dry_send,
     is_dry_run,
     refuse_declined_elevation,
     refuse_declined_match,
@@ -354,6 +364,85 @@ def _sink_for(
     if mode is LogMode.NEVER:
         return _drop_output
     return lambda line: log_output(line, mode)
+
+
+def _log_sent(
+    log_command: Callable[[str, LogMode], None], text: "str | SecretStr", mode: LogMode
+) -> None:
+    """Log a live ``send`` of *text* under *mode*, the send's folded mode; nothing under NEVER.
+
+    The one log line of a written ``send``: the host's default session's
+    (:meth:`SessionManager.send`, whose caller folded the mode), a named
+    session's and a login hop's (:class:`_SessionProxyIO`). A
+    :class:`~pydantic.SecretStr` is shown masked.
+    """
+    if mode is not LogMode.NEVER:
+        log_command(shown(text).rstrip(), mode)
+
+
+async def _log_and_run(
+    session: "ShellSession",
+    log_command: Callable[[str, LogMode], None],
+    log_output: Callable[[str, LogMode], None],
+    cmd: str,
+    *,
+    mode: LogMode,
+    expects: "list[Expect | CredentialExpect] | None",
+    timeout: float,
+    exec_input: "ExecInput | None",
+    write_progress: "Callable[[int, int], None] | None" = None,
+) -> CommandResult:
+    """Log *cmd* unless *mode* is NEVER, then run it on *session*, its sink and redaction set.
+
+    The one live step of a typed command under its folded *mode*: the host's
+    default session (:meth:`SessionManager.run_cmd`, whose caller folded the
+    mode) and a named or pooled session (``HostSession._run_one``, which
+    folds it). Under NEVER nothing is logged and the session's own debug
+    trace is redacted.
+    """
+    if mode is not LogMode.NEVER:
+        log_command(cmd, mode)
+    return await session.run_cmd(
+        cmd=cmd,
+        expects=expects,
+        timeout=timeout,
+        on_output=_sink_for(log_output, mode),
+        redact=mode is LogMode.NEVER,
+        write_progress=write_progress,
+        exec_input=exec_input,
+    )
+
+
+def identity_fold(mode: LogMode) -> LogMode:
+    """Return *mode* unchanged: the fold of a sink that adds no standing mode of its own.
+
+    A container's named sessions (``DockerContainerHost``'s session fold) and
+    the ``otto login`` bridge, whose session log records every line it is
+    handed, use it.
+    """
+    return mode
+
+
+def _relay_expect_read(
+    session: "ShellSession",
+    read: str,
+    log_output: Callable[[str, LogMode], None],
+    mode: LogMode,
+) -> None:
+    """Log what *session*'s ``expect()`` read, one record per line, under *mode*.
+
+    The one relay of the three places that wait on a session's output (the
+    host's default session, a named session, a login hop). *mode* is the
+    session's folded mode, as its ``run`` and ``send`` log under: what
+    ``expect`` reads is output of the same session, so a ``NEVER`` host logs
+    none of it (a terminal's echo of a password typed with ``send`` is in it)
+    and a ``QUIET`` host logs it at ``QUIET``. The lines are the command rule
+    (``ShellSession._logged_lines``).
+    """
+    if mode is LogMode.NEVER:
+        return
+    for line in session._logged_lines(read):  # noqa: SLF001 — the one relay of a session's expect output, for the three handles that wrap the session
+        log_output(line, mode)
 
 
 _ESTABLISHING = ContextClaims("otto_establishing")
@@ -1495,6 +1584,9 @@ class ShellSession(ABC):
         self._require_alive()
         sink = on_output if on_output is not None else self._on_output
         output = ExecOutput(valuer=self._partial_value())
+        # A live frame's line logger, begun at the BEGIN line; a buffered
+        # frame never begins it and logs its parsed output instead.
+        line_log = self._line_log(sink)
         # What an interrupted command leaves to restore: only an exec that ran
         # isolated has a tail of its own that the interrupt skipped.
         restore = (
@@ -1505,7 +1597,14 @@ class ShellSession(ABC):
             # command needs no separate branch.
             return await asyncio.wait_for(
                 self._run_cmd_inner(
-                    cmd, expects, sink, output, redact, write_progress, exec_input=exec_input
+                    cmd,
+                    expects,
+                    sink,
+                    output,
+                    line_log,
+                    redact,
+                    write_progress,
+                    exec_input=exec_input,
                 ),
                 timeout=timeout,
             )
@@ -1514,9 +1613,19 @@ class ShellSession(ABC):
             # out: what the reader holds past its last match, taken before
             # the interrupt is written. What the recovery reads after it (the
             # echoed ^C, the prompt) is the shell's, never the command's.
-            output.feed(await self._take_unread())
+            taken = await self._take_unread()
+            loggable = self._before_end_record(taken)
+            unread = output.feed(loggable)
+            output.feed(taken[len(loggable) :])
             await self._stop_under_bound(restore=restore)
-            return timed_out_result(cmd=cmd, timeout=timeout, output=output, route=None)
+            result = timed_out_result(cmd=cmd, timeout=timeout, output=output, route=None)
+            if line_log.begun:
+                # The complete lines the reader still held before any END
+                # record are the command's.
+                line_log.stop(unread)
+            elif not self._frame.streams_output_live:
+                OutputLog(sink).stop(_timed_out_lines(output))
+            return result
         except _CredentialRefusedError as refused:
             # The prompt came back after the one answer: typing the password
             # again would spend another authentication attempt on a password
@@ -1573,6 +1682,33 @@ class ShellSession(ABC):
         if self._terminal.mapping == ONLCR:
             return text.replace("\r\n", "\n")
         return text
+
+    def _line_log(self, on_output: Callable[[str], None]) -> "OutputLog":
+        """Return a command's line logger, begun at its BEGIN line (:meth:`_begin_line_log`)."""
+        return OutputLog(on_output, fold=self._undo_terminal_mapping, begun=False)
+
+    def _begin_line_log(self, line_log: "OutputLog", data: str) -> None:
+        """Begin *line_log* at the read *data* that holds the command's BEGIN line.
+
+        It holds each newest line when the BEGIN line, folded, still ends in
+        the terminal's CR (:func:`~otto.host.command_frame.begin_line_ending`,
+        the decision the frame's parse makes): only the next line or the end
+        then tells whether a line's final CR is the terminal's or the
+        program's.
+        """
+        folded = self._undo_terminal_mapping(data)
+        start = folded.rfind(self._markers.begin) + len(self._markers.begin)
+        line_log.begin(hold_newest=begin_line_ending(folded, start) == "\r\n")
+
+    def _logged_lines(self, text: str) -> list[str]:
+        """Return the lines the host log shows for *text* this session read outside a command.
+
+        The rule of a command's output (:func:`~otto.logger.relay.log_lines`
+        of its ``value``): the terminal mapping undone, one trailing newline
+        removed, split on newlines only. What :meth:`expect` returned is
+        logged through this.
+        """
+        return log_lines(command_value(self._undo_terminal_mapping(text)))
 
     def _partial_value(self) -> Callable[[str], str]:
         """Return how a command's unfinished buffer becomes its timed-out ``value``.
@@ -1673,12 +1809,23 @@ class ShellSession(ABC):
             if self._needs_recovery:
                 self._alive = False
 
+    def _before_end_record(self, data: str) -> str:
+        """Return the part of *data* that may be logged: all of it before the END record.
+
+        Nothing at or after the record's start is ever the command's output,
+        whichever path logs it: the read that ends the command, or what a
+        reader still held when the budget ran out.
+        """
+        end = self._end_pattern.search(data)
+        return data if end is None else data[: end.start()]
+
     async def _run_cmd_inner(
         self,
         cmd: str,
         expects: list[Expect | CredentialExpect] | None,
         on_output: Callable[[str], None],
         read: "ExecOutput",  # defined below, with the drain that shares it
+        line_log: "OutputLog",
         redact: bool = False,
         write_progress: Callable[[int, int], None] | None = None,
         *,
@@ -1735,42 +1882,66 @@ class ShellSession(ABC):
         # read, so a timeout that cancels this loop keeps them.
         seen_begin = False
         answered: set[int] = set()
-        while True:
-            data = await self.read_transport_until(pattern=combined)
-            read.feed(data)
+        # A live frame logs each line of output as *read* completes it, the
+        # terminal mapping undone, and the text before the END record once
+        # the command ended. *line_log* begins at the BEGIN line, whose ending
+        # says whether a line's final CR may be the terminal's, as the
+        # frame's parse decides it.
+        # The output line in progress at the END record, from its start to
+        # the record: its complete lines and the unfinished last one are what
+        # a live frame logs once the command ended.
+        before_end = ExecOutput()
+        ended: list[str] = []
+        try:
+            while True:
+                # Where this read starts in the line in progress, for a
+                # credential's read to be cut from it.
+                prior = read.tail()
+                start = len(prior)
+                data = await self.read_transport_until(pattern=combined)
 
-            # Check if the end sentinel was matched
-            end_match = self._end_pattern.search(data)
-            if end_match:
-                # Emit any output text that precedes the sentinel on the same
-                # line (happens when a command produces no trailing newline).
-                if live and seen_begin:
-                    pre = data[: end_match.start()].replace("\r", "").strip()
-                    if pre:
-                        on_output(pre)
-                break
+                end = self._end_pattern.search(data)
+                if end:
+                    # Nothing at or after the END record is ever logged,
+                    # whatever the read spans (an expect match can carry it
+                    # past the record): only the text before it is.
+                    read.feed(data)
+                    ended = before_end.feed(prior + self._before_end_record(data))
+                    break
+                completed = read.feed(data)
 
-            # BEGIN first, and on every chunk, including one an expect
-            # matches: a credential answer is gated on it. The begin marker
-            # check uses rstrip + startswith to avoid false matches when the
-            # shell echoes the wrapped command (which embeds the marker
-            # inside quotes on the same line).
-            began_before = seen_begin
-            if not seen_begin and self._frame.marks_begin(data, m=self._markers):
-                if not redact:
-                    logger.debug(f"{self._log_tag}: begin marker matched on chunk={data!r}")
-                seen_begin = True
+                # BEGIN first, and on every chunk, including one an expect
+                # matches: a credential answer is gated on it. The begin marker
+                # check uses rstrip + startswith to avoid false matches when the
+                # shell echoes the wrapped command (which embeds the marker
+                # inside quotes on the same line).
+                began_before = seen_begin
+                if not seen_begin and self._frame.marks_begin(data, m=self._markers):
+                    if not redact:
+                        logger.debug(f"{self._log_tag}: begin marker matched on chunk={data!r}")
+                    seen_begin = True
+                    if live:
+                        self._begin_line_log(line_log, data)
 
-            expect_matched = await self._answer_expect(
-                data, expects or [], seen_begin=seen_begin, answered=answered, redact=redact
-            )
+                answered_with = await self._answer_expect(
+                    data, expects or [], seen_begin=seen_begin, answered=answered, redact=redact
+                )
 
-            # Stream each content line to the callback.
-            if live and began_before and not expect_matched:
-                line = data.rstrip("\r\n").replace("\r", "")
-                if line:
-                    on_output(line)
+                # Stream each content line to the callback. A line a credential
+                # was typed into stays out of the log.
+                if line_log.begun and began_before:
+                    if isinstance(answered_with, CredentialExpect):
+                        line_log.withhold_read(start, data)
+                    for raw in completed:
+                        line_log.line(raw)
+        except BaseException:
+            # Timed out, cancelled or refused: the complete lines held are logged.
+            line_log.stop()
+            raise
 
+        # Everything that decides the session's health and the command's
+        # result happens before the tail is logged, so a sink that fails on
+        # it costs only log lines.
         buffer = self._undo_terminal_mapping(read.raw())
         if exec_input is not None:
             self._note_exec_baseline(buffer)
@@ -1794,11 +1965,20 @@ class ShellSession(ABC):
             # success, whatever its digits; the raw text is in the DEBUG
             # line below, and the value is one stable sentence.
             output, retcode, status = NEVER_RAN, -1, Status.Failed
-        # Buffered frames (raw stream not clean line-by-line) emit the parsed
-        # output once here — identical to the returned CommandResult.value, so
-        # the log never shows shell prompts or the retcode scaffolding.
-        if not live and output:
-            on_output(output)
+        # A live frame logged its lines as they completed and logs the rest,
+        # up to the END record, here. A buffered frame (raw stream not clean
+        # line-by-line), or a command whose BEGIN and END came in one read, logs the lines
+        # of the parsed output once here, so the log never shows shell
+        # prompts or the retcode scaffolding. A command that never ran
+        # printed nothing: its value is otto's sentence, never logged as
+        # output, on every frame.
+        if line_log.begun:
+            for raw in ended:
+                line_log.line(raw)
+            line_log.finish(before_end.tail())
+        elif begun:
+            for line in log_lines(output):
+                on_output(line)
         # Log a per-command summary at the seam. The full buffer is dumped at
         # DEBUG so a future-dialect bring-up can see exactly what the frame's
         # extract_retcode / parse_output had to work with.
@@ -1847,8 +2027,8 @@ class ShellSession(ABC):
         seen_begin: bool,
         answered: set[int],
         redact: bool,
-    ) -> bool:
-        """Answer the first expect whose pattern is in *data*; return whether one matched.
+    ) -> "Expect | CredentialExpect | None":
+        """Answer the first expect whose pattern is in *data*; return it, or ``None``.
 
         Nothing is answered before the command's BEGIN marker, on any frame:
         what precedes it is the shell's (the echoed command line, a console
@@ -1863,7 +2043,7 @@ class ShellSession(ABC):
         answer; under ``LogMode.NEVER`` (*redact*) there is no line at all.
         """
         if not seen_begin:
-            return False
+            return None
         for i, expect in enumerate(expects):
             if isinstance(expect, CredentialExpect):
                 pattern, response = expect.pattern, expect.response
@@ -1884,8 +2064,8 @@ class ShellSession(ABC):
                     f"{self._log_tag}: expect matched "
                     f"pattern={pat.pattern!r} response=<{len(response)} chars>"
                 )
-            return True
-        return False
+            return expect
+        return None
 
     def _build_combined_pattern(
         self,
@@ -2741,11 +2921,16 @@ class HostSession:
         establishing: bool = False,
         *,
         term: "str | None" = None,
+        fold_log: "Callable[[LogMode], LogMode]",
     ) -> None:
         self._name = name
         self._session = session
         self._log_command = log_command
         self._log_output = log_output
+        # The host's standing mode folded into a command's, as the host's own
+        # `run` folds it (`BaseHost._effective_log`): one log mode per command
+        # on every entry, dry and live.
+        self._fold_log = fold_log
         self._deregister = deregister
         # Creds this session's switch_user/as_user resolve targets against
         # (via otto.host.login_proxy.perform_switch). None on non-posix
@@ -2980,8 +3165,7 @@ class HostSession:
                 pc.cmd,
                 expects=pc.expects,
                 timeout=t,
-                # _resolve_command collapsed the None sentinel into a concrete LogMode.
-                log=pc.log if pc.log is not None else LogMode.NORMAL,
+                log=pc.log,
             )
 
         if isinstance(cmds, (str, ShellCommand)):
@@ -3012,39 +3196,38 @@ class HostSession:
         """
         if is_dry_run():
             return self._decline_command(ShellCommand(cmd=cmd, timeout=timeout, log=log))
-        if log is not LogMode.NEVER:
-            self._log_command(cmd, log)
-        return await self._session.run_cmd(
-            cmd=cmd,
+        return await _log_and_run(
+            self._session,
+            self._log_command,
+            self._log_output,
+            cmd,
+            mode=self._fold_log(log),
             expects=expects,
             timeout=timeout,
-            on_output=_sink_for(self._log_output, log),
-            redact=log is LogMode.NEVER,
             exec_input=exec_input,
         )
 
     def _decline_command(self, sc: ShellCommand) -> CommandResult:
         """Announce a command this session will not send, and return the decline.
 
-        The session-level twin of
-        :meth:`~otto.host.host.BaseHost._dry_run_result`, and identical to it
-        in product: ``Status.NotRun`` (``is_ok`` False), ``retcode`` -1, and a
-        :class:`~otto.result.NotRunResult` whose ``value`` RAISES rather than
-        handing a parser something that was never measured.
-
-        Two things differ, both because this object is a session and not a
-        host. The host name is ``host_id`` — the correlation id the manager
-        stamped on this session, which is the only host identity a
-        :class:`HostSession` holds. And the mode is the caller's own,
-        unfolded: this class's real path logs at ``sc.log`` with no standing
-        host mode folded in, and a dry run must put on the console exactly
-        what a real run puts there — no more (it would leak) and no less (an
-        empty dry run is a bug).
+        Through :func:`~otto.host.host.decline_command`, the one decline a
+        host's ``run`` and ``exec`` return too: ``Status.NotRun`` (``is_ok``
+        False), ``retcode`` -1, and a :class:`~otto.result.NotRunResult` whose
+        ``value`` RAISES rather than handing a parser something that was never
+        measured. The announcement is logged under the mode this session's live
+        path logs the command under: the command's own, with the host's
+        standing mode folded in. Only the name differs: ``host_id``, the
+        correlation id the manager stamped on this session, which is the only
+        host identity a :class:`HostSession` holds.
         """
-        mode = sc.log if sc.log is not None else LogMode.NORMAL
-        self._log_command(f"[DRY RUN] {sc.cmd}", mode)
-        return NotRunResult(
-            status=Status.NotRun, command=sc.cmd, retcode=-1, host_name=self._host_id
+        from .host import command_log_mode, decline_command
+
+        return decline_command(
+            sc.cmd,
+            command_log_mode(sc.log),
+            host_name=self._host_id,
+            log_command=self._log_command,
+            fold=self._fold_log,
         )
 
     def _declined_results(
@@ -3087,16 +3270,12 @@ class HostSession:
         arm the host-level ``send`` carries, and for the same reason: a raw
         write is an action, and returning ``None`` invents no device fact.
         """
-        mode = log
+        # The caller's mode with the host's standing mode folded in, as `run`'s.
+        mode = self._fold_log(log)
         if is_dry_run():
-            # The caller's mode, not the default NORMAL: a dry run must not put
-            # a send on the console that a real run keeps off it. No NEVER
-            # guard here on purpose — `_log_command` returns before it logs on
-            # NEVER, and that is the ONE home for the decision.
-            self._log_command(f"[DRY RUN] send({text!r})", mode)
+            _announce_dry_send(self._log_command, text, mode)
             return
-        if mode is not LogMode.NEVER:
-            self._log_command(shown(text).rstrip(), mode)
+        _log_sent(self._log_command, text, mode)
         await self._session.send(text)
 
     async def expect(
@@ -3118,7 +3297,7 @@ class HostSession:
         if is_dry_run():
             refuse_declined_match(pattern, self._host_id, self._log_command)
         result = await self._session.expect(pattern, timeout=timeout)
-        self._log_output(result, LogMode.NORMAL)
+        _relay_expect_read(self._session, result, self._log_output, self._fold_log(LogMode.NORMAL))
         return result
 
     async def enter_frame(self, *, timeout: float | None = None) -> None:
@@ -3303,6 +3482,8 @@ class DeclinedSession(HostSession):
         log_output: Callable[[str, LogMode], None],
         host_id: str = "",
         current_user: str = "",
+        *,
+        fold_log: "Callable[[LogMode], LogMode]",
     ) -> None:
         transport = _NoTransport(host_id)
         # The same stamp `SessionManager._seed_user` puts on a real named
@@ -3320,6 +3501,7 @@ class DeclinedSession(HostSession):
             deregister=lambda _name: None,
             creds=None,
             host_id=host_id,
+            fold_log=fold_log,
         )
 
     @property
@@ -3343,7 +3525,7 @@ class DeclinedSession(HostSession):
     @override
     async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
         """Announce the text and write nothing."""
-        self._log_command(f"[DRY RUN] send({text!r})", log)
+        _announce_dry_send(self._log_command, text, self._fold_log(log))
 
     @override
     async def expect(
@@ -3416,21 +3598,26 @@ class _SessionProxyIO:
         session: "ShellSession",
         log_command: Callable[[str, LogMode], None],
         log_output: Callable[[str, LogMode], None],
+        *,
+        fold_log: "Callable[[LogMode], LogMode]",
     ) -> None:
         self._session = session
         self._log_command = log_command
         self._log_output = log_output
+        # The standing mode of the host whose session this is, as its
+        # named sessions fold it: a hop's send and what its expect reads log
+        # as the session's own run would.
+        self._fold_log = fold_log
 
     async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
-        if log is not LogMode.NEVER:
-            self._log_command(shown(text).rstrip(), log)
+        _log_sent(self._log_command, text, self._fold_log(log))
         await self._session.send(text)
 
     async def expect(
         self, pattern: str | re.Pattern[str], *, timeout: float = DEFAULT_COMMAND_TIMEOUT
     ) -> str:
         out = await self._session.expect(pattern, timeout=timeout)
-        self._log_output(out, LogMode.NORMAL)
+        _relay_expect_read(self._session, out, self._log_output, self._fold_log(LogMode.NORMAL))
         return out
 
 
@@ -3660,11 +3847,10 @@ class BridgeSetup:
 
 
 def output_line(raw: str) -> str | None:
-    r"""Turn one raw line an exec drain read into the line it logs.
+    r"""Turn one raw line of a command's output into the line it logs.
 
-    :func:`drain_exec_output`, the drain both line-reading exec routes run (the
-    ssh channel's and local exec's), logs what this returns and keeps it for a
-    timed-out result's text. The per-line form of
+    :class:`OutputLog`, the line logger of every route (the process routes'
+    drain and a streaming shell session), logs what this returns. The per-line form of
     :func:`~otto.host.command_frame.command_value`, so a logged line is cut by
     the same rule as ``value``: the contract in :ref:`command-output-contract`.
 
@@ -3737,6 +3923,163 @@ class ExecOutput:
         return self._valuer(self.raw())
 
 
+class OutputLog:
+    r"""The one logger of a command's output lines as they complete, on every route.
+
+    Each line handed to :meth:`line` is one complete raw line, ending in its
+    ``\n``; :meth:`finish` takes the unfinished last line once the command
+    has ended. The lines reaching *on_output* are then exactly
+    :func:`~otto.logger.relay.log_lines` of the command's ``value``, whatever
+    boundary the output arrived at, for a route whose ``value`` is its lines
+    with one final line ending cut (the process routes, and a frame that
+    streams: see ``streams_output_live``): a line is logged when it completes
+    (*fold* undoes the terminal's mapping, :func:`output_line` cuts its
+    ``\n``), and the unfinished line at :meth:`finish`. Nothing here reads
+    the ``value``, so the output is never split a second time.
+
+    Two lines wait for the next one instead. A first line that is blank may be
+    the whole of an empty value, which logs nothing. With *hold_newest* (a
+    shell whose terminal mapping is unknown) every newest line waits: only the
+    next line or the end tells whether its ``\r`` is the terminal's, cut from
+    the value, or the program's, kept. A read a credential was typed into
+    (:meth:`withhold_read`) is cut from the line it lands on; the rest of that
+    line is logged, and a line left with nothing is not.
+
+    >>> from otto.host.session import OutputLog
+    >>> logged = []
+    >>> log = OutputLog(logged.append)
+    >>> log.line("a\n"), log.line("\n"), logged
+    (None, None, ['a', ''])
+    >>> log.finish("b"), logged
+    (None, ['a', '', 'b'])
+    """
+
+    def __init__(
+        self,
+        on_output: Callable[[str], None],
+        *,
+        hold_newest: bool = False,
+        fold: Callable[[str], str] = lambda raw: raw,
+        begun: bool = True,
+    ) -> None:
+        self._on_output = on_output
+        self._hold_newest = hold_newest
+        self._fold = fold
+        self._begun = begun
+        self._held: str | None = None
+        self._count = 0
+        # The reads to cut from the line in progress, as (start, length) in
+        # its raw characters; a read that runs past the line's end carries
+        # on into the next line from its start.
+        self._cuts: list[tuple[int, int]] = []
+
+    @property
+    def begun(self) -> bool:
+        """Whether the command's output has begun, so that its lines are logged.
+
+        A shell session's log begins at the command's BEGIN line
+        (:meth:`begin`); what a shell prints before it is never the command's.
+        """
+        return self._begun
+
+    def begin(self, *, hold_newest: bool) -> None:
+        """Begin logging lines, holding each newest one when *hold_newest* (see the class)."""
+        self._hold_newest = hold_newest
+        self._begun = True
+
+    def withhold_read(self, start: int, read: str) -> None:
+        """Cut *read*, which began *start* raw characters into the line in progress, from the log.
+
+        A credential was typed into it: the matched prompt is kept out, as
+        is any line the read ran across, and text after it is logged.
+        """
+        self._cuts.append((start, len(read)))
+
+    def _cut(self, raw: str) -> tuple[str, bool]:
+        """Return *raw* with the pending cuts applied, and whether any of it was cut."""
+        if not self._cuts:
+            return raw, False
+        kept, carried, at = [], [], 0
+        for start, length in sorted(self._cuts):
+            stop = start + length
+            if start >= len(raw):
+                carried.append((start - len(raw), length))
+                continue
+            kept.append(raw[at:start] if start > at else "")
+            at = max(at, min(stop, len(raw)))
+            if stop > len(raw):
+                carried.append((0, stop - len(raw)))
+        kept.append(raw[at:])
+        self._cuts = carried
+        return "".join(kept), True
+
+    def line(self, raw: str) -> None:
+        """Log the complete raw line *raw*, or hold it until the next one."""
+        self._release()
+        raw, cut = self._cut(raw)
+        line = output_line(self._fold(raw))
+        if line is None:
+            return
+        self._count += 1
+        if cut and not line.rstrip("\r"):
+            return
+        if self._hold_newest or (self._count == 1 and not line):
+            self._held = line
+        else:
+            self._on_output(line)
+
+    def finish(self, tail: str) -> None:
+        r"""Log what is left once the command ended: the held line and *tail*, its unfinished line.
+
+        *tail* is the raw text after the last complete line (``""`` when the
+        output ended on a newline). Then the held line is the value's last:
+        under *hold_newest* its final ``\r`` is the terminal's, cut with the
+        value's line ending, and a lone blank first line is an empty value,
+        which logs nothing.
+        """
+        held, self._held = self._held, None
+        if tail:
+            if held is not None:
+                self._on_output(held)
+            line, cut = self._cut(tail)
+            line = self._fold(line)
+            if line or not cut:
+                self._on_output(line)
+            return
+        if held is None:
+            return
+        if self._hold_newest:
+            held = held.removesuffix("\r")
+        if self._count > 1 or held:
+            self._on_output(held)
+
+    def stop(self, lines: Iterable[str] = ()) -> None:
+        """Log the complete lines left, nothing unfinished: the command stopped without finishing.
+
+        *lines* are complete raw lines read after the last one handed to
+        :meth:`line` (what a reader still held at a timeout); they are logged
+        as :meth:`line` logs them, then the line held. Called while an
+        exception (a timeout, a cancellation) is on its way out, or for a
+        result already decided, so a sink that fails here is reported, and
+        nothing raised while reporting it replaces the exception or the
+        result.
+        """
+        try:
+            for raw in lines:
+                self.line(raw)
+            self._release()
+        except (
+            Exception
+        ):  # the exception being raised, or the result, is what must reach the caller
+            with suppress(Exception):  # a handler that fails the report fails it alone
+                logger.warning("the held output line could not be logged", exc_info=True)
+
+    def _release(self) -> None:
+        if self._held is not None:
+            held, self._held = self._held, None
+            self._on_output(held)
+
+
 def timed_out_result(
     *, cmd: str, timeout: float, output: ExecOutput, route: ExecRoute | None
 ) -> CommandResult:
@@ -3758,6 +4101,21 @@ def timed_out_result(
     )
 
 
+def _timed_out_lines(output: ExecOutput) -> list[str]:
+    """Return the complete lines a timed-out buffered frame printed, as raw lines to log.
+
+    A buffered frame logs nothing while it reads, so at a timeout its log is
+    the lines of its partial value (*output*'s, the one the timed-out result
+    carries after its diagnostic line), without the unfinished last line
+    when *output* ended mid-line: the complete lines printed before the
+    deadline, as a streaming frame has logged them.
+    """
+    lines = log_lines(output.value())
+    if output.tail() and lines:
+        lines.pop()
+    return [f"{line}\n" for line in lines]
+
+
 async def drain_exec_output(
     chunks: AsyncIterable[str],
     output: ExecOutput,
@@ -3772,20 +4130,23 @@ async def drain_exec_output(
     :data:`~otto.host.output_codec.OUTPUT_ENCODING` and
     :data:`~otto.host.output_codec.OUTPUT_ERRORS`; *output* holds all of it,
     so a caller that times the drain out still has everything read before
-    the deadline, an unfinished last line included. Each complete line is
-    logged through :func:`output_line`, and at end-of-file the unfinished
-    last line too. On a timeout there is no end-of-file: the unfinished line
-    is in the timed-out result's value but never logged as an output line.
+    the deadline, an unfinished last line included. The lines are logged by
+    :class:`OutputLog`: each complete line as it arrives, and at end-of-file
+    the unfinished last line, so the value is built once, by the caller.
+    On a timeout there is no end-of-file:
+    the unfinished line is in the timed-out result's value but never logged
+    as an output line.
     """
-    on_output = _sink_for(log_output, mode)
-    async for chunk in chunks:
-        for raw in output.feed(chunk):
-            line = output_line(raw)
-            if line is not None:
-                on_output(line)
-    tail = output_line(output.tail())
-    if tail is not None:
-        on_output(tail)
+    line_log = OutputLog(_sink_for(log_output, mode))
+    try:
+        async for chunk in chunks:
+            for raw in output.feed(chunk):
+                line_log.line(raw)
+    except BaseException:
+        # Timed out or cancelled: the complete line held is logged.
+        line_log.stop()
+        raise
+    line_log.finish(output.tail())
 
 
 async def drain_and_wait(
@@ -3868,6 +4229,7 @@ class SessionManager:
         name: str = "",
         log_command: Callable[[str, LogMode], None] = lambda *_: None,
         log_output: Callable[[str, LogMode], None] = lambda *_: None,
+        fold_log: "Callable[[LogMode], LogMode]",
         session_factory: "Callable[[], ShellSession] | None" = None,
         named_session_factory: "Callable[[], ShellSession] | None" = None,
         command_frame: CommandFrame | None = None,
@@ -3890,6 +4252,7 @@ class SessionManager:
         self._name = name
         self._log_command = log_command
         self._log_output = log_output
+        self._fold_log = fold_log
         self._session_factory = session_factory
         # How to build a NAMED auxiliary session, when that differs from the
         # default channel. ``None`` (the norm) means "same factory as the
@@ -4167,7 +4530,7 @@ class SessionManager:
         via_login = creds[0] if creds else ""
         switch_creds = self._creds or []
         term = getattr(self._connections, "term", None)
-        io = _SessionProxyIO(session, self._log_command, self._log_output)
+        io = _SessionProxyIO(session, self._log_command, self._log_output, fold_log=self._fold_log)
         for hop in hops:
             via = cred_for(switch_creds, via_login, term) or Cred(login=via_login)
             await run_proxy(
@@ -4209,6 +4572,7 @@ class SessionManager:
             session=session,
             log_command=self._log_command,
             log_output=self._log_output,
+            fold_log=self._fold_log,
             deregister=lambda _n: None,
             creds=self._creds,
             host_id=self._host_id,
@@ -4596,18 +4960,17 @@ class SessionManager:
             exec_escapes=exec_escapes,
             exec_input=exec_input,
         )
-        mode = log
-        if mode is not LogMode.NEVER:
-            self._log_command(cmd, mode)
-        assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
-        result = await self._session.run_cmd(
-            cmd=cmd,
+        # *log* is folded already: the host's `_run_one` folds its standing mode in.
+        result = await _log_and_run(
+            self._session,
+            self._log_command,
+            self._log_output,
+            cmd,
+            mode=log,
             expects=expects,
             timeout=timeout,
-            on_output=_sink_for(self._log_output, mode),
-            redact=mode is LogMode.NEVER,
-            write_progress=write_progress,
             exec_input=exec_input,
+            write_progress=write_progress,
         )
         return _ran_on(result, ExecRoute.DEFAULT_SESSION)
 
@@ -5172,7 +5535,7 @@ class SessionManager:
             return
         mark = secrets.token_hex(8)
         proven = await prove_identity(
-            _SessionProxyIO(session, self._log_command, self._log_output),
+            _SessionProxyIO(session, self._log_command, self._log_output, fold_log=self._fold_log),
             host_id=self._host_id,
             user=session.current_user,
             marking=frame.identity_mark_statement(mark=mark),
@@ -5276,7 +5639,12 @@ class SessionManager:
                     await self._apply_login_proxy(shell_session)
                 if as_user is not None and as_user != shell_session.current_user:
                     await switch_and_stamp(
-                        io=_SessionProxyIO(shell_session, self._log_command, self._log_output),
+                        io=_SessionProxyIO(
+                            shell_session,
+                            self._log_command,
+                            self._log_output,
+                            fold_log=self._fold_log,
+                        ),
                         creds=self._creds or [],
                         user=as_user,
                         password=None,
@@ -5311,6 +5679,7 @@ class SessionManager:
                 session=shell_session,
                 log_command=self._log_command,
                 log_output=self._log_output,
+                fold_log=self._fold_log,
                 deregister=lambda n: (self._named_sessions.pop(n, None), None)[1],
                 creds=self._creds,
                 host_id=self._host_id,
@@ -5360,9 +5729,7 @@ class SessionManager:
     async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to the default session, creating it if needed."""
         await self._ensure_session()
-        mode = log
-        if mode is not LogMode.NEVER:
-            self._log_command(shown(text).rstrip(), mode)
+        _log_sent(self._log_command, text, log)
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         await self._session.send(text)
 
@@ -5371,12 +5738,19 @@ class SessionManager:
         pattern: str | re.Pattern[str],
         *,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
+        log: LogMode = LogMode.NORMAL,
     ) -> str:
-        """Wait for *pattern* in the default session's output, creating the session if needed."""
+        """Wait for *pattern* in the default session's output, creating the session if needed.
+
+        *log* is the mode the read is logged under, already folded by the host,
+        as :meth:`send`'s is: the default session is the host's, so its
+        ``send`` and ``expect`` take the host's fold, never this manager's
+        named-session fold.
+        """
         await self._ensure_session()
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         result = await self._session.expect(pattern, timeout=timeout)
-        self._log_output(result, LogMode.NORMAL)
+        _relay_expect_read(self._session, result, self._log_output, log)
         return result
 
     async def close_all(self) -> None:

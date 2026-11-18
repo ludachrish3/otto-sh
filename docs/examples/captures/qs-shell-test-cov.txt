@@ -16,7 +16,7 @@ INFO     @dut   | printf '\n%s\n' otto-gcda-check; if { __otto_d=/tmp/wordcount;
          done; test "$__otto_d" != /tmp/wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d";
          }; }; then echo otto-gcda-absent; else LC_ALL=C find /tmp/wordcount -name '*.gcda' -type f
          -print 2>&1; fi
-INFO
+INFO     @dut > |
 INFO     @dut > | otto-gcda-check
 INFO     @dut > | otto-gcda-absent
 INFO     @dut   | { __otto_d=/tmp/shout; while ! test -e "$__otto_d" && ! test -L "$__otto_d"; do
@@ -33,14 +33,14 @@ INFO     @dut   | printf '\n%s\n' otto-gcda-check; if { __otto_d=/tmp/shout; whi
          done; test "$__otto_d" != /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; };
          }; then echo otto-gcda-absent; else LC_ALL=C find /tmp/shout -name '*.gcda' -type f -print
          2>&1; fi
-INFO
+INFO     @dut > |
 INFO     @dut > | otto-gcda-check
 INFO     @dut > | otto-gcda-absent
 INFO     @dut   | printf '\n%s\n' otto-cov-presence
          if test -d /tmp/wordcount; then echo 'otto-cov 0 present'; else echo 'otto-cov 0 absent';
          fi
          if test -d /tmp/shout; then echo 'otto-cov 1 present'; else echo 'otto-cov 1 absent'; fi
-INFO
+INFO     @dut > |
 INFO     @dut > | otto-cov-presence
 INFO     @dut > | otto-cov 0 absent
 INFO     @dut > | otto-cov 1 absent
@@ -100,7 +100,7 @@ INFO     @dut   | printf '\n%s\n' otto-gcda-check; if { __otto_d=/tmp/wordcount;
          done; test "$__otto_d" != /tmp/wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d";
          }; }; then echo otto-gcda-absent; else LC_ALL=C find /tmp/wordcount -name '*.gcda' -type f
          -print 2>&1; fi
-INFO
+INFO     @dut > |
 INFO     @dut > | otto-gcda-check
 INFO     @dut > | otto-gcda-absent
 INFO     @dut   | { __otto_d=/tmp/shout; while ! test -e "$__otto_d" && ! test -L "$__otto_d"; do
@@ -117,7 +117,7 @@ INFO     @dut   | printf '\n%s\n' otto-gcda-check; if { __otto_d=/tmp/shout; whi
          done; test "$__otto_d" != /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; };
          }; then echo otto-gcda-absent; else LC_ALL=C find /tmp/shout -name '*.gcda' -type f -print
          2>&1; fi
-INFO
+INFO     @dut > |
 INFO     @dut > | otto-gcda-check
 INFO     @dut > | otto-gcda-absent
 INFO     coverage counters cleared after collection on 2 product(s) across 1 host(s)

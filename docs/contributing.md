@@ -2220,7 +2220,9 @@ what the text is:
   markup string.
 - **`otto.logger.relay.escape_relayed`** is for foreign text that must stay a
   markup string, because it travels through a log record or a progress
-  description.
+  description. A record that `log_relayed` sent also carries the text before
+  escaping, as its `relayed` attribute: read that, never the message, to
+  get a relayed line back as the program wrote it.
 
 To style a prefix, build a `rich.text.Text` with `Text.assemble` and
 pass that: its styles survive, and the user's text stays a plain span

@@ -47,7 +47,9 @@ from pydantic import SecretBytes, SecretStr
 from typing_extensions import override
 
 from .._terminal import interactive_terminal_size
+from ..logger.formatters import display_text
 from ..logger.mode import LogMode
+from ..logger.relay import host_output_prefix
 from ..models.base import Cred
 from .command_frame import CommandFrame
 from .exit_status import exit_status_of
@@ -61,6 +63,7 @@ from .session import (
     ShellSession,
     _PatternReaderTransport,
     _SessionProxyIO,
+    identity_fold,
 )
 from .telnet import TELNET_EOL, telnet_line_ends
 
@@ -163,7 +166,7 @@ class _LineBuffer:
 
 
 class _SessionLogFile:
-    """Append interactive session lines to ``session.log`` in the active output dir.
+    r"""Append interactive session lines to ``session.log`` in the active output dir.
 
     Bypasses the Python logging machinery deliberately: interactive I/O
     is not an otto-issued command, so ``_HostFilter`` and the console
@@ -173,7 +176,9 @@ class _SessionLogFile:
 
     Each line is formatted to match the style produced by the normal
     logger's ``RichFormatter`` so a reader scanning ``session.log`` doesn't
-    see two different layouts.
+    see two different layouts, and is shown as every sink shows it
+    (:func:`~otto.logger.formatters.display_text`): each ``\r``-separated
+    segment on a prefixed line of its own, plain text.
     """
 
     def __init__(self, log_path: Path, host_name: str) -> None:
@@ -191,7 +196,8 @@ class _SessionLogFile:
             datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S.")
             + f"{datetime.now(tz=timezone.utc).microsecond // 1000:03d}"
         )
-        record = f"{timestamp} [INFO ] @{self._host_name} > | {line}\n"
+        prefix = f"{timestamp} [INFO ] {host_output_prefix(self._host_name)}"
+        record = "".join(f"{prefix}{shown}\n" for shown in display_text(line).split("\n"))
         try:
             self._file.write(record)
             self._file.flush()
@@ -629,7 +635,10 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     session.current_user = via_login
     via = via_login
     io = _SessionProxyIO(
-        session, lambda text, _mode: log_line(text), lambda text, _mode: log_line(text)
+        session,
+        lambda text, _mode: log_line(text),
+        lambda text, _mode: log_line(text),
+        fold_log=identity_fold,
     )
     if proxy_hops:
         _print_stderr(f"[otto] proxying to {proxy_hops[-1].login}...")
@@ -647,6 +656,12 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
         session=session,
         log_command=lambda text, _mode: log_line(text),
         log_output=lambda text, _mode: log_line(text),
+        # The identity, by choice: the bridge's session log is the record of
+        # what the user's login did, so it keeps every line it is handed, a
+        # `log=never` host's setup-hook commands included; a password is
+        # never among them (a hop sends it with `log=NEVER`, which no fold
+        # turns into a logged mode).
+        fold_log=identity_fold,
         deregister=lambda _n: None,
         creds=creds,
         host_id=host_id,

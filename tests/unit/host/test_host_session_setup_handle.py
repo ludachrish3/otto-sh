@@ -10,6 +10,7 @@ from otto.host.errors import ConsoleError
 from otto.host.session import HostSession, TelnetSession
 from otto.host.session_setup import SessionSetupError
 from otto.host.telnet import ReadGate
+from tests.unit.host._sessions import host_session
 from tests.unit.host._telnet_fakes import stream_client
 from tests.unit.host.test_session import MockSession
 
@@ -19,7 +20,7 @@ from tests.unit.host.test_session import MockSession
 
 def _handle(session: MockSession, **kw) -> HostSession:
     kw.setdefault("deregister", lambda _n: None)
-    return HostSession(
+    return host_session(
         name="__setup_default__",
         session=session,
         log_command=lambda *_: None,
@@ -87,7 +88,7 @@ async def test_close_is_refused_while_establishing(landed):
 @pytest.mark.asyncio
 async def test_close_works_on_an_ordinary_handle(landed):
     closed: list[str] = []
-    h = HostSession(
+    h = host_session(
         name="n",
         session=landed,
         log_command=lambda *_: None,
@@ -117,7 +118,7 @@ async def test_console_login_runs_the_client_sequence_on_a_console_session():
             calls.append("login")
 
     shell = TelnetSession(reader=object(), writer=object(), console_client=_Client())
-    handle = HostSession(
+    handle = host_session(
         "default",
         shell,
         lambda *_: None,
@@ -145,8 +146,13 @@ async def test_console_login_disables_the_handshake_retry_after_a_successful_log
 
     shell = TelnetSession(reader=object(), writer=object(), console_client=_Client())
     assert shell._retry_failed_handshake is True
-    handle = HostSession(
-        "default", shell, lambda *_: None, lambda *_: None, lambda n: None, host_id="test2"
+    handle = host_session(
+        "default",
+        shell,
+        lambda *_: None,
+        lambda *_: None,
+        lambda n: None,
+        host_id="test2",
     )
     await handle.console_login()
     assert shell._retry_failed_handshake is False
@@ -159,7 +165,7 @@ async def test_console_login_is_refused_off_a_console_term():
     # HostSession.console_login() re-raises with host_id and term.
     reader, writer = object(), object()
     shell = TelnetSession(reader=reader, writer=writer, client=stream_client(reader, writer))
-    handle = HostSession(
+    handle = host_session(
         "default",
         shell,
         lambda *_: None,

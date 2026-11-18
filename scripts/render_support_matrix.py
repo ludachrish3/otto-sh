@@ -253,7 +253,7 @@ class Voice:
     branches: "tuple[Branch, ...]" = ()
     """The observables this surface can offer, when it offers more than one.
 
-    Empty for a surface with a single observable, which is twelve of the sixteen today.
+    Empty for a surface with a single observable, which is fourteen of the eighteen today.
     Non-empty means :attr:`capability` is never used for a MEASURED cell: the cell's
     own stored ``observable`` decides which arm ran, and an observable matching no arm
     -- or more than one -- publishes NO promise and fails the docs build.
@@ -465,6 +465,38 @@ VOICE: "dict[str, Voice]" = {
             "**None of this says a cancel is broken on such a device** -- it says the "
             "surface has no observable there, which is why the cell is `not-observable` "
             "rather than `measured-broken`."
+        ),
+    ),
+    "exec-log": Voice(
+        short="host log",
+        capability=(
+            "read the host log and find the lines of each command's `value`, one record "
+            "per line, blank lines and a program's own `\\r` kept, under `log=NORMAL` and "
+            "`log=QUIET`, and nothing under `log=NEVER`"
+        ),
+        narrowed="the contract declares such a device outside its own domain",
+    ),
+    "exec-dry-run": Voice(
+        short="dry run",
+        capability=(
+            "run a command under a dry run and have it reach no device, getting back a "
+            "`NotRun` result with `retcode == -1`, no route, `command` the line a live call "
+            "would type, and a `value` that raises `CommandNotRunError`"
+        ),
+        narrowed=(
+            "this suite's vocabulary for such a target declares no `leave_mark_template`, so "
+            "nothing on the device could show whether a command ran; there the dry run is "
+            "checked by a unit test that drives an open Zephyr session"
+        ),
+        narrowed_detail=(
+            "**None of this says a dry run reaches such a device** -- a dry run is otto's own "
+            "code on every host; the surface has no device-side witness there, which is why "
+            "the cell is `not-observable` rather than `measured-broken`."
+        ),
+        reader_narrowed=(
+            "the Zephyr shell has no stock command that leaves an effect a later command can "
+            "read back, so nothing on the device could show whether a command ran; a unit "
+            "test checks that a dry run writes nothing to an open Zephyr session"
         ),
     ),
     "transfer-roundtrip": Voice(

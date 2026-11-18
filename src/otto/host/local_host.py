@@ -237,6 +237,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             name=self.name,
             log_command=self._log_command,
             log_output=self._log_output,
+            fold_log=self._session_fold(),
             session_factory=LocalSession,
             creds=[],
             host_id=self.id,

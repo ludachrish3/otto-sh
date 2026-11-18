@@ -16,6 +16,7 @@ from otto.host.session import NEVER_RAN, SessionManager
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
+from tests.unit.host._sessions import session_manager
 from tests.unit.host.test_session import _proxy_connections, _StubExecSession, idle_exec_sessions
 
 _PW = SecretStr("pw")
@@ -40,7 +41,7 @@ def _mgr(
     conn = _proxy_connections(list(hops), login_target=login_target, credentials=credentials)
     conn.term = term
     conn.ssh = AsyncMock()
-    return SessionManager(
+    return session_manager(
         connections=conn,
         session_factory=_StubExecSession,
         host_id="h",
@@ -422,7 +423,7 @@ class TestConsoleTermExecRunsOnTheDefaultSession:
             proxy_hops=[],
             login_target="test",
         )
-        return SessionManager(connections=conn, name="test2"), console
+        return session_manager(connections=conn, name="test2"), console
 
     @staticmethod
     def _spy_default(mgr: SessionManager, monkeypatch: pytest.MonkeyPatch) -> list:

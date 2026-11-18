@@ -23,7 +23,7 @@ from otto.cli.host import _host_id_completer, _resolve_host, host_app
 from otto.config.project import Project
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
-from otto.host.session import SessionManager, ShellSession
+from otto.host.session import ShellSession
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.reservations import Reservation, ReservationBackendBase
@@ -33,6 +33,7 @@ from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests.unit.host._session_feed import identity_handshake_reply, writes_handshake
+from tests.unit.host._sessions import session_manager
 
 # The dynamic verbs are plain ``async def`` leaves bridged by the leaf-invoke
 # wrapper, so host_app invocations go through the production dispatch seam;
@@ -126,7 +127,7 @@ def _make_host_with_session(
         term=term,
     )
     fake = FakeSession(responses)
-    host._session_mgr = SessionManager(
+    host._session_mgr = session_manager(
         connections=host._connections,
         session_factory=lambda: fake,
         name=host.name,

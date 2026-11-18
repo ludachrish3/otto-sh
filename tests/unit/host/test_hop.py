@@ -18,12 +18,12 @@ from otto.host.element import Element
 from otto.host.host_key_client import HostKeyCheck
 from otto.host.login_proxy import Cred
 from otto.host.options import LocalPortForward, NcOptions, SshOptions
-from otto.host.session import SessionManager
 from otto.host.transport import _SshHopTransport
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
+from tests.unit.host._sessions import session_manager
 
 
 def _check(alias: str, port: int) -> dict[str, Any]:
@@ -486,7 +486,7 @@ class TestConnectionManagerTunnel:
         )
         cm.telnet_options.port = 2335
 
-        mgr = SessionManager(connections=cm, name="bb1350")
+        mgr = session_manager(connections=cm, name="bb1350")
         with (
             patch("otto.host.session.TelnetClient") as MockTelnet,  # noqa: N806 — CapWords for a class mock
             patch("otto.host.session.TelnetSession") as MockSession,  # noqa: N806 — CapWords for a class mock

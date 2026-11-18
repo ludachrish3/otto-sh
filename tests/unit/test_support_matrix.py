@@ -43,6 +43,7 @@ from jsonschema import Draft202012Validator
 from otto.host import process_stop
 from otto.host.command_frame import BashFrame
 from otto.host.exec_route import ExecRoute
+from otto.host.host import BaseHost, output_log_prefix
 from otto.host.limitation import Limitation
 from otto.host.session import RouteRecord, ShellSession
 from otto.host.transfer import (
@@ -50,6 +51,8 @@ from otto.host.transfer import (
     ProgressGranularity,
     aggregate_transfer,
 )
+from otto.logger.mode import LogMode
+from otto.logger.relay import log_lines
 from otto.result import CommandResult, Result, Results
 from otto.utils import Status
 from scripts import collate_support_matrix as _collator
@@ -115,7 +118,9 @@ from tests.conformance import _entry
 from tests.conformance import conftest as conformance_conftest
 from tests.conformance import test_cancel_contract as _cancel_contract
 from tests.conformance import test_concurrency_contract as _concurrency_contract
+from tests.conformance import test_dry_run_contract as _dry_run_contract
 from tests.conformance import test_exec_contract as _exec_contract
+from tests.conformance import test_log_contract as _log_contract
 from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_progress_contract as _progress_contract
 from tests.conformance import test_signal_contract as _signal_contract
@@ -130,6 +135,7 @@ from tests.conformance._controls import (
     positive_control_for,
 )
 from tests.conformance._entry import ALL_ENTRIES, entries_declared, space_for, with_entry
+from tests.conformance._log import logged_lines
 from tests.conformance._observable import (
     OBSERVABLE_MARK,
     discover_observables,
@@ -2485,6 +2491,14 @@ def _printf(command: str) -> str:
     return "\n".join(parts[2:])
 
 
+def _after(command: str, template: "str | None") -> "str | None":
+    """The ``{path}`` *command* fills into *template* (a trailing ``{path}``), or ``None``."""
+    if template is None:
+        return None
+    head = template.format(path="")
+    return command[len(head) :] if command.startswith(head) else None
+
+
 #: The stride ``_FakeHost`` promises the progress bar. Small on purpose: the
 #: progress contract sizes its payload as ``3 * stride + 17``, so 16 keeps this
 #: harness's files at 65 bytes.
@@ -2563,20 +2577,47 @@ class _FakeHost:
     #: The route each opener's ``exec`` reports, set by :func:`_fake_cell`.
     exec_route = "ssh-channel"
 
-    async def run(self, command, timeout=None):
+    name = "fake"
+
+    async def run(self, command, timeout=None, log=LogMode.NORMAL):
         commands = [command] if isinstance(command, str) else list(command)
         return Results.collect(
             items=[
-                self._routed(self._answer(one, timeout, self._state), "default-session")
+                self._logged(
+                    self._routed(self._answer(one, timeout, self._state), "default-session"), log
+                )
                 for one in commands
             ]
         )
 
-    async def exec(self, command, timeout=None) -> CommandResult:
+    async def exec(self, command, timeout=None, log=LogMode.NORMAL) -> CommandResult:
         witnessed = self._witnesses.long_running_path(_outside_subshell(command))
         if witnessed is not None and timeout is None:
             await self._run_until_cancelled(witnessed)
-        return self._routed(self._answer(command, timeout, dict(self._state)), self.exec_route)
+        return self._logged(
+            self._routed(self._answer(command, timeout, dict(self._state)), self.exec_route), log
+        )
+
+    def _log_output(self, output: str, mode: LogMode = LogMode.NORMAL) -> None:
+        """The real host's output seam, looked up on ``BaseHost`` at call time.
+
+        At call time so a control that patches the seam on the class reaches
+        this host as it reaches a real one.
+        """
+        BaseHost._log_output(self, output, mode)  # type: ignore[arg-type]
+
+    def _logged(self, result: CommandResult, mode: LogMode) -> CommandResult:
+        """Log *result*'s lines as a host does, through its seam unless a twist bypasses it."""
+        for line in log_lines(result.value):
+            if "the-log-bypasses-its-seam" in self._twists:
+                if mode is not LogMode.NEVER:
+                    _fake_output_logger.info(
+                        f"{output_log_prefix(self.name)}{line}",
+                        extra={"host": self, "relayed": line},
+                    )
+            else:
+                self._log_output(line, mode)
+        return result
 
     async def _run_until_cancelled(self, witnessed: str) -> None:
         """A witnessed command with no budget: relays its start token, then runs until cancelled.
@@ -2587,7 +2628,7 @@ class _FakeHost:
         one that runs records the witnessed process as stopped.
         """
         self._witnesses.record(witnessed, RUNNING)
-        _fake_output_logger.info(f"[yellow]@fake > | {STARTED_TOKEN}", extra={"host": self})
+        self._log_output(STARTED_TOKEN)
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError as exc:
@@ -2724,6 +2765,12 @@ class _FakeHost:
             if path not in self._files:
                 return 1, f"stat: cannot stat '{path}'"
             return 0, f"{self._modes.get(path, 0o644):o}"
+        if (mark := _after(command, POSIX.leave_mark_template)) is not None:
+            if "the-mark-is-never-left" not in self._twists:
+                self._files[mark] = b""
+            return 0, ""
+        if (mark := _after(command, POSIX.mark_left_template)) is not None:
+            return (0 if mark in self._files else 1), ""
         if command.startswith("rm "):
             path = command[len("rm ") :]
             if path not in self._files:
@@ -3040,6 +3087,8 @@ CONTROLS = {
     "exec-stdin": _stdin_contract.test_control_input_given_to_the_command_is_read,
     "exec-concurrent": _concurrency_contract.test_control_swapped_results_are_reported,
     "exec-cancel": _cancel_contract.test_control_with_the_stop_disabled_the_command_is_seen_running,
+    "exec-log": _log_contract.test_control_a_log_that_drops_blank_lines_is_refused,
+    "exec-dry-run": _dry_run_contract.test_control_a_command_issued_live_leaves_its_mark,
     "transfer-roundtrip": (
         _transfer_contract.test_control_the_roundtrip_comparison_rejects_a_corrupted_byte
     ),
@@ -3131,6 +3180,22 @@ HOST_CASES = [
         True,
         False,
     ),
+    ("a log that drops blank lines is refused", "exec-log", (), True, True),
+    (
+        "the log bypasses the output seam",
+        "exec-log",
+        ("the-log-bypasses-its-seam",),
+        True,
+        False,
+    ),
+    ("a command issued live leaves its mark", "exec-dry-run", (), True, True),
+    (
+        "no command leaves a mark",
+        "exec-dry-run",
+        ("the-mark-is-never-left",),
+        True,
+        False,
+    ),
     ("get reads the far side", "transfer-roundtrip", (), True, True),
     (
         "get answers a constant",
@@ -3171,6 +3236,41 @@ HOST_CASES = [
     ("everything times out", "timeout", ("always-times-out",), True, False),
     ("every process reads stopped", "timeout", ("every-process-reads-stopped",), True, False),
 ]
+
+
+@pytest.mark.parametrize("line", ["[x]", "a [/b] c", "\\[y]", ""])
+def test_the_log_reader_returns_a_line_as_the_program_wrote_it(line):
+    """A bracket the logger escaped comes back from ``logged_lines`` as the program wrote it."""
+    host = _FakeHost()
+    with logged_lines(host) as logged:  # type: ignore[arg-type]
+        host._log_output(line)
+        host._log_output(line, LogMode.NEVER)
+    assert logged == [line]
+
+
+def test_every_output_arm_holds_a_case_with_a_blank_line_for_the_log_control():
+    """The log control's stimulus exists on every arm ``arm_cases`` can select, hostless.
+
+    The POSIX table (as written, and as a console that does not escape 0xFF
+    carries it) and every recorded Zephyr guest's cases (``help`` on each, and
+    ``devmem`` too on the 3.7 guests).
+    """
+    from otto.host.options import UNESCAPED_IAC
+    from tests.conformance._vocabulary import ZEPHYR_SHELLS, OutputArm
+
+    class _UnescapingConsole:
+        term = "console"
+        console_options = type("O", (), {"exact_output": UNESCAPED_IAC})()
+
+    selections = {
+        "posix": _output_contract.arm_cases(POSIX, object()),
+        "posix-unescaped-iac": _output_contract.arm_cases(POSIX, _UnescapingConsole()),
+        **{el: _output_contract.arm_cases(ZEPHYR_SHELLS[el], object()) for el in ZEPHYR_SHELLS},
+    }
+    assert len(selections) > 2
+    assert selections["posix-unescaped-iac"].arm is OutputArm.UNESCAPED_IAC
+    for name, chosen in selections.items():
+        assert any(_log_contract._has_blank_line(case) for case in chosen.cases), name
 
 
 def test_the_harness_drives_every_control_the_tree_declares():
@@ -6388,6 +6488,7 @@ def test_the_narrowing_pin_examines_a_real_mechanism_on_every_narrowing_surface(
         "run-keeps-state",
         "exec-stdin",
         "exec-cancel",
+        "exec-dry-run",
         "transfer-roundtrip",
         "transfer-mode",
         "transfer-progress",
@@ -6836,14 +6937,14 @@ def test_a_cell_nothing_has_watched_yet_still_describes_the_promise(committed):
 
 
 def test_a_surface_with_one_observable_still_promises_it(committed):
-    """The accept-control for all of the above: twelve of the sixteen surfaces are unbranched.
+    """The accept-control for all of the above: fourteen of the eighteen surfaces are unbranched.
 
     Without it, a `promise_of` that answered "no promise" for everything would satisfy
     every refusal above and publish a page that promises nothing at all.
     """
     page = _page(committed)
     unbranched = [surface.id for surface in SURFACES if not VOICE[surface.id].branches]
-    assert len(unbranched) == 12, f"the tree's branching surfaces have changed: {unbranched}"
+    assert len(unbranched) == 14, f"the tree's branching surfaces have changed: {unbranched}"
     for surface_id in unbranched:
         cell = committed["cells"][surface_id]["gnu"]
         assert promise_of(surface_id, cell).capability == VOICE[surface_id].capability

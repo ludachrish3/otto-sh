@@ -24,6 +24,7 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.fake_shell import ShellModel, probe_marker
+from tests.unit.host._sessions import host_session
 
 _SUDO_LINE = re.compile(r"SUDO_PROMPT='(otto-sudo-[A-Za-z0-9]{16}:)' sudo -S (.*)", re.DOTALL)
 """The sudo line ``_elevate`` builds: group 1 the per-command prompt, group 2 sudo's argv."""
@@ -141,7 +142,7 @@ def _mock_session_mgr(*, prompts: bool = True, user: str = "admin", **model_kw):
     async def _send(text, **_kw) -> None:
         wrote(text)
 
-    async def _expect(_pat, timeout=10.0) -> str:
+    async def _expect(_pat, timeout=10.0, log=None) -> str:
         return reply()
 
     mgr.send = AsyncMock(side_effect=_send)
@@ -564,7 +565,7 @@ async def test_host_session_switch_user_on_proxied_cred_stamps_current_user():
     """
     from unittest.mock import AsyncMock, MagicMock
 
-    from otto.host.session import HostSession, ShellSession
+    from otto.host.session import ShellSession
 
     shell = MagicMock(spec=ShellSession)
     shell.current_user = "admin"  # already at mysql's `via` user
@@ -575,7 +576,7 @@ async def test_host_session_switch_user_on_proxied_cred_stamps_current_user():
 
     shell.send = AsyncMock(side_effect=_shell_send)
     shell.expect = AsyncMock(side_effect=lambda *_a, **_k: _reply())
-    hs = HostSession(
+    hs = host_session(
         "n",
         shell,
         lambda *_: None,

@@ -17,6 +17,7 @@ from otto.host.exec_route import ExecRoute
 from otto.host.limitation import Limitation
 from otto.host.session import EXEC_ROUTES, SessionManager, typed_line_budget
 from otto.registry import Ref
+from tests.unit.host._sessions import session_manager
 
 if TYPE_CHECKING:
     from otto.host.connections import ConnectionManager
@@ -100,7 +101,7 @@ def test_every_route_has_a_record_and_the_shell_routes_declare_the_line_budget()
 
 
 def test_the_line_budget_is_read_from_the_route_record():
-    manager = SessionManager(
+    manager = session_manager(
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet", proxy_hops=[])),
         name="h",
         command_frame=BashFrame(),

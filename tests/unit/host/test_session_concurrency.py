@@ -96,6 +96,7 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from tests._fixtures.fake_shell import probe_marker
 from tests.unit.host._session_feed import identity_handshake_reply, writes_handshake
+from tests.unit.host._sessions import session_manager
 from tests.unit.host.test_session import idle_exec_sessions
 
 pytestmark = pytest.mark.concurrency
@@ -219,7 +220,7 @@ def _make_mgr(factory: _Factory, term: str = "telnet") -> SessionManager:
     SSH's ``exec`` bypasses the pool (uses asyncssh ``create_process``
     directly) and isn't relevant to these tests.
     """
-    return SessionManager(
+    return session_manager(
         # SimpleNamespace duck-types ConnectionManager — we only need `.term`
         # because session_factory short-circuits the connection-based paths.
         connections=cast("ConnectionManager", SimpleNamespace(term=term)),
@@ -696,7 +697,7 @@ async def test_open_session_closes_session_when_init_cancelled() -> None:
         created.append(session)
         return session
 
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
         session_factory=factory,
     )
@@ -748,7 +749,7 @@ async def test_ensure_session_retries_once_on_handshake_failure() -> None:
         factory.created.append(session)
         return session
 
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
         session_factory=make_session,
         # Skip the real ~2 s peer-release backoff — these fakes have no peer to
@@ -787,7 +788,7 @@ async def test_ensure_session_propagates_persistent_handshake_failure() -> None:
         factory.created.append(session)
         return session
 
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
         session_factory=make_session,
         # Skip the real ~2 s peer-release backoff (no peer here) — sleeping on
@@ -864,7 +865,7 @@ async def test_ensure_session_retry_backoff_is_configurable(
         factory.created.append(session)
         return session
 
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
         session_factory=make_session,
         retry_backoff=injected_backoff,

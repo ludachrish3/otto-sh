@@ -38,6 +38,17 @@ async with await host.open_session("monitor") as mon:
 # session is closed automatically
 ```
 
+### Log modes on a named session
+
+A named session logs its `run`, its `send` and what its `expect` reads under
+the mode the host's own `run` would: the command's own `log` (a
+`ShellCommand`'s) when it sets one, otherwise the call's `log`, composed with
+the host's standing `log` as {ref}`log-mode-knob` defines. On a host built
+with `log=LogMode.NEVER`, then, none of the three is logged, dry run or live;
+on a `QUIET` host they stay off the console. A container host's named session
+does not compose the standing mode yet; the container's own `send` and
+`expect` (its default session, called on the host) do, as every family's do.
+
 (named-sessions-vs-exec)=
 ### When to use named sessions vs exec
 

@@ -286,6 +286,8 @@ SIGKILL), and a sink stuck on a slow write holds back everything queued behind
 it. Because locals are read where the exception is logged, a local whose
 `repr` blocks holds up that logging call, not the listener.
 
+(log-mode-knob)=
+
 ## LogMode: one knob for command I/O
 
 Whether a host's command echo and output *show up* is a per-host and
@@ -302,6 +304,13 @@ The effective mode composes **most-restrictive-wins**
 ({func}`~otto.logger.mode.effective_mode`): a `QUIET` host running a `NEVER`
 command yields `NEVER`. If either party considers the I/O sensitive, the
 stricter disposition holds.
+
+The host's standing mode composes into everything its default session logs —
+`run`, `send` and what `expect` reads — in every host family, a container
+included: on a `NEVER` host, a password typed with `send` is not logged, and
+neither is the terminal's echo of it that the next `expect` reads. A named
+session composes it the same way, except a container's named session, which
+does not yet ({doc}`../../extend/sessions`).
 
 Scope is the important invariant: **LogMode gates command I/O only** —
 records tagged with the host that emitted them. Framework diagnostics,

@@ -38,6 +38,7 @@ from otto.host.session import LocalSession, _SessionProxyIO
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.models.base import Cred
+from tests.unit.host._sessions import proxy_io
 from tests.unit.host.test_console_client import ScriptedReader, ScriptedWriter
 
 PLANTED = "PLANTED-SECRET-7f3a"
@@ -295,7 +296,7 @@ async def _console_login(monkeypatch: pytest.MonkeyPatch, received: _Received) -
 
 
 def _proxy_io(session: LocalSession) -> _SessionProxyIO:
-    return _SessionProxyIO(session, lambda *_: None, lambda *_: None)
+    return proxy_io(session, lambda *_: None, lambda *_: None)
 
 
 async def _su_proxy(monkeypatch: pytest.MonkeyPatch, received: _Received) -> None:

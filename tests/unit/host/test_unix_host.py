@@ -37,6 +37,7 @@ from otto.utils import Status
 from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
 from tests.conftest import active_context
 from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_host
+from tests.unit.host._sessions import host_session, session_manager
 from tests.unit.host.test_session import idle_exec_sessions
 
 
@@ -2472,7 +2473,7 @@ class TestHostSessionProxy:
         shell.send = AsyncMock()
         shell.expect = AsyncMock(return_value="some output")
         shell.close = AsyncMock()
-        remote = HostSession(
+        remote = host_session(
             name=name,
             session=shell,
             log_command=host._log_command,
@@ -2603,7 +2604,7 @@ class TestOpenSessionCleanup:
         shell = MagicMock(spec=ShellSession)
         shell.alive = alive
         shell.close = AsyncMock()
-        host._session_mgr._named_sessions[name] = HostSession(
+        host._session_mgr._named_sessions[name] = host_session(
             name=name,
             session=shell,
             log_command=host._log_command,
@@ -3719,13 +3720,12 @@ async def test_a_declared_stage_dir_is_used_as_given_and_never_re_resolved(tmp_p
 def _real_session_mgr(*, creds=None):
     """A real ``SessionManager`` over the stub shell session the pooled-exec
     tests use — telnet term, so every route lands on the pooled shell."""
-    from otto.host.session import SessionManager
     from tests.unit.host.test_session import _proxy_connections, _StubExecSession
 
     conn = _proxy_connections([], login_target="admin", credentials=("admin", SecretStr("pw")))
     conn.term = "telnet"
     conn.ssh = AsyncMock()
-    return SessionManager(
+    return session_manager(
         connections=conn,
         session_factory=_StubExecSession,
         host_id="h",

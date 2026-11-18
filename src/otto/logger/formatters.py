@@ -445,6 +445,51 @@ def render_traceback(record: LogRecord, *, color: bool) -> str:
     return file.getvalue() if isinstance(file, io.StringIO) else ""
 
 
+def _segments(line: str) -> list[str]:
+    r"""Return the ``\r``-separated segments of *line* a sink shows.
+
+    An empty segment beside a non-empty one has nothing to show and adds no
+    line (``\r10%`` and ``line\r\r`` show one line each). A line with no
+    non-empty segment (``""``, ``\r``, ``\r\r``) is the program's blank line:
+    it is one empty segment, which a sink shows as one prefixed blank line.
+    """
+    return [segment for segment in line.split("\r") if segment] or [""]
+
+
+def display_text(msg: str, relayed: "str | None" = None) -> str:
+    r"""Return *msg* as a sink shows it: each ``\r``-separated segment on a line of its own.
+
+    The one decision of what a sink does with a carriage return, made before
+    Rich renders a record (Rich would delete the ``\r``): a sink cannot
+    overwrite a line, so ``10%\r20%\r`` and ``\r10%\r20%`` show as the two
+    lines ``10%`` and ``20%``: an empty segment beside a non-empty one adds
+    no line, while a line of empty segments only (``""``, ``\r``) shows as
+    one blank line. *relayed* is the record's ``relayed`` attribute
+    (:func:`~otto.logger.relay.log_relayed`); when *msg* is otto's prefix
+    followed by that text, every segment of the first line carries the
+    prefix. The record itself is not changed: its message and ``relayed``
+    keep the program's ``\r``. See :ref:`command-output-log`.
+
+    >>> from otto.logger.formatters import display_text
+    >>> display_text("10%\r20%\r"), display_text("[y]@h > | a\rb", "a\rb")
+    ('10%\n20%', '[y]@h > | a\n[y]@h > | b')
+    """
+    if "\r" not in msg:
+        return msg
+    if relayed is not None:
+        from .relay import escape_relayed
+
+        escaped = escape_relayed(relayed)
+        if msg.endswith(escaped):
+            prefix = msg[: len(msg) - len(escaped)]
+            return "\n".join(
+                (prefix if i == 0 or j > 0 else "") + escape_relayed(segment)
+                for i, line in enumerate(relayed.split("\n"))
+                for j, segment in enumerate(_segments(line))
+            )
+    return "\n".join(segment for line in msg.split("\n") for segment in _segments(line))
+
+
 class MultilineFormatter(Formatter):
     """``logging.Formatter`` that formats each line of a multiline message separately.
 
@@ -490,10 +535,17 @@ class MultilineFormatter(Formatter):
         try:
             # Create smaller log records, each with just a single line
             # Format each one on its own so that they have the proper formatting,
-            # then join them together with newlines. Splitting on the newline
-            # character is needed instead of calling splitlines() because
-            # splitlines() ignores the first trailing newline character.
-            for line in original_msg.splitlines():
+            # then join them together with newlines. The lines are the
+            # message as a sink shows it (display_text: each carriage-return
+            # segment on a line of its own). One trailing newline ends the
+            # last line; an empty message is one blank line.
+            text = original_msg
+            if isinstance(text, str):
+                text = display_text(text, getattr(record, "relayed", None))
+            lines = str(text).split("\n")
+            if len(lines) > 1 and lines[-1] == "":
+                lines.pop()
+            for line in lines:
                 record.msg = line
                 formatted_line = super().format(record)
 
@@ -640,6 +692,9 @@ class RichFormatter(MultilineFormatter):
         """
         original_msg = record.msg
         try:
+            # Before Rich sees the text: Rich deletes a carriage return.
+            if isinstance(original_msg, str):
+                record.msg = display_text(original_msg, getattr(record, "relayed", None))
             msg = super().format(record=self._stylize(record))
         finally:
             record.msg = original_msg

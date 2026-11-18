@@ -5,7 +5,7 @@ INFO     fleet of interest: 0 of 9 lab hosts (1 project(s), 1 excluded); outside
 INFO     Connected to <Peer 127.0.0.1 <port>>
 INFO     @zephyr37_lfs   |
 INFO     @zephyr37_lfs > |
-         @zephyr37_lfs > | ~$
+INFO     @zephyr37_lfs > | ~$
 INFO     @zephyr37_lfs   | kernel version
 INFO     @zephyr37_lfs > | Zephyr version 3.7.2
 INFO     Connection closed to <Peer 127.0.0.1 <port>>

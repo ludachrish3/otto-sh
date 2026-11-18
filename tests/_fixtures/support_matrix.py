@@ -202,6 +202,19 @@ SURFACES: "tuple[Surface, ...]" = (
         ),
     ),
     Surface(
+        id="exec-log",
+        title="exec: the host log receives the lines of a command's value",
+        contract="tests/conformance/test_log_contract.py::test_the_log_receives_the_lines_of_value",
+    ),
+    Surface(
+        id="exec-dry-run",
+        title="exec: a dry run reaches no device and returns one result shape",
+        contract=(
+            "tests/conformance/test_dry_run_contract.py"
+            "::test_a_dry_run_reaches_no_device_and_returns_one_shape"
+        ),
+    ),
+    Surface(
         id="transfer-roundtrip",
         title="transfer: put/get roundtrip preserves content",
         contract=(

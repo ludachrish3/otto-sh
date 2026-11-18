@@ -16,6 +16,7 @@ No env var, no custom filter — just standard Python logging at DEBUG.
 import asyncio
 import logging
 import re
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -23,6 +24,7 @@ import pytest_asyncio
 from otto.host.element import Element
 from otto.host.session import ShellSession
 from tests.unit.host._session_feed import FeedAfterWriteMixin, identity_handshake_reply
+from tests.unit.host._sessions import host_session, proxy_io, session_manager
 
 
 class MockSession(FeedAfterWriteMixin, ShellSession):
@@ -302,11 +304,12 @@ class TestLogTag:
 # Per-command log suppression (log=LogMode.QUIET)
 # ---------------------------------------------------------------------------
 
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import cast
 
 from otto.host.connections import ConnectionManager
-from otto.host.session import SessionManager
+from otto.host.session import HostSession, SessionManager, _SessionProxyIO
 from otto.result import CommandResult
 from otto.utils import Status
 
@@ -349,7 +352,7 @@ class _AliveStubSession(ShellSession):
 def _logging_mgr():
     cmds: list[str] = []
     outs: list[str] = []
-    mgr = SessionManager(
+    mgr = session_manager(
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
         session_factory=_AliveStubSession,
         log_command=lambda cmd, _mode: cmds.append(cmd),
@@ -440,3 +443,760 @@ def test_effective_log_composes_host_and_command():
     assert host._effective_log(LogMode.NEVER) is LogMode.NEVER
     # The composition is the most-restrictive of the two modes.
     assert effective_mode(LogMode.QUIET, LogMode.NORMAL) is LogMode.QUIET
+
+
+# ---------------------------------------------------------------------------
+# The host log receives the lines of a command's value
+# ---------------------------------------------------------------------------
+
+import codecs
+
+from pydantic import SecretStr
+
+from otto.host.host import CredentialExpect
+from otto.host.terminal_mapping import IDENTITY, ONLCR, UNMEASURED
+from otto.host.terminal_mapping import Measurement as _Measurement
+from otto.logger.relay import log_lines
+from otto.testing import EXACT_OUTPUT_CASES, OutputCase
+from otto.utils import wait_for_async
+
+_MAPPINGS = {
+    "onlcr": _Measurement(ONLCR, calibrated=True),
+    "unknown": _Measurement("unknown('X\\nY')", calibrated=True),
+}
+
+
+class _ScriptedSession(MockSession):
+    """A MockSession that reads in whole chunks, and says when it waits for more."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._unread = ""
+        self._decoder = codecs.getincrementaldecoder("utf-8")()
+        self.starved = asyncio.Event()
+
+    async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
+        assert self._out_reader is not None
+        while (match := pattern.search(self._unread)) is None:
+            self.starved.set()
+            chunk = await self._out_reader.read(65536)
+            if not chunk:
+                raise asyncio.IncompleteReadError(self._unread.encode(), None)
+            self._unread += self._decoder.decode(chunk)
+        self.starved.clear()
+        data, self._unread = self._unread[: match.end()], self._unread[match.end() :]
+        return data
+
+
+@pytest_asyncio.fixture
+async def scripted_session() -> _ScriptedSession:
+    s = _ScriptedSession()
+    await s.open_transport()
+    feed_task = asyncio.create_task(s.feed_after_write(identity_handshake_reply(s._ready_marker)))
+    await s._ensure_initialized()
+    await feed_task
+    return s
+
+
+def _pieces(text: str, split: str) -> list[str]:
+    """*text* as the reads deliver it: whole, one line per read, or every line cut in two."""
+    if split == "whole":
+        return [text]
+    lines = text.splitlines(keepends=True)
+    if split == "line":
+        return lines
+    return [half for line in lines for half in (line[: len(line) // 2], line[len(line) // 2 :])]
+
+
+def _transcript(s: ShellSession, case: OutputCase) -> str:
+    """What a terminal that adds a CR before every newline sends back for *case*."""
+    body = f"{s._begin_marker}\n{case.text}{s._end_marker_prefix}{case.retcode}__\n"
+    return body.replace("\n", "\r\n")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("split", ["whole", "line", "mid-line"])
+@pytest.mark.parametrize("mapping", sorted(_MAPPINGS))
+@pytest.mark.parametrize("case", EXACT_OUTPUT_CASES, ids=lambda c: c.id)
+async def test_a_shell_command_logs_the_lines_of_its_value(
+    scripted_session: _ScriptedSession, case: OutputCase, mapping: str, split: str
+):
+    s = scripted_session
+    s._terminal = _MAPPINGS[mapping]
+    logged: list[str] = []
+    feed_task = asyncio.create_task(s.feed_after_write(*_pieces(_transcript(s, case), split)))
+    result = await s.run_cmd(cmd=case.command, on_output=logged.append)
+    await feed_task
+    assert result.retcode == case.retcode
+    assert logged == log_lines(result.value), f"value={result.value!r}"
+
+
+async def _logged_after(s: _ScriptedSession, text: str, event: asyncio.Event) -> None:
+    """Feed *text*, then wait until *event* is set and the session waits for more."""
+    s.starved.clear()
+    s.feed(text)
+    await asyncio.wait_for(event.wait(), 5)
+    await asyncio.wait_for(s.starved.wait(), 5)
+
+
+@pytest.mark.asyncio
+async def test_under_onlcr_a_line_is_logged_before_the_next_one_arrives(
+    scripted_session: _ScriptedSession,
+):
+    s = scripted_session
+    s._terminal = _MAPPINGS["onlcr"]
+    logged: list[str] = []
+    first = asyncio.Event()
+
+    def sink(line: str) -> None:
+        logged.append(line)
+        first.set()
+
+    run = asyncio.create_task(s.run_cmd(cmd="two lines", on_output=sink))
+    await wait_for_async(
+        lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="the command was never written"
+    )
+    await _logged_after(s, f"{s._begin_marker}\r\none\r\n", first)
+    assert logged == ["one"]
+    s.feed(f"two\r\n{s._end_marker_prefix}0__\r\n")
+    result = await run
+    assert logged == log_lines(result.value) == ["one", "two"]
+
+
+@pytest.mark.asyncio
+async def test_under_an_unknown_mapping_a_line_is_logged_once_the_next_one_arrives(
+    scripted_session: _ScriptedSession,
+):
+    s = scripted_session
+    s._terminal = _MAPPINGS["unknown"]
+    logged: list[str] = []
+    first = asyncio.Event()
+
+    def sink(line: str) -> None:
+        logged.append(line)
+        first.set()
+
+    run = asyncio.create_task(s.run_cmd(cmd="two lines", on_output=sink))
+    await wait_for_async(
+        lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="the command was never written"
+    )
+    s.starved.clear()
+    s.feed(f"{s._begin_marker}\r\none\r\n")
+    await asyncio.wait_for(s.starved.wait(), 5)
+    assert logged == []
+    await _logged_after(s, "two\r\n", first)
+    assert logged == ["one\r"]
+    s.feed(f"{s._end_marker_prefix}0__\r\n")
+    result = await run
+    assert logged == log_lines(result.value) == ["one\r", "two"]
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_answered_by_an_expect_is_logged_inside_its_line(
+    scripted_session: _ScriptedSession,
+):
+    s = scripted_session
+    s._terminal = _MAPPINGS["onlcr"]
+    logged: list[str] = []
+    feed_task = asyncio.create_task(
+        s.feed_after_write(
+            f"{s._begin_marker}\r\nContinue? y\r\nok\r\n{s._end_marker_prefix}0__\r\n"
+        )
+    )
+    result = await s.run_cmd(cmd="ask", expects=[(r"Continue\? ", "y\n")], on_output=logged.append)
+    await feed_task
+    assert result.value == "Continue? y\nok"
+    assert logged == ["Continue? y", "ok"]
+
+
+@pytest.mark.asyncio
+async def test_a_line_answered_with_a_credential_logs_what_it_always_has(
+    scripted_session: _ScriptedSession,
+):
+    s = scripted_session
+    s._terminal = _MAPPINGS["onlcr"]
+    logged: list[str] = []
+    cred = CredentialExpect(pattern=r"Password: ", response=SecretStr("pw"), user="u", host="h")
+    feed_task = asyncio.create_task(
+        s.feed_after_write(
+            f"{s._begin_marker}\r\nPassword: \r\nok\r\n{s._end_marker_prefix}0__\r\n"
+        )
+    )
+    await s.run_cmd(cmd="su u", expects=[cred], on_output=logged.append)
+    await feed_task
+    assert logged == ["ok"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "pattern"),
+    [
+        pytest.param("out\r\ndone", r"done.*\n", id="match-spans-the-end-marker"),
+        pytest.param("out\r\ndone", r"out\r?\ndone.*\n", id="read-holds-a-line-the-end-and-more"),
+    ],
+)
+async def test_nothing_at_or_after_the_end_marker_is_logged(
+    scripted_session: _ScriptedSession, body: str, pattern: str
+):
+    """A read an expect match carries past the END record logs only what precedes it."""
+    s = scripted_session
+    s._terminal = _MAPPINGS["onlcr"]
+    logged: list[str] = []
+    transcript = f"{s._begin_marker}\r\n{body}{s._end_marker_prefix}0__\r\n"
+    feed_task = asyncio.create_task(s.feed_after_write(transcript))
+    result = await s.run_cmd(cmd="printf", expects=[(pattern, "")], on_output=logged.append)
+    await feed_task
+    assert result.value == "out\ndone"
+    assert logged == ["out", "done"]
+
+
+_PASSWORD = CredentialExpect(pattern=r"Password: ", response=SecretStr("pw"), user="u", host="h")
+_TOKEN = CredentialExpect(pattern=r"Token: ", response=SecretStr("tk"), user="u", host="h")
+_SPLIT = CredentialExpect(pattern=r"Pass\r?\nword: ", response=SecretStr("pw"), user="u", host="h")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "creds", "logged_before_this_branch"),
+    [
+        pytest.param("Password: \nok\n", [_PASSWORD], ["ok"], id="prompt-then-newline"),
+        pytest.param("Password: ok\nend\n", [_PASSWORD], ["ok", "end"], id="text-after-prompt"),
+        pytest.param(
+            "first\nPass\nword: \nok\n", [_SPLIT], ["first", "ok"], id="read-spans-newline"
+        ),
+        pytest.param("ok\nPassword: ", [_PASSWORD], ["ok"], id="prompt-on-end-line"),
+        pytest.param("ok\nPassword: done", [_PASSWORD], ["ok", "done"], id="text-on-end-line"),
+        pytest.param(
+            "Password: \nToken: \nok\n", [_PASSWORD, _TOKEN], ["ok"], id="two-credential-prompts"
+        ),
+    ],
+)
+async def test_a_credential_exchange_logs_what_it_logged_before(
+    scripted_session: _ScriptedSession,
+    body: str,
+    creds: "list[CredentialExpect]",
+    logged_before_this_branch: list[str],
+):
+    """The matched read is not logged; text after it on the same line is (main's behaviour)."""
+    s = scripted_session
+    s._terminal = _MAPPINGS["onlcr"]
+    logged: list[str] = []
+    transcript = f"{s._begin_marker}\n{body}{s._end_marker_prefix}0__\n".replace("\n", "\r\n")
+    feed_task = asyncio.create_task(s.feed_after_write(transcript))
+    await s.run_cmd(cmd="su u", expects=list(creds), on_output=logged.append)
+    await feed_task
+    assert logged == logged_before_this_branch
+
+
+class _FlushError(Exception):
+    """The host log's sink failed while a held line was being logged."""
+
+
+def _failing_sink(line: str) -> None:
+    raise _FlushError(line)
+
+
+class _WarningSinkError(Exception):
+    """The handler the flush failure's WARNING went to failed as well."""
+
+
+class _FailingWarnings(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        raise _WarningSinkError(record.getMessage())
+
+
+@pytest.fixture(params=["warning-logged", "warning-fails"])
+def warning_sink(request: pytest.FixtureRequest):
+    """The session logger's WARNING path, working or broken as the sink is.
+
+    A broken handler fails both the output line and the report of that
+    failure; neither may replace the exception on its way out.
+    """
+    if request.param == "warning-logged":
+        yield
+        return
+    session_logger = logging.getLogger("otto.host.session")
+    handler = _FailingWarnings(level=logging.WARNING)
+    session_logger.addHandler(handler)
+    try:
+        yield
+    finally:
+        session_logger.removeHandler(handler)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("warning_sink")
+@pytest.mark.parametrize("how", ["timeout", "cancel"])
+async def test_a_sink_failing_on_the_held_line_never_replaces_a_shell_command_s_stop(
+    scripted_session: _ScriptedSession, monkeypatch: pytest.MonkeyPatch, how: str
+):
+    # On Python 3.10 an outer cancel of `asyncio.wait_for` masks whatever the
+    # inner task raised, so the cancel row cannot be shown red there; the
+    # timeout rows can, and the row is kept for the versions that surface it.
+    s = scripted_session
+    s._terminal = _MAPPINGS["onlcr"]
+    stopped: list[str] = []
+
+    async def stop(*, restore=None, held=None) -> None:
+        stopped.append(how)
+
+    monkeypatch.setattr(s, "_stop_under_bound", stop)
+    # A blank first line is held: it may be the whole of an empty value.
+    s.starved.clear()
+    run = asyncio.create_task(
+        s.run_cmd(cmd="hang", timeout=0.2 if how == "timeout" else 60, on_output=_failing_sink)
+    )
+    await wait_for_async(
+        lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="the command was never written"
+    )
+    s.starved.clear()
+    s.feed(f"{s._begin_marker}\r\n\r\n")
+    await asyncio.wait_for(s.starved.wait(), 5)
+    if how == "timeout":
+        result = await run
+        assert result.timed_out
+    else:
+        run.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run
+    assert stopped == [how]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("warning_sink")
+@pytest.mark.parametrize("how", ["timeout", "cancel"])
+async def test_a_sink_failing_on_the_held_line_never_replaces_a_drain_s_exception(how: str):
+    from otto.host.session import ExecOutput, drain_exec_output
+
+    reached = asyncio.Event()
+
+    async def chunks():
+        yield "\n"
+        reached.set()
+        await asyncio.Event().wait()
+
+    drain = drain_exec_output(
+        chunks(), ExecOutput(), lambda line, _m: _failing_sink(line), LogMode.NORMAL
+    )
+    if how == "timeout":
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(drain, 0.2)
+        assert reached.is_set()
+        return
+    task = asyncio.create_task(drain)
+    await asyncio.wait_for(reached.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+_LF_MAPPINGS = {
+    "identity": _Measurement(IDENTITY, calibrated=True),
+}
+"""Mappings whose terminal adds no CR: the transcript carries the program's bytes as written."""
+
+_CRLF_MAPPINGS = {
+    **_MAPPINGS,
+    "unmeasured": _Measurement(UNMEASURED, calibrated=False),
+}
+"""Mappings under which the terminal sends a CR before every newline."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mapping", sorted(_LF_MAPPINGS))
+@pytest.mark.parametrize("case", EXACT_OUTPUT_CASES, ids=lambda c: c.id)
+async def test_a_shell_command_on_a_terminal_that_adds_no_cr_logs_the_lines_of_its_value(
+    scripted_session: _ScriptedSession, case: OutputCase, mapping: str
+):
+    s = scripted_session
+    s._terminal = _LF_MAPPINGS[mapping]
+    logged: list[str] = []
+    transcript = f"{s._begin_marker}\n{case.text}{s._end_marker_prefix}{case.retcode}__\n"
+    feed_task = asyncio.create_task(s.feed_after_write(*_pieces(transcript, "line")))
+    result = await s.run_cmd(cmd=case.command, on_output=logged.append)
+    await feed_task
+    assert logged == log_lines(result.value) == log_lines(case.value)
+
+
+@pytest.mark.asyncio
+async def test_under_identity_a_line_is_logged_before_the_next_one_arrives(
+    scripted_session: _ScriptedSession,
+):
+    s = scripted_session
+    s._terminal = _LF_MAPPINGS["identity"]
+    logged: list[str] = []
+    first = asyncio.Event()
+
+    def sink(line: str) -> None:
+        logged.append(line)
+        first.set()
+
+    run = asyncio.create_task(s.run_cmd(cmd="two lines", on_output=sink))
+    await wait_for_async(
+        lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="the command was never written"
+    )
+    await _logged_after(s, f"{s._begin_marker}\none\r\n", first)
+    assert logged == ["one\r"]
+    s.feed(f"two\n{s._end_marker_prefix}0__\n")
+    result = await run
+    assert logged == log_lines(result.value) == ["one\r", "two"]
+
+
+@pytest.mark.asyncio
+async def test_unmeasured_on_a_crlf_terminal_holds_the_newest_line(
+    scripted_session: _ScriptedSession,
+):
+    s = scripted_session
+    s._terminal = _CRLF_MAPPINGS["unmeasured"]
+    logged: list[str] = []
+    run = asyncio.create_task(s.run_cmd(cmd="two lines", on_output=logged.append))
+    await wait_for_async(
+        lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="the command was never written"
+    )
+    s.starved.clear()
+    s.feed(f"{s._begin_marker}\r\none\r\n")
+    await asyncio.wait_for(s.starved.wait(), 5)
+    assert logged == []
+    s.feed(f"two\r\n{s._end_marker_prefix}0__\r\n")
+    result = await run
+    assert logged == log_lines(result.value) == ["one\r", "two"]
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_shell_command_logs_the_complete_lines_it_held(
+    scripted_session: _ScriptedSession, monkeypatch: pytest.MonkeyPatch
+):
+    import otto.host.session as session_mod
+
+    monkeypatch.setattr(session_mod, "_RECOVERY_TIMEOUT", 0.05)
+    s = scripted_session
+    s._terminal = _MAPPINGS["unknown"]
+    logged: list[str] = []
+    feed_task = asyncio.create_task(
+        s.feed_after_write(f"{s._begin_marker}\r\none\r\ntwo\r\nunfini")
+    )
+    result = await s.run_cmd(cmd="long", timeout=0.1, on_output=logged.append)
+    await feed_task
+    assert result.timed_out
+    assert logged == ["one\r", "two\r"]
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_drain_logs_the_blank_first_line_it_held():
+    from otto.host.session import ExecOutput, drain_exec_output
+
+    logged: list[str] = []
+    reached = asyncio.Event()
+
+    async def chunks():
+        yield "\n"
+        yield "unfini"
+        reached.set()
+        await asyncio.Event().wait()
+
+    drain = asyncio.create_task(
+        drain_exec_output(
+            chunks(), ExecOutput(), lambda line, _m: logged.append(line), LogMode.NORMAL
+        )
+    )
+    await asyncio.wait_for(reached.wait(), 5)
+    drain.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await drain
+    assert logged == [""]
+
+
+@pytest.mark.asyncio
+async def test_a_credential_prompt_the_command_ends_on_stays_out_of_the_log(
+    scripted_session: _ScriptedSession,
+):
+    s = scripted_session
+    s._terminal = _MAPPINGS["onlcr"]
+    logged: list[str] = []
+    cred = CredentialExpect(pattern=r"Password: ", response=SecretStr("pw"), user="u", host="h")
+    feed_task = asyncio.create_task(
+        s.feed_after_write(f"{s._begin_marker}\r\nok\r\nPassword: {s._end_marker_prefix}1__\r\n")
+    )
+    await s.run_cmd(cmd="su u", expects=[cred], on_output=logged.append)
+    await feed_task
+    assert logged == ["ok"]
+
+
+class _ExpectStubSession(_AliveStubSession):
+    """An initialized session under ONLCR whose expect() answers a scripted text."""
+
+    answer = ""
+
+    async def _ensure_initialized(self) -> None:
+        await super()._ensure_initialized()
+        self._terminal = _Measurement(ONLCR, calibrated=True)
+
+    async def expect(self, pattern, *, timeout=None):
+        await self._ensure_initialized()
+        return self.answer
+
+
+async def _expect_through(site: str, answer_sink: "Callable[[str, LogMode], None]") -> str:
+    """``expect("x")`` through *site*, one of the three places that log what expect() read."""
+    mgr = session_manager(
+        connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
+        session_factory=_ExpectStubSession,
+        log_command=lambda *_: None,
+        log_output=answer_sink if site == "manager" else lambda *_: None,
+    )
+    if site == "manager":
+        return await mgr.expect("x")
+    await mgr._ensure_session()
+    session = mgr._session
+    assert session is not None
+    if site == "host-session":
+        handle = host_session(
+            "s",
+            session,
+            lambda *_: None,
+            answer_sink,
+            lambda _name: None,
+        )
+        return await handle.expect("x")
+    return await proxy_io(session, lambda *_: None, answer_sink).expect("x")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("site", ["manager", "host-session", "session-proxy"])
+@pytest.mark.parametrize(
+    ("answer", "lines"),
+    [
+        ("a\r\nb\r\n", ["a", "b"]),
+        ("x\ry\r\n$ ", ["x\ry", "$ "]),
+        ("", []),
+    ],
+)
+async def test_what_expect_read_is_logged_by_the_command_rule(
+    monkeypatch: pytest.MonkeyPatch, site: str, answer: str, lines: list[str]
+):
+    monkeypatch.setattr(_ExpectStubSession, "answer", answer)
+    outs: list[str] = []
+    assert await _expect_through(site, lambda out, _mode: outs.append(out)) == answer
+    assert outs == lines
+
+
+class _EchoingStubSession(_AliveStubSession):
+    """An initialized session under ONLCR whose terminal echoes the line last sent."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.echo = ""
+
+    async def _ensure_initialized(self) -> None:
+        await super()._ensure_initialized()
+        self._terminal = _Measurement(ONLCR, calibrated=True)
+
+    async def write_transport(self, data) -> None:
+        self.echo = str(data).replace("\n", "\r\n")
+
+    async def read_transport_until(self, pattern):
+        return self.echo
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("site", ["manager", "host-session", "session-proxy"])
+@pytest.mark.parametrize("standing", [LogMode.NORMAL, LogMode.QUIET, LogMode.NEVER])
+async def test_what_expect_read_folds_the_standing_mode_at_every_relay(
+    caplog: pytest.LogCaptureFixture, site: str, standing: LogMode
+):
+    from otto.logger.mode import effective_mode
+
+    relay = logging.getLogger("otto.test.relay")
+    relayed: list[LogMode] = []
+
+    def log_output(text: str, mode: LogMode) -> None:
+        relayed.append(mode)
+        relay.info(text, extra={"log_mode": mode})
+
+    def log_command(text: str, mode: LogMode) -> None:
+        relay.info(text, extra={"log_mode": mode})
+
+    def fold(mode: LogMode) -> LogMode:
+        return effective_mode(standing, mode)
+
+    mgr = SessionManager(
+        connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
+        session_factory=_EchoingStubSession,
+        log_command=log_command,
+        log_output=log_output,
+        fold_log=fold,
+    )
+    caplog.set_level(logging.DEBUG)
+    with caplog.at_level(logging.DEBUG):
+        if site == "manager":
+            # The host folds the mode of its default session's send and
+            # expect alike before the manager logs either.
+            await mgr.send("mysql -psecret\n", log=fold(LogMode.NORMAL))
+            read = await mgr.expect("secret", log=fold(LogMode.NORMAL))
+        else:
+            await mgr._ensure_session()
+            session = mgr._session
+            assert session is not None
+            if site == "host-session":
+                handle = HostSession(
+                    "s", session, log_command, log_output, lambda _name: None, fold_log=fold
+                )
+            else:
+                handle = _SessionProxyIO(session, log_command, log_output, fold_log=fold)
+            await handle.send("mysql -psecret\n")
+            read = await handle.expect("secret")
+    assert read == "mysql -psecret\r\n"
+    if standing is LogMode.NEVER:
+        assert relayed == []
+        assert [r.getMessage() for r in caplog.records if "secret" in r.getMessage()] == []
+    else:
+        assert relayed == [standing]
+
+
+def _host_output_records(text: str) -> list[logging.LogRecord]:
+    """The records the local host logs for the output *text*, as every route logs them."""
+    from otto.host.local_host import LocalHost
+
+    records: list[logging.LogRecord] = []
+
+    class _Keep(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    keep = _Keep(level=logging.DEBUG)
+    host_logger = logging.getLogger("otto.host.host")
+    host_logger.addHandler(keep)
+    saved = host_logger.level
+    host_logger.setLevel(logging.DEBUG)
+    try:
+        LocalHost()._log_output(text)
+    finally:
+        host_logger.removeHandler(keep)
+        host_logger.setLevel(saved)
+    return records
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        ("a\rb", ["@localhost > | a", "@localhost > | b"]),
+        ("10%\r20%\r", ["@localhost > | 10%", "@localhost > | 20%"]),
+        ("", ["@localhost > | "]),
+        ("\r10%\r20%", ["@localhost > | 10%", "@localhost > | 20%"]),
+        ("line\r\r", ["@localhost > | line"]),
+        ("a\r\rb", ["@localhost > | a", "@localhost > | b"]),
+        ("\r", ["@localhost > | "]),
+        ("\r\r", ["@localhost > | "]),
+        ("tab\tx", ["@localhost > | tab      x"]),
+        ("[red]x[/red]\ry", ["@localhost > | [red]x[/red]", "@localhost > | y"]),
+    ],
+)
+def test_a_sink_shows_each_carriage_return_segment_of_a_host_line_as_a_prefixed_line(
+    tmp_path: Path, text: str, shown: list[str]
+):
+    from otto.logger.management import _make_file_handler
+
+    (record,) = _host_output_records(text)
+    assert record.relayed == text  # the record keeps the program's line as it was
+    handler = _make_file_handler(tmp_path / "verbose.log", logging.DEBUG, rich=False)
+    try:
+        handler.emit(record)
+    finally:
+        handler.close()
+    written = (tmp_path / "verbose.log").read_text(encoding="utf-8").split("\n")
+    assert written.pop() == ""  # the file ends on a newline
+    for line, want in zip(written, shown, strict=True):
+        # Every line the file holds carries the record's prefix.
+        assert "INFO" in line
+        assert line.endswith(want)
+
+
+@pytest.mark.parametrize("msg", ["", "\r"])
+def test_a_file_sink_shows_an_empty_plain_record_as_one_prefixed_blank_line(
+    tmp_path: Path, msg: str
+):
+    from otto.logger.management import _make_file_handler
+
+    record = logging.LogRecord("otto.t", logging.INFO, __file__, 1, msg, None, None)
+    handler = _make_file_handler(tmp_path / "verbose.log", logging.DEBUG, rich=False)
+    try:
+        handler.emit(record)
+    finally:
+        handler.close()
+    (line, end) = (tmp_path / "verbose.log").read_text(encoding="utf-8").split("\n")
+    assert end == ""
+    assert "[INFO" in line
+
+
+def test_a_sink_shows_each_carriage_return_segment_of_a_plain_record_as_a_line():
+    from otto.logger.formatters import RichFormatter
+
+    record = logging.LogRecord(
+        "otto.t", logging.INFO, __file__, 1, "git said:\n10%\r20%\r\ndone", None, None
+    )
+    assert RichFormatter(fmt="{message}").format(record).split("\n") == [
+        "git said:",
+        "10%",
+        "20%",
+        "done",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        ("10%\r20%\r", ["@localhost > | 10%", "@localhost > | 20%"]),
+        ("\r10%\r20%", ["@localhost > | 10%", "@localhost > | 20%"]),
+        ("line\r\r", ["@localhost > | line"]),
+        ("", ["@localhost > | "]),
+        ("\r", ["@localhost > | "]),
+    ],
+)
+def test_the_console_shows_each_carriage_return_segment_of_a_host_line_as_a_prefixed_line(
+    text: str, shown: list[str]
+):
+    import io
+
+    from rich.console import Console
+
+    from otto.logger.management import _ConsoleHandler
+
+    (record,) = _host_output_records(text)
+    buf = io.StringIO()
+    handler = _ConsoleHandler(
+        console=Console(file=buf, width=200, color_system=None),
+        markup=False,
+        show_time=False,
+        show_path=False,
+    )
+    handler.emit(record)
+    printed = [line.rstrip() for line in buf.getvalue().split("\n")]
+    assert printed.pop() == ""
+    assert [line.removeprefix("INFO").strip() for line in printed] == [w.rstrip() for w in shown]
+    assert printed[0].startswith("INFO")  # one row, under the record's level
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [LogMode.NORMAL, LogMode.NEVER], ids=lambda m: m.name)
+@pytest.mark.parametrize("printed", ["a\\nb\\n", "a\\nb", ""])
+async def test_a_process_exec_builds_its_value_once(
+    monkeypatch: pytest.MonkeyPatch, mode: LogMode, printed: str
+):
+    from otto.host.local_host import LocalHost
+    from otto.host.session import ExecOutput
+
+    built: list[str] = []
+    real = ExecOutput.value
+
+    def counted(self: ExecOutput) -> str:
+        built.append(self.raw())
+        return real(self)
+
+    monkeypatch.setattr(ExecOutput, "value", counted)
+    host = LocalHost()
+    try:
+        result = await host.exec(f"printf '{printed}'", log=mode)
+    finally:
+        await host.close()
+    assert result.route == "local-subprocess"
+    assert len(built) == 1, built

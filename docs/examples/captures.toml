@@ -902,7 +902,7 @@ argv = ["{otto}", "--lab", "example_lab", "-n", "run", "install"]
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
-    ["(?m)(?:^ +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "         @dut > | <gcda hexdump>\n"],
+    ["(?m)(?:^INFO +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "INFO     @dut > | <gcda hexdump>\n"],
 ]
 
 [[capture]]
@@ -913,7 +913,7 @@ argv = ["{otto}", "--lab", "example_lab", "run", "install"]
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
-    ["(?m)(?:^ +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "         @dut > | <gcda hexdump>\n"],
+    ["(?m)(?:^INFO +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "INFO     @dut > | <gcda hexdump>\n"],
 ]
 
 # `run status` on the Zephyr host reads the extension the install just loaded
@@ -940,7 +940,7 @@ argv = ["{otto}", "--lab", "example_lab", "host", "dut", "exec", "llext call_fn 
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
-    ["(?m)(?:^ +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "         @dut > | <gcda hexdump>\n"],
+    ["(?m)(?:^INFO +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "INFO     @dut > | <gcda hexdump>\n"],
 ]
 
 [[capture]]
@@ -951,7 +951,7 @@ argv = ["{otto}", "--lab", "example_lab", "cov", "get", "--tier", "manual", "--t
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
-    ["(?m)(?:^ +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "         @dut > | <gcda hexdump>\n"],
+    ["(?m)(?:^INFO +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "INFO     @dut > | <gcda hexdump>\n"],
     ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
     ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
     ["otto-fetch\\n( +)-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch\\n\\1-<id>.<tmp>"],
@@ -977,7 +977,7 @@ argv = ["{otto}", "--lab", "example_lab", "run", "uninstall"]
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
-    ["(?m)(?:^ +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "         @dut > | <gcda hexdump>\n"],
+    ["(?m)(?:^INFO +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "INFO     @dut > | <gcda hexdump>\n"],
 ]
 
 [[capture]]
@@ -988,7 +988,7 @@ argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
-    ["(?m)(?:^ +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "         @dut > | <gcda hexdump>\n"],
+    ["(?m)(?:^INFO +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "INFO     @dut > | <gcda hexdump>\n"],
     ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
     ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
     ["otto-fetch\\n( +)-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch\\n\\1-<id>.<tmp>"],
@@ -1009,7 +1009,7 @@ argv = ["{otto}", "--lab", "example_lab", "cov", "report", "{xdir}/quickstart-em
 redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
-    ["(?m)(?:^ +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "         @dut > | <gcda hexdump>\n"],
+    ["(?m)(?:^INFO +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "INFO     @dut > | <gcda hexdump>\n"],
     ["dropped \\d+ others", "dropped <n> others"],
 ]
 
