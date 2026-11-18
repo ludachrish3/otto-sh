@@ -56,7 +56,7 @@
       "minor": "3.10",
       "buckets": {
         "fd": 12,
-        "other": 70,
+        "other": 72,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -66,14 +66,14 @@
         "site:typing_inspection": 17,
         "stdlib": 60
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "docker",
       "minor": "3.10",
       "buckets": {
         "fd": 12,
-        "other": 70,
+        "other": 72,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -83,14 +83,14 @@
         "site:typing_inspection": 17,
         "stdlib": 60
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "help",
       "minor": "3.10",
       "buckets": {
         "fd": 12,
-        "other": 70,
+        "other": 72,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -100,14 +100,14 @@
         "site:typing_inspection": 17,
         "stdlib": 60
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "host",
       "minor": "3.10",
       "buckets": {
         "fd": 12,
-        "other": 70,
+        "other": 72,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -117,14 +117,14 @@
         "site:typing_inspection": 17,
         "stdlib": 60
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "monitor",
       "minor": "3.10",
       "buckets": {
         "fd": 12,
-        "other": 70,
+        "other": 72,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -134,14 +134,14 @@
         "site:typing_inspection": 17,
         "stdlib": 60
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "reservation",
       "minor": "3.10",
       "buckets": {
         "fd": 12,
-        "other": 70,
+        "other": 72,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -151,14 +151,14 @@
         "site:typing_inspection": 17,
         "stdlib": 60
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "run",
       "minor": "3.10",
       "buckets": {
         "fd": 12,
-        "other": 70,
+        "other": 72,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -168,14 +168,14 @@
         "site:typing_inspection": 17,
         "stdlib": 60
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "schema",
       "minor": "3.10",
       "buckets": {
         "fd": 12,
-        "other": 70,
+        "other": 72,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -185,14 +185,14 @@
         "site:typing_inspection": 17,
         "stdlib": 60
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "test",
       "minor": "3.10",
       "buckets": {
         "fd": 12,
-        "other": 70,
+        "other": 72,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -202,14 +202,14 @@
         "site:typing_inspection": 17,
         "stdlib": 60
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "cov",
       "minor": "3.11",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -219,14 +219,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "docker",
       "minor": "3.11",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -236,14 +236,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "help",
       "minor": "3.11",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -253,14 +253,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "host",
       "minor": "3.11",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -270,14 +270,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "monitor",
       "minor": "3.11",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -287,14 +287,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "reservation",
       "minor": "3.11",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -304,14 +304,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "run",
       "minor": "3.11",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -321,14 +321,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "schema",
       "minor": "3.11",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -338,14 +338,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "test",
       "minor": "3.11",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -355,14 +355,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "cov",
       "minor": "3.12",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -372,14 +372,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "docker",
       "minor": "3.12",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -389,14 +389,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "help",
       "minor": "3.12",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -406,14 +406,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "host",
       "minor": "3.12",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -423,14 +423,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "monitor",
       "minor": "3.12",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -440,14 +440,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "reservation",
       "minor": "3.12",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -457,14 +457,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "run",
       "minor": "3.12",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -474,14 +474,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "schema",
       "minor": "3.12",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -491,14 +491,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "test",
       "minor": "3.12",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -508,14 +508,14 @@
         "site:typing_inspection": 17,
         "stdlib": 56
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "cov",
       "minor": "3.13",
       "buckets": {
         "fd": 12,
-        "other": 73,
+        "other": 74,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -525,14 +525,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "docker",
       "minor": "3.13",
       "buckets": {
         "fd": 12,
-        "other": 73,
+        "other": 74,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -542,14 +542,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "help",
       "minor": "3.13",
       "buckets": {
         "fd": 12,
-        "other": 73,
+        "other": 74,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -559,14 +559,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "host",
       "minor": "3.13",
       "buckets": {
         "fd": 12,
-        "other": 73,
+        "other": 74,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -576,14 +576,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "monitor",
       "minor": "3.13",
       "buckets": {
         "fd": 12,
-        "other": 73,
+        "other": 74,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -593,14 +593,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "reservation",
       "minor": "3.13",
       "buckets": {
         "fd": 12,
-        "other": 73,
+        "other": 74,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -610,14 +610,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "run",
       "minor": "3.13",
       "buckets": {
         "fd": 12,
-        "other": 73,
+        "other": 74,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -627,14 +627,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "schema",
       "minor": "3.13",
       "buckets": {
         "fd": 12,
-        "other": 73,
+        "other": 74,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -644,14 +644,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "test",
       "minor": "3.13",
       "buckets": {
         "fd": 12,
-        "other": 73,
+        "other": 74,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -661,14 +661,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "cov",
       "minor": "3.14",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -678,14 +678,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "docker",
       "minor": "3.14",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -695,14 +695,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "help",
       "minor": "3.14",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -712,14 +712,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "host",
       "minor": "3.14",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -729,14 +729,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "monitor",
       "minor": "3.14",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -746,14 +746,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "reservation",
       "minor": "3.14",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -763,14 +763,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "run",
       "minor": "3.14",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -780,14 +780,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "schema",
       "minor": "3.14",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -797,14 +797,14 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     },
     {
       "surface": "test",
       "minor": "3.14",
       "buckets": {
         "fd": 12,
-        "other": 67,
+        "other": 68,
         "otto:config": 4,
         "site:*": 4,
         "site:annotated_types": 6,
@@ -814,7 +814,7 @@
         "site:typing_inspection": 17,
         "stdlib": 67
       },
-      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer."
+      "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
     }
   ]
 }

@@ -261,7 +261,16 @@ tip and run `make release` again. When `reports/budget/other/<minor>.json`
 holds the other environment's records for that minor (CI's
 `budget-<minor>` artifact, placed by hand), each grown surface's stop line is
 followed by an `other environment:` line with that environment's numbers.
-An approval applies to both environments.
+An approval applies to both environments, so when they measure a bucket
+differently, approve the larger amount and say so in the `why`. The
+`other` bucket is the usual case. It holds every path under no measured
+root, and its machine-dependent part (the interpreter install, the loader's
+shared libraries, locale and OpenSSL configuration) is laid out differently
+on CI's x86_64 runner and the aarch64 dev VM, so the same tree can grow it
+by an operation or two more on one of them. A pull request's approval is
+written from CI's numbers alone, so the larger figure usually first shows
+up as a release stop on the dev VM, with the `other environment:` line
+beside it.
 
 The same delta runs on every pull request whose diff can move the budget,
 against the release tag nearest its merge base, so most growth is approved
