@@ -100,10 +100,10 @@ def _field_default(f: "dataclasses.Field[Any]") -> Any:
     default = f.default if f.default is not dataclasses.MISSING else inspect.Parameter.empty
     if isinstance(default, FieldInfo):
         if default.default_factory is not None:
-            # Called once here (signature-build time), not per invocation —
-            # safe because the pydantic dataclass calls the factory again on
-            # each construction, so the per-instance field is always fresh;
-            # this value is only Typer's CLI-default sentinel.
+            # Called here, when the signature is built. Typer passes an unset
+            # flag's default to the command, so this value is what an unset
+            # flag builds the instance with: one per signature, which is one
+            # per CLI invocation.
             return default.default_factory()
         if not default.is_required():
             return default.default
@@ -116,9 +116,8 @@ def _secret_types() -> "tuple[type, ...]":
     """Return the pydantic secret types: a value of one ``str()``s as a mask, not the value.
 
     A function, not a module constant, so ``pydantic`` stays a call-time
-    import (see :func:`sensitive_field_names`). Both questions read it:
-    whether a VALUE is a secret (:func:`_is_secret`) and whether a TYPE
-    holds one (:func:`contains_secret_type`).
+    import (see :func:`sensitive_field_names`). :func:`contains_secret_type`
+    and the annotation-text pattern below both read it.
     """
     import pydantic
 
@@ -130,28 +129,6 @@ def _secret_type_name() -> "re.Pattern[str]":
     """Return a pattern matching a secret type's name as a whole word in annotation text."""
     names = "|".join(t.__name__ for t in _secret_types())
     return re.compile(rf"\b(?:{names})\b")
-
-
-def _is_secret(value: object) -> bool:
-    """Whether *value* is a pydantic secret, whose ``str()`` is a mask, not the value."""
-    return isinstance(value, _secret_types())
-
-
-def drop_unset_secrets(opts_cls: type, kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Return *kwargs* without the secret-defaulted flags the command line left unset.
-
-    :func:`options_params` gives such a flag the CLI default ``None``; a
-    ``None`` for it therefore means "not given", and dropping it lets the
-    dataclass apply its own secret default.
-    """
-    if not dataclasses.is_dataclass(opts_cls):
-        return kwargs
-    unset = {
-        f.name
-        for f in dataclasses.fields(opts_cls)
-        if kwargs.get(f.name, ...) is None and _is_secret(_field_default(f))
-    }
-    return {k: v for k, v in kwargs.items() if k not in unset}
 
 
 def contains_secret_type(tp: Any) -> bool:
@@ -346,6 +323,11 @@ def options_params(opts_cls: "type[DataclassInstance]") -> list[inspect.Paramete
     Typer can extract the help text and other metadata.  Works with inherited
     fields because ``get_type_hints`` and ``dataclasses.fields`` both traverse
     the full MRO.
+
+    Typer converts each value to its field's type and nothing more. It drops
+    every other ``Annotated`` entry, so a ``Field(gt=...)`` constraint or a
+    pydantic validator is enforced in one place only: the options class itself,
+    through :func:`build_options` (#1119).
     """
     params: list[inspect.Parameter] = []
     hints = get_type_hints(opts_cls, include_extras=True)
@@ -358,13 +340,6 @@ def options_params(opts_cls: "type[DataclassInstance]") -> list[inspect.Paramete
             # cache either (its serialiser stores no default for a flag whose
             # help hides it): a ``repr=False`` default may be a credential.
             typ = _default_hidden(typ)  # noqa: PLW2901 — the hidden form replaces the hint
-        if _is_secret(default):
-            # Click renders a default through the option's type, and a secret
-            # renders as '**********' -- which the dataclass would then take
-            # as the value. None survives click untouched and means "not
-            # given" (see :func:`drop_unset_secrets`), so the dataclass's own
-            # default applies and neither the help nor a dry run shows it.
-            default = None
         params.append(
             inspect.Parameter(
                 name,
@@ -449,14 +424,11 @@ class OptionsSource:
     def build(self, opts_cls: "type[DataclassInstance]") -> Any:
         """Construct *opts_cls* from this source; pydantic validates the result."""
         if self.kwargs is not None:
-            picked = drop_unset_secrets(
-                opts_cls,
-                {
-                    f.name: self.kwargs[f.name]
-                    for f in dataclasses.fields(opts_cls)
-                    if f.name in self.kwargs
-                },
-            )
+            picked = {
+                f.name: self.kwargs[f.name]
+                for f in dataclasses.fields(opts_cls)
+                if f.name in self.kwargs
+            }
         else:
             picked = shared_field_values(opts_cls, self.instance)
         return build_options(opts_cls, picked)

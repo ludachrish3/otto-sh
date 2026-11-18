@@ -184,6 +184,35 @@ def test_validation_exits_2_before_the_body(run_cli):
     assert "n must be >= 1" in result.output, "exit 2 for the VALIDATION, not an unknown flag"
 
 
+def test_an_annotated_field_constraint_is_a_usage_error_from_build_options(run_cli):
+    """Typer drops ``Annotated`` pydantic metadata; otto's ``build_options`` enforces it.
+
+    The constraint on ``n`` reaches Typer as ``Annotated[int, Option(),
+    Field(gt=3)]``, the order docs/setup/options-classes.md documents. Typer
+    0.29 keeps only the ``int`` and the ``Option``
+    (``test_typer_still_drops_annotated_pydantic_metadata`` pins that). The
+    refusal comes from the one validator otto runs, the options class itself,
+    through ``build_options``, with that validator's own message (#1119).
+    """
+    import pydantic
+
+    @options
+    class Bounded:
+        n: Annotated[int, typer.Option(), pydantic.Field(gt=3)] = 5
+
+    register_options(Bounded, verbs=["run"])
+    ran = []
+
+    @instruction()
+    async def bounded_body() -> None:
+        ran.append(True)
+
+    result = run_cli(["run", "bounded-body", "--n", "1"])
+    assert result.exit_code == 2, result.output
+    assert ran == []
+    assert "n: Input should be greater than 3" in " ".join(result.output.replace("│", " ").split())
+
+
 def test_project_instructions_gain_run_flags_too(run_cli):
     register_options(ProjectOptions, verbs=["run"])
     assert "--lab-env" in run_cli(["run", "install", "--help"]).output
@@ -298,28 +327,75 @@ def test_an_own_class_registered_for_the_verb_is_built_once_under_dry_run(run_cl
     assert built == [3], "the own class must be built exactly once under -n too"
 
 
-def test_a_secret_default_reaches_the_instruction_as_its_value(run_cli):
-    """Typer used to render the default through str(): the body got '**********'."""
+def _secret_default_shapes():
+    """Every way an options field can default to a pydantic secret, with its raw default."""
     import pydantic
 
-    @options
-    class Vault:
-        token: Annotated[pydantic.SecretStr, typer.Option()] = pydantic.SecretStr("dflt")
+    return [
+        pytest.param(
+            Annotated[pydantic.SecretStr, typer.Option()],
+            pydantic.SecretStr("dflt"),
+            "dflt",
+            id="SecretStr",
+        ),
+        pytest.param(
+            Annotated[pydantic.SecretBytes, typer.Option()],
+            pydantic.SecretBytes(b"dflt"),
+            b"dflt",
+            id="SecretBytes",
+        ),
+        pytest.param(
+            Annotated[pydantic.Secret[str], typer.Option()],
+            pydantic.Secret[str]("dflt"),
+            "dflt",
+            id="Secret[str]",
+        ),
+        pytest.param(
+            Annotated[pydantic.SecretStr, typer.Option()],
+            pydantic.Field(default=pydantic.SecretStr("dflt")),
+            "dflt",
+            id="Field-default",
+        ),
+        pytest.param(
+            Annotated[pydantic.SecretStr, typer.Option()],
+            pydantic.Field(default_factory=lambda: pydantic.SecretStr("dflt")),
+            "dflt",
+            id="Field-default_factory",
+        ),
+    ]
 
-    register_options(Vault, verbs=["run"])
+
+@pytest.mark.parametrize(("hint", "default", "raw"), _secret_default_shapes())
+def test_a_secret_default_reaches_the_instruction_as_its_value(run_cli, hint, default, raw):
+    """Typer before 0.29 rendered the default through str(): the body got '**********'.
+
+    On 0.29 a secret default reaches the body intact, so otto needs no
+    workaround for it (#1119). This pins that for every secret type and default
+    form, through both binding paths, and checks that neither --help nor a dry
+    run shows the default.
+    """
+    vault_cls = options(type("Vault", (), {"__annotations__": {"token": hint}, "token": default}))
+    register_options(vault_cls, verbs=["run"])
     seen = []
 
     @instruction()
-    async def peek_secret(vault: Vault) -> None:
+    async def peek_secret(vault: vault_cls, ctx: OttoContext) -> None:  # ty: ignore[invalid-type-form]
         seen.append(vault.token.get_secret_value())
+        seen.append(ctx.options(vault_cls).token.get_secret_value())
 
+    typed = b"typed" if isinstance(raw, bytes) else "typed"
     assert run_cli(["run", "peek-secret"]).exit_code == 0
     assert run_cli(["run", "peek-secret", "--token", "typed"]).exit_code == 0
-    assert seen == ["dflt", "typed"]
+    assert seen == [raw, raw, typed, typed]
+    shown = str(raw, "ascii") if isinstance(raw, bytes) else raw
+    help_out = run_cli(["run", "peek-secret", "--help"]).output
+    assert "--token" in help_out
+    assert shown not in help_out
+    assert "*****" not in help_out
     dry = run_cli(["run", "peek-secret"], dry_run=True)
     assert dry.exit_code == 0, dry.output
     assert "--token" not in dry.output
-    assert "dflt" not in dry.output
+    assert shown not in dry.output
 
 
 def test_no_sensitive_default_reaches_the_run_cache_or_help(run_cli):

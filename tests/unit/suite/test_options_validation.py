@@ -209,3 +209,35 @@ def test_verb_plain_dataclass_options_still_work(monkeypatch):
     result = CliRunner().invoke(_test_app(), ["test_x", "--label", "y"])
     assert result.exit_code == 0, result.output
     assert seen["options"][0].label == "y"
+
+
+def test_typer_still_drops_annotated_pydantic_metadata():
+    """Pins Typer's own behaviour, so a release that changes it fails here (#1119).
+
+    Typer 0.29 keeps only the base type and its ``Option`` from an
+    ``Annotated`` hint, so ``Field(gt=3)`` and ``AfterValidator`` never run on
+    the command line. otto therefore validates options in one place, the
+    options class, through ``build_options``. When this test fails, Typer has
+    started honouring the metadata: decide whether the CLI should keep
+    ``build_options`` as the only validator or let Typer refuse the value first,
+    so the two never disagree on a message.
+    """
+    from typing import Annotated
+
+    import pydantic
+    import typer
+    from typer.testing import CliRunner
+
+    seen: list[object] = []
+    app = typer.Typer()
+
+    @app.command()
+    def cmd(
+        n: Annotated[int, pydantic.Field(gt=3), typer.Option()] = 5,
+        a: Annotated[str, pydantic.AfterValidator(str.upper), typer.Option()] = "x",
+    ) -> None:
+        seen.extend([n, a])
+
+    result = CliRunner().invoke(app, ["--n", "1", "--a", "hi"])
+    assert result.exit_code == 0, result.output
+    assert seen == [1, "hi"], "Typer now applies Annotated pydantic metadata: see the docstring"

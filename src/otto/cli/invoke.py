@@ -27,7 +27,6 @@ from ..params import (
     OptionsOrigin,
     OptionsValidationError,
     build_options,
-    drop_unset_secrets,
     merge_option_params,
     options_params,
     sensitive_field_names,
@@ -197,14 +196,13 @@ def _bind_and_build_own(
     at the CLI boundary.
 
     *kw* may hold more keys than the own class needs (the command's other
-    parameters); anything outside *own_field_names* is ignored. An unset
-    secret field is dropped so its default applies. Returns ``None`` when
-    *opts_cls* is ``None``.
+    parameters); anything outside *own_field_names* is ignored. Returns
+    ``None`` when *opts_cls* is ``None``.
     """
     if opts_cls is None:
         return None
     opts_kw = {k: v for k, v in kw.items() if k in own_field_names}
-    return build_options(opts_cls, drop_unset_secrets(opts_cls, opts_kw))
+    return build_options(opts_cls, opts_kw)
 
 
 def _bind_run_leaf(
