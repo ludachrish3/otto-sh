@@ -289,10 +289,16 @@ class TestZephyrFrame:
         assert self.frame.marks_begin(f"{M.begin}: command not found", m=M)
         assert not self.frame.marks_begin("nope", m=M)
 
-    def test_streams_output_live_is_false(self):
-        # The Zephyr stream interleaves prompts + a `retval` line, so it must be
-        # buffered and emitted via parse_output rather than streamed raw.
-        assert ZephyrFrame.streams_output_live is False
+    def test_streams_output_live_with_its_tail_held_back(self):
+        # The Zephyr stream follows the output with a prompt, a `retval` line and
+        # a prompt, so it streams with those three held back until END.
+        assert ZephyrFrame.streams_output_live is True
+        assert ZephyrFrame.live_hold_lines == 3
+        assert ZephyrFrame().live_skip_lines == 1
+
+    def test_clean_output_is_the_cleaning_its_value_gets(self):
+        raw = "\x1b[1;31merr\x1b[m\r\n\x1b[17Cmore\r\n"
+        assert self.frame.clean_output(raw) == "err\n\x1b[17Cmore\n"
 
     def test_extract_retcode_reads_retval_integer_line(self):
         # Modelled on the real shell: prompt after each executed line.
@@ -344,8 +350,9 @@ class TestZephyrSerialFrame:
         )
         assert self.frame.extract_retcode(buf, m=M) == 0
 
-    def test_inherits_buffered_streaming(self):
-        assert ZephyrSerialFrame.streams_output_live is False
+    def test_inherits_held_back_streaming(self):
+        assert ZephyrSerialFrame.streams_output_live is True
+        assert ZephyrSerialFrame.live_hold_lines == 3
 
 
 class TestRecoverProbe:
