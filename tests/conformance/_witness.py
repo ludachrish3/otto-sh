@@ -125,12 +125,21 @@ async def _cleaned_up(cleanup: "Callable[[], Awaitable[None]]", path: str) -> "A
     await cleanup()
 
 
+def scratch_file(purpose: str) -> str:
+    """A path no other test invocation names: ``/tmp/otto-cf-<purpose>-<uuid4 hex>``.
+
+    On the host that runs the cell's commands; the one spelling of a
+    contract's scratch file on a device.
+    """
+    return f"/tmp/otto-cf-{purpose}-{uuid.uuid4().hex}"
+
+
 @contextlib.asynccontextmanager
 async def witness(
     resolved: ResolvedCell, host: BaseHost, *, purpose: str = "timeout"
 ) -> "AsyncIterator[Witness]":
     """One witness on *resolved*'s host, observed and cleaned up by the one observer it picks."""
-    path = f"/tmp/otto-cf-{purpose}-{uuid.uuid4().hex}"
+    path = scratch_file(purpose)
     if resolved.kind in RUNNER_LOCAL_KINDS:
 
         async def observe_here() -> str:
