@@ -40,6 +40,7 @@ from pathlib import Path
 import pytest
 
 from tests._ambient_env import ambient
+from tests._fixtures._browser_guard import is_browser_test
 
 _E2E_ROOT = Path(__file__).parent
 _PRIMARY = {"hostless", "integration", "embedded"}
@@ -111,7 +112,7 @@ def _generous_browser_ceilings(request: pytest.FixtureRequest) -> None:
     test rather than once per session — a session-scoped fixture would not
     re-apply it in every xdist worker.
     """
-    if request.node.get_closest_marker("browser") is None:
+    if not is_browser_test(request):
         return
     from playwright.sync_api import expect as _expect
 
