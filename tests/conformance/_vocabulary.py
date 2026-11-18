@@ -335,6 +335,30 @@ class Vocabulary:
     only quote an unknown command back.
     """
 
+    prompting_command: str | None
+    """Prints :attr:`prompt_text` with no newline, reads one line, then prints that line.
+
+    The ``expects=`` stimulus of ``exec-options``: the answer otto types is the
+    command's output. ``None`` where the userland has no stock command that
+    prompts and reads a line (measured 2026-11-18 on Zephyr 2.7.6, 3.7.2 and
+    4.4.1: no command in ``help`` reads a line, ``tests/measurements/zephyr_privilege/``).
+    """
+
+    prompting_whoami_command: str | None
+    """:attr:`prompting_command` that prints the effective user's login name, a space, then
+    the line it read: the ``expects=`` and ``sudo=`` stimulus, so the answer and the
+    elevation are both in the one value. One simple command (``sh -c``). ``None`` where
+    :attr:`prompting_command` is."""
+
+    prompt_text: str | None
+    """What :attr:`prompting_command` prints before it reads; the pattern ``expects=`` answers."""
+
+    whoami_command: str | None
+    """Prints the effective user's login name and nothing else. ``None`` where the userland has
+    no users (Zephyr: ``whoami`` and ``id`` are ``command not found``, measured 2026-11-18,
+    ``tests/measurements/zephyr_privilege/``).
+    """
+
     signal_kill_command: str | None
     """Dies of SIGTERM in a child, for ``run``; never kills the session's shell (M1)."""
 
@@ -381,6 +405,10 @@ class Vocabulary:
     """Closes output in the command's own outer shell, so EOF precedes exit (M8); exec entries
     only.
     """
+
+
+_PROMPT_TEXT = "otto-cf-answer? "
+"""The prompt :attr:`Vocabulary.prompting_command` prints: a token no shell prints by itself."""
 
 
 #: Bash, ash and any other POSIX shell: the vocabulary the seven contracts were
@@ -433,6 +461,17 @@ POSIX = Vocabulary(
     terminal_baseline_answer="noecho icanon",
     exit_session_command="exit 7",
     distinct_answer_template="printf '%s\\n' {token}",
+    # One simple command (`sh -c`), so `sudo=True` elevates all of it: a
+    # compound command under sudo is a separate, open difference.
+    prompting_command=(
+        f'sh -c \'printf "%s" "{_PROMPT_TEXT}"; IFS= read -r a; printf "%s\\n" "$a"\''
+    ),
+    prompting_whoami_command=(
+        f'sh -c \'printf "%s" "{_PROMPT_TEXT}"; IFS= read -r a; '
+        f'printf "%s %s\\n" "$(id -un)" "$a"\''
+    ),
+    prompt_text=_PROMPT_TEXT,
+    whoami_command="id -un",
     signal_kill_command="sh -c 'kill -TERM $$'",
     exec_signal_kill_command="exec sh -c 'kill -TERM $$'",
     signal_exit_code=143,
@@ -520,6 +559,10 @@ _ZEPHYR_BASE = Vocabulary(
     terminal_baseline_answer=None,
     exit_session_command=None,
     distinct_answer_template="{token}",
+    prompting_command=None,
+    prompting_whoami_command=None,
+    prompt_text=None,
+    whoami_command=None,
     signal_kill_command=None,
     exec_signal_kill_command=None,
     signal_exit_code=None,

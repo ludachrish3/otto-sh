@@ -22,7 +22,6 @@ from collections.abc import Callable
 
 import pytest
 
-from otto.host.exec_route import ExecRoute
 from tests.conformance._entry import EXEC, expected_route, issue, opened
 from tests.conformance._resolved import ResolvedCell
 
@@ -39,12 +38,6 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     (the Zephyr shell runs no process with a stdin to read).
     """
     return resolved.vocabulary.stdin_eof_command is not None
-
-
-def _elevated_route(resolved: ResolvedCell) -> str:
-    """The route ``exec(sudo=True)`` takes: a shell, so the ssh channel's cells take the pool."""
-    route = expected_route(resolved)
-    return ExecRoute.POOLED_SHELL.value if route == ExecRoute.SSH_CHANNEL.value else route
 
 
 def _stdin_words(resolved: ResolvedCell) -> str:
@@ -76,7 +69,7 @@ async def test_an_exec_without_expects_reads_end_of_file(
             # Arm: after otto's own password prompt. The prompt otto answered is
             # the terminal's output, ahead of the command's.
             elevated = await host.exec(cmd, timeout=_STDIN_BUDGET_S, sudo=True)
-            assert elevated.route == _elevated_route(resolved_cell)
+            assert elevated.route == expected_route(resolved_cell, shell_bound=True)
             assert (elevated.timed_out, elevated.value.endswith("otto-cf-eof")) == (False, True)
             note_observable(
                 f"value and timed_out of `{cmd}` under a 5s budget, plain and under "
@@ -95,6 +88,6 @@ async def test_control_input_given_to_the_command_is_read(resolved_cell: Resolve
         if resolved_cell.password_sudo and resolved_cell.entry == EXEC:
             # The elevated arm, on the same cells as the contract's.
             elevated = await host.exec(piped_cmd, timeout=_STDIN_BUDGET_S, sudo=True)
-            assert elevated.route == _elevated_route(resolved_cell)
+            assert elevated.route == expected_route(resolved_cell, shell_bound=True)
             # Fails an elevation that swallows the command's input.
             assert elevated.value.endswith("x\notto-cf-eof")

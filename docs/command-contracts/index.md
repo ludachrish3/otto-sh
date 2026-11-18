@@ -214,6 +214,8 @@ that apply to it.
 | {ref}`How long one command can be, on the ssh-channel route <exception-how-long-one-command-can-be-on-the-ssh-channel-route>` | 9000 characters ran whole on dropbear 2022.83; other ssh servers were not measured |
 | {ref}`How long one line of a command can be, on the pooled-shell and default-session routes <exception-how-long-one-line-of-a-command-can-be-on-the-pooled-shell-and-default-session-routes>` | in a shell session (the `pooled-shell` and `default-session` routes), 4095 characters per line; 1022 on a BusyBox shell whose terminal still echoes |
 | {ref}`A 0xFF byte in a command's output, on a console whose host record sets console_options.escapes_iac: false <exception-a-0xff-byte-in-a-command-s-output-on-a-console-whose-host-record-sets-console-options-escapes-iac-false>` | a 0xFF byte the command writes is lost, and sometimes the bytes after it |
+| {ref}`Elevating a command with sudo= on run and exec, on the embedded and zephyr host families <exception-elevating-a-command-with-sudo-on-run-and-exec-on-the-embedded-and-zephyr-host-families>` | no `sudo` or `su` on the device shell |
+| {ref}`Running a command as another user= on run and exec, on the embedded and zephyr host families <exception-running-a-command-as-another-user-on-run-and-exec-on-the-embedded-and-zephyr-host-families>` | no user accounts on the device shell |
 
 Each section below gives the exception's **kind**: device: the device cannot do it; library: a library otto builds on behaves this way.
 
@@ -271,6 +273,34 @@ Measured (the lab detail, for the evidence):
 - 2026-11-13, BusyBox 1.35.0 guest bb1350, its ttyS1 bridged by QEMU's `-serial telnet:` on test1:2450: printf 'SA\377BE' arrives on the wire as 53 41 ff 42 45 (not ff ff), which telnetlib3 5.0.1 reads as 'SABE'; \377\377 arrives as ff ff and reads as one 0xFF; `run` and `exec` of printf '\377\n' answer ''
 - 2026-11-13, same console: 0x00, 0x0D, 0xFB, 0xFD and 0xFE each arrive intact between two ASCII bytes
 - 2026-11-13, replayed through telnetlib3 5.0.1 and otto's reader behind the captured QEMU greeting (no wire capture): after 'SA', ff 42 reads 'B', ff 00 reads 0x00, ff f0 reads 0xF0, ff f1 to ff f9 lose both bytes, ff fb to ff fe lose those and the option byte after them, ff fa 01 42 43 44 ff f0 45 reads only 'E', and ff fa with no ff f0 after it reads nothing more at all
+
+(exception-elevating-a-command-with-sudo-on-run-and-exec-on-the-embedded-and-zephyr-host-families)=
+
+### Elevating a command with `sudo=` on `run` and `exec`, on the `embedded` and `zephyr` host families
+
+Where: the `embedded` and `zephyr` host families. Kind: device: the device cannot do it.
+
+The device shell has no privilege levels to elevate between: it offers no `sudo` or `su`, and every command already runs with the shell's one identity. Measured on Zephyr; a family for another RTOS declares its own measurement.
+
+Measured (the lab detail, for the evidence):
+
+- 2026-11-18, Zephyr 2.7.6 (zephyr27_fat): `sudo true`, `su`, `whoami` and `id` each answer `<name>: command not found` (retcode -8); `help` lists no user or privilege command (tests/measurements/zephyr_privilege/zephyr27_fat.txt)
+- 2026-11-18, Zephyr 3.7.2 (zephyr37_fat): `sudo true`, `su`, `whoami` and `id` each answer `<name>: command not found` (retcode -8); `help` lists no user or privilege command (tests/measurements/zephyr_privilege/zephyr37_fat.txt)
+- 2026-11-18, Zephyr 4.4.1 (zephyr44_lfs): `sudo true`, `su`, `whoami` and `id` each answer `<name>: command not found` (retcode -8); `help` lists no user or privilege command (tests/measurements/zephyr_privilege/zephyr44_lfs.txt)
+
+(exception-running-a-command-as-another-user-on-run-and-exec-on-the-embedded-and-zephyr-host-families)=
+
+### Running a command as another `user=` on `run` and `exec`, on the `embedded` and `zephyr` host families
+
+Where: the `embedded` and `zephyr` host families. Kind: device: the device cannot do it.
+
+The device shell has no user accounts to switch to: it offers no `su`, `whoami` or `id`, and the console's one identity is the only one there is. Measured on Zephyr; a family for another RTOS declares its own measurement.
+
+Measured (the lab detail, for the evidence):
+
+- 2026-11-18, Zephyr 2.7.6 (zephyr27_fat): `sudo true`, `su`, `whoami` and `id` each answer `<name>: command not found` (retcode -8); `help` lists no user or privilege command (tests/measurements/zephyr_privilege/zephyr27_fat.txt)
+- 2026-11-18, Zephyr 3.7.2 (zephyr37_fat): `sudo true`, `su`, `whoami` and `id` each answer `<name>: command not found` (retcode -8); `help` lists no user or privilege command (tests/measurements/zephyr_privilege/zephyr37_fat.txt)
+- 2026-11-18, Zephyr 4.4.1 (zephyr44_lfs): `sudo true`, `su`, `whoami` and `id` each answer `<name>: command not found` (retcode -8); `help` lists no user or privilege command (tests/measurements/zephyr_privilege/zephyr44_lfs.txt)
 
 (command-contracts-undefined)=
 
@@ -341,6 +371,7 @@ By promise id:
 - `exec-cancel`: `tests/conformance/test_cancel_contract.py::test_cancelling_an_exec_stops_its_command_and_leaves_the_host_usable`
 - `exec-log`: `tests/conformance/test_log_contract.py::test_the_log_receives_the_lines_of_value`
 - `exec-dry-run`: `tests/conformance/test_dry_run_contract.py::test_a_dry_run_reaches_no_device_and_returns_one_shape`
+- `exec-options`: `tests/conformance/test_options_contract.py::test_an_option_has_the_same_effect_everywhere_or_is_refused_by_name`
 - `timeout`: `tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way`
 
 The suite checks shell-routed `exec` (the `exec-shell` entry) on an SSH host

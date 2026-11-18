@@ -55,14 +55,25 @@ them has a lab entry to derive a userland from. It is also the reason the
 contracts' bash spellings were universally true of this venue and broke the
 moment the bed venue reached a Zephyr shell: a contract's portability is only
 tested by the venue it runs in.
+
+EVERY KIND CARRIES THE STAND-IN ELEVATION (:func:`stand_in_elevation`): no
+hermetic login has a second user or a sudo this venue may drive, so each
+host's shells find the one stand-in ``sudo``, ``su`` and ``id``
+(:mod:`tests._fixtures.fake_elevation`) first on ``PATH``, and each cell
+names the stand-in's user as its :attr:`~ResolvedCell.switch_user`. The
+stand-in ``sudo`` never asks (as the bed's ``NOPASSWD`` logins do), and
+``su - USER`` becomes *USER* without a password, so ``exec-options`` can
+drive ``sudo=`` and ``user=`` here without touching the runner's own sudo.
 """
 
 import asyncio
 import contextlib
+import dataclasses
 import json
+import os
 import subprocess
 import tempfile
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AbstractAsyncContextManager
 from functools import partial
 from pathlib import Path
@@ -70,11 +81,20 @@ from pathlib import Path
 from otto.host.factory import create_host_from_dict
 from otto.host.host import BaseHost
 from otto.host.local_host import LocalHost
+from otto.utils import process_user
 from tests._fixtures.busybox import BUSYBOX_MATRIX, BusyBoxRelease, busybox_binary, can_run
+from tests._fixtures.env_guard import preserved_env_var
+from tests._fixtures.fake_elevation import install_fake_elevation
 from tests._fixtures.labdata import element_of, entry_of, flatten_lab_doc
 from tests._fixtures.profiles import Cell
 from tests.conformance._bed import bed_space
-from tests.conformance._entry import LOCAL_FAMILY, family_of, hooked, proxied_on, switch_user_on
+from tests.conformance._entry import (
+    LOCAL_FAMILY,
+    family_of,
+    hooked,
+    proxied_on,
+    switch_user_on,
+)
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._venue import BED, current_venue
 from tests.conformance._vocabulary import POSIX
@@ -119,6 +139,66 @@ _INSTALL_TIMEOUT_S = 60
 #: rather than a reserved one, because reserving a port for a daemon that is
 #: never started would hold a lock for nothing.
 _RESOLVE_TIME_PORT = 22
+
+
+STAND_IN_USER = "otto-cf-svc"
+"""The second user every hermetic cell can become: a user no machine has, so only the
+stand-in ``su - USER`` can become them (:mod:`tests._fixtures.fake_elevation`)."""
+
+
+def _stand_in_for(login: str) -> str:
+    """:data:`STAND_IN_USER`, refusing a venue whose *login* is that user.
+
+    A second user equal to the login would make every user arm vacuous, so
+    the cell is never built rather than built and skipped.
+    """
+    if login == STAND_IN_USER:
+        raise RuntimeError(
+            f"the hermetic login is {login!r}, the stand-in's own name: no cell can switch "
+            f"to a second user"
+        )
+    return STAND_IN_USER
+
+
+@dataclasses.dataclass(frozen=True)
+class StandIn:
+    """Where :func:`stand_in_elevation` put the stand-in, and the variables that use it."""
+
+    bin_dir: Path
+    """The directory holding the stand-in ``sudo``, ``su`` and ``id``."""
+
+    env: "dict[str, str]"
+    """``PATH`` (:attr:`bin_dir` first) and ``FAKE_SUDO_DIR``."""
+
+
+@contextlib.contextmanager
+def stand_in_elevation() -> Iterator[StandIn]:
+    """Install the stand-in elevation in a fresh directory for the life of one host.
+
+    ``NOPASSWD``: the stand-in ``sudo`` never asks, as on the bed's GNU logins
+    (``tests/conformance/_bed.py``, ``BED_SUDO_ASKS_A_PASSWORD``).
+    """
+    with tempfile.TemporaryDirectory(prefix="conformance-elevation-") as tmp:
+        root = Path(tmp)
+        env = install_fake_elevation(
+            root, password="unused-stand-in-sudo", keeps_timestamp=True, nopasswd=True
+        )
+        yield StandIn(bin_dir=root / "bin", env=env)
+
+
+@contextlib.contextmanager
+def _local_stand_in() -> Iterator[StandIn]:
+    """:func:`stand_in_elevation`, in this process's environment, which every local shell inherits.
+
+    :class:`~otto.host.session.LocalSession` spawns its shell with this
+    process's environment, so the variables are set here for the block and
+    put back exactly after it.
+    """
+    with stand_in_elevation() as stand_in, contextlib.ExitStack() as stack:
+        for name, value in stand_in.env.items():
+            stack.enter_context(preserved_env_var(name))
+            os.environ[name] = value
+        yield stand_in
 
 
 def _servable(term: str, transfer: str) -> bool:
@@ -175,8 +255,9 @@ def _local_cells() -> "list[ResolvedCell]":
 
     @contextlib.asynccontextmanager
     async def opener() -> "AsyncIterator[BaseHost]":
-        async with LocalHost() as host:
-            yield host
+        with _local_stand_in():
+            async with LocalHost() as host:
+                yield host
 
     return [
         ResolvedCell(
@@ -186,6 +267,9 @@ def _local_cells() -> "list[ResolvedCell]":
             remote_scratch=_runner_scratch,
             vocabulary=POSIX,
             family=LOCAL_FAMILY,
+            switch_user=_stand_in_for(process_user() or ""),
+            switch_user_stand_in=True,
+            switch_user_may_sudo=True,
         )
     ]
 
@@ -239,6 +323,10 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
         proxied = {
             term: proxied_on(entry_of(entry), term, family=family) for term in host.valid_terms
         }
+        # The entry's own second user where it names one; the stand-in,
+        # who has no credential entry and is reached by `su`, where it does
+        # not (today: it names the login alone).
+        login = entry_of(entry)["creds"][0]["login"]
         switch_users = {
             term: switch_user_on(entry_of(entry), term, family=family) for term in host.valid_terms
         }
@@ -255,7 +343,10 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
             # placeholder (the loopback login is by key) and the hermetic venue
             # drives no real elevation. The password arm is the unit tests'.
             password_sudo=False,
-            switch_user=switch_users[term],
+            switch_user=switch_users[term] or _stand_in_for(login),
+            switch_user_direct=switch_users[term] is not None,
+            switch_user_stand_in=switch_users[term] is None,
+            switch_user_may_sudo=True,
             open_shell_host=(
                 hooked(partial(_loopback_build, term, transfer))
                 if term == "ssh" and not proxied[term]
@@ -291,7 +382,8 @@ def _loopback_opener(
     async def opener() -> "AsyncIterator[BaseHost]":
         with (
             tempfile.TemporaryDirectory(prefix="conformance-loopback-") as tmp,
-            loopback_sshd(Path(tmp)) as endpoint,
+            stand_in_elevation() as stand_in,
+            loopback_sshd(Path(tmp), session_env=stand_in.env) as endpoint,
         ):
             root = Path(tmp)
             make_loopback_target(root, endpoint)
@@ -350,6 +442,9 @@ def _busybox_cells() -> "list[ResolvedCell]":
             # lab entry to derive one from.
             vocabulary=POSIX,
             family=LOCAL_FAMILY,
+            switch_user=_stand_in_for(process_user() or ""),
+            switch_user_stand_in=True,
+            switch_user_may_sudo=True,
         )
         for release in BUSYBOX_MATRIX
         if can_run(release.arch)
@@ -364,7 +459,10 @@ def _busybox_opener(
     @contextlib.asynccontextmanager
     async def opener() -> "AsyncIterator[BaseHost]":
         binary = busybox_binary(release)
-        with tempfile.TemporaryDirectory(prefix=f"conformance-busybox-{release.version}-") as tmp:
+        with (
+            tempfile.TemporaryDirectory(prefix=f"conformance-busybox-{release.version}-") as tmp,
+            _local_stand_in() as stand_in,
+        ):
             applets = Path(tmp)
             # Off the event loop thread: a blocking `subprocess.run` here
             # would stall every other coroutine for the (emulated, and so not
@@ -378,7 +476,10 @@ def _busybox_opener(
                 timeout=_INSTALL_TIMEOUT_S,
             )
             async with LocalHost() as host:
-                await host.run(f'export PATH="{applets}:$PATH"')
+                # The stand-in elevation ahead of the applets: BusyBox's own
+                # `su` and `id` would otherwise shadow it, and the hermetic
+                # venue drives no real user switch (module docstring).
+                await host.run(f'export PATH="{stand_in.bin_dir}:{applets}:$PATH"')
                 # Confirm the prepend took, rather than assuming it. The
                 # session is a real shell and `export` is a real command; if
                 # it did not take, every later assertion would measure the

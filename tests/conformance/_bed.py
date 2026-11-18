@@ -69,6 +69,7 @@ from tests._fixtures.profiles import Cell, _ensure_custom_frames, axes_for, axis
 from tests.conformance._entry import (
     family_of,
     hooked,
+    login_on,
     password_sudo_on,
     proxied_on,
     switch_user_on,
@@ -111,6 +112,12 @@ LABS_NOT_CROSSED: frozenset[str] = frozenset({"chaos"})
 # password arm of `exec-stdin` is proved only by the hermetic unit tests
 # with the stand-in sudo (tests/unit/host/test_exec_stdin.py).
 BED_SUDO_ASKS_A_PASSWORD = False
+
+# Whether a bed cell's second user (`switch_user_on`) may run sudo. MEASURED
+# 2026-11-14, the same findings file: `test`, the GNU guests' second user,
+# may not run sudo at all, so `exec-options`' sudo-as-that-user arm has no
+# stimulus on the bed and is the hermetic stand-in's.
+BED_SWITCH_USER_MAY_SUDO = False
 
 BED_UNIX = "bed-unix"
 BED_BUSYBOX = "bed-busybox"
@@ -619,6 +626,13 @@ def bed_space() -> "list[ResolvedCell]":
         password_sudo = BED_SUDO_ASKS_A_PASSWORD and password_sudo_on(
             entry, cell.term, family=family_of(host)
         )
+        switch_user = switch_user_on(entry, cell.term, family=family_of(host))
+        if switch_user is not None and switch_user == login_on(
+            entry, cell.term, family=family_of(host)
+        ):
+            raise RuntimeError(
+                f"{cell.element}: the second user {switch_user!r} is the login itself"
+            )
         resolved.append(
             ResolvedCell(
                 cell=cell,
@@ -629,7 +643,9 @@ def bed_space() -> "list[ResolvedCell]":
                 family=family_of(host),
                 proxied_login=proxied,
                 password_sudo=password_sudo,
-                switch_user=switch_user_on(entry, cell.term, family=family_of(host)),
+                switch_user=switch_user,
+                switch_user_direct=switch_user is not None,
+                switch_user_may_sudo=switch_user is not None and BED_SWITCH_USER_MAY_SUDO,
                 open_shell_host=(
                     hooked(partial(_hooked_open, cell))
                     if cell.term == "ssh" and not proxied

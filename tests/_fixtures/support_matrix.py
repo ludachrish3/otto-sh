@@ -215,6 +215,14 @@ SURFACES: "tuple[Surface, ...]" = (
         ),
     ),
     Surface(
+        id="exec-options",
+        title="exec: an option has the same effect everywhere, or is refused by name",
+        contract=(
+            "tests/conformance/test_options_contract.py"
+            "::test_an_option_has_the_same_effect_everywhere_or_is_refused_by_name"
+        ),
+    ),
+    Surface(
         id="transfer-roundtrip",
         title="transfer: put/get roundtrip preserves content",
         contract=(
