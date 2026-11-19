@@ -198,6 +198,16 @@ PS_FAILED = "@ps-failed"
 found-nothing and could-not-look read differently. The tunnel and link checks'
 sweeps print it."""
 
+
+def ps_failed(output: str) -> bool:
+    """Say whether a failure-marking listing's *output* is :data:`PS_FAILED`: ``ps`` listed nothing.
+
+    The one reading of the marker, for every sweep that prints it: nothing is
+    known about such a host's processes, which is not the same as none running.
+    """
+    return PS_FAILED in [line.strip() for line in output.splitlines()]
+
+
 _PS_FIELDS = "-eo pid= -eo etime= -eo args="
 
 

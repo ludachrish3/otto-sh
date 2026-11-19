@@ -21,8 +21,10 @@ from tests._fixtures.bed_hygiene import (
     _NC_LISTENER_PROBE,
     _NETDEV_PROBE,
     HygieneSnapshot,
+    ProbeFailedError,
     QdiscReads,
     diff_snapshots,
+    echo_pids,
     format_hygiene_report,
     format_residual_report,
     listener_pids,
@@ -540,3 +542,59 @@ def test_the_staging_probe_lists_the_chaos_hold_file():
     from tests._fixtures import bed_hygiene
 
     assert "/run/chaos/shutdown_hold" in bed_hygiene._STAGING_PROBE
+
+
+# -- otto-check echoes (#1131) ------------------------------------------------
+
+
+# The issue's own ps line (#1131): the sentinel IS argv[0], socat's arguments follow.
+_ECHO_TOKEN = "otto-check:v1:5e8f68:-:tcp:segment:test3"
+_ECHO_LINE = (
+    f"2101878 01:02:03 {_ECHO_TOKEN} -b 65535 "
+    "TCP4-LISTEN:64910,bind=10.10.200.13,fork,reuseaddr PIPE"
+)
+# The sweep's own grep, always in its own ps listing, carrying the bare needle.
+_SWEEP_GREP_LINE = "2101990 00:00:00 grep -a -e  otto-check: -e ^@ps-failed$"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_host_lists_the_tunnel_check_echoes_and_not_the_sweeps_own_grep():
+    from otto.tunnel.check_probes import SWEEP_COMMAND
+
+    future = "4242 00:00:09 otto-check:v9:abcdef:-:udp:fwd-echo:test2 -b 65535 UDP4-LISTEN:1 PIPE"
+    host = _ScriptedHost(
+        canned_outputs={SWEEP_COMMAND: f"{_ECHO_LINE}\n{_SWEEP_GREP_LINE}\n{future}"}
+    )
+    snap = await snapshot_host(host)
+    assert snap.check_echoes == frozenset(
+        {f"2101878 {_ECHO_TOKEN}", "4242 otto-check:v9:abcdef:-:udp:fwd-echo:test2"}
+    ), "any version counts, the scan's grep does not"
+    assert echo_pids(snap) == [4242, 2101878]
+
+
+def test_check_echo_procs_is_the_one_reading_of_a_sweep():
+    """The reap's oracle and tests/e2e/test_tunnel_check_e2e.py's bracket both call it."""
+    from tests._fixtures.bed_hygiene import check_echo_procs
+
+    assert check_echo_procs(f"{_ECHO_LINE}\n{_SWEEP_GREP_LINE}", "test3") == [
+        (2101878, _ECHO_TOKEN)
+    ]
+    with pytest.raises(ProbeFailedError, match=r"test3.*@ps-failed"):
+        check_echo_procs("@ps-failed", "test3")
+
+
+@pytest.mark.asyncio
+async def test_a_sweep_that_cannot_list_processes_is_a_failed_probe_not_a_clean_host():
+    from otto.tunnel.check_probes import PS_FAILED, SWEEP_COMMAND
+
+    host = _ScriptedHost(canned_outputs={SWEEP_COMMAND: PS_FAILED})
+    with pytest.raises(ProbeFailedError, match=r"otto-check.*@ps-failed"):
+        await snapshot_host(host)
+
+
+def test_an_echo_is_residual_dirt_and_a_new_one_is_a_leftover():
+    line = f"2101878 {_ECHO_TOKEN}"
+    assert residual_dirt(_snap(check_echoes=frozenset({line}))) == [f"tunnel-check echo: {line}"]
+    assert diff_snapshots(_snap(), _snap(check_echoes=frozenset({line}))) == [
+        f"new tunnel-check echo: {line}"
+    ]

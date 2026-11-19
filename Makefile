@@ -1826,7 +1826,7 @@ bed-lease: ## (Lab) Hold the bed from this shell for as long as the shell lives 
 bed-release: ## (Lab) Free the bed cell whoever holds it, naming what was evicted — the eviction of a run you KNOW is dead (a lease whose workers still run is kept by the lanes themselves).
 	@$(BED_LEASE) release --pid $$PPID --force
 
-bed-reap: ## (Lab) Clean the bed after a killed or interrupted run, under the lease: otto tunnels, impair timers and qdiscs, nc listeners, staging, orphan docker stacks and e2e images, a half-built coverage product, a console left logged in, then the whole-bed console health report (`RESTART_QEMU=1` also restarts the guests). Refuses a bed another live run holds. Every bed lane runs the same reap (without the health report) at its start and its green exit.
+bed-reap: ## (Lab) Clean the bed after a killed or interrupted run, under the lease: otto tunnels and tunnel-check echoes, impair timers and qdiscs, nc listeners, staging, orphan docker stacks and e2e images, a half-built coverage product, a console left logged in, then the whole-bed console health report (`RESTART_QEMU=1` also restarts the guests). Refuses a bed another live run holds. Every bed lane runs the same reap (without the health report) at its start and its green exit.
 	$(call bed_acquire,bed-reap)
 	$(call bed_reap) --full $(if $(RESTART_QEMU),--restart-qemu)
 	$(call bed_release)

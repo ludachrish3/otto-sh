@@ -18,10 +18,9 @@ from typing import Any
 
 from ..check.errors import CheckHostUnreachableError
 from ..check.fingerprint import check_read
-from ..host.daemon import kill_command, parse_ps_output, rescan_until_exited
+from ..host.daemon import kill_command, parse_ps_output, ps_failed, rescan_until_exited
 from .check_probes import (
     CHECK_PREFIX,
-    PS_FAILED,
     SWEEP_COMMAND,
     EchoTag,
     echo_launch_command,
@@ -77,6 +76,10 @@ class EchoScan:
     ``-o`` fields): then nothing is known about the host's echoes, which is not
     the same as none running."""
 
+    pids: frozenset[int] = frozenset()
+    """Every ``otto-check:`` process ``ps`` listed, read or not: a killed echo is
+    confirmed gone by its pid, whatever its tag's version."""
+
     @property
     def tags(self) -> list[EchoTag]:
         """Every echo's tag, in the order ``ps`` listed them."""
@@ -87,15 +90,16 @@ async def scan(host: Any) -> EchoScan:
     """Every ``otto-check:v1`` echo running on *host*, whatever run started it."""
     result = await check_read(host, SWEEP_COMMAND)
     said = result.value or ""
-    if PS_FAILED in [line.strip() for line in said.splitlines()]:
+    if ps_failed(said):
         return EchoScan([], listed=False)
     found = []
-    for proc in parse_ps_output(said, CHECK_PREFIX):
+    procs = parse_ps_output(said, CHECK_PREFIX)
+    for proc in procs:
         tag = parse_echo_sentinel(proc.token)
         if tag is not None:
             age = proc.age_seconds if proc.age_known else None
             found.append(TaggedEcho(proc.pid, tag, age))
-    return EchoScan(found)
+    return EchoScan(found, pids=frozenset(proc.pid for proc in procs))
 
 
 def could_not_list(host_id: str) -> str:
@@ -120,7 +124,7 @@ async def _scan_after_kill(host: Any, pids: list[int]) -> EchoScan:
     killed = set(pids)
 
     def still_listed(after: EchoScan) -> bool:
-        return after.listed and any(echo.pid in killed for echo in after.echoes)
+        return after.listed and bool(killed & after.pids)
 
     return await rescan_until_exited(lambda: scan(host), still_listed)
 
@@ -140,7 +144,7 @@ async def kill_confirmed(host: Any, pids: list[int]) -> set[int] | None:
     after = await _scan_after_kill(host, pids)
     if not after.listed:
         return None
-    return {echo.pid for echo in after.echoes if echo.pid in pids}
+    return set(pids) & after.pids
 
 
 async def kill_matching(host: Any, wanted: Callable[[EchoTag], bool]) -> list[TaggedEcho]:

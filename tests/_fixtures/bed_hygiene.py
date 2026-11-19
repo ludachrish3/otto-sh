@@ -1,8 +1,9 @@
 """BedHygiene: per-host snapshot/diff oracle for the tier-3 chaos lane.
 
 Consolidates the piecemeal leftover checks (chaos spec, Tier 3): otto-tagged
-tunnel daemons, impair timers, nc listeners, tc qdisc state, /tmp/otto*
-staging entries, shell-history digest, and docker container/network probes —
+tunnel daemons, tunnel-check echoes, impair timers, nc listeners, tc qdisc
+state, /tmp/otto* staging entries, shell-history digest, and docker
+container, network and e2e-image probes —
 probed over a FRESH connection, snapshot before / diff after, failure naming
 the host and each leftover. Pre-existing dirt is snapshotted out (the
 tunnel_bed.py pattern): a dirty bed going in is never blamed on the scenario,
@@ -14,11 +15,14 @@ the existing suite-wide detectors; this module is remote-state only.
 """
 
 import dataclasses
+import re
 
+from otto.host.daemon import parse_ps_output, ps_failed
 from otto.link.netem import NetEmImpairer, parse_scoped_outputs
 from otto.link.sentinel import IMPAIR_PS_COMMAND, parse_impair_ps
 from otto.logger.mode import LogMode
 from otto.result import Result
+from otto.tunnel.check_probes import CHECK_PREFIX, PS_FAILED, SWEEP_COMMAND
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
 from tests._fixtures.docker_reap import E2E_IMAGE_LABEL, ORPHAN_FRAGMENTS, image_ids_command
 
@@ -184,6 +188,7 @@ class HygieneSnapshot:
     docker_containers: frozenset  # docker ps lines: "id names"
     docker_networks: frozenset  # docker network names
     docker_images: frozenset = frozenset()  # full ids of the e2e-labelled images
+    check_echoes: frozenset = frozenset()  # "pid token" per otto-check echo the tunnel sweep sees
 
 
 def netdevs_listed(qdisc_show: str) -> list[str]:
@@ -212,6 +217,7 @@ async def snapshot_host(host) -> HygieneSnapshot:
         check_probe_result(getattr(host, "id", "<unknown host>"), result)
         return result.value
 
+    echoes = check_echo_procs(await _out(SWEEP_COMMAND), getattr(host, "id", "<unknown host>"))
     tunnel_raw = await _out(DISCOVERY_PS_COMMAND)
     impair_raw = await _out(IMPAIR_PS_COMMAND)
     qdiscs = {}
@@ -233,7 +239,41 @@ async def snapshot_host(host) -> HygieneSnapshot:
         docker_containers=frozenset(probe_lines(await _out(_DOCKER_PS_PROBE))),
         docker_networks=frozenset(probe_lines(await _out(_DOCKER_NET_PROBE))),
         docker_images=frozenset(probe_lines(await _out(_DOCKER_IMAGES_PROBE))),
+        check_echoes=frozenset(f"{pid} {token}" for pid, token in echoes),
     )
+
+
+CHECK_ECHO_TAG = re.compile(rf"^{CHECK_PREFIX}:v\d+:")
+"""A tunnel-check echo's ``argv[0]``: the prefix, then a version segment, any version."""
+
+
+def check_echo_procs(sweep_output: str, host_id: str) -> list[tuple[int, str]]:
+    """Every tunnel-check echo a :data:`SWEEP_COMMAND` output on *host_id* lists: ``(pid, token)``.
+
+    The one test-side reading of "an echo is on the bed", for the bed oracle
+    and ``tests/e2e/test_tunnel_check_e2e.py``'s module bracket alike. It uses
+    the generic daemon parser, not the check's own sentinel parser, so an echo
+    of any version counts (a killed run of a branch that bumped the version
+    left one too). The version segment is required: the scan's own ``grep``
+    carries the bare ``otto-check:`` needle and shows up in its ``ps``
+    listing. A ``ps`` that could not list raises :class:`ProbeFailedError`:
+    nothing is known about that host's echoes, which is not the same as none.
+    """
+    if ps_failed(sweep_output):
+        raise ProbeFailedError(
+            f"bed probe failed on {host_id}: "
+            f"{SWEEP_COMMAND!r} -> {PS_FAILED!r} (ps could not list processes)"
+        )
+    return [
+        (proc.pid, proc.token)
+        for proc in parse_ps_output(sweep_output, CHECK_PREFIX)
+        if CHECK_ECHO_TAG.match(proc.token)
+    ]
+
+
+def echo_pids(snapshot: HygieneSnapshot) -> list[int]:
+    """The pids a snapshot's ``check_echoes`` lines name, ascending (the line's inverse)."""
+    return sorted(int(line.split(" ", 1)[0]) for line in snapshot.check_echoes)
 
 
 def tunnel_ids(snapshot: HygieneSnapshot) -> list[str]:
@@ -271,6 +311,7 @@ def diff_snapshots(before: HygieneSnapshot, after: HygieneSnapshot) -> list:
     leftovers = []
     for label, b, a in (
         ("otto-tunnel daemon", before.tunnel_procs, after.tunnel_procs),
+        ("tunnel-check echo", before.check_echoes, after.check_echoes),
         ("otto-impair timer", before.impair_timers, after.impair_timers),
         ("nc listener", before.nc_listeners, after.nc_listeners),
         ("staging entry", before.staging, after.staging),
@@ -334,7 +375,8 @@ def residual_dirt(snapshot: HygieneSnapshot) -> list[str]:
 
     :func:`diff_snapshots` is new-only (the chaos bracket must never blame a
     scenario for dirt it inherited); the bed reap asks the other question,
-    "what is still here", and this answers it: every otto-tunnel daemon,
+    "what is still here", and this answers it: every otto-tunnel daemon and
+    otto-check echo,
     otto-impair timer, nc listener the probe lists and ``/tmp/otto*`` staging
     entry (the bed hosts are the suite's fixtures, and those namespaces are
     the suite's by the oracle's definition); every docker container and
@@ -347,6 +389,7 @@ def residual_dirt(snapshot: HygieneSnapshot) -> list[str]:
     found: list[str] = []
     for label, items in (
         ("otto-tunnel daemon", snapshot.tunnel_procs),
+        ("tunnel-check echo", snapshot.check_echoes),
         ("otto-impair timer", snapshot.impair_timers),
         ("nc listener", snapshot.nc_listeners),
         ("staging entry", snapshot.staging),

@@ -110,6 +110,7 @@ def doubles(monkeypatch, tmp_path):
     hygiene = types.SimpleNamespace(**{**vars(bed_hygiene), "snapshot_host": d.snapshot_host})
     monkeypatch.setattr(bed_reap, "_hygiene", lambda: hygiene)
     for name in (
+        "kill_echoes",
         "remove_tunnels",
         "cancel_timers",
         "repair_links",
@@ -293,6 +294,7 @@ def test_every_kind_of_leftover_is_removed_through_its_own_remover(cell, doubles
             "eth1.100": QdiscReads(QDISC_SCOPED_ONE, FILTER_SCOPED_ONE),
             "eth2": QdiscReads(""),
         },
+        check_echoes=frozenset({"401 otto-check:v1:5e8f68:-:tcp:segment:test1"}),
     )
     doubles.snapshots["test1"] = [dirty, _snap()]
     status, out = _reap(cell, capsys)
@@ -303,6 +305,7 @@ def test_every_kind_of_leftover_is_removed_through_its_own_remover(cell, doubles
         ("kill_listeners", "test1", [300, 301]),
         ("remove_staging", "test1", ["/tmp/otto-abc", "/tmp/otto_old"]),
         ("clear_qdisc", "test1", "eth1.100"),
+        ("kill_echoes", "test1", [401]),
         ("repair_links", lab),
         ("reset_logged_in_consoles", LAB),
     ]
@@ -316,6 +319,55 @@ def test_every_kind_of_leftover_is_removed_through_its_own_remover(cell, doubles
         "clean",
     ):
         assert f"bed-reap: {line}" in out, (line, out)
+
+
+def test_an_interrupted_runs_otto_check_echo_is_killed_by_the_reap(cell, doubles, lab, capsys):
+    """#1131: a killed gate left an otto-check echo on test3; the next lane's reap kills it."""
+    echo = "2101878 otto-check:v1:5e8f68:-:tcp:segment:test3"
+    doubles.snapshots["test1"] = [_snap(check_echoes=frozenset({echo})), _snap()]
+    status, out = _reap(cell, capsys)
+    assert status == 0, out
+    assert ("kill_echoes", "test1", [2101878]) in doubles.calls
+    assert f"bed-reap: removed test1: tunnel-check echo {echo}" in out
+
+
+def test_an_echo_that_survives_its_kill_is_a_failure_after_the_hosts_other_removers(
+    cell, doubles, lab, monkeypatch, capsys
+):
+    echo = "2101878 otto-check:v1:5e8f68:-:tcp:segment:test3"
+    stuck = _snap(check_echoes=frozenset({echo}), staging=frozenset({"/tmp/otto-x"}))
+    doubles.snapshots["test1"] = [stuck, _snap(check_echoes=frozenset({echo}))]
+
+    async def survives(host, pids):
+        doubles.calls.append(("kill_echoes", host.id, pids))
+        raise RuntimeError("otto-check echoes survived their kill: [2101878]")
+
+    monkeypatch.setattr(bed_reap, "kill_echoes", survives)
+    status, out = _reap(cell, capsys)
+    assert status == bed_reap.EXIT_DIRTY
+    assert ("remove_staging", "test1", ["/tmp/otto-x"]) in doubles.calls
+    assert "bed-reap: failed test1: otto-check echoes survived their kill: [2101878]" in out
+
+
+def test_the_reap_kills_echoes_with_the_tunnel_checks_own_confirmed_kill(monkeypatch):
+    """One decision: the reap and ``otto tunnel check``'s sweep kill echoes the same way,
+    and an echo that survives, or a ps that cannot say, is a failure."""
+    from otto.tunnel import _tunnel_echoes
+
+    answers = iter([set(), {7}, None])
+    seen = []
+
+    async def kill_confirmed(host, pids):
+        seen.append((host, pids))
+        return next(answers)
+
+    monkeypatch.setattr(_tunnel_echoes, "kill_confirmed", kill_confirmed)
+    asyncio.run(bed_reap.kill_echoes("h", [7, 8]))
+    assert seen == [("h", [7, 8])]
+    with pytest.raises(RuntimeError, match=r"survived their kill: \[7\]"):
+        asyncio.run(bed_reap.kill_echoes("h", [7]))
+    with pytest.raises(RuntimeError, match="could not list"):
+        asyncio.run(bed_reap.kill_echoes("h", [7]))
 
 
 def test_a_foreign_qdisc_is_kept_and_keeps_the_bed_dirty(cell, doubles, lab, capsys):
