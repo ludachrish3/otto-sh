@@ -14,7 +14,7 @@ from typing_extensions import override
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-from scripts import api_manifest, docs_api_reference, docs_build_stamp
+from scripts import api_manifest, docs_api_reference, docs_build_stamp, render_release_notes
 
 project = "otto"
 author = "otto contributors"
@@ -683,13 +683,16 @@ _RENDERED_PAGES = {
     "scripts.render_proven_range": "docs/cli/known-good.md",
     "scripts.render_module_graph": "docs/architecture/modules.md",
     "scripts.render_python_badge": "docs/_static/generated/python-badge.svg",
+    "scripts.render_release_notes": "docs/release-notes/index.md",
 }
 """Each git-ignored page (or page asset) rendered at build time, keyed by its renderer.
 
 Their sources are schemas/support_matrix.json, schemas/kmodcov_matrix.json,
-src/otto/check/proven.json, tach.toml and pyproject.toml's Python classifiers.
-Makefile SPHINX_SRCS lists every source and renderer, so editing one re-triggers
-the build.
+src/otto/check/proven.json, tach.toml, pyproject.toml's Python classifiers and,
+for the release notes, git history: the tags merged into HEAD and the commits
+they hold, rendered through cliff.toml. Makefile SPHINX_SRCS lists every source
+and renderer, so editing one re-triggers the build; git history is listed as
+docs/_build/.release-tags, a stamp rewritten only when the tag set changes.
 """
 
 
@@ -706,12 +709,17 @@ def _generate_rendered_pages(app):  # noqa: ARG001 — Sphinx event signature
     RAISES, so a source the renderer cannot read, or a matrix whose axes the tree
     no longer backs, is a build FAILURE and not a warning (spec §5).
     """
+    import os
     import subprocess
 
     from sphinx.util import logging as sphinx_logging
 
     logger = sphinx_logging.getLogger(__name__)
     root = pathlib.Path(__file__).parent.parent
+    # The interpreter's bin/ first, so a renderer finds the dev tools installed beside
+    # it (git-cliff) from a bare .venv/bin/sphinx-build too: the Makefile's VENV_BIN rule.
+    path = os.pathsep.join([str(pathlib.Path(sys.executable).parent), os.environ.get("PATH", "")])
+    env = {**os.environ, "PATH": path}
     for module, page in _RENDERED_PAGES.items():
         proc = subprocess.run(  # noqa: S603 — fixed interpreter + a repository-local module named above
             [sys.executable, "-m", module],
@@ -719,6 +727,7 @@ def _generate_rendered_pages(app):  # noqa: ARG001 — Sphinx event signature
             text=True,
             check=False,
             cwd=str(root),
+            env=env,
         )
         if proc.stdout.strip():
             logger.info(proc.stdout.strip())
@@ -935,6 +944,7 @@ def setup(app):
     app.connect("missing-reference", _resolve_external_doc_links)
     app.connect("autodoc-process-signature", _process_signature)
     app.connect("autodoc-process-bases", _drop_private_bases)
+    render_release_notes.sphinx_setup(app)
 
 
 # -- napoleon -----------------------------------------------------------------

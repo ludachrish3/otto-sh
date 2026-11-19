@@ -44,6 +44,7 @@ otto
    cli/index
    configuration/index
    api/index
+   release-notes/index
    command-contracts/index
 
 .. toctree::

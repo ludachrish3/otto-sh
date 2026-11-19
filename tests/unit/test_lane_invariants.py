@@ -2598,6 +2598,8 @@ HOSTLESS_TARGETS = [
     "docs-media",
     "doctest",
     "doctest-src",
+    # the always-run prerequisite that refreshes the docs build's release-tag stamp
+    "FORCE",
     # build, release bookkeeping and the web app
     "build",
     "clean",

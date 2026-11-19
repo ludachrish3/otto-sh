@@ -2040,7 +2040,7 @@ api-surface-report: ## (Dev) Measure the declared surface's open work without ga
 	@uv run python scripts/api_teaching.py --manifest api/public.toml --report
 	@uv run python scripts/api_snapshot.py --manifest api/public.toml --report
 
-check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; RANGE must end at HEAD) that deletes a public-API golden line without a mark git-cliff's census counts, or carries a Corrects: footer that does not validate
+check-breaking: ## (Quality) Refuse a RANGE commit (default origin/main..HEAD; RANGE must end at HEAD) that deletes a public-API golden line without a mark git-cliff's census counts, or carries a Corrects: footer that does not validate, or marks a commit breaking without a BREAKING CHANGE: remediation footer
 	@$(SAY) "check-breaking-marks: $(RANGE)"
 	@uv run python scripts/check_breaking_marks.py $(RANGE)
 
@@ -2085,6 +2085,10 @@ land: ## (Quality) The landing in one command, from a feature branch: gate-tip, 
 # same shape again, for the setup checks' known-good environments page, and
 # tach.toml with its renderer for the architecture docs' module dependencies page,
 # and pyproject.toml with its renderer for the overview's supported-Python badge.
+# The release-notes pages render from git history through scripts/render_release_notes.py,
+# scripts/release_events.py and cliff.toml; history itself is docs/_build/.release-tags,
+# a stamp rewritten only when the tag set changes (rule below), so a fetch that adds a
+# tag rebuilds the docs and an ordinary commit does not.
 # Every file under docs/examples is a literalinclude or a download-archive input,
 # so editing one must rebuild the pages that show it (build output and bytecode
 # excluded: they are not what a page shows). Only `.py` files under src/otto are globbed;
@@ -2109,6 +2113,10 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 scripts/render_module_graph.py      \
                 pyproject.toml                      \
                 scripts/render_python_badge.py      \
+                scripts/render_release_notes.py     \
+                scripts/release_events.py           \
+                cliff.toml                          \
+                docs/_build/.release-tags           \
                 scripts/docs_api_reference.py       \
                 scripts/build_example_archives.py   \
                 api/public.toml                     \
@@ -2160,6 +2168,17 @@ docs/_build/html/index.html: $(SPHINX_SRCS) $(DASHBOARD_DIST) $(COVAPP_DIST)
 	@$(SAY) "sphinx-build html (clean rebuild, warnings are errors)"
 	@rm -rf docs/_build/html
 	@uv run sphinx-build -E -a -W -b html docs/ docs/_build/html
+
+# The tag state the release-notes pages depend on, as the renderer itself spells it
+# (--print-tag-state; never re-spell the git query here). The rule runs on every make
+# (FORCE) but moves its output over the stamp only when the content differs, so the
+# stamp's mtime, and with it the html rebuild above, moves only when a tag does.
+docs/_build/.release-tags: FORCE
+	@mkdir -p $(@D)
+	@uv run python -m scripts.render_release_notes --print-tag-state > $@.tmp
+	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv $@.tmp $@; fi
+
+FORCE:
 
 doctest:
 	@$(SAY) "sphinx-build doctest"
