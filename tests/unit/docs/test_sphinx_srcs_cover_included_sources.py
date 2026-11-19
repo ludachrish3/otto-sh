@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.docs_tree import docs_sources
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -21,9 +22,7 @@ def _included_sources() -> dict[str, Path]:
     """Map each non-``.py`` file under ``src/otto`` that a docs page includes to the page."""
     found: dict[str, Path] = {}
     src = (CHECKOUT_ROOT / "src" / "otto").resolve()
-    for page in (CHECKOUT_ROOT / "docs").rglob("*.md"):
-        if "_build" in page.parts:
-            continue
+    for page in docs_sources(CHECKOUT_ROOT / "docs", suffixes=(".md",)):
         for target in INCLUDE.findall(page.read_text(encoding="utf-8")):
             path = (page.parent / target).resolve()
             if path.suffix != ".py" and path.is_relative_to(src):

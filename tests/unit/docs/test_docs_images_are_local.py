@@ -13,12 +13,12 @@ import re
 
 import pytest
 
+from scripts.docs_tree import docs_sources
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
 DOCS = CHECKOUT_ROOT / "docs"
-SKIP_PARTS = {"_build", "superpowers", "_inventories"}
 
 REMOTE_IMAGE = re.compile(
     r"!\[[^\]]*\]\(\s*https?://"  # Markdown ![alt](https://…)
@@ -30,11 +30,7 @@ REMOTE_IMAGE = re.compile(
 
 
 def _sources() -> "list":
-    return sorted(
-        p
-        for p in DOCS.rglob("*")
-        if p.suffix in {".md", ".rst"} and not SKIP_PARTS.intersection(p.relative_to(DOCS).parts)
-    )
+    return docs_sources(DOCS)
 
 
 def test_the_scan_sees_the_docs_tree() -> None:

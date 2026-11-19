@@ -16,6 +16,7 @@ import pytest
 
 from otto.config.project import Project
 from otto.host.docker_image_kind import _docker_image_kind
+from scripts.docs_tree import docs_sources
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 DOCS = CHECKOUT_ROOT / "docs"
@@ -27,11 +28,7 @@ _HAND_COUNT = re.compile(r"GCOV_PREFIX_STRIP=(?!\{[A-Za-z_.]*gcov_prefix_strip\}
 
 
 def _teaching_files() -> list[Path]:
-    pages = [
-        p
-        for p in DOCS.rglob("*.md")
-        if p.relative_to(DOCS).parts[0] not in ("superpowers", "_build")
-    ]
+    pages = docs_sources(DOCS, suffixes=(".md",))
     examples = [
         p
         for p in EXAMPLES.rglob("*")

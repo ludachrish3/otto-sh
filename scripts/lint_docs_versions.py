@@ -18,6 +18,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.docs_tree import docs_sources
+
 TOKEN = "%OTTO_VERSION%"  # noqa: S105 — a text placeholder, not a credential
 OFFENSES = [
     (re.compile(r"otto-sh==\d"), "hardcoded otto version pin (use %OTTO_VERSION%)"),
@@ -31,7 +34,6 @@ OFFENSES = [
     ),
 ]
 NEAR_TOKEN = re.compile(r"%OTTO_[A-Z_]*%")
-SKIP_PARTS = ("_build", "superpowers", "_inventories")
 
 
 def lint_file(path: Path) -> list[tuple[int, str]]:
@@ -55,11 +57,7 @@ def main(argv: list[str]) -> int:
         print("usage: lint_docs_versions.py <docs-dir>", file=sys.stderr)
         return 2
     failed = False
-    for path in sorted(Path(argv[0]).rglob("*")):
-        if path.suffix not in {".md", ".rst"}:
-            continue
-        if any(part in SKIP_PARTS for part in path.parts):
-            continue
+    for path in docs_sources(Path(argv[0])):
         for lineno, reason in lint_file(path):
             print(f"{path}:{lineno}: {reason}")
             failed = True

@@ -57,7 +57,7 @@ def test_main_writes_the_badge_to_the_output_path(tmp_path) -> None:
 
 
 def test_the_docs_build_renders_the_badge_and_fails_when_the_renderer_does() -> None:
-    assert_conf_renders("scripts.render_python_badge", "docs/_static/generated/python-badge.svg")
+    assert_conf_renders("scripts.render_python_badge", "_static/generated/python-badge.svg")
 
 
 def test_sphinx_srcs_names_pyproject_and_the_renderer() -> None:

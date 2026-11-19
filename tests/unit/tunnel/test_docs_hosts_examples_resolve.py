@@ -26,16 +26,17 @@ from pathlib import Path
 import pytest
 
 from otto.host.remote_host import make_host_id
+from scripts.docs_tree import docs_sources
 from tests._fixtures.labdata import flat_hosts
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 DOCS = CHECKOUT_ROOT / "docs"
 # Scan every ``*.md`` page under docs/ rather than an enumerated list of
 # trees, so this guard cannot go stale the next time a tree is renamed,
-# promoted, or a new one grows a ``--hosts`` example — only the paths Sphinx
-# itself treats as non-page content are excluded (see ``exclude_patterns``
-# in docs/conf.py) plus its own build output.
-_EXCLUDED_DIRS = {"superpowers", "_build", "_inventories", "examples"}
+# promoted, or a new one grows a ``--hosts`` example. The hand-written pages
+# are scripts/docs_tree.py's; examples/ is left out too, because Sphinx builds
+# none of it as a page (``exclude_patterns`` in docs/conf.py).
+_ALSO_SKIP = ("examples/",)
 
 _HOSTS_RE = re.compile(r"--hosts\s+(\S+)")
 
@@ -65,11 +66,7 @@ def _interface_counts() -> dict[str, int]:
 
 def _pages() -> list[Path]:
     """Every doc page under docs/, minus the non-page trees Sphinx excludes."""
-    return [
-        page
-        for page in sorted(DOCS.rglob("*.md"))
-        if not _EXCLUDED_DIRS & set(page.relative_to(DOCS).parts[:-1])
-    ]
+    return docs_sources(DOCS, suffixes=(".md",), also_skip=_ALSO_SKIP)
 
 
 def _sources() -> list[tuple[Path, re.Pattern[str]]]:

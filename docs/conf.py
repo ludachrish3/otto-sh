@@ -15,6 +15,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from scripts import api_manifest, docs_api_reference, docs_build_stamp, render_release_notes
+from scripts.docs_tree import RENDERED
 
 project = "otto"
 author = "otto contributors"
@@ -677,27 +678,8 @@ def _generate_docs_media(app):
         _run_capture_script("capture_docs_media.py")
 
 
-_RENDERED_PAGES = {
-    "scripts.render_support_matrix": "docs/architecture/support-matrix.md",
-    "scripts.render_kmodcov_matrix": "docs/cli/cov/instrumenting/kmodcov-matrix.md",
-    "scripts.render_proven_range": "docs/cli/known-good.md",
-    "scripts.render_module_graph": "docs/architecture/modules.md",
-    "scripts.render_python_badge": "docs/_static/generated/python-badge.svg",
-    "scripts.render_release_notes": "docs/release-notes/index.md",
-}
-"""Each git-ignored page (or page asset) rendered at build time, keyed by its renderer.
-
-Their sources are schemas/support_matrix.json, schemas/kmodcov_matrix.json,
-src/otto/check/proven.json, tach.toml, pyproject.toml's Python classifiers and,
-for the release notes, git history: the tags merged into HEAD and the commits
-they hold, rendered through cliff.toml. Makefile SPHINX_SRCS lists every source
-and renderer, so editing one re-triggers the build; git history is listed as
-docs/_build/.release-tags, a stamp rewritten only when the tag set changes.
-"""
-
-
 def _generate_rendered_pages(app):  # noqa: ARG001 — Sphinx event signature
-    """Render every page in :data:`_RENDERED_PAGES` from its committed source.
+    """Render every page in ``scripts.docs_tree.RENDERED`` from its committed source.
 
     EVERY BUILDER, not html-only: each page is a real source file that a toctree
     names, so the doctest builder has to find it on disk too — the same reason the
@@ -720,7 +702,8 @@ def _generate_rendered_pages(app):  # noqa: ARG001 — Sphinx event signature
     # it (git-cliff) from a bare .venv/bin/sphinx-build too: the Makefile's VENV_BIN rule.
     path = os.pathsep.join([str(pathlib.Path(sys.executable).parent), os.environ.get("PATH", "")])
     env = {**os.environ, "PATH": path}
-    for module, page in _RENDERED_PAGES.items():
+    for entry in RENDERED:
+        module, page = entry.module, f"docs/{entry.output}"
         proc = subprocess.run(  # noqa: S603 — fixed interpreter + a repository-local module named above
             [sys.executable, "-m", module],
             capture_output=True,

@@ -140,7 +140,7 @@ def test_the_page_draws_both_graphs_and_tables_every_module(tmp_path) -> None:
 
 
 def test_the_docs_build_renders_the_page_and_fails_when_the_renderer_does() -> None:
-    assert_conf_renders("scripts.render_module_graph", "docs/architecture/modules.md")
+    assert_conf_renders("scripts.render_module_graph", "architecture/modules.md")
 
 
 def test_the_page_is_build_output_listed_in_the_overview_and_rebuilt_on_a_tach_edit() -> None:
