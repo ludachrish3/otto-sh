@@ -579,6 +579,17 @@ def project_marker() -> str:
 #     yield host
 #     await host.close()
 #
+# get_host() is for one particular device. To act on a group, walk the fleet
+# with all_hosts() and narrow it with a comprehension (or pattern=re.compile(...),
+# a full match on the host id). The code stays the same whatever the lab holds.
+# See https://otto-sh.readthedocs.io/en/stable/setup/selecting-hosts.html
+#
+# @pytest.fixture(scope="class")
+# def fleet():
+#     from otto.lab import all_hosts
+#
+#     return [h for h in all_hosts() if h.id.startswith("router")]
+#
 # A test class pinned to a loop of its own, @pytest.mark.asyncio(loop_scope="class"),
 # can't use a host the session loop already owns.
 # get_host() returns one shared instance per host, so a host any unpinned test
@@ -671,6 +682,22 @@ async def smoke(
     is already a flag here. `--loud` is this instruction's own.
     """
     logger.info(opts.message.upper() if loud else opts.message)
+
+
+# An instruction can walk every host the lab holds with all_hosts(), and narrow
+# the walk with a comprehension. The code is the same for two hosts or twenty,
+# and a host added later is picked up without an edit. Uncomment once your
+# lab_data/ is real. Use get_host("<id>") instead for one particular device.
+# See https://otto-sh.readthedocs.io/en/stable/setup/selecting-hosts.html
+#
+# @instruction()
+# async def uptime_everywhere() -> None:
+#     """Log the uptime of every router in the lab."""
+#     from otto.lab import all_hosts
+#
+#     for host in [h for h in all_hosts() if h.id.startswith("router")]:
+#         result = (await host.run("uptime")).only.value
+#         logger.info("%s: %s", host.id, result)
 '''
 
 VSCODE_SETTINGS_TEMPLATE = r"""{

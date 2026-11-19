@@ -37,10 +37,14 @@ INFO     @dut > | | Name             | Size         |
 INFO     @dut > | |          mathops |        48752 |
 INFO     @dut   | llext call_fn mathops op_div_zero
 INFO     @dut > | op_div_zero=-1,0
+INFO     === test_dut_is_the_labs_only_embedded_host ===
+INFO     @dut   | llext list
+INFO     @dut > | | Name             | Size         |
+INFO     @dut > | |          mathops |        48752 |
 INFO     Connection closed to <Peer 127.0.0.1 <port>>
 
 ------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
-=== 4 passed in <t>s ===
+=== 5 passed in <t>s ===
 INFO     Dumping embedded coverage for mathops from dut via 'llext call_fn mathops cov_dump'
 INFO     Connected to <Peer 127.0.0.1 <port>>
 INFO     @dut   | llext call_fn mathops cov_dump

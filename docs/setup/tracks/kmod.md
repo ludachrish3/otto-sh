@@ -383,6 +383,9 @@ page's tests ({doc}`../../configuration/settings`):
 :caption: tests/test_monitoring.py
 ```
 
+The test monitors the lab's Unix hosts, here just `dut`
+({doc}`../selecting-hosts`).
+
 Run it. `--no-cov` keeps coverage out of this run, because plain `otto test`
 turns it on by itself when it finds instrumented products
 ({ref}`coverage-tristate`):

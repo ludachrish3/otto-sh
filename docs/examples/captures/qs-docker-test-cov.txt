@@ -32,20 +32,15 @@ INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '{
          d=${d%/*}; done; done | { LC_ALL=C sort -ru 2>/dev/null || while IFS= read -r _; do :;
          done; } | while IFS= read -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); test
          "$__otto_gcda_rc" = 0; }'
+INFO     @docker-host > |
+INFO     @docker-host > | otto-gcda-check
+INFO     @docker-host > | otto-gcda-absent
 INFO     @docker-host   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf
          '"'"'\n%s\n'"'"' otto-gcda-check; if { __otto_d=/tmp/quickstart-docker/banner; while ! test
          -e "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*};
          __otto_d=${__otto_d:-/}; done; test "$__otto_d" != /tmp/quickstart-docker/banner && { !
          test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo otto-gcda-absent; else LC_ALL=C
          find /tmp/quickstart-docker/banner -name '"'"'*.gcda'"'"' -type f -print 2>&1; fi'
-INFO     @docker-host > |
-INFO     @docker-host > | otto-gcda-check
-INFO     @docker-host   | printf '\n%s\n' otto-cov-presence
-         if test -d /tmp/quickstart-docker/banner; then echo 'otto-cov 0 present'; else echo
-         'otto-cov 0 absent'; fi
-INFO     @docker-host > |
-INFO     @docker-host > | otto-gcda-check
-INFO     @docker-host > | otto-gcda-absent
 INFO     @docker-host   | docker exec -i <id> sh -c '{ __otto_d=/tmp/shout; while ! test -e
          "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/};
          done; test "$__otto_d" != /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; };
@@ -57,14 +52,19 @@ INFO     @docker-host   | docker exec -i <id> sh -c '{ __otto_d=/tmp/shout; whil
          -r d; do rmdir "$d" 2>/dev/null; done; } 3>&1 ); rmdir /tmp/shout 2>/dev/null; test
          "$__otto_gcda_rc" = 0; }'
 INFO     @docker-host > |
-INFO     @docker-host > | otto-cov-presence
-INFO     @docker-host > | otto-cov 0 present
+INFO     @docker-host > | otto-gcda-check
+INFO     @docker-host   | printf '\n%s\n' otto-cov-presence
+         if test -d /tmp/quickstart-docker/banner; then echo 'otto-cov 0 present'; else echo
+         'otto-cov 0 absent'; fi
 INFO     @docker-host   | docker exec -i <id> sh -c 'printf '"'"'\n%s\n'"'"'
          otto-gcda-check; if { __otto_d=/tmp/shout; while ! test -e "$__otto_d" && ! test -L
          "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
          /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; }; then echo
          otto-gcda-absent; else LC_ALL=C find /tmp/shout -name '"'"'*.gcda'"'"' -type f -print 2>&1;
          fi'
+INFO     @docker-host > |
+INFO     @docker-host > | otto-cov-presence
+INFO     @docker-host > | otto-cov 0 present
 INFO     @docker-host > |
 INFO     @docker-host > | otto-gcda-check
 INFO     @docker-host > | otto-gcda-absent
@@ -98,9 +98,10 @@ INFO     @docker-host > | HELLO WORLD
 INFO     === test_banner_counts_then_repeats ===
 INFO     @docker-host   | docker exec quickstart-banner /opt/quickstart/banner hello docker world
 INFO     @docker-host > | [3] hello docker world
+INFO     === test_compose_container_is_a_fleet_host_on_request ===
 
 ------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
-=== 5 passed in <t>s ===
+=== 6 passed in <t>s ===
 INFO     Archiving .gcda for banner on docker-host:/tmp/quickstart-docker/banner
 INFO     Archiving .gcda for wordcount on docker-host.quickstart.tools:/tmp/wordcount
 INFO     @docker-host   | { __otto_d=/tmp/quickstart-docker/banner; while ! test -e "$__otto_d" && !

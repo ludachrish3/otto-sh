@@ -290,7 +290,9 @@ The tests call the extension's exported functions through one helper:
 not loaded ([the `ensure`
 marker](../writing-tests.md#declaring-lab-state-the-ensure-marker)). Each
 exported `op_*` function in `ext/src/ext.c` runs one path of the logic and
-prints its result for the test to read.
+prints its result for the test to read. The last test walks the lab's
+hosts by kind and finds only the board, not the console server
+({doc}`../selecting-hosts`).
 
 ## A unit test
 

@@ -226,10 +226,27 @@ in its signature. They work the same in a test class and in a test function.
   the test ends. See the
   [monitoring recipe](test-recipes.md#monitoring-from-a-test).
 
-Hosts don't come from `ctx`: a test or fixture calls `get_host(id)`
-(`from otto.lab import get_host`) with the id of a host in the lab, as in
-the fixtures below. {doc}`host-scopes` covers how widely one connection
-is shared.
+In a test, hosts don't come from the `ctx` fixture: a test or fixture calls
+`all_hosts()` for a group or `get_host(id)` for one device, both from
+`otto.lab`. A test that checks every router the lab holds, whatever their
+number:
+
+```python
+import re
+
+from otto.lab import all_hosts
+
+
+async def test_routers_answer() -> None:
+    for host in all_hosts(pattern=re.compile(r"router.*")):
+        assert (await host.run("echo ok")).only.value.strip() == "ok"
+```
+
+A bare `assert` stops at the first failing host; to check every host and list
+each failure, see the
+[check-every-host recipe](test-recipes.md#check-every-host-in-a-group).
+{doc}`selecting-hosts` covers narrowing and grouping the fleet.
+{doc}`host-scopes` covers how widely one connection is shared.
 
 ## Event loops
 
@@ -328,6 +345,21 @@ class TestRouter:
 
 `test_first_boot` is not a coverage test: its `clean` removes the counters a
 `--cov` run has collected so far ({ref}`the coverage lifecycle <cov-dir-lifecycle>`).
+
+A fixture can hand out a group as easily as one host. This one yields every
+Unix host in the fleet, for tests that check them all:
+
+```python
+import pytest
+
+from otto.host import UnixHost
+from otto.lab import all_hosts
+
+
+@pytest.fixture(scope="session")
+def fleet():
+    return [h for h in all_hosts() if isinstance(h, UnixHost)]
+```
 
 `host.run(...)` returns a {class}`~otto.result.Results`, one entry per
 command; `.only` asserts exactly one command ran and returns it, and `.value`

@@ -337,6 +337,51 @@ def test_tests_scaffold_is_plain_pytest(tmp_path: Path) -> None:
     assert "opens its own host" not in conftest
 
 
+_SELECTING_HOSTS_URL = "https://otto-sh.readthedocs.io/en/stable/setup/selecting-hosts.html"
+
+
+def _fleet_lines(text: str) -> list[str]:
+    return [line for line in text.splitlines() if "all_hosts(" in line]
+
+
+def _assert_example_lines(text: str, *lines: str) -> None:
+    """Each pinned line opens a line of *text*: only the example block has them, not the prose."""
+    own_lines = text.splitlines()
+    for pinned in lines:
+        assert any(line.startswith(pinned) for line in own_lines), pinned
+
+
+def test_the_conftest_shows_the_fleet_beside_one_host(tmp_path: Path) -> None:
+    """Both ways to reach hosts are taught, commented out like the placeholder lab."""
+    _scaffold(tmp_path, "tests")
+    conftest = (tmp_path / "tests" / "conftest.py").read_text()
+    assert "get_host(" in conftest
+    assert "all_hosts(" in conftest
+    assert _SELECTING_HOSTS_URL in conftest
+    assert all(line.strip().startswith("#") for line in _fleet_lines(conftest))
+    _assert_example_lines(
+        conftest,
+        '# @pytest.fixture(scope="class")',
+        "# def fleet():",
+        "#     return [h for h in all_hosts() if",
+    )
+
+
+def test_the_init_module_shows_walking_the_fleet(tmp_path: Path) -> None:
+    """The fleet walk is taught as a commented, decorated instruction beside the real one."""
+    _scaffold(tmp_path, "instructions")
+    src = (tmp_path / "pylib" / "widget_instructions" / "__init__.py").read_text()
+    assert _fleet_lines(src)
+    assert _SELECTING_HOSTS_URL in src
+    assert all(line.strip().startswith("#") for line in _fleet_lines(src))
+    _assert_example_lines(
+        src,
+        "# @instruction()",
+        "# async def uptime_everywhere",
+        "#     for host in [h for h in all_hosts() if",
+    )
+
+
 def test_instructions_scaffold_imports(tmp_path: Path) -> None:
     _scaffold(tmp_path, "instructions")
     assert (tmp_path / "pylib" / "widget_instructions" / "__init__.py").exists()

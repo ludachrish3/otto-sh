@@ -18,6 +18,7 @@ running-tests
 running-instructions
 customizing-project-instructions
 coverage
+selecting-hosts
 writing-tests
 writing-instructions
 options-classes
