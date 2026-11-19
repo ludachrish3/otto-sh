@@ -1460,7 +1460,9 @@ Every lane that runs a suite on the bed runs the quick reap right after it
 takes the lease and again before it releases it: whatever a predecessor left
 is gone before the suite starts, and a green lane leaves none of its own. A
 red lane stops at its failing step, and the next lane's first reap collects
-what it left.
+what it left. Every reap, the quick one included, brings each console that
+logs in (the Unix and BusyBox consoles; a Zephyr console has no login) back to
+its login prompt.
 
 So you may stop a gate whenever its result no longer matters: a tree that a
 rebase has replaced, a lane already known to be red. Interrupt it, or kill it
@@ -1468,9 +1470,7 @@ outright. The gates exist to defend against dirty lab state, not to be
 protected from it. A stopped run that cannot release its own lease leaves it
 for the next lane, which takes it over once nothing of that run still runs
 ([the bed lease](#bed-lease)) and reaps before its suite starts. A kill
-that leaves workers running keeps the bed until you kill them too, and a
-console the stopped run left logged in waits for the hand run, which alone has
-the console step.
+that leaves workers running keeps the bed until you kill them too.
 
 The hand run, for when you want the bed clean now rather than at the next
 lane's start:
@@ -1479,19 +1479,37 @@ lane's start:
 make bed-reap
 ```
 
-It adds the console step (`make console-logout`'s; `RESTART_QEMU=1` restarts
-the guests first, as `make qemu-restart` does), prints one `bed-reap: removed
-...` line per thing removed, `bed-reap: clean` when the bed is, and exits 1
-with a per-host `still carries` report when something stayed: a host that did
-not answer, a removal that did not take, or a qdisc tree otto did not place
-(reported as foreign and left alone: clear it by hand on that host with
-`sudo tc qdisc del dev <netdev> root`, then run the reap again). It refuses
-a bed another live run holds, and a run of your own whose processes are still
-running: wait for them, or kill them, then run it again. `make gate-tip` runs
-the same reap by itself when you interrupt it (above).
+The hand run resets the consoles through `make console-logout`, which also
+probes the Zephyr consoles and prints the whole-bed health report. To recover a
+wedged guest, run `make bed-reap RESTART_QEMU=1`: it restarts the guests first,
+as `make qemu-restart` does, and judges their consoles once they are back.
 
-The reap is quick when the bed is clean (a probe per host). One step is not:
-the embedded coverage product (`tests/project3/product`) is rebuilt when a
+Every reap ends by printing what it did, one line each, and exits 1 unless the
+last line is `bed-reap: clean`:
+
+- `bed-reap: removed ...`: removed, nothing to do.
+- `bed-reap: failed ...`: a step did not work, and the line says what to run.
+  A console it could not bring to its login prompt reads `bed-reap: failed
+  console <name>: <state> (...); see <what to run>`: `SILENT` or `DOWN` is a
+  guest that is not answering (`make qemu-restart`), `BUSY` is another client
+  holding the console port, and a reset that failed is `make console-logout`'s
+  to retry.
+- `bed-reap: unreachable <host>`: the host did not answer, so nothing on it was
+  looked at.
+- `bed-reap: <host> still carries ...`: what is still on that host after the
+  removers ran. A qdisc tree otto did not place is reported as foreign and left
+  alone: clear it by hand with `sudo tc qdisc del dev <netdev> root`.
+
+Fix what the lines name, then run the reap again. A reap at a lane's start that
+fails stops the lane before any of its tests run, so the red is the bed's, not
+your change's. The reap refuses a bed another live run holds, and a run of your
+own whose processes are still running: wait for them, or kill them, then run it
+again. An interrupted `make gate-tip` runs the same reap by itself
+([the landing's gate](#the-landings-gate-is-stamped)).
+
+The reap is quick when the bed is clean: a probe per host, and a probe per
+console that logs in (about 2.5 s each, so about 5 s on tech1). One step is
+not: the embedded coverage product (`tests/project3/product`) is rebuilt when a
 declared build's artifact is missing, which a `west build` cut mid-way
 leaves behind, and that build takes minutes. It runs at every lane's start,
 whether or not that lane loads the product, so a missing artifact costs the

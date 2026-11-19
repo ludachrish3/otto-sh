@@ -81,6 +81,8 @@ class Doubles:
         self.timers_cancelled = 2
         self.tunnel_ids = ["t-1"]
         self.repair_failures: list[str] = []
+        self.consoles: list = []
+        """What ``reset_logged_in_consoles`` answers: ``(element, result)`` pairs."""
 
     async def snapshot_host(self, host):
         if host.id in self.unreachable:
@@ -122,6 +124,12 @@ def doubles(monkeypatch, tmp_path):
         return d.health_status
 
     monkeypatch.setattr(bed_reap, "run_lab_health", run_lab_health)
+
+    def reset_consoles(lab_file):
+        d.calls.append(("reset_logged_in_consoles", lab_file))
+        return list(d.consoles)
+
+    monkeypatch.setattr(bed_reap, "reset_logged_in_consoles", reset_consoles)
 
     async def reap_docker(host):
         d.calls.append(("reap_docker", host.id))
@@ -271,7 +279,7 @@ def test_a_clean_bed_is_reported_clean_and_nothing_is_run(cell, doubles, lab, ca
     status, out = _reap(cell, capsys)
     assert status == 0
     assert out.strip().splitlines()[-1] == "bed-reap: clean"
-    assert doubles.calls == []
+    assert doubles.calls == [("reset_logged_in_consoles", LAB)], "only the console look"
     assert all(h.closed for h in bed_reap.unix_bed_hosts(lab, LAB))
 
 
@@ -296,6 +304,7 @@ def test_every_kind_of_leftover_is_removed_through_its_own_remover(cell, doubles
         ("remove_staging", "test1", ["/tmp/otto-abc", "/tmp/otto_old"]),
         ("clear_qdisc", "test1", "eth1.100"),
         ("repair_links", lab),
+        ("reset_logged_in_consoles", LAB),
     ]
     for line in (
         "removed test1: otto-tunnel t-1",
@@ -533,34 +542,126 @@ def test_an_unhealthy_console_step_is_a_failure(cell, doubles, lab, capsys):
     assert "bed-reap: failed the console step reported an unhealthy bed" in out
 
 
-def test_run_lab_health_runs_the_makefiles_console_targets_in_order(monkeypatch):
-    """The console lines live in the Makefile: the reap runs its targets, a red one stops it."""
+def _console(monkeypatch, out: str, rc: int = 0, err: str = "") -> dict:
+    """What lab_health's own ``_check_console(logout=True)`` answers for the probe's *out*.
+
+    The reap's console tests read real results, never hand-written ones, so a
+    reworded result in lab_health fails here instead of going quiet.
+    """
+    from scripts import lab_health
+    from tests.unit.scripts.test_lab_health import _SERVER, _console_entry, _fake_ssh
+
+    _fake_ssh(monkeypatch, out, rc, err)
+    return lab_health._check_console(_console_entry(creds=True), {"test1": _SERVER}, logout=True)
+
+
+def test_a_console_left_logged_in_is_reset_by_every_reap_not_only_full(
+    cell, doubles, lab, capsys, monkeypatch
+):
+    """#1124: an interrupted lane left a console logged in; the next lane's quick reap,
+    and the reap an interrupted gate runs for itself, reset it instead of saying clean."""
+    doubles.consoles = [("test2", _console(monkeypatch, "LOGGED-IN\nRESET-OK"))]
+    status, out = _reap(cell, capsys)
+    assert status == 0
+    assert "bed-reap: removed test2: console reset from LOGGED-IN" in out
+    assert ("reset_logged_in_consoles", cell.lab_file) in doubles.calls
+    assert "run_lab_health" not in _names(doubles), "the full health report stays --full only"
+
+
+def test_a_console_at_its_login_prompt_is_no_line_and_the_bed_is_clean(
+    cell, doubles, lab, capsys, monkeypatch
+):
+    doubles.consoles = [("bb1350", _console(monkeypatch, "AT-LOGIN"))]
+    status, out = _reap(cell, capsys)
+    assert status == 0
+    assert "console" not in out
+    assert out.rstrip().endswith("bed-reap: clean")
+
+
+@pytest.mark.parametrize(
+    ("probe", "shown", "recovery"),
+    [
+        (
+            ("LOGGED-IN\nRESET-FAILED '~ # '",),
+            "LOGGED-IN (reset failed: '~ # ')",
+            "`make console-logout`",
+        ),
+        (("SILENT",), "SILENT (no bytes)", "`make qemu-restart` (the guest is not answering)"),
+        (
+            ("CONNFAIL refused",),
+            "DOWN (CONNFAIL refused)",
+            "`make qemu-restart` (the guest is not answering)",
+        ),
+        (
+            ("BUSY",),
+            "BUSY (port held)",
+            "`make bed-status` (another client holds the console port)",
+        ),
+        (
+            ("", 255, ""),
+            "HOP-FAIL (rc=255)",
+            "`make vm-health` (the console server did not answer)",
+        ),
+    ],
+)
+def test_a_console_the_reap_cannot_bring_to_its_login_prompt_refuses_the_lane(
+    cell, doubles, lab, capsys, monkeypatch, probe, shown, recovery
+):
+    """The lane refuses with the console named and what recovers it, never three red tests."""
+    doubles.consoles = [("test2", _console(monkeypatch, *probe))]
+    status, out = _reap(cell, capsys)
+    assert status == bed_reap.EXIT_DIRTY
+    assert f"bed-reap: failed console test2: {shown}; see {recovery}" in out
+    assert "bed-reap: clean" not in out
+
+
+def test_full_resets_the_consoles_through_the_makefile_not_twice(cell, doubles, lab, capsys):
+    """#1124 review: with --full (and --restart-qemu) the reset is the Makefile run's own,
+    after the guest restart, so a wedged guest is not judged before it is restarted."""
+    status, out = _reap(cell, capsys, full=True, restart_qemu=True)
+    assert status == 0, out
+    assert "reset_logged_in_consoles" not in _names(doubles)
+    assert doubles.calls[-1] == ("run_lab_health", True)
+
+
+def test_run_lab_health_runs_the_makefiles_console_targets(monkeypatch):
+    """The console lines live in the Makefile. The restart resets the consoles in its own
+    run, so a console left logged in cannot fail the restart's report first (#1124 review)."""
     seen = []
-    statuses = {"qemu-restart": 0, "console-logout": 0}
+    status = {"code": 0}
 
     class _Proc:
-        def __init__(self, target):
-            self.target = target
-
         async def wait(self):
-            return statuses[self.target]
+            return status["code"]
 
     async def spawn(*argv, cwd):
         assert argv[:2] == ("make", "--no-print-directory")
         assert cwd == bed_reap.REPO_ROOT
-        seen.append(argv[2])
-        return _Proc(argv[2])
+        seen.append(argv[2:])
+        return _Proc()
 
     monkeypatch.setattr(bed_reap.asyncio, "create_subprocess_exec", spawn)
     assert asyncio.run(bed_reap.run_lab_health(restart_qemu=False)) == 0
-    assert seen == ["console-logout"]
-    seen.clear()
     assert asyncio.run(bed_reap.run_lab_health(restart_qemu=True)) == 0
-    assert seen == ["qemu-restart", "console-logout"]
-    seen.clear()
-    statuses["qemu-restart"] = 2
+    assert seen == [("console-logout",), ("qemu-restart", "LOGOUT_CONSOLES=1")]
+    status["code"] = 2
     assert asyncio.run(bed_reap.run_lab_health(restart_qemu=True)) == 2
-    assert seen == ["qemu-restart"], "a failed restart stops before the logout"
+
+
+def test_qemu_restart_with_logout_consoles_passes_lab_healths_logout_flag():
+    """The Makefile line the reap's restart relies on: one lab_health run, both flags."""
+    import subprocess
+
+    out = subprocess.run(
+        ["make", "-n", "--no-print-directory", "qemu-restart", "LOGOUT_CONSOLES=1"],
+        cwd=bed_reap.REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    (line,) = [ln for ln in out.splitlines() if "scripts/lab_health.py" in ln]
+    assert "--restart-qemu" in line
+    assert "--logout-consoles" in line
 
 
 # --- the CLI --------------------------------------------------------------------
