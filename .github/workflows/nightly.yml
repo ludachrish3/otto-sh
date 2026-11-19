@@ -228,6 +228,43 @@ jobs:
       - name: Repeat tests/unit in one process (test-isolation leak guard)
         run: uv run nox -s tests_unit_repeat
 
+  # The hostless unit suite with every runtime dependency pinned to the floor
+  # pyproject.toml declares (#1181). The per-push floor smoke (`make
+  # wheel-smoke`) proves otto imports and runs there; the breaks it cannot see
+  # are behaviour on paths only the suite takes. Nightly: it is the slowest
+  # hostless leg, and a floor drifts with a dependency bump, not per push.
+  unit-floors:
+    name: unit-floors (the unit suite at the declared dependency floors)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.10
+        run: uv python install 3.10
+
+      # Same tree as `unit-repeat`: the BusyBox artifacts, strace and the
+      # kmodcov compilers some unit tests consume.
+      - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/otto/busybox
+          key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
+
+      - name: Install strace (the import budget counts stat syscalls through it)
+        run: command -v strace || { sudo apt-get update && sudo apt-get install -y strace; }
+
+      - name: Install gcc-11, clang and llvm-cov (the kmodcov reader tests)
+        run: command -v gcc-11 && command -v clang && command -v llvm-cov || { sudo apt-get update && sudo apt-get install -y gcc-11 clang llvm; }
+
+      - name: Run tests/unit at the declared dependency floors
+        run: uv run nox -s tests_unit_floors
+
   # The Playwright image the browser jobs run in, named by
   # scripts/playwright_version.py from the playwright version locked in
   # uv.lock: the one place that reads the lock and spells the image, so a
@@ -911,6 +948,7 @@ jobs:
         stability-matrix,
         unit-matrix,
         unit-repeat,
+        unit-floors,
         dashboard,
         dashboard-soak,
         chaos-tier2,

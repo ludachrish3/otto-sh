@@ -382,6 +382,7 @@ WORKFLOW_READERS = [
     "tests/unit/test_ci_playwright_container.py",
     "tests/unit/test_ci_web_gate.py",
     "tests/unit/test_declared_harness_bounds.py",
+    "tests/unit/test_dependency_floor_lanes.py",
     "tests/unit/test_support_matrix.py",
     "tests/unit/test_tach_layers.py",
     "tests/unit/test_tier_marker_invariants.py",

@@ -238,3 +238,48 @@ def test_importing_the_module_does_not_import_an_http_stack():
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     ).stdout.strip()
     assert out == "['otto.tls']", f"import otto.tls pulled in {out}"
+
+
+def test_a_large_compressed_body_reads_whole_through_the_sessions_adapter():
+    """The urllib3 floor (#1181): 2.0.0 and 2.0.1 truncate a large gzip body.
+
+    NetBox serves compressed JSON; a truncated read fails ``.json()``. The
+    body arrives as on the wire: an ``http.client.HTTPResponse`` with a
+    ``Content-Length``, which closes its file once the compressed bytes are
+    read while decoded bytes are still buffered (urllib3 2.0.0 then stops
+    streaming). It goes through the adapter :func:`os_trust_session` mounts,
+    so the nightly floor lane checks it at the declared urllib3.
+    """
+    import gzip
+    import http.client
+    import io
+    import json
+
+    import requests
+    import urllib3
+
+    payload = json.dumps({"data": ["a" * 500 for _ in range(1000)]}).encode()
+    body = gzip.compress(payload)
+    wire = (
+        b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Type: application/json\r\n"
+        b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    )
+
+    class _Socket:
+        def makefile(self, *_args: object, **_kwargs: object) -> io.BytesIO:
+            return io.BytesIO(wire)
+
+    original = http.client.HTTPResponse(_Socket())  # type: ignore[arg-type]
+    original.begin()
+    raw = urllib3.HTTPResponse(
+        body=original,
+        headers=dict(original.getheaders()),
+        status=200,
+        original_response=original,
+        preload_content=False,
+    )
+    session = os_trust_session()
+    request = requests.Request("GET", "https://netbox.example/api/dcim/devices/").prepare()
+    response = session.get_adapter(request.url).build_response(request, raw)
+    assert len(response.content) == len(payload)
+    assert len(response.json()["data"]) == 1000

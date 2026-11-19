@@ -27,7 +27,7 @@ the ``parse=`` spec:
 import asyncio
 import re
 import types
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, ClassVar, Union, get_args, get_origin
 
@@ -97,14 +97,12 @@ class Parsed(OttoModel):
         # quiet failed result.
         for field, info in cls.model_fields.items():
             inner = _unwrap_optional(info.annotation)
-            if get_origin(inner) is not list:
+            if get_origin(inner) is not list or _parsed_reader(inner) is not None:
                 continue
             (element,) = get_args(inner)
-            if not (isinstance(element, type) and issubclass(element, Parsed)):
-                raise TypeError(
-                    f"{cls.__name__}.{field}: list fields must contain a Parsed "
-                    f"subclass, got {element}"
-                )
+            raise TypeError(
+                f"{cls.__name__}.{field}: list fields must contain a Parsed subclass, got {element}"
+            )
 
 
 def _unwrap_optional(annotation: Any) -> Any:
@@ -121,6 +119,25 @@ def _unwrap_optional(annotation: Any) -> Any:
     return annotation
 
 
+def _parsed_reader(spec: Any) -> "Callable[[str], Any] | None":
+    """Return what reads text into *spec* when it is ``Sub`` or ``list[Sub]`` of a Parsed ``Sub``.
+
+    The one decision between the two shapes, for a ``parse=`` spec
+    (:func:`apply_parse`) and a field annotation (:func:`_parse_region`)
+    alike; ``None`` for anything else. The list form is checked first: on
+    Python 3.10 ``list[Sub]`` is an instance of ``type``, and pydantic before
+    2.11 raises on ``issubclass(list[Sub], ...)``.
+    """
+    if get_origin(spec) is list:
+        (element,) = get_args(spec)
+        if isinstance(element, type) and issubclass(element, Parsed):
+            return lambda text: parse_all(element, text)
+        return None
+    if isinstance(spec, type) and issubclass(spec, Parsed):
+        return lambda text: parse_one(spec, text=text)
+    return None
+
+
 def _parse_region(annotation: Any, region: str | None) -> Any:
     """Interpret one group's captured ``region`` per its field ``annotation``.
 
@@ -131,14 +148,8 @@ def _parse_region(annotation: Any, region: str | None) -> Any:
     """
     if region is None:
         return None
-    inner = _unwrap_optional(annotation)
-    if get_origin(inner) is list:
-        (element,) = get_args(inner)
-        if isinstance(element, type) and issubclass(element, Parsed):
-            return parse_all(element, region)
-    elif isinstance(inner, type) and issubclass(inner, Parsed):
-        return parse_one(inner, text=region)
-    return region
+    reader = _parsed_reader(_unwrap_optional(annotation))
+    return region if reader is None else reader(region)
 
 
 def _from_match(model: type[Parsed], match: re.Match[str]) -> Parsed:
@@ -186,12 +197,11 @@ def apply_parse(spec: Any, *, text: str) -> Any:
     ``list[Sub]`` of one (:func:`parse_all`), or any other callable used as an
     escape hatch — its exceptions are wrapped in :class:`ParseMismatch`.
     """
-    if isinstance(spec, type) and issubclass(spec, Parsed):
-        return parse_one(spec, text=text)
+    reader = _parsed_reader(spec)
+    if reader is not None:
+        return reader(text)
     if get_origin(spec) is list:
         (element,) = get_args(spec)
-        if isinstance(element, type) and issubclass(element, Parsed):
-            return parse_all(element, text)
         raise TypeError(f"list parse spec element must be a Parsed subclass, got {element!r}")
     if callable(spec):
         try:

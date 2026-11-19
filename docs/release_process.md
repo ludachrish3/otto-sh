@@ -315,13 +315,31 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
   {doc}`library docs <extend/python-library>`. The build backend itself refuses an asset-less wheel,
   so a bare `uv build` without the web step fails rather than publishing a
   frontend-less package. The build then goes through `make wheel-smoke`:
-  the wheel is installed over otto's locked runtime dependencies alone (no
-  dev group, nothing from `src/`) and `scripts/wheel_smoke.py` imports every
-  module and runs `otto test` from it, with pytest's plugin autoload on and
-  off. Every other lane runs an editable otto in the dev venv, where a
+  the wheel is installed over otto's runtime dependencies alone (no dev
+  group, nothing from `src/`), once at the locked versions (nox session
+  `wheel_smoke`) and once with every direct dependency pinned to the minimum
+  `pyproject.toml` declares, on Python 3.10 (`wheel_smoke_floors`). Each
+  time, `scripts/wheel_smoke.py` imports every module, runs every
+  third-party import statement in otto's source (the function-local ones
+  too), and runs `otto test`, with pytest's plugin autoload on and off.
+  Every other lane runs an editable otto in the dev venv, where a
   development dependency can hide what an installed otto lacks; the import
   budget measures an editable otto too, in a runtime-only venv. CI's
   `wheel-smoke` job runs the same target on every push.
+
+  When only `wheel_smoke_floors` is red, a minimum in `pyproject.toml` is
+  lower than otto needs. Either the floors do not resolve (uv's error names
+  the package whose minimum another one outgrows, or a minimum that is a
+  yanked release), or the smoke fails on an import that names the package.
+  Raise that minimum to the lowest version that passes, run `uv lock`,
+  update the table in {doc}`installation`, and run `make wheel-smoke` again.
+  Do not change the lock to fix it: the locked install was already green.
+  If the failing package is not one `pyproject.toml` declares, a new release
+  of a transitive dependency broke at the floors: this session resolves
+  those fresh, where the locked one does not. Raise the direct minimum that
+  lets the bad release in, or declare that package with a minimum of its
+  own. The nightly `unit-floors` lane runs the unit suite at the same
+  floors, and is triaged the same way.
 - **publish** uploads to PyPI via OIDC, gated by the `pypi` GitHub
   Environment.
 - **docs** builds the HTML documentation on a clean runner and packs the two

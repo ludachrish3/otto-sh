@@ -10,12 +10,17 @@ List available sessions:
     uv run nox --list
 """
 
+import atexit
 import os
+import re
 import shutil
+import sys
+import tempfile
 from pathlib import Path
 
 import nox
 import nox_uv
+from packaging.utils import canonicalize_name
 
 PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
@@ -1074,6 +1079,51 @@ def tests_changed_repeat_browser(session: nox.Session) -> None:
     )
 
 
+def _scratch(session: nox.Session, name: str) -> Path:
+    """Return a fresh scratch directory *name* for *session*, outside the checkout.
+
+    Every nox scratch directory comes from here, never ``session.create_tmp()``.
+    ``create_tmp``'s directory lives under ``.nox/`` in the checkout and
+    points the session's TMPDIR there, so a pytest or pytester run from it
+    reads the checkout's pyproject.toml (its addopts and ``pythonpath``) and
+    git work tree: about 110 of the first floor nightly's 203 failures, and
+    the wheel smoke could see the checkout's code. Each session of each nox invocation has a
+    private root (``mkdtemp``), so concurrent runs, of another worktree or the
+    same one, never share or delete each other's files. The *name*
+    subdirectory is emptied on each call, and the root goes when nox exits.
+    """
+    root = _SCRATCH_ROOTS.get(session.name)
+    if root is None:
+        root = Path(tempfile.mkdtemp(prefix=f"otto-nox-{session.name}-"))
+        _SCRATCH_ROOTS[session.name] = root
+        atexit.register(shutil.rmtree, root, ignore_errors=True)
+    path = root / name
+    shutil.rmtree(path, ignore_errors=True)
+    path.mkdir()
+    return path
+
+
+_SCRATCH_ROOTS: "dict[str, Path]" = {}
+"""Each session's scratch root in this nox invocation (:func:`_scratch`)."""
+
+
+def _smoke_wheel(session: nox.Session, runtime: Path) -> None:
+    """Install ``dist/*.whl`` with ``--no-deps`` over the *runtime* requirements, then smoke it.
+
+    The one installed-otto smoke (scripts/wheel_smoke.py), for each runtime
+    resolution a session hands it. It runs from a scratch directory, so
+    neither ``src/`` nor the checkout's tests are importable.
+    """
+    wheels = sorted(Path("dist").glob("*.whl"))
+    if len(wheels) != 1:
+        session.error(f"expected one wheel in dist/, found {len(wheels)}: run `make wheel-smoke`")
+    session.install("-r", str(runtime))
+    session.install("--no-deps", str(wheels[0].resolve()))
+    script = Path("scripts/wheel_smoke.py").resolve()
+    session.chdir(_scratch(session, "smoke"))
+    session.run("python", str(script))
+
+
 @nox.session(python=[PRIMARY_PYTHON])
 def wheel_smoke(session: nox.Session) -> None:
     """Smoke the built wheel in a venv of runtime dependencies only (scripts/wheel_smoke.py).
@@ -1082,19 +1132,15 @@ def wheel_smoke(session: nox.Session) -> None:
     development dependency or an auto-loaded plugin can hide what an
     installed otto lacks (#593: pytest-cov's `--no-cov`). This one installs
     `dist/*.whl` with `--no-deps` over the locked runtime dependencies
-    (`uv export --no-dev`) — what `pip install otto-sh` resolves, pinned —
-    and runs the smoke from a scratch directory, so neither `src/` nor the
-    checkout's tests are importable.
+    (`uv export --no-dev`) — what `pip install otto-sh` resolves, pinned.
+    :func:`wheel_smoke_floors` is the same smoke over the declared floors.
 
     It needs a built wheel. Building one needs the web assets (the build
     backend refuses an asset-less wheel), so the Node step stays outside
     this Python-only session, as for `dashboard`: `make wheel-smoke` builds
     first, and so does CI's `wheel-smoke` job.
     """
-    wheels = sorted(Path("dist").glob("*.whl"))
-    if len(wheels) != 1:
-        session.error(f"expected one wheel in dist/, found {len(wheels)}: run `make wheel-smoke`")
-    runtime = Path(session.create_tmp()) / "runtime-requirements.txt"
+    runtime = _scratch(session, "locked") / "runtime-requirements.txt"
     session.run_install(
         "uv",
         "export",
@@ -1105,11 +1151,142 @@ def wheel_smoke(session: nox.Session) -> None:
         f"--output-file={runtime}",
         external=True,
     )
+    _smoke_wheel(session, runtime)
+
+
+def _floor_requirements(session: nox.Session) -> Path:
+    """Resolve otto's runtime with every direct dependency pinned to its declared floor.
+
+    The one floor resolution, for :func:`wheel_smoke_floors` and
+    :func:`tests_unit_floors`. Each direct dependency is constrained to
+    ``name==floor`` (``scripts/check_docs_dependency_table.py --constraints``,
+    the floors' one reader), and the rest resolve for this session's Python.
+    A floor no resolution can install (another dependency needs more of it)
+    fails here, naming both, and so does a floor its index has yanked (a
+    release withdrawn as broken is no floor to promise). Returns the pinned
+    requirements file.
+    """
+    tmp = _scratch(session, "floors")
+    # Read by the interpreter running nox (the dev venv): this session's venv is
+    # empty until the floors it is about to read are installed.
+    constraints_argv = (sys.executable, "scripts/check_docs_dependency_table.py", "--constraints")
+    # run_install, so the floors are also read under `--install-only`; it returns
+    # None under `--no-install`/`-R`, where `run` reads them instead.
+    floors = session.run_install(*constraints_argv, silent=True, external=True) or session.run(
+        *constraints_argv, silent=True, external=True
+    )
+    if not isinstance(floors, str) or not floors.strip():
+        session.error("scripts/check_docs_dependency_table.py --constraints printed no floors")
+    constraints = tmp / "floor-constraints.txt"
+    constraints.write_text(floors)
+    runtime = tmp / "floor-requirements.txt"
+    said = session.run_install(
+        "uv",
+        "pip",
+        "compile",
+        "pyproject.toml",
+        f"--constraints={constraints}",
+        f"--python-version={session.python}",
+        "--no-header",
+        f"--output-file={runtime}",
+        silent=True,
+        external=True,
+    )
+    # Keyed on uv's warning wording ("`name==version` is yanked (reason: ...)");
+    # a reworded warning would silence this refusal, not fail it.
+    yanked = [line for line in (said or "").splitlines() if "is yanked" in line]
+    if yanked:
+        session.error("a declared floor is a yanked release:\n" + "\n".join(yanked))
+    return runtime
+
+
+@nox.session(python=[PRIMARY_PYTHON])
+def wheel_smoke_floors(session: nox.Session) -> None:
+    """Smoke the built wheel with every direct dependency at its declared floor (#1181).
+
+    A declared floor is a promise: a user whose resolver lands on it gets an
+    otto that works. ``pydantic>=2.6`` was not one: otto crashed at import
+    below 2.10.4, and nothing ran it there. This session installs the floor
+    resolution (:func:`_floor_requirements`) on the oldest Python otto
+    supports and runs the same smoke as :func:`wheel_smoke`, so a floor below
+    what otto needs fails here, at release and on every push.
+    :func:`tests_unit_floors` runs the unit suite there nightly.
+    """
+    _smoke_wheel(session, _floor_requirements(session))
+
+
+@nox.session(python=[PRIMARY_PYTHON])
+def tests_unit_floors(session: nox.Session) -> None:
+    """Run the hostless unit suite with every runtime dependency at its declared floor (#1181).
+
+    The floor smoke (:func:`wheel_smoke_floors`) proves otto imports and runs
+    at the floors; most floor breaks are behaviour on a path the smoke never
+    takes (an SNMP GET's cleanup, a TLS context urllib3 1.x rejects), and
+    only the suite reaches them. Nightly, not per push: the suite is the
+    slowest hostless leg.
+
+    The runtime is the floor resolution; the ``dev`` group is the lock's,
+    installed ``--no-deps`` less every package the floors pin (its docs
+    tooling needs newer versions than otto's floors, and the tests do not
+    need it to agree); otto is the editable checkout. The selection is
+    ``tests_hostless_unit``'s uninstrumented pair, by name.
+    """
+    runtime = _floor_requirements(session)
+    tmp = _scratch(session, "dev")
+    locked_dev = tmp / "dev-requirements.txt"
+    session.run_install(
+        "uv",
+        "export",
+        "--frozen",
+        "--only-group",
+        "dev",
+        "--no-emit-project",
+        "--no-hashes",
+        "--quiet",
+        f"--output-file={locked_dev}",
+        external=True,
+    )
+    # Under `-R`/`--no-install` the compile and the export do not run, so the
+    # files they write are absent; the installs below would be no-ops anyway.
+    if runtime.exists():
+        _install_floor_suite(session, runtime, locked_dev, tmp / "dev-extra-requirements.txt")
+    session.run(
+        "pytest",
+        *HOSTLESS_MIDDLE_TEST_ARGS,
+        _junitxml(session, "nox-unit-floors"),
+        *session.posargs,
+        env=_LEAK_ENV,
+    )
+    session.run(
+        "pytest",
+        *HOSTLESS_MIDDLE_SERIAL_ARGS,
+        _junitxml(session, "nox-unit-floors-serial"),
+        *session.posargs,
+        env=_LEAK_ENV,
+    )
+
+
+def _install_floor_suite(
+    session: nox.Session, runtime: Path, locked_dev: Path, dev_extra: Path
+) -> None:
+    """Install tests_unit_floors's venv: the floors, the lock's dev group less them, otto."""
+    pin = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==")
+
+    def pinned(path: Path) -> "list[tuple[str, str]]":
+        """Each ``name==version`` line of *path*, with its canonical name."""
+        return [
+            (canonicalize_name(m.group(1)), line)
+            for line in path.read_text().splitlines()
+            if (m := pin.match(line))
+        ]
+
+    floor_names = {name for name, _ in pinned(runtime)}
+    dev_extra.write_text(
+        "".join(f"{line}\n" for name, line in pinned(locked_dev) if name not in floor_names)
+    )
     session.install("-r", str(runtime))
-    session.install("--no-deps", str(wheels[0].resolve()))
-    script = Path("scripts/wheel_smoke.py").resolve()
-    session.chdir(session.create_tmp())
-    session.run("python", str(script))
+    session.install("--no-deps", "-r", str(dev_extra))
+    session.install("--no-deps", "-e", ".")
 
 
 @nox_uv.session(uv_groups=["dev", "lint"])
