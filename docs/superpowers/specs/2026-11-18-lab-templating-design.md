@@ -1,7 +1,7 @@
 # Lab templating over externally owned inventories
 
-**Issue:** #1176 (folds in #803, the Terraform inventory backend)
-**Status:** approved 2026-11-18. Reviewed in two rounds by Astra and Opus; the maintainer accepted the recommended option for D1–D5 (section 11).
+**Issue:** #1176. Remote Terraform (#803) and Ansible/AWX (#1179) sources are future work (section 12).
+**Status:** approved 2026-11-18. Reviewed in two rounds by Astra and Opus; the maintainer accepted the recommended option for D1–D6 (section 11).
 
 ## 1. Why
 
@@ -29,22 +29,22 @@ The goal is to let a team:
 **Goals**
 
 1. **Several inventories at once.** A project can read NetBox for physical
-   hosts and Ansible or Terraform for virtual ones in the same run, plus the
-   JSON inventory and any registered backend. A virtual host may live in any
-   of them: a fixture VM in `inventory.json` (`"is_virtual": true`) or in
-   NetBox is as valid as a Terraform-provisioned one.
-2. **First-party Ansible and Terraform inventory adapters**, plus NetBox
-   Virtual Machines.
+   hosts and a JSON or Jsonnet inventory for fixture VMs in the same run, plus
+   any registered backend. A virtual host may live in any of them: a fixture
+   VM in `inventory.json` (`"is_virtual": true`) or in NetBox. The design
+   leaves room for remote Ansible and Terraform servers (section 12).
+2. **NetBox Virtual Machines**, as opt-in records with `is_virtual: true`.
 3. **One template language for otto's attributes in v1: Jsonnet.** It renders
    in memory, over the records of every configured inventory, into ordinary
    lab documents.
-4. **Jsonnet is also the escape hatch for data.** A team without NetBox,
-   Ansible or Terraform can write its inventory records in Jsonnet.
+4. **Jsonnet is also the escape hatch for data.** A team without an
+   inventory server can write its inventory records in Jsonnet. In v1 this is
+   the familiar-format input for every team that does not run NetBox.
 5. **Several layouts per project**, and **host-level definitions reusable
    inside full lab layouts**.
 6. **One source of truth for each fact and each relationship.** Machine facts
    come from the inventory that owns them. Instance membership comes from
-   upstream when upstream declares it (an Ansible group per rig), and is
+   upstream when upstream declares it (an explicit instance map), and is
    derived (by grouping on a fact such as `rack`) only when it is not.
 7. **The result can be explained.** A user can see what a template rendered
    and why a host got each value.
@@ -56,8 +56,10 @@ The goal is to let a team:
   renderer slot (section 6.6), fed the same inputs.
 - Role aliases for tests, such as `get_host(role="dut")`. Worth doing, as a
   follow-up issue. Marked as my call.
-- Writing to any external system. otto never runs `terraform apply`, never
-  edits an Ansible inventory and never writes to NetBox.
+- Remote Ansible (AWX) and Terraform (HCP Terraform-compatible) inventory
+  sources. Deferred until a dedicated server can prove them (section 12).
+- Writing to any external system. otto never writes to NetBox, and future
+  adapters will never write to theirs either.
 
 **Anti-goals: things that would make this a failure even if it works**
 
@@ -90,10 +92,8 @@ The goal is to let a team:
   re-implements its logic.
 - **No threads with asyncio, and the lab build stays synchronous.** The
   `Inventory` and `LabRepository` protocols and `build_lab` are sync, and
-  teams' own backends implement them. Running `ansible-inventory` or
-  `terraform` is a blocking `subprocess.run` with fixed argv. This matches how
-  the NetBox backend already does blocking I/O during the lab build (pynetbox,
-  sync `requests`) and how `src/otto/host/toolchain_discovery.py` shells out.
+  teams' own backends implement them. Backend I/O is blocking, as the NetBox
+  backend already does it during the lab build (pynetbox, sync `requests`).
   Marked as my call.
 - **One decision, one place** (AGENTS.md). In particular, all four lab-file
   readers (section 7.1) move onto one reader.
@@ -145,23 +145,30 @@ repository) and one by a naive Opus reviewer (with the user docs only).
 - **(c) First match wins.** Rejected. Reordering settings could silently
   redirect a test to different hardware.
 
-### 4.4 What otto reads from each tool
+### 4.4 What otto reads from Ansible and Terraform (future)
 
-- **Terraform:** `terraform output -json <name>`. Not `.tf` source (desired
-  state, variables unresolved). Not the raw state file (HashiCorp says its
-  format may change). Not `terraform show -json` (far broader, includes
-  sensitive values, provider-specific).
-- **Ansible:** `ansible-inventory --list` from the deployment's own Ansible
-  install. Not YAML/INI parsed by otto, which would re-implement group_vars,
-  plugins, `constructed` and precedence.
+The maintainer ruled that Ansible and Terraform sources are **remote servers
+only**; their local files are never otto's source of truth. Local files enter
+otto through JSON or Jsonnet. The reading approach for the future adapters is
+recorded in section 12. Rejected along the way:
+
+- Running the local CLIs (`terraform output -json`, `ansible-inventory
+  --list`). Sound for "rely on the tool", but it makes local files the source
+  of truth and requires the binaries on every controller.
+- Parsing `.tf` source, raw state files or Ansible YAML/INI. Desired state
+  with unresolved variables, a format HashiCorp says may change, or a
+  re-implementation of Ansible's group_vars, plugins and precedence.
 
 ## 5. Decided by the maintainer
 
-- otto is a consumer of Terraform, Ansible and NetBox data, as it is of
-  NetBox today. Those tools own their files.
+- otto is a consumer of external inventory data, as it is of NetBox today.
+  Those tools own their data.
+- v1 ships named inventories, NetBox Virtual Machines and Jsonnet. Remote
+  Ansible and Terraform servers are future work (section 12); when they come,
+  they are remote servers only, never local files.
 - Several built-in inventory backends plus registered alternatives, usable
-  simultaneously, for example NetBox for physical and Ansible or Terraform
-  for virtual.
+  simultaneously, for example NetBox for physical hosts and Jsonnet for
+  fixture VMs (later, Ansible or Terraform servers for virtual ones).
 - Named inventories, with machine identity = inventory name + key.
 - Virtual hosts may live in any backend. NetBox Virtual Machine support is in
   this work.
@@ -178,9 +185,9 @@ repository) and one by a naive Opus reviewer (with the user docs only).
   C++ `jsonnet` on Windows and Apple-silicon macOS, and no binding on Intel
   macOS.
 
-**D1–D5 (section 11):** five decisions the two reviewers left to the
-maintainer. He accepted the recommended option for each; they are marked
-**[D1]**–**[D5]** where they apply below.
+**D1–D6 (section 11):** six decisions the reviews left to the maintainer.
+He accepted the recommended option for each; they are marked
+**[D1]**–**[D6]** where they apply below.
 
 ## 6. Design
 
@@ -196,10 +203,8 @@ url = "https://netbox.example"
 
 [[inventories]]
 name = "virtual"
-backend = "terraform"
-dir = "../testbed/terraform"
-workspace = "lab"
-output = "otto_hosts"
+backend = "json"
+path = "lab_data/virtual.jsonnet"
 
 [[inventories]]
 name = "fixtures"
@@ -215,7 +220,8 @@ path = "lab_data/inventory.json"
   agree on backend, normalized settings, cache policy and credentials binding,
   reusing `CompiledInventory.same_as` and `CompiledCreds.same_as`
   (`src/otto/inventory/config.py`). Otherwise bootstrap fails naming both
-  files. Project-over-user resolution applies per name.
+  files. Project-over-user resolution applies per name. For `default`, the
+  inventory and credentials agreements stay the independent walks below.
 - Qualified references resolve by name across the whole catalog.
 
 **`default` is exactly today's inventory.**
@@ -228,6 +234,13 @@ path = "lab_data/inventory.json"
   working (`tests/unit/inventory/test_config.py`).
 - A `[[inventories]]` entry named `default` takes part in that walk as an
   `[inventory]` would. Declaring both forms in one file is an error.
+- **[D6] The `[creds]` twin of D1.** A project that declares any
+  `[[inventories]]` and also a `[creds]` table, without binding `default`
+  itself, is refused at bootstrap. The error points at the entry's `creds`
+  sub-table. Otherwise its `[creds]` would bind to the process `default`
+  (possibly the user's personal inventory), so `physical` would silently lose
+  its credentials and the project's passwords would merge into records for
+  machines it does not own.
 - Credentials compose only through `merge_creds`
   (`src/otto/inventory/creds.py`), which identifies a credential by login and
   protocol scope. Explicit `creds` sub-tables bind to their `[[inventories]]`
@@ -259,14 +272,15 @@ fields.
 
 **Inventory commands and the doctor.** `otto inventory lookup|list|export|
 diff|refresh` take `--inventory NAME`, defaulting to `default`. The doctor
-checks every inventory and attributes each finding to its name.
+checks every inventory and attributes each finding to its name. Its choice
+of `default` for existing configurations is unchanged (section 9).
 
 ### 6.2 Record vocabulary for discovery
 
 Records keep every existing field, and gain two normalized ones:
 
-- `groups: list[str]`: memberships (Ansible groups, NetBox role and tags, a
-  Terraform output field).
+- `groups: list[str]`: memberships (NetBox role and tags in v1; later,
+  Ansible groups or a Terraform output field).
 - `labels: dict[str, str | int]`: scalar values used for selection and
   substitution (`pod`, `console_port`, `vlan`). Adapters validate types at
   their boundary: strings such as `"007"` stay strings; booleans, arrays and
@@ -287,8 +301,8 @@ Rules:
   behaviour (`os_type`, terms and option tables stay in otto's files).
 
 **One lab may draw from several inventories.** A router lab can take its DUT
-from `physical` (NetBox) and its traffic generator from `virtual`
-(Terraform). Templates group records from different inventories on a shared
+from `physical` (NetBox) and its traffic generator from `virtual` (a
+Jsonnet fixture inventory). Templates group records from different inventories on a shared
 label, with the grouping scope declared (section 6.5).
 
 **Optional capability: instances.**
@@ -300,11 +314,11 @@ label, with the grouping scope declared (section 6.5).
 - Instance members are the adapter's **own** keys. Upstream data never spells
   otto's project-local inventory names; cross-inventory joins happen in
   templates.
-- Examples: an Ansible group per rig, or a Terraform output map
-  `rig-7 → {dut: edge-17, tgen: ixia-9}`.
+- Examples: the JSON instances document format in v1,
+  `rig-7 → {dut: edge-17, tgen: ixia-9}`; later, an Ansible group per rig or
+  a Terraform output map.
 - Only an explicit instance map can report an instance whose hosts have all
-  gone. Ansible plugins drop empty groups, so the Ansible adapter cannot make
-  that promise; the docs say so.
+  gone.
 - The JSON inventory gains instances through an explicitly selected document
   format (a top-level format marker), because `instances` and any other bare
   top-level name are already legal host keys. Flat legacy documents keep their
@@ -314,11 +328,13 @@ label, with the grouping scope declared (section 6.5).
 
 ### 6.3 Adapters
 
-All adapters register through the existing inventory registry
-(`src/otto/inventory/registry.py`), exactly as a team's own backend would.
-If a team already registered a name that a new built-in uses (`ansible`,
-`terraform`, `jsonnet`), the team's registration keeps the name, with a
-warning naming both. Marked as my call.
+Inventory backends register through the existing inventory registry
+(`src/otto/inventory/registry.py`), and lab sources through the lab-source
+registry (`src/otto/labs/registry.py`), exactly as a team's own would. If a
+team already registered a name that a new built-in uses in the same registry
+(in v1 the `jsonnet` lab source; later the `awx` and `terraform` inventory
+backends), the team's registration keeps the name, with a warning naming
+both. Marked as my call.
 
 - **JSON (existing).** Gains `groups`, `labels` and the instances document
   format. Its `path` may also name a `.jsonnet` file (section 6.6).
@@ -332,40 +348,7 @@ warning naming both. Marked as my call.
     fails naming both object kinds and ids.
   - Gains mappings for role and tags to `groups`, and custom fields to
     `labels`.
-- **Ansible (new).**
-  - Input: runs `ansible-inventory -i <source> --list` with the deployment's
-    configured executable, inventory sources, config and collections, and
-    with Ansible's own strict-parse setting
-    (`ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED`), so a source that fails to
-    parse fails discovery and never reads as an empty fleet.
-  - Mapping: the inventory hostname is the key. The address comes from
-    `ansible_host` (configurable), falling back to the hostname as Ansible
-    does. Group membership, including inherited groups, becomes `groups`.
-    Configured hostvars become `labels`. A configured group pattern can
-    expose rig groups as instances.
-  - Offline: the adapter also accepts a captured `--list` JSON file. The docs
-    say what a capture certifies.
-  - Dependency: Ansible is not an otto dependency. It is required only by
-    projects that use this adapter, and its absence fails naming the adapter.
-- **Terraform (new; supersedes #803).**
-  - Input: runs `terraform output -json <output>` in the configured
-    initialized working directory. The workspace is pinned with
-    `TF_WORKSPACE` in the child environment (never `terraform workspace
-    select`, which writes to disk), and is part of the cache identity.
-  - Data contract: the named output is a map keyed by stable host ids, with
-    fields the adapter maps. It may carry an instance map.
-  - Missing data: a missing output or field fails naming the workspace,
-    output and field.
-  - **[D4]** Secrets: otto reads only the designated output, never all
-    outputs. The docs state that this output is the operator's public
-    contract and that otto cannot see Terraform's `sensitive` flag through
-    it. Deployments that need stronger assurance supply a separately produced
-    public artifact, read in place. Credentials never come from Terraform;
-    they come by reference from the bound credentials store, as #803
-    specified. Raw stdout and stderr never reach diagnostics or caches.
-  - Offline: the adapter also accepts a captured output JSON file.
-- **Both subprocess adapters** use fixed argv, a timeout and an output bound,
-  and run synchronously (section 3).
+- **Ansible and Terraform:** future work (section 12).
 
 ### 6.4 The Jsonnet lab source
 
@@ -450,7 +433,7 @@ ships with otto. A team may read it, wrap it or ignore it. It provides:
   include the location fields that make it unique, for example
   `['site', 'rack']`. A record missing a scope value fails its instance.
   Grouping may span inventories; it never requires members to share an
-  inventory, so a NetBox DUT and a Terraform traffic generator can form one
+  inventory, so a NetBox DUT and a Jsonnet-fixture traffic generator can form one
   rig.
 - **Counts:** `expect(role, records, n)` makes an instance whose role does
   not have exactly `n` members unavailable, with the reason, while other labs
@@ -483,7 +466,7 @@ otherwise: two isolated VMs that share a private IP are different machines.
 Host summaries get the same check.
 
 Example: one `router-lab` per site and rack (one DUT from NetBox, one traffic
-generator from Terraform):
+generator from a Jsonnet fixture inventory):
 
 ```jsonnet
 // lab_data/layouts/router-lab.jsonnet
@@ -602,8 +585,11 @@ naming the source. Nothing below weakens that for a source without a scope.
 
 - `list_labs() -> list[str]`, `load_lab(..., inventory=...)` and
   `list_host_summaries(..., inventory=...)` stay exactly as they are. A legacy
-  backend receives the `default` inventory (or `None`) and only ever sees
-  string references.
+  backend receives the `default` inventory, `None`, or, in a project that
+  refuses bare references (D1), a refusing stand-in that raises the D1
+  diagnostic before any lookup. It only ever sees string references. A
+  backend that resolves references privately, without `resolve_host_entry` or
+  `inventory.lookup`, is outside D1's guarantee; the extending docs say so.
 - New behaviour comes through optional capabilities, detected structurally
   like `SupportsHostSummaries`: one receiving a named-inventory view, and
   `list_lab_status(*, view) -> list[LabStatus]`. A core adapter turns a legacy
@@ -612,34 +598,49 @@ naming the source. Nothing below weakens that for a source without a scope.
   capabilities only where a backend implements them.
 
 **[D2] Stale data.** `SnapshotCache` today serves a snapshot of any age after
-an `InventoryError` (`src/otto/inventory/cache.py`). For the new discovery
-sources:
+an `InventoryError` (`src/otto/inventory/cache.py`). v1 adds typed errors
+that a backend may raise, used by registered backends now and by the future
+Ansible and Terraform adapters:
 
-- NetBox's behaviour is unchanged.
-- For Ansible and Terraform, an upstream **data** error (missing output,
-  parse failure, missing field) never falls back to a snapshot.
-- A **transient** outage (unreachable, timeout) uses a snapshot for execution
+- NetBox's behaviour, and any backend raising a plain `InventoryError`, is
+  unchanged.
+- An upstream **data** error (`InventoryDataError`: missing output, parse
+  failure, missing field) never falls back to a snapshot.
+- A **transient** outage (`InventoryUnreachableError`) uses a snapshot for execution
   only within a per-inventory `max_stale` (default: none, so expired data is
-  diagnostic-only). The age is always shown.
+  diagnostic-only). The age is always shown. `max_stale` is policy, not
+  data: it is excluded from the snapshot's identity, so raising it during an
+  outage serves the existing snapshot instead of orphaning it.
 - The decision lives in the existing cache, tested for expired, corrupt,
   missing and TTL-zero cases.
 
-**Caching.** Ansible and Terraform records go behind the existing
-`SnapshotCache` with a `cache_ttl`, as NetBox does: normalized,
-credential-free records and instances only. Raw upstream output is never
-cached. A captured artifact supplied offline is read in place, never copied.
+**Caching.** Remote backends go behind the existing `SnapshotCache` with a
+`cache_ttl`, as NetBox does: normalized, credential-free records and
+instances only. Raw upstream output is never cached.
 
 **Completion.**
 
-- Every completion path, including the writer that fills its cache, reads
-  previously evaluated results only. It never fetches, never starts a
-  subprocess and never evaluates Jsonnet, including on a cold or expired
-  cache, where it may omit generated names. This matters because completion
-  enumerates hosts on an abandonable worker thread today
-  (`src/otto/config/completion_cache.py`).
-- Freshness is stat-only over entry files, imports and absent candidates,
-  plus each snapshot's recorded expiry time.
-- Real operations populate the evaluated results that completion reads.
+- **Templated labs and hosts tab-complete like hand-written ones**, cold
+  cache included (maintainer, 2026-11-18: templating must not cost users
+  completion). Completion evaluates a Jsonnet source when its inputs changed,
+  as it parses `lab.json` today. Evaluation is local and hermetic, with no
+  network and no subprocess.
+- A warm TAB stays stat-only. The evaluated result is cached, keyed by the
+  stat data of the entry files, their imports and absent import candidates,
+  plus each consumed inventory's fingerprint, so a warm TAB keeps today's
+  file-operation budget.
+- Evaluation runs under completion's existing deadline
+  (`src/otto/config/completion_cache.py`) with the evaluation limits of
+  section 6.4. A source that overruns or fails is reported as a drop, with
+  its reason, in `otto cache info`; it never blocks TAB.
+- Remote inventories behave in completion exactly as today: a cold or
+  expired snapshot may be fetched within completion's existing deadline. A
+  no-fetch rule was considered to protect against subprocess adapters; with
+  those deferred (section 12) v1 keeps today's behaviour, so nothing
+  user-visible changes. Revisit when section 12's adapters land. Marked as my
+  call.
+- Freshness for Jsonnet sources is stat-only over entry files, imports and
+  absent candidates.
 
 ### 6.9 Packaging
 
@@ -701,7 +702,7 @@ cached. A captured artifact supplied offline is read in place, never copied.
     project/user splits, resolve as today.
   - An unchanged third-party lab backend and inventory backend go through
     registration, listing, loading, completion and conformance.
-  - A team registration named `ansible`, `terraform` or `jsonnet` keeps its
+  - A team registration named `jsonnet` (a lab source) keeps its
     name, with the warning.
 - **Template matches hand-written JSON.** A rendered fleet and its
   hand-expanded JSON go through the same configured sources and give
@@ -730,34 +731,32 @@ cached. A captured artifact supplied offline is read in place, never copied.
   - A failed source that contributes a DUT to `bench` without declaring
     `bench` fails `bench`.
   - Both declaration orders for `unavailable`; a first run with no cache.
-- **Staleness.** A removed Terraform output never becomes a successful load
-  at an old address. Expired, corrupt, missing and TTL-zero snapshots.
-- **Hermeticity.** A recognizable test secret in `creds.json`, in a record's
-  credentials, in `extra` and in raw Terraform output never appears in
-  rendered output, stdout, stderr, errors or snapshots. Imports of
+- **Staleness.** A fake remote backend's data error never becomes a
+  successful load at an old address. Expired, corrupt, missing and TTL-zero
+  snapshots.
+- **Hermeticity.** A recognizable test secret in `creds.json` or in a
+  record's credentials never appears in rendered output, stdout, stderr,
+  errors or snapshots. A secret in `extra` never reaches a template input or
+  rendered output. (The inventory snapshot keeps `extra` byte-for-byte as
+  today; it is opaque record data, not a credential.) Imports of
   `creds.json`, `inventory.json` and a path outside the roots fail.
 - **Adapters.**
-  - Ansible and Terraform run against fixtures in unit tests, with no
-    binaries needed. A differential test pins each to the JSON backend on the
-    same data.
-  - Ansible with one good and one bad source fails discovery.
-  - The same Terraform directory with two workspaces gives two inventories.
   - NetBox: a device-only configuration makes zero VM requests; a same-name
     device/VM pair fails naming both.
   - Instances: a cold/warm cache parity test that changes only membership.
-  - Real-binary end-to-end runs for Ansible and Terraform live in a named
-    lane that provisions supported versions and fails if the binary is
-    absent. The builder names the lane in `docs/contributing.md`.
-- **Completion.** Zero subprocess calls and zero Jsonnet evaluations on TAB,
-  cold or warm. One evaluation per entry file during a real operation.
+- **Completion.** A templated host and lab complete on a cold cache. A warm
+  TAB performs zero Jsonnet evaluations and stays stat-only. Editing an
+  entry file or an imported library re-evaluates once. A template that
+  overruns the deadline is a reported drop, never a hung TAB. One evaluation
+  per entry file during a real operation.
 - **Inspection.** `render` and `explain` produce the expected output.
 - **Packaging.** The marker set installs binary-only on every documented
   offline target; Intel macOS installs otto without a binding.
 - **Docs.**
   - A worked-example page under `docs/configuration/lab/`, linked from
     `lab-config.md` and `host-sources.md`.
-  - The inventory page gains named inventories, the three adapters and what
-    an offline capture certifies.
+  - The inventory page gains named inventories, NetBox Virtual Machines and
+    the `.jsonnet` inventory path.
   - One page shows the full precedence chain from record through credentials
     store, OS profile, template, `[host_preferences]` and CLI.
   - The source/inventory distinction is made explicit, since Ansible users
@@ -773,27 +772,46 @@ cached. A captured artifact supplied offline is read in place, never copied.
    the reference normalizer, `--inventory NAME`, section 7.2, 7.4 and 7.5,
    plus fake-backend conformance fixtures that phases 2 and 3 build against.
    Everything else depends on it.
-2. **Adapters:** NetBox Virtual Machines, Ansible and Terraform (section
-   6.3), each against the phase-1 fixtures, independent of each other.
+2. **NetBox Virtual Machines** (section 6.3), against the phase-1 fixtures.
 3. **Jsonnet:** packaging (6.9), the renderer slot and import callback, the
    lab source, the `.jsonnet` inventory path, `otto.libsonnet`, scopes,
-   inspection, completion's evaluated-results path, the reader and
+   inspection, completion of templated labs and hosts, the reader and
    file-discovery consolidation, and post-composition links (sections 6.4–6.9,
    7.1 and 7.3).
 
 Phases 2 and 3 run in parallel once phase 1 lands. The last pull request adds
-one real end-to-end acceptance test: adapter → template → composed lab.
+one real end-to-end acceptance test: NetBox and Jsonnet inventories →
+template → composed lab.
+
+**Scope rulings (maintainer, 2026-11-19).**
+
+- **Phase 2 lands first.** NetBox Virtual Machines landed ahead of phase 1,
+  as their own pull request, because they need none of phase 1's contracts.
+  They read every field through pynetbox. A field missing from a trimmed
+  list response is loaded from that object's detail page once, inside the
+  fetch session.
+- **Completion keeps today's design in phase 1.** Phase 1 changes completion
+  only where qualified inventory identity requires it: resolving through
+  the named-inventory view, `inventory_ref` on summaries, D1 refusals
+  reported as drops, and machine identity in the JSON same-id fold. Making
+  completion offer exactly what `--lab` dispatch loads, including
+  cross-project membership, is tracked separately in #1185.
+- **A lab whose load fails is partial in completion, as today.**
+  Completion offers the hosts it could resolve and records a drop; dispatch
+  refuses the lab.
+- **The doctor keeps today's `default`.** For existing configurations, the
+  doctor's `default` remains the project's own tables, else the user file.
+  The active catalog supplies only named inventories that the project
+  references but does not declare. The doctor-vs-dispatch divergence for
+  `default` is tracked in #1186.
 
 ## 10. Left to the builder
 
 - The exact `otto.libsonnet` API, within section 6.5's rules.
-- Settings key names for adapter mappings, scopes and overrides.
-- Subprocess timeouts and output bounds for `ansible-inventory` and
-  `terraform`, and Jsonnet evaluation limits, measured on a representative
-  large fleet.
-- The name of the real-binary end-to-end lane.
+- Settings key names for NetBox mappings, scopes and overrides.
+- Jsonnet evaluation limits, measured on a representative large fleet.
 
-## 11. Maintainer decisions D1–D5
+## 11. Maintainer decisions D1–D6
 
 The reviewers left these to the maintainer. On 2026-11-18 he accepted the
 recommended option for each, as written into the design above. The rejected
@@ -804,7 +822,7 @@ alternatives are kept for the record.
   otherwise an error naming the qualified form. Alternative: always resolve
   through the process-wide `default` (simpler, but leaves the migration trap
   of section 6.1).
-- **[D2] Stale data for Ansible and Terraform.** Decided: data errors
+- **[D2] Stale data for remote backends.** Decided: data errors
   never fall back; transient outages use a snapshot for execution only within
   an opt-in per-inventory `max_stale`, so by default expired data is
   diagnostic-only. Alternative: NetBox's rule (any age, with a warning) for
@@ -813,7 +831,8 @@ alternatives are kept for the record.
   override that changes the machine needs an explicit `overrides` entry; one
   that keeps the machine overrides as today. Alternative: today's
   last-source-wins with a warning for all.
-- **[D4] Terraform secrets.** Decided: read only the designated output;
+- **[D4] Terraform secrets** (applies when the future Terraform adapter
+  lands, section 12). Decided: read only the designated output;
   the docs make it the operator's public contract and offer a separately
   produced artifact for stronger assurance. Alternative: read all outputs to
   see Terraform's `sensitive` flag and refuse a sensitive one, at the cost of
@@ -822,3 +841,39 @@ alternatives are kept for the record.
   so a generated link can reach a shared console server from another source.
   Alternative: keep today's same-source rule for v1 and document it, which
   makes shared equipment and its links live in the same source.
+- **[D6] `[creds]` in a project that adopts named inventories.** Decided
+  2026-11-18: refused unless the project binds `default` itself (section
+  6.1). Raised by the phase-1 plan review.
+
+## 12. Future work: remote Ansible and Terraform servers
+
+Deferred on 2026-11-18 until a dedicated server can host them as a proving
+ground. The v1 contracts (named inventories, `groups`/`labels`, the instances
+capability, typed errors and D2, and the snapshot cache) are what these adapters will build on, so they need no v1 rework.
+
+Recorded so the work can resume without re-research (2026-11-18 findings;
+verify against the real servers first):
+
+- **Ansible: AWX** (the free, open-source upstream of Red Hat Ansible
+  Automation Platform, with the same API). Its inventory script endpoint,
+  `/api/v2/inventories/<id>/script/`, returns standard Ansible inventory JSON
+  (hosts, groups, `_meta.hostvars`), evaluated by the server. The
+  `hostvars=1` query parameter is documented only in community examples so
+  far. Mapping: hostname as key, `ansible_host` as address with hostname
+  fallback, groups to `groups`, configured hostvars to `labels`, rig groups to
+  instances. Ansible plugins drop empty groups, so an Ansible source cannot
+  report a rig whose hosts have all gone.
+- **Terraform: the HCP Terraform / Terraform Enterprise API**
+  (state-version outputs, which carry a per-output `sensitive` flag; revisit
+  D4 with that in hand). One adapter would serve HCP Terraform's free tier
+  (500 managed resources; the legacy free plan ended 2026-03-31) and
+  self-hosted open-source TFE alternatives such as OTF or Terrakube, whose
+  coverage of the state-version-outputs endpoint is unverified. OpenTofu
+  pairs with those for a fully open-source stack. Plain remote state (S3,
+  GCS) with no server API is out of scope: reading the state file directly
+  depends on a format HashiCorp says may change.
+- **Shape:** both are HTTP backends like NetBox, registered through the
+  existing inventory registry, with no local binaries. Acceptance: recorded
+  API fixtures in unit tests, plus one test against each real server.
+- **Tracking:** Terraform is #803 (rescoped to this approach on 2026-11-18);
+  AWX is #1179.
