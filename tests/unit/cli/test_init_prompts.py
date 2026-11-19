@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from otto.cli.init import init_command
+from otto.init.templates import EXAMPLE_PROBE_COMMAND
 from tests._fixtures.dispatch import DispatchRunner
 
 # init_command is a plain async function loader: DispatchRunner's dispatch
@@ -167,9 +168,10 @@ def test_epilogue_prints_next_steps(tmp_path: Path) -> None:
     # shell; the panel has to say so (see test_init_banner.py).
     assert "source ~/.bash_completions/otto.sh" in result.output
     assert "otto test --list-tests" in result.output
-    # These three need a lab to run; the printed lines must name it (like
+    # These need a lab to run; the printed lines must name it (like
     # `otto --lab example_lab --list-hosts`) or they fail as printed with
     # "Missing option '--lab'".
+    assert EXAMPLE_PROBE_COMMAND in result.output
     assert "otto --lab example_lab test TestExample" in result.output
     assert "otto --lab example_lab test test_example_function" in result.output
     assert "otto --lab example_lab run smoke" in result.output

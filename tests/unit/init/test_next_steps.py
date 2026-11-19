@@ -5,8 +5,9 @@ from pathlib import Path
 import pytest
 
 from otto.init.config import InitConfig
-from otto.init.next_steps import try_it_commands
+from otto.init.next_steps import probe_step_command, try_it_commands
 from otto.init.scaffolder import scaffold
+from otto.init.templates import EXAMPLE_HOST_ID, EXAMPLE_LAB_NAME, EXAMPLE_PROBE_COMMAND
 
 
 def test_a_full_project_tries_the_example_lab_tests_and_instruction(tmp_path: Path) -> None:
@@ -158,3 +159,23 @@ def test_an_example_file_without_the_exact_template_names_is_not_suggested(
     cmds = _tries(tmp_path)
     assert "otto test --list-tests" in cmds
     assert not _example_cmds(cmds)
+
+
+def test_the_probe_is_its_own_step_offered_only_when_the_lab_is_declared(tmp_path: Path) -> None:
+    """A fresh scaffold's example host is a placeholder, so probing it is never a "Try it" command.
+
+    The step names a literal ``<id>``: the quickstarts' ``example_lab`` has no
+    ``example-device``, and the scaffold's own one is TEST-NET until edited.
+    """
+    labbed = tmp_path / "labbed"
+    labbed.mkdir()
+    scaffold(InitConfig(labbed, "widget", "0.1.0"), areas=["settings", "lab"])
+    assert probe_step_command(labbed) == EXAMPLE_PROBE_COMMAND
+    assert f"--lab {EXAMPLE_LAB_NAME} host <id> " in EXAMPLE_PROBE_COMMAND
+    assert EXAMPLE_HOST_ID not in EXAMPLE_PROBE_COMMAND
+    assert not [c for c in _tries(labbed) if "probe" in c]
+
+    labless = tmp_path / "labless"
+    labless.mkdir()
+    scaffold(InitConfig(labless, "widget", "0.1.0"), areas=["settings", "tests"])
+    assert probe_step_command(labless) is None

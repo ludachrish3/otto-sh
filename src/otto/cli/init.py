@@ -309,6 +309,12 @@ _BOX_OVERHEAD = 2 * (1 + _BOX_PAD)
 _COMMAND_INDENT = 8
 """How far the copyable commands are indented under their heading."""
 
+_PROSE_INDENT = 6
+"""How far the panel's prose lines are indented under their heading."""
+
+_PROSE_WIDTH = 80 - _BOX_OVERHEAD - _PROSE_INDENT
+"""The widest wrapped prose line: what a boxed 80-column panel leaves after the prose indent."""
+
 
 def _ottopath_var() -> str:
     from ..config.env import OTTOPATH_ENV_VAR
@@ -366,15 +372,30 @@ def _next_steps_lines(
         return _Line(text, "bold cyan", 3)
 
     def prose(*lines: str, style: str = "") -> list[_Line]:
-        return [_Line(line, style, 6) for line in lines]
+        return [_Line(line, style, _PROSE_INDENT) for line in lines]
 
     def commands(*lines: str) -> list[_Line]:
         return [_Line(line, "green", _COMMAND_INDENT, command=True) for line in lines]
 
-    from ..init.next_steps import try_it_commands
+    import textwrap
+
+    from ..init.next_steps import PROBE_STEP_LEAD, probe_step_command, try_it_commands
 
     tried = try_it_commands(root, kmodcov_dir, embedded_gcov_dir, cwd=Path.cwd())
     try_it = [blank, heading("3. Try it:"), blank, *commands(*tried)] if tried else []
+    probe = probe_step_command(root)
+    probe_step = (
+        [
+            blank,
+            heading(f"{4 if tried else 3}. Probe your hosts:"),
+            blank,
+            *prose(*textwrap.wrap(PROBE_STEP_LEAD, _PROSE_WIDTH)),
+            blank,
+            *commands(probe),
+        ]
+        if probe
+        else []
+    )
     bashrc = [
         "Step 1's `otto --install-completion` adds the `source` line to",
         "~/.bashrc, so completion needs nothing more there." + (" Add only:" if export else ""),
@@ -401,6 +422,7 @@ def _next_steps_lines(
             style="yellow",
         ),
         *try_it,
+        *probe_step,
     ]
 
 
@@ -422,7 +444,9 @@ def next_steps_panel(
     the commands *root* can run (:func:`otto.init.next_steps.try_it_commands`), and is left out
     when there are none; *kmodcov_dir* is where ``--kmodcov`` vendored the
     library and *embedded_gcov_dir* where ``--embedded-gcov`` wrote the patch
-    (``None``: the default directory for each).
+    (``None``: the default directory for each). When *root* declares the
+    example lab, a last step asks for a probe of each Unix host once the lab
+    names real ones (:func:`otto.init.next_steps.probe_step_command`).
 
     Boxed when every command fits inside the box. Otherwise the same lines
     print unboxed under a rule, soft-wrapped: rich folds or crops a line that
