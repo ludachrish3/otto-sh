@@ -60,7 +60,7 @@ def _apply_client_cert(conn: Any, cert: Any) -> None:
     ``ca_certs`` / ``ca_cert_dir``), but a caller's own client certificate —
     ``session.cert`` or a per-request ``cert=`` — is presented exactly as
     stock requests would present it: the pyproject floor is
-    ``requests>=2.20.0``, and only requests>=2.32's ``_urllib3_request_context``
+    ``requests>=2.30.0``, and only requests>=2.32's ``_urllib3_request_context``
     keys ``cert_file`` / ``key_file`` into the pool on its own, so this
     override still assigns them and still checks the paths exist, mTLS being
     out of scope only for the server side of the handshake.

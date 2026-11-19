@@ -687,34 +687,40 @@ links only for those pages.
 ### Direct runtime dependencies
 
 Otto's direct runtime dependencies (declared in `pyproject.toml` under
-`[project] dependencies`):
+`[project] dependencies`). Otto is tested at every minimum below: each
+release installs otto on Python 3.10 with every one of these packages at
+exactly its minimum version and runs it. Otto is not supported below a
+minimum, and below several it does not work (below pydantic 2.10.4 it fails
+at import), so if your project pins an older version, raise that pin rather
+than overriding otto's requirement.
 
 | Package | Min version | Purpose |
 | ------- | ----------- | ------- |
 | `aioftp` | 0.27.2 | Async FTP client for file transfers |
 | `aiosqlite` | 0.21.0 | Async SQLite for persisting monitor metrics |
-| `asyncssh` | 2.22.0 | SSH connections to remote hosts |
+| `asyncssh` | 2.24.0 | SSH connections to remote hosts |
 | `fastapi` | 0.135.1 | Monitor dashboard web server |
 | `packaging` | 24.0 | Requirement/marker/specifier evaluation for the dependency preflight |
-| `pydantic` | 2.6 | Boundary validation models for lab JSON, host records, and settings |
-| `pydantic-settings` | 2.2 | Environment-variable settings (`OTTO_*`) |
+| `pydantic` | 2.10.4 | Boundary validation models for lab JSON, host records, and settings |
+| `pydantic-settings` | 2.7.0 | Environment-variable settings (`OTTO_*`) |
 | `pynetbox` | 7.4.0 | NetBox REST client for the `netbox` inventory backend |
-| `pysnmp` | 7.1.0 | Async SNMP manager for separate-channel host monitoring |
+| `pysnmp` | 7.1.21 | Async SNMP manager for separate-channel host monitoring |
 | `pytest` | 9.1.1 | Test runner; otto imports user test files at runtime |
 | `pytest-asyncio` | 1.4.0 | Async test support for pytest |
 | `pytest-timeout` | 2.3.1 | Per-test timeouts for `otto test` (`@pytest.mark.timeout`) |
 | `pytest-randomly` | 4.1.0 | Random test order for `otto test` (`--random`, `--seed N` to reproduce) |
 | `pyyaml` | 6.0.3 | Parses rendered compose YAML to collect `env_file:` sidecar references |
-| `requests` | 2.20.0 | HTTP adapter mounted directly by the `netbox` inventory backend to bound each request |
+| `requests` | 2.30.0 | HTTP adapter mounted directly by the `netbox` inventory backend to bound each request |
 | `rich` | 15.0.0 | Terminal formatting, panels, and tables |
 | `sse-starlette` | 3.3.3 | Server-sent events for live dashboard updates |
 | `starlette` | 0.52.1 | ASGI request types used directly by the monitor server |
-| `telnetlib3` | 4.0.1 | Async Telnet client for telnet-based hosts |
+| `telnetlib3` | 5.0.1 | Async Telnet client for telnet-based hosts |
 | `tomli` | 2.4.0 | TOML parser for `.otto/settings.toml` |
 | `tomlkit` | 0.14 | Comment-preserving edits to the user settings file (`otto cache enable` / `disable`) |
-| `truststore` | 0.10 | Verifies otto's HTTPS clients (`otto.tls`) against the OS certificate store |
+| `truststore` | 0.10.1 | Verifies otto's HTTPS clients (`otto.tls`) against the OS certificate store |
 | `typer` | 0.29 | CLI framework (builds `otto run`, `otto test`, etc.) |
-| `typing-extensions` | 4.12.0 | Backport of `typing.override` (PEP 698) for Python < 3.12 |
+| `typing-extensions` | 4.13.2 | Backport of `typing.override` (PEP 698) for Python < 3.12 |
+| `urllib3` | 2.0.2 | HTTP connection pools under `requests`; otto's OS-store TLS context needs urllib3 2 |
 | `uv` | 0.11 | Installs and syncs the `otto env` orchestration venv; otto runs the uv installed with it |
 | `uvicorn` | 0.42.0 | ASGI server for the monitor dashboard |
 

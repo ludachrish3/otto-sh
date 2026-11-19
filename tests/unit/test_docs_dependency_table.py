@@ -145,3 +145,31 @@ def test_floor_with_extra_arguments_is_a_usage_error(tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "usage:" in captured.err
+
+
+# -- --constraints: the floors, pinned, for the floor smoke's resolution (#1181) --
+
+
+def test_constraints_pin_every_direct_dependency_to_its_floor(tmp_path, capsys):
+    mod = _load()
+    py = tmp_path / "pyproject.toml"
+    py.write_text(
+        '[project]\nname = "otto-sh"\n'
+        'dependencies = ["requests>=2.26.0", "uv>=0.11,<0.14", "pydantic>=2.10.4,<3"]\n'
+    )
+    assert mod.main(["--constraints", str(py)]) == 0
+    assert capsys.readouterr().out == "requests==2.26.0\nuv==0.11\npydantic==2.10.4\n"
+
+
+def test_constraints_of_the_live_checkout_cover_every_dependency(capsys):
+    mod = _load()
+    assert mod.main(["--constraints"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    floors = mod.parse_pyproject((CHECKOUT_ROOT / "pyproject.toml").read_text())
+    assert lines == [f"{name}=={floor}" for name, floor in floors.items()]
+
+
+def test_constraints_with_extra_arguments_is_a_usage_error(tmp_path, capsys):
+    mod = _load()
+    assert mod.main(["--constraints", "a", "b"]) == 2
+    assert "usage:" in capsys.readouterr().err

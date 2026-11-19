@@ -9,9 +9,16 @@ from the table, a table row with no matching dependency, and a stale floor.
 
 Usage: python scripts/check_docs_dependency_table.py [pyproject.toml docs/installation.md]
        python scripts/check_docs_dependency_table.py --floor NAME [pyproject.toml]
+       python scripts/check_docs_dependency_table.py --constraints [pyproject.toml]
 
 ``--floor NAME`` prints one dependency's declared minimum version and checks
 nothing else; an unknown name is an error on stderr with nothing on stdout.
+
+``--constraints`` prints one ``name==floor`` line per direct dependency: the
+constraints ``nox -s wheel_smoke_floors`` resolves otto's runtime under, so
+every direct dependency is installed at exactly its declared floor, and a
+floor no resolution can install (another dependency needs more) fails the
+resolution by name (#1181).
 """
 
 import re
@@ -23,6 +30,7 @@ import tomli
 REQ = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*>=\s*([0-9][0-9A-Za-z.]*)")
 ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|")
 FLOOR_USAGE = "usage: check_docs_dependency_table.py --floor NAME [pyproject.toml]"
+CONSTRAINTS_USAGE = "usage: check_docs_dependency_table.py --constraints [pyproject.toml]"
 MAX_FLOOR_ARGS = 2
 USAGE_ERROR = 2
 SECTION_HEADING = "### Direct runtime dependencies"
@@ -83,6 +91,11 @@ def print_floor(name: str, pyproject_path: Path) -> int:
     return 0
 
 
+def floor_constraints(floors: dict[str, str]) -> str:
+    """Pin each direct dependency to its declared floor, one ``name==floor`` line each."""
+    return "".join(f"{name}=={floor}\n" for name, floor in floors.items())
+
+
 def main(argv: list[str]) -> int:
     """Print each drift line; return 1 when the docs table and pyproject disagree."""
     root = Path(__file__).resolve().parent.parent
@@ -92,6 +105,14 @@ def main(argv: list[str]) -> int:
             print(FLOOR_USAGE, file=sys.stderr)
             return USAGE_ERROR
         return print_floor(args[0], Path(args[1]) if args[1:] else root / "pyproject.toml")
+    if argv[:1] == ["--constraints"]:
+        args = argv[1:]
+        if len(args) > 1:
+            print(CONSTRAINTS_USAGE, file=sys.stderr)
+            return USAGE_ERROR
+        pyproject = Path(args[0]) if args else root / "pyproject.toml"
+        print(floor_constraints(parse_pyproject(pyproject.read_text())), end="")
+        return 0
     pyproject_path = Path(argv[0]) if argv else root / "pyproject.toml"
     docs_path = Path(argv[1]) if len(argv) > 1 else root / "docs" / "installation.md"
     problems = diff(parse_pyproject(pyproject_path.read_text()), parse_table(docs_path.read_text()))

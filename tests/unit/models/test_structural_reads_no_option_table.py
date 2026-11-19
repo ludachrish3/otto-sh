@@ -3,6 +3,7 @@ validator may read one: an option-dependent invariant belongs in contextual vali
 
 import ast
 import inspect
+from typing import get_origin
 
 import otto.host.specs as host_models
 from otto.host import Element
@@ -14,7 +15,11 @@ def _option_tables() -> set[str]:
     return {
         name
         for obj in vars(host_models).values()
-        if isinstance(obj, type) and issubclass(obj, host_models.HostSpec)
+        # A `list[X]` alias is a `type` on Python 3.10, and pydantic before 2.11
+        # raises on `issubclass` with one: classes only.
+        if isinstance(obj, type)
+        and get_origin(obj) is None
+        and issubclass(obj, host_models.HostSpec)
         for name in obj.model_fields
         if name.endswith("_options")
     }

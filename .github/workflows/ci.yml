@@ -739,7 +739,8 @@ jobs:
   # measures an editable otto in a runtime-only venv), which is how a dev-only
   # pytest-cov option shipped in every `otto test` session (#593). The wheel
   # needs the web assets (the build backend refuses an asset-less one), and
-  # `make wheel-smoke` builds them, checks the wheel, then runs the session.
+  # `make wheel-smoke` builds them, checks the wheel, then runs the sessions:
+  # the locked runtime dependencies, then their declared floors (#1181).
   wheel-smoke:
     needs: [gate-admission]
     runs-on: ubuntu-latest

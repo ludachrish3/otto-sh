@@ -865,9 +865,9 @@ wheel-check: clean-dist $(DASHBOARD_DIST) $(COVAPP_DIST) build ## (Build & Relea
 	fi; \
 	echo "wheel-check: OK — otto/kmodcov/build.sh stored executable (0o755)."
 
-wheel-smoke: wheel-check ## (Build & Release) Install the checked wheel over otto's locked RUNTIME dependencies only (no dev group, no editable src/) and smoke it from outside the checkout: every module imports, and the hostless CLI lists and runs tests with pytest's plugin autoload on and off (scripts/wheel_smoke.py, #593)
-	@$(SAY) "wheel smoke: dist/*.whl over runtime dependencies only"
-	@uv run nox -s wheel_smoke
+wheel-smoke: wheel-check ## (Build & Release) Install the checked wheel over otto's RUNTIME dependencies only (no dev group, no editable src/), once locked and once with every direct dependency pinned to its declared floor (#1181), and smoke it from outside the checkout: every module imports, every third-party import statement in otto's source runs (function-local ones too), and the hostless CLI lists and runs tests with pytest's plugin autoload on and off (scripts/wheel_smoke.py, #593)
+	@$(SAY) "wheel smoke: dist/*.whl over runtime dependencies only, locked then at their floors"
+	@uv run nox -s wheel_smoke wheel_smoke_floors
 
 docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, clips, termynal blocks) in docs/_static/generated/
 	@$(SAY) "capturing docs GUI media (screenshots + clips)"
