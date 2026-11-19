@@ -63,6 +63,7 @@ AREA_PAGES = {
     "migrating",
     "network-interfaces",
     "power",
+    "probing-hosts",
     "project-scope",
     "snmp",
     "toolchain-tools",

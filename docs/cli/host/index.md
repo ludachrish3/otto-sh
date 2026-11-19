@@ -117,7 +117,7 @@ when called from Python with no explicit `user=` of its own.
 | `mv` | Move/rename a path on the host |
 | `read-file` | Print a file's text contents |
 | `write-file` | Write text to a file on the host |
-| `probe` | Report the host's userland capabilities and its protocol survey; print the pins to paste |
+| `probe` | Report the host's userland capabilities and its protocol survey; print the pins to paste. Run it once per Unix host, BusyBox included, while setting up a lab ({ref}`probing-hosts`) |
 | `forget-key` | Remove the host's SSH host-key entries so the next connection records its new key ({ref}`forget-key`) |
 
 ## Listing hosts

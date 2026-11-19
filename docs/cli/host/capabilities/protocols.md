@@ -2,6 +2,9 @@
 
 # Protocol survey
 
+Setting up a lab? {doc}`../../../configuration/lab/probing-hosts` is the step
+to follow; this page is the reference behind it.
+
 `otto host <id> probe` also answers a second question: which term,
 transfer, and monitoring protocols this host really supports, and on
 which ports. It runs after the {doc}`userland section <userland>` and

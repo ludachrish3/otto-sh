@@ -45,6 +45,14 @@ The project is a git repository because coverage records the commit a run
 measured. Check that otto reaches your host, as in {ref}`the shared setup's
 first success <shared-setup-first-success>`.
 
+```{important}
+**Probe `dut` once and paste the pin it prints into its entry in
+`lab_data/lab.json`:** `otto --lab example_lab host dut probe`. Unpinned, each
+otto command that needs the host's userland probes it again.
+{doc}`../../configuration/lab/probing-hosts` shows what the pin looks like and
+where it goes. Then commit the change: `git commit -am "pin dut"`.
+```
+
 ## Build
 
 ```bash

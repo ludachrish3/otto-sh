@@ -9,14 +9,14 @@ otto does with none. `valid_terms` and `valid_transfers` are menus otto
 chooses from (`ssh` and `scp` first, by default); everything else otto works
 out for itself on first connect.
 
-Is `probe` worth running on one? On a current Debian, Ubuntu or Fedora box,
-no: the probe finds exactly the GNU answers otto's transfer and command
-paths are built around, so it confirms rather than discovers — compare the
-`test1` capture on {doc}`index`, where every row's source is `probed` and
-what it found is the modern-GNU answer on every row. The command earns its
-keep on the *other* Unix: an old release, a stripped image, a vendor build
-with `busybox` behind `/bin/sh`. There, one probe replaces a connection that
-fails halfway through a transfer for a reason nobody can see.
+```{important}
+**Probe every Unix host, current Debian, Ubuntu and Fedora boxes and BusyBox
+included, and paste the pin it prints into its entry:**
+`otto --lab <lab> host <id> probe`. Unpinned, each otto command that needs the
+host's userland probes it again.
+{doc}`../../../configuration/lab/probing-hosts` shows what the pin looks like
+and where it goes.
+```
 
 `hop` is the field this family uses most: the BusyBox guests on the next page
 are reached through `test1`, and a Zephyr target through `test4`. otto opens

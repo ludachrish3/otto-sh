@@ -22,3 +22,11 @@ inline.  The empty string is an error.
 Which fields the inventory owns is a per-deployment decision, not a per-host
 one, and it is made in `[inventory]` — see {doc}`../inventory` for the settings
 table, the backends, and what happens at load.
+
+```{important}
+**A referenced Unix host's probe pin (BusyBox included) goes here, beside
+`inventory`, never in the inventory record:** paste what
+`otto --lab <lab> host <id> probe` prints into this entry. Unpinned, each otto
+command that needs its userland probes it again. {doc}`probing-hosts` shows
+what the pin looks like and where it goes.
+```

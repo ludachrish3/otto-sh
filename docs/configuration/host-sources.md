@@ -516,6 +516,13 @@ name is registered by the time a source is prepared, whichever project
 registers it. Loading a lab from inside an `init` module is refused.
 ```
 
+```{important}
+**Pin a custom source's Unix hosts (BusyBox included) in the host records the
+source emits:** paste what `otto --lab <lab> host <id> probe` prints there.
+Unpinned, each otto command that needs a host's userland probes it again;
+{doc}`lab/probing-hosts` shows what the pin looks like and where it goes.
+```
+
 See {doc}`Extension points <../architecture/subsystems/extension-points>` for the
 registry machinery behind this and every other seam otto can be extended at.
 

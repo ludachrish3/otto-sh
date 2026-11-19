@@ -78,6 +78,15 @@ container host exists as an id before its stack is up ([Container
 hosts](../../cli/docker/index.md#container-hosts)), and using it before `up`
 fails.
 
+```{important}
+**Probe `docker-host`, the Unix parent, and paste the pin it prints into its
+entry in `lab_data/lab.json`:** `otto --lab example_lab host docker-host probe`.
+Unpinned, each otto command that needs its userland probes it again. Its
+container hosts need no userland pin.
+{doc}`../../configuration/lab/probing-hosts` shows what the pin looks like and
+where it goes. Then commit the change: `git commit -am "pin docker-host"`.
+```
+
 ## Build
 
 ```bash

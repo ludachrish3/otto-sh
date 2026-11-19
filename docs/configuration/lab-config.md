@@ -47,6 +47,13 @@ its one host takes the element's name as its id. `otto --lab bench
 --list-hosts` lists `devbox`. Everything else is optional and documented on
 the pages below.
 
+```{important}
+**Probe `devbox`, then paste the pin it prints into its entry:**
+`otto --lab bench host devbox probe`. Unpinned, each otto command that needs
+the host's userland probes it again. {doc}`lab/probing-hosts` shows what the
+pin looks like and where it goes.
+```
+
 ## The pages
 
 ```{toctree}
@@ -55,6 +62,7 @@ the pages below.
 lab/files-and-membership
 lab/elements
 lab/host-fields
+lab/probing-hosts
 lab/inventory-references
 lab/host-identity
 lab/network-interfaces
@@ -75,6 +83,8 @@ lab/migrating
 - {doc}`lab/elements`: the element entry and how it joins labs by pattern.
 - {doc}`lab/host-fields`: every per-host field, the host type, and option
   tables.
+- {doc}`lab/probing-hosts`: probing every Unix host and pasting the pin it
+  prints.
 - {doc}`lab/inventory-references`: pointing a host entry at an inventory
   record.
 - {doc}`lab/host-identity`: how a host's id is formed and kept unique.
