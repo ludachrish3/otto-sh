@@ -1,8 +1,8 @@
 # Test recipes
 
 Common patterns for writing otto tests. {doc}`writing-tests` is
-the guide these build on. Recipes that take a `dut` use the session-scoped
-fixture from
+the guide these build on; {doc}`selecting-hosts` covers choosing the
+hosts. Recipes that take a `dut` use the session-scoped fixture from
 [One connection for the whole run](host-scopes.md#one-connection-for-the-whole-run).
 
 ## Parametrized tests
@@ -23,6 +23,33 @@ class TestInterfaces:
         result = (await get_host("dut1").run(f"ip link show {interface}")).only
         assert "UP" in result.value
 ```
+
+## Check every host in a group
+
+Walk the group inside the test and check each host with the `expect` fixture
+(below), so one failing host doesn't hide the rest:
+
+```python
+import re
+
+from otto.lab import all_hosts
+
+
+async def test_servers_keep_time(expect) -> None:
+    servers = list(all_hosts(pattern=re.compile(r"server.*")))
+    for host in servers:
+        clock = (await host.run("date +%s")).only.value
+        expect(clock.strip().isdigit(), msg=f"{host.id} has no clock")
+    # Every server is checked; the test fails at the end with each failure listed
+```
+
+Call `all_hosts()` inside the test or a fixture, never at module level or in
+a `parametrize` list: `otto test --list-tests`, `--list-markers` and TAB
+completion collect tests without loading the lab, so a module that reads the
+lab at import fails to collect there. A pattern that matches nothing raises
+{class}`otto.lab.EmptySelectionError <otto.config.scope.EmptySelectionError>`
+and fails the test. Narrowing and grouping recipes are on
+{doc}`selecting-hosts`.
 
 ## Non-fatal assertions with expect
 
@@ -95,12 +122,19 @@ metrics from the hosts it names. It collects and serves no dashboard: archive
 with `db_path=` and review the file with `otto monitor <file>.db`, or watch a
 lab live with `otto monitor --live`.
 
+`monitor.start` refuses a host it cannot sample (an embedded host, say), so on
+a mixed lab narrow the walk first, as in the by-kind recipe on
+{doc}`selecting-hosts`.
+
 ```python
-from otto.lab import get_host
+import re
+
+from otto.lab import all_hosts, get_host
 
 
 async def test_performance_under_load(monitor) -> None:
-    hosts = [get_host("server1"), get_host("server2")]
+    hosts = list(all_hosts(pattern=re.compile(r"server.*")))
+    hosts.append(get_host("gateway1"))  # plus one device named outright
     await monitor.start(hosts=hosts)  # collection only: no dashboard, no URL
 
     await monitor.event("load started", color="#2ca02c")

@@ -298,8 +298,9 @@ where `otto test` finds this page's tests ({doc}`../../configuration/settings`):
 :caption: pylib/quickstart_shell/\_\_init\_\_.py
 ```
 
-A test monitors `dut` while `shout` runs, then checks that the metric was
-charted:
+A test monitors the lab's Unix hosts (here just `dut`, see
+{doc}`../selecting-hosts`) while `shout` runs, then checks that the metric
+was charted:
 
 ```{literalinclude} ../../examples/quickstart-shell/tests/test_monitoring.py
 :language: python

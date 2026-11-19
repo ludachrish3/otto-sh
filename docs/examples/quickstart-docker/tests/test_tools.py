@@ -1,7 +1,10 @@
-"""End-to-end tests: each tool runs once per test, writing coverage as it exits."""
+"""End-to-end tests: each tool runs once per test, and one test walks the fleet."""
 
 import pytest
-from quickstart_docker.tools import run_tool
+from quickstart_docker.tools import CONTAINER, run_tool
+
+from otto.host import DockerContainerHost
+from otto.lab import all_hosts
 
 
 class TestTools:
@@ -19,3 +22,10 @@ class TestTools:
     async def test_banner_counts_then_repeats(self) -> None:
         """The singleton image's tool prints the word count, then the words."""
         assert await run_tool("banner", "hello docker world") == "[3] hello docker world"
+
+    async def test_compose_container_is_a_fleet_host_on_request(self) -> None:
+        """A walk that opts in to containers finds the compose container."""
+        containers = [
+            h.id for h in all_hosts(include_containers=True) if isinstance(h, DockerContainerHost)
+        ]
+        assert CONTAINER in containers

@@ -290,6 +290,9 @@ variables on `banner`'s own `docker run`, so its container already has them,
 and the helper's `docker exec` adds nothing
 ({doc}`../../cli/cov/instrumenting/containers`).
 
+The last test walks the fleet with `include_containers=True`: containers join
+the walk only on request ({doc}`../selecting-hosts`).
+
 The coverage section below runs these tests, with coverage on.
 
 ## A unit test

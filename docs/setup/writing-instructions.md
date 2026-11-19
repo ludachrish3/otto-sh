@@ -64,59 +64,30 @@ the registry machinery behind this and every other way otto can be extended.
 
 ## Accessing hosts
 
-Inside an instruction body, pull hosts out of the lab with the
-{mod}`otto.lab` helpers:
+Inside an instruction body, walk the lab's hosts with `all_hosts()` and
+narrow them with a list comprehension, or reach one device with `get_host()`:
 
 ```python
-import re
+from otto.host import UnixHost
+from otto.instructions import instruction
 from otto.lab import all_hosts, get_host
 
-# Iterate (optionally narrowed by a regex FULLY matched against host ID)
-for host in all_hosts():
-    await host.run("uname -a")
 
-for host in all_hosts(pattern=re.compile(r"router.*")):
-    await host.run("show version")
+@instruction()
+async def survey() -> None:
+    # Every Unix host the run's fleet holds
+    for host in [h for h in all_hosts() if isinstance(h, UnixHost)]:
+        await host.run("uname -a")
 
-# Fetch a specific host by ID
-router = get_host("router1")
-result = await router.run("show version")
+    # One specific host, by ID
+    router = get_host("router1")
+    version = (await router.run("show version")).only.value
 ```
 
-`pattern` is `re.fullmatch`, never `re.search`: `router` selects the host whose
-id is exactly `router`, so write `router.*` to match by prefix.  A pattern that
-matches none of the hosts the run may walk raises
-{class}`otto.lab.EmptySelectionError <otto.config.scope.EmptySelectionError>` rather than iterating nothing.
-
-`all_hosts()` walks the run's **fleet of interest** — the hosts the active
-projects' `[project]` declarations admit — which is the whole loaded lab when no
-project declared one.  `get_host()` is unscoped and reaches any host.
-See [The fleet of interest](../cli/run/defaults.md#the-fleet-of-interest).
-
-For fan-out across the lab — running the same command or async
-operation on every host concurrently — use
-{func}`~otto.fleet.run_on_all_hosts` or
-{func}`~otto.fleet.do_for_all_hosts`.  These helpers
-apply anywhere you have an async context (instructions, test fixtures,
-monitors, ad-hoc scripts) and are documented in full on the
-[async patterns page](../extend/async-patterns.md).
-
-Two properties of the fleet helpers to keep in mind:
-
-- **Fleet membership.**  The built-in `local` host (the machine otto
-  itself runs on, present in every lab) and Docker container hosts are
-  excluded by default.  Opt in with `include_local=True` (on
-  `all_hosts()` and `do_for_all_hosts()`) or `include_containers=True`.
-  A walk through a project's own view (`self.ctx` in a `ProjectActions`
-  override) already includes the containers that project owns a product or
-  dev tool on ({ref}`a project's own containers <fleet-owned-containers>`).  `get_host("local")` always
-  resolves the local host.
-- **Failure isolation.**  `run_on_all_hosts()` and `do_for_all_hosts()`
-  return a dict mapping each host ID to its result *or* to the exception
-  that host raised (`asyncio.gather` with `return_exceptions=True`
-  semantics), so one unreachable host never costs you the others'
-  results.  Check values with `isinstance(value, BaseException)` before
-  using them.
+{doc}`selecting-hosts` is the home for the rest: `pattern=` and its
+full-match rule, grouping recipes, fanning work out with
+{func}`~otto.fleet.run_on_all_hosts` and {func}`~otto.fleet.do_for_all_hosts`,
+and what the fleet holds.
 
 (instruction-coverage)=
 ## Behaving differently under coverage
