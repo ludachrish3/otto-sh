@@ -14,6 +14,8 @@ from pathlib import Path
 from rich.console import Console
 
 from otto.cli.init import next_steps_panel
+from otto.init.next_steps import PROBE_STEP_LEAD
+from otto.init.templates import EXAMPLE_PROBE_COMMAND
 
 # Reuse the rendering suite's harness: same DispatchRunner wiring, and the
 # same "scaffold a whole project first" helper.
@@ -42,7 +44,7 @@ def test_the_block_is_the_last_output(tmp_path: Path) -> None:
     out = _invoke(["--all", "--path", str(tmp_path)]).output.rstrip()
     # Boxed or not (a long basetemp unboxes it), the last command closes the run.
     content = [line.strip(" │╰╯─") for line in out.splitlines()]
-    assert [line for line in content if line][-1] == "otto --lab example_lab run smoke", out
+    assert [line for line in content if line][-1] == EXAMPLE_PROBE_COMMAND, out
     assert out.index("otto init —") < out.index("Next steps")
 
 
@@ -56,6 +58,7 @@ def test_both_shells_are_covered_and_completion_is_sourced_after_install(tmp_pat
         "~/.bashrc",
         "~/.profile",
         "3. Try it:",
+        "4. Probe your hosts:",
     ):
         assert heading in text, heading
     assert text.index("otto --install-completion") < text.index(
@@ -151,8 +154,18 @@ def _try_it(text: str) -> list[str]:
     """The commands under "3. Try it:", or ``[]`` when the block has no such step."""
     if "3. Try it:" not in text:
         return []
-    tail = text.split("3. Try it:", 1)[1]
+    tail = text.split("3. Try it:", 1)[1].split("4. Probe your hosts:", 1)[0]
     return [line.strip(" │╰╯─") for line in tail.splitlines() if line.strip(" │╰╯─")]
+
+
+def _probe_step(text: str) -> str:
+    """The "4. Probe your hosts:" step flattened to one line, or ``""`` when it is absent."""
+    if "4. Probe your hosts:" not in text:
+        return ""
+    tail = text.split("4. Probe your hosts:", 1)[1]
+    return " ".join(
+        tail.replace("│", " ").replace("╰", " ").replace("╯", " ").replace("─", " ").split()
+    )
 
 
 def test_a_full_project_tries_the_example_lab_tests_and_instruction(tmp_path: Path) -> None:
@@ -165,6 +178,19 @@ def test_a_full_project_tries_the_example_lab_tests_and_instruction(tmp_path: Pa
         "otto --lab example_lab test test_example_function",
         "otto --lab example_lab run smoke",
     ]
+
+
+def test_the_probe_step_follows_try_it_with_its_lead_and_a_placeholder_id(tmp_path: Path) -> None:
+    """Probing the scaffold's placeholder host stalls, so the step waits for real hosts."""
+    root = tmp_path.resolve()
+    _scaffold_all(root)
+    text = _render(root, str(root))
+    assert text.index("3. Try it:") < text.index("4. Probe your hosts:")
+    assert _probe_step(text) == f"{PROBE_STEP_LEAD} {EXAMPLE_PROBE_COMMAND}"
+    # At 80 columns the lead wraps inside the box and the command stays whole.
+    narrow = _render(root, str(root), width=80)
+    assert _probe_step(narrow) == f"{PROBE_STEP_LEAD} {EXAMPLE_PROBE_COMMAND}"
+    assert EXAMPLE_PROBE_COMMAND in narrow
 
 
 def test_a_kmodcov_only_project_is_never_told_to_use_a_lab_it_does_not_have(
@@ -183,6 +209,7 @@ def test_a_kmodcov_only_project_is_never_told_to_use_a_lab_it_does_not_have(
     steps = _try_it(_render(root, str(root)))
     assert not [line for line in steps if "example_lab" in line], steps
     assert "otto cov kmodcov check third_party/otto_kmodcov" in steps, steps
+    assert not _probe_step(_render(root, str(root)))
 
 
 def test_an_embedded_gcov_only_project_is_told_to_check_the_patch(

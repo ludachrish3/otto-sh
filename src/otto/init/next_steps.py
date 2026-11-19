@@ -17,7 +17,13 @@ from .areas import (
     patch_present,
     template_tests_present,
 )
-from .templates import EXAMPLE_LAB_NAME
+from .templates import EXAMPLE_LAB_NAME, EXAMPLE_PROBE_COMMAND
+
+PROBE_STEP_LEAD = (
+    "Once `lab_data/lab.json` names your real hosts, probe each Unix host"
+    " (BusyBox included) and paste the pin it prints into its entry:"
+)
+"""The prose that leads the panel's probe step, before :data:`EXAMPLE_PROBE_COMMAND`."""
 
 
 def declares_lab(root: Path, name: str) -> bool:
@@ -77,3 +83,12 @@ def try_it_commands(
     if patch_present(patch):
         commands.append(f"otto cov embedded-gcov check {_shown(patch, cwd)}")
     return commands
+
+
+def probe_step_command(root: Path) -> str | None:
+    """Return the probe command for the panel's probe step, or ``None`` when *root* has no lab.
+
+    The step is its own, after "Try it": those commands work on a fresh
+    scaffold, and a probe of its placeholder host stalls until it gives up.
+    """
+    return EXAMPLE_PROBE_COMMAND if declares_lab(root, EXAMPLE_LAB_NAME) else None

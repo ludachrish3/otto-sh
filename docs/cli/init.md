@@ -272,7 +272,13 @@ are tests, the example test and instruction runs when both the lab and those
 exist, `otto cov kmodcov check <dir>` when the kmodcov library is vendored, and
 `otto cov embedded-gcov check <dir>` when the embedded-gcov patch is there
 — so `otto init --kmodcov` in an empty directory, which writes no lab, never
-points you at one. When a command would not fit inside the
+points you at one. When the lab files declare `example_lab`, a last step
+follows: once `lab_data/lab.json` names your real hosts, run
+`otto --lab example_lab host <id> probe` for each Unix host, BusyBox
+included, and paste the pin it prints into its entry;
+{doc}`../configuration/lab/probing-hosts` shows what the pin looks like and
+where it goes. It is not a "Try it" command because the scaffold's example
+host is a placeholder address until you edit it. When a command would not fit inside the
 box at your terminal's width (a long project-root path), the same steps print
 unboxed under a "Next steps" rule, so every command stays on one line you
 can copy. The panel repeats the completion

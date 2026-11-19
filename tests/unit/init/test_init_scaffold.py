@@ -23,6 +23,7 @@ from otto.init import (
     scaffold_candidates,
     scaffold_prerequisites,
 )
+from otto.init.templates import EXAMPLE_HOST_ID
 from tests._fixtures.project_scaffold import make_project
 
 
@@ -356,6 +357,7 @@ def test_the_conftest_shows_the_fleet_beside_one_host(tmp_path: Path) -> None:
     _scaffold(tmp_path, "tests")
     conftest = (tmp_path / "tests" / "conftest.py").read_text()
     assert "get_host(" in conftest
+    assert f'get_host("{EXAMPLE_HOST_ID}")' in conftest
     assert "all_hosts(" in conftest
     assert _SELECTING_HOSTS_URL in conftest
     assert all(line.strip().startswith("#") for line in _fleet_lines(conftest))

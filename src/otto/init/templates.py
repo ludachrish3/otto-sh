@@ -128,7 +128,7 @@ paths = ["lab_data"]
 # --- [coverage] — coverage tiers + remote gcov collection --------------------
 # Embedded build settings live in [coverage.embedded] (see the coverage docs).
 #[coverage]
-#hosts = "example-device"
+#hosts = "{example_host_id}"
 ## Each tier's `kind` decides which fields it may carry: `products` and
 ## `toolchain` are unit-only, `max_age` is manual-only. One tier of each kind
 ## below, so every field is shown where it is legal.
@@ -210,6 +210,20 @@ paths = ["lab_data"]
 EXAMPLE_LAB_NAME = "example_lab"
 """The lab the scaffold declares — the one name every printed next step passes to ``--lab``."""
 
+EXAMPLE_HOST_ID = "example-device"
+"""The scaffold's example host id, the one the templates name.
+
+No printed next step passes it to ``host``: until its address is edited it is
+the TEST-NET placeholder ``192.0.2.1``, and the quickstarts' ``example_lab``
+has no host by this name.
+"""
+
+EXAMPLE_PROBE_COMMAND = f"otto --lab {EXAMPLE_LAB_NAME} host <id> probe"
+"""The probe a new lab's next steps ask for, once per Unix host, with a literal ``<id>``.
+
+The ``otto init`` panel and the scaffolded lab README both print it.
+"""
+
 EXAMPLE_INVENTORY_KEY = "device-01.lab.example"
 """The inventory key the scaffold's three files share — the machine's own name, never an otto id.
 
@@ -249,7 +263,7 @@ EXAMPLE_ELEMENT_ENTRY = {
         "(typically its DNS hostname), never an otto id; its address lives in inventory.json "
         "and its creds in creds.json under that key."
     ),
-    "name": "example-device",
+    "name": EXAMPLE_HOST_ID,
     "labs": [EXAMPLE_LAB_NAME],
     "hosts": [EXAMPLE_HOST_ENTRY],
 }
@@ -269,7 +283,7 @@ LAB_JSON_TEMPLATE: dict[str, Any] = {
         "inventory.json and its creds from creds.json under that key; everything "
         "otto-specific stays here, and a creds entry here overrides the same login below it."
     ),
-    "labs": {EXAMPLE_LAB_NAME: {"resources": ["example-device"]}},
+    "labs": {EXAMPLE_LAB_NAME: {"resources": [EXAMPLE_HOST_ID]}},
     "elements": [EXAMPLE_ELEMENT_ENTRY],
     "links": [],
 }
@@ -334,7 +348,8 @@ path = "lab_data/creds.json"
 ``otto init --inline-hosts`` writes it commented out.
 """
 
-LAB_README_BODY = """\
+LAB_README_BODY = (
+    """\
 ## `lab.json`
 
 It is a JSON object with three sections, each optional:
@@ -450,7 +465,14 @@ otto's sanctioned way to leave a note inline — at the top level, inside the
   `otto schema export`
 - Confirm otto sees your hosts once you've edited this file:
   `otto --lab example_lab --list-hosts`
+- Then probe each Unix host, BusyBox included, and paste the pin it prints
+  into its entry: `"""
+    + EXAMPLE_PROBE_COMMAND
+    + """`
+  (what the pin looks like and where it goes:
+  <https://otto-sh.readthedocs.io/en/stable/configuration/lab/probing-hosts.html>)
 """
+)
 """The lab README after its head, the ``lab.json`` reference both lab layouts share."""
 
 LAB_README_TEMPLATE = (

@@ -8,9 +8,13 @@ import tomli
 from otto.init.templates import (
     CREDS_JSON_TEMPLATE,
     EXAMPLE_HOST_ENTRY,
+    EXAMPLE_HOST_ID,
     EXAMPLE_INVENTORY_KEY,
+    EXAMPLE_LAB_NAME,
+    EXAMPLE_PROBE_COMMAND,
     INLINE_HOST_ENTRY,
     INLINE_LAB_JSON_TEMPLATE,
+    INLINE_LAB_README_TEMPLATE,
     INVENTORY_JSON_TEMPLATE,
     INVENTORY_TABLES_TEMPLATE,
     LAB_JSON_TEMPLATE,
@@ -64,9 +68,21 @@ def _uncommented() -> dict:
         version="0.1.0",
         init_module="widget_instructions",
         inventory_tables=INVENTORY_TABLES_TEMPLATE,
+        example_host_id=EXAMPLE_HOST_ID,
     )
     text = "\n".join(_COMMENTED.sub("", line) for line in rendered.splitlines())
     return tomli.loads(text)
+
+
+def test_the_settings_template_names_the_example_host_from_the_constant() -> None:
+    rendered = SETTINGS_TEMPLATE.format(
+        name="widget",
+        version="0.1.0",
+        init_module="widget_instructions",
+        inventory_tables=INVENTORY_TABLES_TEMPLATE,
+        example_host_id=EXAMPLE_HOST_ID,
+    )
+    assert f'#hosts = "{EXAMPLE_HOST_ID}"' in rendered
 
 
 def test_uncommented_template_is_settings_model_valid() -> None:
@@ -123,7 +139,7 @@ def test_lab_template_parses_through_the_runtime_parsers_and_joins_its_siblings(
     sections = parse_lab_sections(LAB_JSON_TEMPLATE, "lab.json")
     entries = parse_lab_entries(sections["labs"], "lab.json")
     (element,) = parse_elements(sections["elements"], "lab.json")
-    assert entries["example_lab"].resources == {"example-device"}
+    assert entries["example_lab"].resources == {EXAMPLE_HOST_ID}
     assert element.matches("example_lab")
     (tmp_path / "inventory.json").write_text(json.dumps(INVENTORY_JSON_TEMPLATE))
     (tmp_path / "creds.json").write_text(json.dumps(CREDS_JSON_TEMPLATE))
@@ -137,9 +153,7 @@ def test_lab_template_parses_through_the_runtime_parsers_and_joins_its_siblings(
     spec = UnixHostSpec.model_validate(resolved)
     assert spec.ip == "192.0.2.1"
     assert EXAMPLE_HOST_ENTRY["inventory"] == EXAMPLE_INVENTORY_KEY
-    assert (
-        EXAMPLE_INVENTORY_KEY != "example-device"
-    )  # a key is the machine's name, never an otto id
+    assert EXAMPLE_INVENTORY_KEY != EXAMPLE_HOST_ID  # a key is the machine's name, never an otto id
     # `element`/`element_id`/`labs` are element-level in v2; not `resources`
     # (it came back to the host entry with spec 2026-08-28
     # three-level-reservations, so it is no longer a hoisted key). Driven off
@@ -159,6 +173,17 @@ def test_lab_readme_documents_the_v2_shape_and_the_migration() -> None:
     assert "are NOT host fields" in LAB_README_TEMPLATE
     for phrase in ("inventory.json", "creds.json", "inventory key", "lab.json over"):
         assert phrase in LAB_README_TEMPLATE
+
+
+def test_both_lab_readmes_end_by_probing_each_unix_host_after_listing_them() -> None:
+    """The README's last next step, after listing the hosts, is probing each Unix host."""
+    for readme in (LAB_README_TEMPLATE, INLINE_LAB_README_TEMPLATE):
+        steps = readme.split("## Where to go next", 1)[1]
+        listed = steps.index(f"`otto --lab {EXAMPLE_LAB_NAME} --list-hosts`")
+        probed = steps.index(f"`{EXAMPLE_PROBE_COMMAND}`")
+        assert listed < probed
+        assert "BusyBox included" in steps[listed:]
+        assert "configuration/lab/probing-hosts.html" in steps[listed:]
 
 
 def test_inline_lab_template_differs_from_the_referenced_one_only_in_the_host_and_comments() -> (
@@ -185,6 +210,7 @@ def test_commented_inventory_tables_uncomment_to_the_default_tables() -> None:
             version="0.1.0",
             init_module="widget_instructions",
             inventory_tables=tables,
+            example_host_id=EXAMPLE_HOST_ID,
         )
         return tomli.loads("\n".join(_COMMENTED.sub("", line) for line in rendered.splitlines()))
 

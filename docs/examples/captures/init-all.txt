@@ -34,37 +34,44 @@ created pylib/acme_instructions/__init__.py
 └───────────────┴─────────────┴──────────────────────────────────────────────────────────────┘
 inventory: json:/tmp/otto-gs/acme/lab_data/inventory.json
 creds:     json:/tmp/otto-gs/acme/lab_data/creds.json
-╭─ Next steps ───────────────────────────────────────────────────────────────╮
-│                                                                            │
-│  1. Activate otto in this shell:                                           │
-│                                                                            │
-│          export OTTOPATH=/tmp/otto-gs/acme                                 │
-│          otto --install-completion                                         │
-│          source ~/.bash_completions/otto.sh                                │
-│                                                                            │
-│  2. Activate otto in future shells:                                        │
-│                                                                            │
-│     ~/.bashrc                                                              │
-│        Step 1's `otto --install-completion` adds the `source` line to      │
-│        ~/.bashrc, so completion needs nothing more there. Add only:        │
-│                                                                            │
-│          export OTTOPATH=/tmp/otto-gs/acme                                 │
-│                                                                            │
-│     ~/.profile  (if your login shell reads it instead of ~/.bashrc)        │
-│        Add both lines yourself:                                            │
-│                                                                            │
-│          export OTTOPATH=/tmp/otto-gs/acme                                 │
-│          source ~/.bash_completions/otto.sh                                │
-│                                                                            │
-│        Never put `otto --install-completion` itself in a startup file: it  │
-│        rewrites ~/.bashrc every time it runs.                              │
-│                                                                            │
-│  3. Try it:                                                                │
-│                                                                            │
-│          otto --lab example_lab --list-hosts                               │
-│          otto test --list-tests                                            │
-│          otto --lab example_lab test TestExample                           │
-│          otto --lab example_lab test test_example_function                 │
-│          otto --lab example_lab run smoke                                  │
-│                                                                            │
-╰────────────────────────────────────────────────────────────────────────────╯
+╭─ Next steps ─────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│  1. Activate otto in this shell:                                             │
+│                                                                              │
+│          export OTTOPATH=/tmp/otto-gs/acme                                   │
+│          otto --install-completion                                           │
+│          source ~/.bash_completions/otto.sh                                  │
+│                                                                              │
+│  2. Activate otto in future shells:                                          │
+│                                                                              │
+│     ~/.bashrc                                                                │
+│        Step 1's `otto --install-completion` adds the `source` line to        │
+│        ~/.bashrc, so completion needs nothing more there. Add only:          │
+│                                                                              │
+│          export OTTOPATH=/tmp/otto-gs/acme                                   │
+│                                                                              │
+│     ~/.profile  (if your login shell reads it instead of ~/.bashrc)          │
+│        Add both lines yourself:                                              │
+│                                                                              │
+│          export OTTOPATH=/tmp/otto-gs/acme                                   │
+│          source ~/.bash_completions/otto.sh                                  │
+│                                                                              │
+│        Never put `otto --install-completion` itself in a startup file: it    │
+│        rewrites ~/.bashrc every time it runs.                                │
+│                                                                              │
+│  3. Try it:                                                                  │
+│                                                                              │
+│          otto --lab example_lab --list-hosts                                 │
+│          otto test --list-tests                                              │
+│          otto --lab example_lab test TestExample                             │
+│          otto --lab example_lab test test_example_function                   │
+│          otto --lab example_lab run smoke                                    │
+│                                                                              │
+│  4. Probe your hosts:                                                        │
+│                                                                              │
+│        Once `lab_data/lab.json` names your real hosts, probe each Unix host  │
+│        (BusyBox included) and paste the pin it prints into its entry:        │
+│                                                                              │
+│          otto --lab example_lab host <id> probe                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯

@@ -25,6 +25,7 @@ from .templates import (
     CREDS_JSON_TEMPLATE,
     EMBEDDED_GCOV_SETTINGS_TEMPLATE,
     EMBEDDED_GCOV_STARTER_README_TEMPLATE,
+    EXAMPLE_HOST_ID,
     INLINE_LAB_JSON_TEMPLATE,
     INLINE_LAB_README_TEMPLATE,
     INSTRUCTIONS_TEMPLATE,
@@ -347,6 +348,7 @@ def _scaffold_settings(config: InitConfig, areas: list[str]) -> AreaWrite:
         version=config.version,
         init_module=config.init_module,
         inventory_tables=tables,
+        example_host_id=EXAMPLE_HOST_ID,
     )
     if "kmodcov" in areas:
         text += KMODCOV_DEV_TOOL_TEMPLATE.format(kmodcov_dir=config.kmodcov_dir)
