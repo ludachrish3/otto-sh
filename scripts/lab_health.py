@@ -750,6 +750,22 @@ _CONSOLE_STATE_INFO = {
 }
 
 
+CONSOLE_RECOVERY = {
+    "SILENT": "`make qemu-restart` (the guest is not answering)",
+    "DOWN": "`make qemu-restart` (the guest is not answering)",
+    "BUSY": "`make bed-status` (another client holds the console port)",
+    "HOP-FAIL": "`make vm-health` (the console server did not answer)",
+    "NO-HOP": "`make vm-health` (the console server is not in the lab)",
+}
+"""What recovers a console :func:`_check_console` could not bring to ``login:``, by
+status; any other status (a reset that failed) is ``make console-logout``'s to retry."""
+
+
+def console_recovery(status: str) -> str:
+    """Name what to run for a console left at *status*, for a report line."""
+    return CONSOLE_RECOVERY.get(status, "`make console-logout`")
+
+
 def _check_console(host: dict, hops: dict[str, dict], *, logout: bool) -> dict:
     """Report the state of *host*'s serial console, optionally resetting it to ``login:``.
 
@@ -794,7 +810,12 @@ def _check_console(host: dict, hops: dict[str, dict], *, logout: bool) -> dict:
     if state not in _CONSOLE_STATE_INFO:
         return {"ok": False, "status": "DOWN", "info": state[:40] or "no answer"}
     if len(lines) > 1 and lines[1].startswith("RESET-OK"):
-        return {"ok": True, "status": "AT-LOGIN", "info": f"reset from {state}"}
+        return {
+            "ok": True,
+            "status": "AT-LOGIN",
+            "info": f"reset from {state}",
+            "reset_from": state,
+        }
     if len(lines) > 1 and lines[1].startswith("RESET-FAILED"):
         # The quoted tail is too wide for the info column; it rides at the
         # end of the row instead, where nothing follows it.
@@ -805,6 +826,26 @@ def _check_console(host: dict, hops: dict[str, dict], *, logout: bool) -> dict:
             "detail": lines[1][len("RESET-FAILED") :].strip(),
         }
     return {"ok": state == "AT-LOGIN", "status": state, "info": _CONSOLE_STATE_INFO[state]}
+
+
+def reset_logged_in_consoles(lab_file: Path) -> list[tuple[str, dict]]:
+    """Reset every console that logs in to its login prompt; ``(element, result)`` per console.
+
+    The consoles are the ones :func:`_print_report` gives a ``console`` row
+    (:func:`_has_console_row`), each through :func:`_check_console` with
+    *logout*, so a Zephyr console is never dialled and a console already at
+    ``login:`` costs two nudges (the probe's and the reset's confirm). The bed
+    reap runs this on every reap but ``--full``'s, where ``make
+    console-logout`` (the same reset plus the whole-bed health report) runs
+    instead.
+    """
+    hosts = _load_hosts(lab_file)
+    hops = _hop_index(hosts)
+    return [
+        (host["element"], _check_console(host, hops, logout=True))
+        for host in hosts
+        if _has_console_row(host)
+    ]
 
 
 def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:

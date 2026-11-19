@@ -25,8 +25,12 @@ there was nothing:
    orphan stacks, e2e-labelled images and expired otto scan snapshots.
 3. The embedded coverage product, local to this machine: a declared build
    whose artifact is missing is rebuilt (a cut ``west build`` left it).
-4. With ``--full`` only, the consoles: ``make console-logout`` (after ``make
-   qemu-restart`` with ``--restart-qemu``), re-entering this run's lease.
+4. The consoles that log in (``lab_health.reset_logged_in_consoles``): each
+   left logged in is reset to its login prompt, and one that cannot be is a
+   failure. With ``--full`` that reset is ``make console-logout``'s own, which
+   adds the whole-bed health report, Zephyr consoles included; it runs after
+   ``make qemu-restart`` with ``--restart-qemu``, so a wedged guest is
+   restarted before its console is judged, re-entering this run's lease.
 5. The after-snapshot of every host, taken last: its residual dirt is the
    verdict, printed, and exit 1 if anything remains, any host was unreachable
    or any step failed.
@@ -63,8 +67,10 @@ from scripts.bed_lease import (  # noqa: E402
 from scripts.lab_health import (  # noqa: E402
     _hop_index,
     _load_hosts,
+    console_recovery,
     direct_ssh_host_ids,
     hopped_ssh_host_ids,
+    reset_logged_in_consoles,
     wait_for_hopped_ssh,
 )
 
@@ -72,8 +78,10 @@ if TYPE_CHECKING:
     from tests._fixtures.bed_hygiene import HygieneSnapshot
 
 PRODUCT_DIR = REPO_ROOT / "tests" / "project3" / "product"
-CONSOLE_TARGETS = {False: ["console-logout"], True: ["qemu-restart", "console-logout"]}
-"""The console step, by ``restart_qemu``: the Makefile's own targets, so the lines live there."""
+CONSOLE_TARGETS = {False: ["console-logout"], True: ["qemu-restart", "LOGOUT_CONSOLES=1"]}
+"""The console step's ``make`` arguments, by ``restart_qemu``: the Makefile's own targets,
+so the lines live there. The restart resets the consoles in the same run, after the
+guests are back: a console left logged in is reset before the report judges it."""
 EXIT_DIRTY = 1
 PURPOSE = "bed-reap"
 
@@ -162,15 +170,11 @@ async def remove_staging(host: Any, entries: list[str]) -> None:
 
 
 async def run_lab_health(*, restart_qemu: bool) -> int:
-    """Run the console step's Makefile targets in order; the first non-zero status, else 0."""
-    for target in CONSOLE_TARGETS[restart_qemu]:
-        proc = await asyncio.create_subprocess_exec(
-            "make", "--no-print-directory", target, cwd=REPO_ROOT
-        )
-        status = await proc.wait()
-        if status != 0:
-            return status
-    return 0
+    """Run the console step's ``make`` invocation; its exit status."""
+    proc = await asyncio.create_subprocess_exec(
+        "make", "--no-print-directory", *CONSOLE_TARGETS[restart_qemu], cwd=REPO_ROOT
+    )
+    return await proc.wait()
 
 
 async def _checked(host: Any, command: str) -> None:
@@ -178,6 +182,31 @@ async def _checked(host: Any, command: str) -> None:
 
     result = await host.exec(command, timeout=60, log=LogMode.QUIET)
     _hygiene().check_probe_result(host.id, result)
+
+
+def _reset_consoles(lab_file: Path, out: "Outcome") -> None:
+    """Bring every console that logs in back to its login prompt; what it could not, a failure.
+
+    A console a killed lane left logged in fails the next lane's first console
+    tests (#1124), so every reap resets it; ``--full`` does it through ``make
+    console-logout`` instead. A failure names what recovers it
+    (:func:`~scripts.lab_health.console_recovery`).
+    """
+    try:
+        results = reset_logged_in_consoles(lab_file)
+    except Exception as exc:  # noqa: BLE001 -- reported, never fatal to the other steps
+        out.failures.append(f"consoles: {exc}")
+        return
+    for element, res in results:
+        if res["ok"]:
+            if res.get("reset_from"):
+                out.removed.append(f"{element}: console reset from {res['reset_from']}")
+            continue
+        detail = f": {res['detail']}" if res.get("detail") else ""
+        out.failures.append(
+            f"console {element}: {res['status']} ({res.get('info', '')}{detail}); "
+            f"see {console_recovery(res['status'])}"
+        )
 
 
 # --- the hosts --------------------------------------------------------------------
@@ -375,6 +404,8 @@ def reap(cell: Cell, pid: int, *, full: bool = False, restart_qemu: bool = False
         snapshots = await _reap_unix(lab, hosts, out)
         await _reap_docker(lab, hosts, out)
         await _rebuild_products(out)
+        if not full:  # --full's console-logout is this same reset, after any qemu-restart
+            _reset_consoles(cell.lab_file, out)
         if full and await run_lab_health(restart_qemu=restart_qemu) != 0:
             out.failures.append("the console step reported an unhealthy bed")
         await _judge_unix(hosts, snapshots, out)
@@ -399,7 +430,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="the bed reap: clean the cell under its lease")
     add_cell_arguments(parser)
     add_run_arguments(parser, skip_help="reap nothing when every PATH after `--` is under DIR")
-    parser.add_argument("--full", action="store_true", help="add the console step")
+    parser.add_argument(
+        "--full", action="store_true", help="add the whole-bed console health report"
+    )
     parser.add_argument(
         "--restart-qemu", action="store_true", help="with --full: restart the guests"
     )

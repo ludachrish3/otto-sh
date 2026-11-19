@@ -1805,10 +1805,10 @@ vm-health: ## (Lab) Probe every lab VM + Zephyr/BusyBox QEMU + the chaos guest; 
 	@uv run python scripts/lab_health.py --hosts $(LAB_FILE)
 	$(call bed_release)
 
-qemu-restart: ## (Lab) Restart the Zephyr + BusyBox + chaos guest QEMU and SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded or BusyBox bed.
+qemu-restart: ## (Lab) Restart the Zephyr + BusyBox + chaos guest QEMU and SNMP-relay units on the hop VM(s), then health-check (LOGOUT_CONSOLES=1 also resets logged-in consoles, as console-logout does). Use to recover a wedged embedded or BusyBox bed.
 	$(call bed_acquire,qemu-restart)
 	@$(SAY) "restarting Zephyr + BusyBox QEMU + SNMP relay, then health-checking"
-	@uv run python scripts/lab_health.py --hosts $(LAB_FILE) --restart-qemu
+	@uv run python scripts/lab_health.py --hosts $(LAB_FILE) --restart-qemu $(if $(LOGOUT_CONSOLES),--logout-consoles)
 	$(call bed_release)
 
 console-logout: ## (Lab) Reset every logged-in bed console to its login prompt and report
@@ -1826,7 +1826,7 @@ bed-lease: ## (Lab) Hold the bed from this shell for as long as the shell lives 
 bed-release: ## (Lab) Free the bed cell whoever holds it, naming what was evicted — the eviction of a run you KNOW is dead (a lease whose workers still run is kept by the lanes themselves).
 	@$(BED_LEASE) release --pid $$PPID --force
 
-bed-reap: ## (Lab) Clean the bed after a killed or interrupted run, under the lease: otto tunnels, impair timers and qdiscs, nc listeners, staging, orphan docker stacks and e2e images, a half-built coverage product, then the consoles (`RESTART_QEMU=1` also restarts the guests). Refuses a bed another live run holds. Every bed lane runs the same reap (without the console step) at its start and its green exit.
+bed-reap: ## (Lab) Clean the bed after a killed or interrupted run, under the lease: otto tunnels, impair timers and qdiscs, nc listeners, staging, orphan docker stacks and e2e images, a half-built coverage product, a console left logged in, then the whole-bed console health report (`RESTART_QEMU=1` also restarts the guests). Refuses a bed another live run holds. Every bed lane runs the same reap (without the health report) at its start and its green exit.
 	$(call bed_acquire,bed-reap)
 	$(call bed_reap) --full $(if $(RESTART_QEMU),--restart-qemu)
 	$(call bed_release)

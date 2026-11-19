@@ -16,6 +16,7 @@ machine runs this script and report a healthy bed no matter what the guests are
 doing.
 """
 
+import shlex
 import socket
 import socketserver
 import subprocess
@@ -1616,3 +1617,65 @@ def test_after_a_restart_a_hopped_unix_row_is_polled_until_up(monkeypatch):
     monkeypatch.setattr(lab_health.shutil, "which", lambda name: "/usr/bin/sshpass")
     assert lab_health.main(["--restart-qemu"]) == 0
     assert polled == ["ubu2404"] * 3
+
+
+# -- reset_logged_in_consoles ------------------------------------------------
+
+
+def test_reset_logged_in_consoles_resets_only_the_consoles_that_log_in(monkeypatch, tmp_path):
+    """The reap's console step (#1124): every console with its own row, reset, none other.
+
+    A Zephyr console (credential-less, its own row dials it) is never sent the
+    reset, and an SSH-only host has no console to reset.
+    """
+    calls = _fake_ssh(monkeypatch, "LOGGED-IN\nRESET-OK")
+    zephyr = {
+        "element": "z1",
+        "ip": "10.10.200.40",
+        "valid_terms": ["console"],
+        "console_options": {"server": "test1", "port": 5000},
+    }
+    plain = {
+        "element": "test3",
+        "ip": "10.10.200.13",
+        "valid_terms": ["ssh"],
+        "creds": [{"login": "vagrant", "password": "x"}],
+    }
+    lab_file = tmp_path / "lab.json"
+    hosts = [_console_entry(creds=True), zephyr, plain, _SERVER]
+    monkeypatch.setattr(lab_health, "_load_hosts", lambda path: hosts if path == lab_file else [])
+
+    results = lab_health.reset_logged_in_consoles(lab_file)
+
+    assert [(element, res["status"], res["reset_from"]) for element, res in results] == [
+        ("test2", "AT-LOGIN", "LOGGED-IN")
+    ]
+    assert len(calls) == 1
+    assert calls[0]["cmd"].rstrip().endswith(" reset")
+
+
+def test_the_reap_and_console_logout_reset_the_same_consoles_the_same_way(monkeypatch, tmp_path):
+    """One decision: ``make console-logout`` (``_print_report(logout=True)``) and the bed
+    reap's ``reset_logged_in_consoles`` dial the same console probes over the same lab."""
+    zephyr = {
+        "element": "z1",
+        "ip": "10.10.200.40",
+        "valid_terms": ["console"],
+        "console_options": {"server": "test1", "port": 5000},
+    }
+    hosts = [_console_entry(creds=True), zephyr, _SERVER]
+    lab_file = tmp_path / "lab.json"
+    monkeypatch.setattr(lab_health, "_load_hosts", lambda path: hosts)
+
+    def console_dials(run):
+        calls = _fake_ssh(monkeypatch, "LOGGED-IN\nRESET-OK")
+        run()
+        probe = shlex.quote(lab_health._CONSOLE_STATE_PROBE)
+        return [(c["ip"], c["cmd"]) for c in calls if probe in c["cmd"]]
+
+    logout = console_dials(
+        lambda: lab_health._print_report(hosts, lab_health._hop_index(hosts), logout=True)
+    )
+    reap = console_dials(lambda: lab_health.reset_logged_in_consoles(lab_file))
+    assert reap == logout
+    assert len(reap) == 1
