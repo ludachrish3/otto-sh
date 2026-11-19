@@ -22,11 +22,15 @@ itself.
 """
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from scripts.check_breaking_marks import (
+    CUT_REMEDIATION_RULE,
+    HIDDEN_MARK_RULE,
+    REMEDIATION_RULE,
     RULE,
     RangeError,
     commits_in_range,
@@ -55,7 +59,7 @@ def test_removal_marked_with_bang_passes(tmp_path):
     repo = TmpGitRepo(tmp_path)
     _seed(repo, ["otto:Alpha", "otto:Beta"])
     repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
-    tip = repo.commit("feat(api)!: drop Beta")
+    tip = repo.commit("feat(api)!: drop Beta\n\nBREAKING CHANGE: see the release notes")
 
     exit_code = main([f"{tip}~1..{tip}", "--repo", str(repo.root), "--golden", "golden.txt"])
 
@@ -119,7 +123,7 @@ def test_merge_commit_is_skipped(tmp_path):
 
     repo.git("checkout", "main")
     repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
-    repo.commit("feat(api)!: drop Beta on main")
+    repo.commit("feat(api)!: drop Beta on main\n\nBREAKING CHANGE: see the release notes")
 
     repo.git("merge", "--no-ff", "-m", "merge: bring in side", side_tip)
     merge_tip = repo.git("rev-parse", "HEAD").strip()
@@ -288,7 +292,9 @@ def test_docs_only_removal_that_no_longer_imports_needs_a_mark(tmp_path, capsys)
     repo.write("golden.txt", GOLDEN_HEADER + "json:no_such_name\notto:Alpha\n")
     repo.commit("docs: put it back")
     repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
-    marked = repo.commit("docs!: stop teaching a dead path")
+    marked = repo.commit(
+        "docs!: stop teaching a dead path\n\nBREAKING CHANGE: see the release notes"
+    )
 
     assert main([f"{marked}~1..{marked}", "--repo", str(repo.root), "--golden", "golden.txt"]) == 0
 
@@ -588,7 +594,11 @@ def test_v2_binding_removal_unmarked_fails(tmp_path, capsys):
 def test_v2_binding_removal_marked_passes(tmp_path):
     repo = TmpGitRepo(tmp_path)
     _commit_dump(repo, _init(["f", "g"], "def f(): pass\ndef g(): pass\n"), "feat: f and g")
-    tip = _commit_dump(repo, _init(["f"], "def f(): pass\n"), "refactor(api)!: drop g")
+    tip = _commit_dump(
+        repo,
+        _init(["f"], "def f(): pass\n"),
+        "refactor(api)!: drop g\n\nBREAKING CHANGE: see the release notes",
+    )
     assert _run(repo, f"{tip}~1..{tip}") == 0
 
 
@@ -612,7 +622,10 @@ def test_stale_dump_is_refused_even_when_marked(tmp_path, capsys):
     first = _commit_dump(repo, _init(["f"], "def f(a): pass\n"), "feat: f")
     old = repo.git("show", f"{first}:golden.txt")
     tip = _commit_dump(
-        repo, _init(["f"], "def f(): pass\n"), "feat(api)!: f loses a", edit=lambda text: old
+        repo,
+        _init(["f"], "def f(): pass\n"),
+        "feat(api)!: f loses a\n\nBREAKING CHANGE: see the release notes",
+        edit=lambda text: old,
     )
     assert _run(repo, f"{tip}~1..{tip}") == 1
     assert "refused: stale dump" in capsys.readouterr().out
@@ -642,7 +655,10 @@ def test_intermediate_stale_dump_is_flagged_on_its_own_commit(tmp_path, capsys):
     base = _commit_dump(repo, _init(["f"], "def f(a): pass\n"), "feat: f")
     old = repo.git("show", f"{base}:golden.txt")
     stale = _commit_dump(
-        repo, _init(["f"], "def f(): pass\n"), "feat(api)!: drop a", edit=lambda text: old
+        repo,
+        _init(["f"], "def f(): pass\n"),
+        "feat(api)!: drop a\n\nBREAKING CHANGE: see the release notes",
+        edit=lambda text: old,
     )
     _commit_dump(repo, _init(["f"], "def f(): pass\n"), "chore: fix the golden")
     assert _run(repo, f"{base}..HEAD") == 1
@@ -657,7 +673,7 @@ def test_namespace_import_failure_is_refused_even_when_marked(tmp_path, capsys):
     old = repo.git("show", f"{first}:golden.txt")
     repo.write("src/otto/__init__.py", "1/0\n")
     repo.write("golden.txt", old)
-    tip = repo.commit("feat(api)!: break the import")
+    tip = repo.commit("feat(api)!: break the import\n\nBREAKING CHANGE: see the release notes")
     assert _run(repo, f"{tip}~1..{tip}") == 1
     assert "cannot regenerate the dump" in capsys.readouterr().out
 
@@ -668,7 +684,7 @@ def test_unknown_producer_schema_is_refused(tmp_path, capsys):
     tip = _commit_dump(
         repo,
         _init(["f"], "def f(): pass\n"),
-        "chore!: schema",
+        "chore!: schema\n\nBREAKING CHANGE: see the release notes",
         edit=lambda text: text.replace("# producer-schema 1", "# producer-schema 2"),
     )
     assert _run(repo, f"{tip}~1..{tip}") == 1
@@ -687,7 +703,16 @@ def test_producer_schema_decrease_through_a_merged_parent_is_refused(tmp_path, c
     )
     repo.commit("chore: a newer producer")
     repo.git("checkout", "-q", "main")
-    repo.git("merge", "-q", "--no-ff", "-s", "ours", "-m", "chore!: merge side", "side")
+    repo.git(
+        "merge",
+        "-q",
+        "--no-ff",
+        "-s",
+        "ours",
+        "-m",
+        "chore!: merge side\n\nBREAKING CHANGE: see the release notes",
+        "side",
+    )
     merge = repo.git("rev-parse", "HEAD").strip()
     assert _run(repo, f"{merge}~1..{merge}") == 1
     assert "producer-schema decreased" in capsys.readouterr().out
@@ -769,9 +794,22 @@ def test_merge_that_leaves_v2_is_refused_even_when_marked(tmp_path, capsys):
     repo.write("golden.txt", "otto:f\n")
     repo.commit("chore: v1")
     repo.git("checkout", "-q", "-b", "side")
-    _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat(api)!: v2")
+    _commit_dump(
+        repo,
+        _init(["f"], "def f(): pass\n"),
+        "feat(api)!: v2\n\nBREAKING CHANGE: see the release notes",
+    )
     repo.git("checkout", "-q", "main")
-    repo.git("merge", "-q", "--no-ff", "-s", "ours", "-m", "chore!: merge side", "side")
+    repo.git(
+        "merge",
+        "-q",
+        "--no-ff",
+        "-s",
+        "ours",
+        "-m",
+        "chore!: merge side\n\nBREAKING CHANGE: see the release notes",
+        "side",
+    )
     merge = repo.git("rev-parse", "HEAD").strip()
     assert _run(repo, f"{merge}~1..{merge}") == 1
     assert "merge leaves api-snapshot v2" in capsys.readouterr().out
@@ -781,7 +819,7 @@ def test_rollback_from_v2_to_v1_is_refused_even_when_marked(tmp_path, capsys):
     repo = TmpGitRepo(tmp_path)
     _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat: f")
     repo.write("golden.txt", "otto:f\n")
-    tip = repo.commit("revert(api)!: back to v1")
+    tip = repo.commit("revert(api)!: back to v1\n\nBREAKING CHANGE: see the release notes")
     assert _run(repo, f"{tip}~1..{tip}") == 1
     assert "rollback from api-snapshot v2 to v1" in capsys.readouterr().out
 
@@ -790,7 +828,7 @@ def test_v2_golden_deleted_is_refused_even_when_marked(tmp_path, capsys):
     repo = TmpGitRepo(tmp_path)
     _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat: f")
     repo.git("rm", "-q", "golden.txt")
-    tip = repo.commit("chore(api)!: drop the golden")
+    tip = repo.commit("chore(api)!: drop the golden\n\nBREAKING CHANGE: see the release notes")
     assert _run(repo, f"{tip}~1..{tip}") == 1
     assert "v2 golden deleted" in capsys.readouterr().out
 
@@ -799,9 +837,9 @@ def test_two_commit_rollback_is_refused_at_the_deletion(tmp_path, capsys):
     repo = TmpGitRepo(tmp_path)
     base = _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat: f")
     repo.git("rm", "-q", "golden.txt")
-    deletion = repo.commit("chore(api)!: drop the golden")
+    deletion = repo.commit("chore(api)!: drop the golden\n\nBREAKING CHANGE: see the release notes")
     repo.write("golden.txt", "otto:f\n")
-    repo.commit("chore(api)!: a v1 golden")
+    repo.commit("chore(api)!: a v1 golden\n\nBREAKING CHANGE: see the release notes")
     assert _run(repo, f"{base}..HEAD") == 1
     assert f"commit {deletion}" in capsys.readouterr().out
 
@@ -810,7 +848,7 @@ def test_v2_commit_with_malformed_manifest_is_refused_even_when_marked(tmp_path,
     repo = TmpGitRepo(tmp_path)
     _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat: f")
     repo.write("api/public.toml", "not = [valid")
-    tip = repo.commit("chore(api)!: break the manifest")
+    tip = repo.commit("chore(api)!: break the manifest\n\nBREAKING CHANGE: see the release notes")
     assert _run(repo, f"{tip}~1..{tip}") == 1
     assert "missing or malformed" in capsys.readouterr().out
 
@@ -949,13 +987,20 @@ def test_conversion_dropping_a_root_line_needs_a_mark(tmp_path, capsys):
 
 def test_conversion_marked_passes(tmp_path):
     repo, tip = _convert(
-        tmp_path, [*V1, "otto:Gone"], "src_files, dest_dir", msg="feat(api)!: switch to the dump"
+        tmp_path,
+        [*V1, "otto:Gone"],
+        "src_files, dest_dir",
+        msg="feat(api)!: switch to the dump\n\nBREAKING CHANGE: see the release notes",
     )
     assert _run(repo, f"{tip}~1..{tip}") == 0
 
 
 @pytest.mark.parametrize(
-    "mark", ["feat(api)!: drop g", "feat: drop g\n\nBREAKING CHANGE: g is gone"]
+    "mark",
+    [
+        "feat(api)!: drop g\n\nBREAKING CHANGE: see the release notes",
+        "feat: drop g\n\nBREAKING CHANGE: g is gone",
+    ],
 )
 def test_both_mark_forms_excuse_a_v2_finding_but_never_a_refusal(tmp_path, mark):
     repo = TmpGitRepo(tmp_path)
@@ -974,7 +1019,7 @@ def test_a_malformed_manifest_at_a_custom_path_is_refused_naming_it(tmp_path, ca
     repo = TmpGitRepo(tmp_path)
     _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat: f", manifest_path=CUSTOM)
     repo.write(CUSTOM, "not = [valid")
-    tip = repo.commit("chore(api)!: break the manifest")
+    tip = repo.commit("chore(api)!: break the manifest\n\nBREAKING CHANGE: see the release notes")
     assert _run(repo, f"{tip}~1..{tip}", CUSTOM) == 1
     out = capsys.readouterr().out
     assert f"{CUSTOM} missing or malformed" in out
@@ -1018,7 +1063,11 @@ def test_a_merge_whose_only_change_downgrades_a_namespace_needs_a_mark_on_the_me
     stable = OTTO_ONLY.replace("provisional", "stable")
     base = _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat: f", manifest=stable)
     repo.git("checkout", "-q", "-b", "side")
-    side = _commit_dump(repo, _init(["f"], "def f(): pass\n"), "docs(api)!: provisional")
+    side = _commit_dump(
+        repo,
+        _init(["f"], "def f(): pass\n"),
+        "docs(api)!: provisional\n\nBREAKING CHANGE: see the release notes",
+    )
     repo.git("checkout", "-q", "main")
     repo.write("README", "x\n")
     repo.commit("docs: main moves on")
@@ -1052,7 +1101,10 @@ def _versions(reads):
     return {**_init(["f"], "def f(): pass\n"), "otto/versions.py": f"READS = {reads!r}\n"}
 
 
-@pytest.mark.parametrize(("msg", "code"), [("feat: drop v7", 1), ("feat!: drop v7", 0)])
+@pytest.mark.parametrize(
+    ("msg", "code"),
+    [("feat: drop v7", 1), ("feat!: drop v7\n\nBREAKING CHANGE: see the release notes", 0)],
+)
 def test_a_dropped_read_version_needs_a_mark(tmp_path, capsys, msg, code):
     repo = TmpGitRepo(tmp_path)
     _commit_dump(repo, _versions([7, 8]), "feat: store", manifest=FORMATS)
@@ -1075,7 +1127,7 @@ def test_a_format_refusal_is_not_excused_by_a_mark(tmp_path, capsys):
     old = repo.git("show", f"{first}:golden.txt")
     repo.write("src/otto/versions.py", "READS = [8, 8]\n")
     repo.write("golden.txt", old)
-    tip = repo.commit("feat!: a duplicate")
+    tip = repo.commit("feat!: a duplicate\n\nBREAKING CHANGE: see the release notes")
     assert _run(repo, f"{tip}~1..{tip}") == 1
     assert "duplicate version" in capsys.readouterr().out
 
@@ -1093,7 +1145,13 @@ def _rw_versions(reads, writes):
     }
 
 
-@pytest.mark.parametrize(("msg", "code"), [("feat: write v8 only", 1), ("feat!: write v8 only", 0)])
+@pytest.mark.parametrize(
+    ("msg", "code"),
+    [
+        ("feat: write v8 only", 1),
+        ("feat!: write v8 only\n\nBREAKING CHANGE: see the release notes", 0),
+    ],
+)
 def test_a_dropped_write_version_needs_a_mark(tmp_path, capsys, msg, code):
     repo = TmpGitRepo(tmp_path)
     _commit_dump(repo, _rw_versions([7, 8], [7, 8]), "feat: store", manifest=FORMATS_RW)
@@ -1105,7 +1163,10 @@ def test_a_dropped_write_version_needs_a_mark(tmp_path, capsys, msg, code):
         assert "reads no longer has" not in out
 
 
-@pytest.mark.parametrize(("msg", "code"), [("feat: drop store", 1), ("feat!: drop store", 0)])
+@pytest.mark.parametrize(
+    ("msg", "code"),
+    [("feat: drop store", 1), ("feat!: drop store\n\nBREAKING CHANGE: see the release notes", 0)],
+)
 def test_a_removed_format_needs_a_mark(tmp_path, capsys, msg, code):
     repo = TmpGitRepo(tmp_path)
     _commit_dump(repo, _versions([8]), "feat: store", manifest=FORMATS)
@@ -1131,7 +1192,7 @@ def test_a_crlf_copy_of_a_fresh_dump_is_stale_even_when_marked(tmp_path, capsys)
     _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat: f")
     fresh = repo.git("show", "HEAD:golden.txt")
     (repo.root / "golden.txt").write_bytes(fresh.replace("\n", CR + "\n").encode())
-    tip = repo.commit("chore(api)!: CRLF")
+    tip = repo.commit("chore(api)!: CRLF\n\nBREAKING CHANGE: see the release notes")
     assert _run(repo, f"{tip}~1..{tip}") == 1
     assert "refused: stale dump" in capsys.readouterr().out
 
@@ -1183,7 +1244,10 @@ def test_each_commit_is_regenerated_under_its_own_lock(tmp_path, monkeypatch):
     repo.write("README", "x\n")
     base = repo.commit("chore: seed")
     files = _init(["f"], "import dep\ndef f(a=dep.DEFAULT): pass\n")
-    for lock, msg in [("lock a\n", "feat: f"), ("lock b\n", "build(deps)!: dep 2")]:
+    for lock, msg in [
+        ("lock a\n", "feat: f"),
+        ("lock b\n", "build(deps)!: dep 2\n\nBREAKING CHANGE: see the release notes"),
+    ]:
         repo.write("uv.lock", lock)
         repo.write("api/public.toml", OTTO_ONLY)
         for rel, text in files.items():
@@ -1210,7 +1274,9 @@ def test_an_ordinary_producer_schema_decrease_is_refused_even_when_marked(tmp_pa
         "feat: f",
         edit=lambda text: text.replace("# producer-schema 1", "# producer-schema 2"),
     )
-    tip = _commit_dump(repo, files, "chore(api)!: schema 1 again")
+    tip = _commit_dump(
+        repo, files, "chore(api)!: schema 1 again\n\nBREAKING CHANGE: see the release notes"
+    )
     assert _run(repo, f"{tip}~1..{tip}") == 1
     assert "producer-schema decreased from 2" in capsys.readouterr().out
 
@@ -1244,7 +1310,7 @@ def test_a_marked_environment_refusal_still_fails(tmp_path, capsys):
     repo = TmpGitRepo(tmp_path)
     _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat: f")
     repo.write("src/otto/__init__.py", "import os\nos._exit(3)\n")
-    tip = repo.commit("feat(api)!: the import crashes")
+    tip = repo.commit("feat(api)!: the import crashes\n\nBREAKING CHANGE: see the release notes")
     assert _run(repo, f"{tip}~1..{tip}") == 1
     out = capsys.readouterr().out
     assert "refused: cannot regenerate the dump" in out
@@ -1256,7 +1322,7 @@ def test_a_marked_provenance_refusal_still_fails(tmp_path, capsys):
     _commit_dump(repo, _init(["f"], "def f(): pass\n"), "feat: f")
     ghost = "import sys, types\nsys.modules['otto.ghost'] = types.ModuleType('otto.ghost')\n"
     repo.write("src/otto/__init__.py", ghost + "__all__ = ['f']\ndef f(): pass\n")
-    tip = repo.commit("feat(api)!: a ghost module")
+    tip = repo.commit("feat(api)!: a ghost module\n\nBREAKING CHANGE: see the release notes")
     assert _run(repo, f"{tip}~1..{tip}") == 1
     out = capsys.readouterr().out
     assert "refused: cannot regenerate the dump" in out
@@ -1267,7 +1333,12 @@ def test_a_marked_unparseable_dump_still_fails(tmp_path, capsys):
     repo = TmpGitRepo(tmp_path)
     files = _init(["f"], "def f(): pass\n")
     _commit_dump(repo, files, "feat: f")
-    tip = _commit_dump(repo, files, "feat(api)!: f", edit=lambda text: text + "junk\n")
+    tip = _commit_dump(
+        repo,
+        files,
+        "feat(api)!: f\n\nBREAKING CHANGE: see the release notes",
+        edit=lambda text: text + "junk\n",
+    )
     assert _run(repo, f"{tip}~1..{tip}") == 1
     assert "refused: the dump does not parse" in capsys.readouterr().out
 
@@ -1276,7 +1347,9 @@ def test_a_marked_commit_over_an_unparseable_parent_dump_still_fails(tmp_path, c
     repo = TmpGitRepo(tmp_path)
     files = _init(["f"], "def f(): pass\n")
     _commit_dump(repo, files, "feat: f", edit=lambda text: text + "junk\n")
-    tip = _commit_dump(repo, files, "fix(api)!: a fresh dump")
+    tip = _commit_dump(
+        repo, files, "fix(api)!: a fresh dump\n\nBREAKING CHANGE: see the release notes"
+    )
     assert _run(repo, f"{tip}~1..{tip}") == 1
     assert "refused: the parent's dump does not parse" in capsys.readouterr().out
 
@@ -1374,7 +1447,7 @@ def test_conversion_inventory_lists_the_breaks_then_the_declaration(tmp_path):
         tmp_path,
         [*V1, "otto:Gone", "json:dumps"],
         "src_files, dest_dir, mode=None",
-        msg="build(api)!: switch to the dump",
+        msg="build(api)!: switch to the dump\n\nBREAKING CHANGE: see the release notes",
     )
     assert conversion_inventory(repo.root, f"{tip}~1", tip, Path("golden.txt")) == [
         "breaking: json:dumps -- not carried into the v2 golden",
@@ -1399,7 +1472,11 @@ def test_conversion_inventory_lists_each_declared_format_with_its_versions(tmp_p
     files = {**_versions([7, 8]), "otto/versions.py": "READS = [7, 8]\nOLD = [1]\n"}
     manifest = FORMATS + '\n[formats.archive]\nreads = "otto.versions:OLD"\n'
     tip = _commit_dump(
-        repo, files, "build(api)!: the dump", manifest=manifest, edit=_formats_reversed
+        repo,
+        files,
+        "build(api)!: the dump\n\nBREAKING CHANGE: see the release notes",
+        manifest=manifest,
+        edit=_formats_reversed,
     )
     assert conversion_inventory(repo.root, base, tip, Path("golden.txt")) == [
         "namespace: otto tier 1 provisional",
@@ -1428,7 +1505,12 @@ def test_conversion_inventory_sorts_each_group_whatever_the_input_order(tmp_path
     )
     base = repo.commit("chore: v1")
     files = {**_init(["f"], "def f(): pass\n"), "otto/host/__init__.py": TWO_WIDENED}
-    tip = _commit_dump(repo, files, "build(api)!: the dump", manifest=HOST_FIRST)
+    tip = _commit_dump(
+        repo,
+        files,
+        "build(api)!: the dump\n\nBREAKING CHANGE: see the release notes",
+        manifest=HOST_FIRST,
+    )
     assert conversion_inventory(repo.root, base, tip, Path("golden.txt")) == [
         "breaking: otto:Gone -- not carried into the v2 golden",
         "breaking: otto:Zed -- not carried into the v2 golden",
@@ -1463,7 +1545,7 @@ def test_an_amend_that_drops_the_breaking_marker_is_rejected_over_the_same_range
     repo = TmpGitRepo(tmp_path / "breaking")
     base = _seed(repo, ["otto:Alpha", "otto:Beta"])
     repo.write("golden.txt", GOLDEN_HEADER + "otto:Alpha\n")
-    tip = repo.commit("feat(api)!: drop Beta")
+    tip = repo.commit("feat(api)!: drop Beta\n\nBREAKING CHANGE: see the release notes")
     argv = ["--repo", str(repo.root), "--golden", "golden.txt"]
     assert main([f"{base}..{tip}", *argv]) == 0
     repo.git("commit", "--amend", "-q", "-m", "feat(api): drop Beta")
@@ -1514,3 +1596,118 @@ def test_adding_a_right_back_is_free(tmp_path):
     _commit_dump(repo, body, "feat: C", manifest=withdrawn)
     tip = _commit_dump(repo, body, "feat: C is built again", manifest=OTTO_ONLY)
     assert _run(repo, f"{tip}~1..{tip}") == 0
+
+
+@dataclass
+class _PlainRange:
+    """A seeded repo and the seed commit the checked range starts after."""
+
+    repo: TmpGitRepo
+    base: str
+
+
+def _plain_range(tmp_path, *messages) -> _PlainRange:
+    """A repo with a seed, then one no-API-change commit per message."""
+    repo = TmpGitRepo(tmp_path)
+    base = _seed(repo, ["otto:Alpha"])
+    for i, message in enumerate(messages):
+        repo.write(f"f{i}", "x")
+        repo.commit(message)
+    return _PlainRange(repo, base)
+
+
+def _check(repo, base):
+    return main([f"{base}..HEAD", "--repo", str(repo.root), "--golden", "golden.txt"])
+
+
+def test_a_bang_without_a_footer_is_refused(tmp_path, capsys):
+    r = _plain_range(tmp_path, "feat!: drop the old way")
+    tip = r.repo.git("rev-parse", "HEAD").strip()
+
+    assert _check(r.repo, r.base) == 1
+
+    out = capsys.readouterr().out
+    assert f"commit {tip} feat!: drop the old way" in out
+    assert REMEDIATION_RULE in out
+
+
+def test_a_footer_that_only_swallows_a_trailer_is_refused(tmp_path, capsys):
+    r = _plain_range(tmp_path, "feat!: drop the old way\n\nBREAKING CHANGE:\nAssisted-by: Claude")
+
+    assert _check(r.repo, r.base) == 1
+    assert REMEDIATION_RULE in capsys.readouterr().out
+
+
+def test_a_footer_only_mark_passes(tmp_path):
+    r = _plain_range(tmp_path, "feat: drop the old way\n\nBREAKING CHANGE: use the new way")
+
+    assert _check(r.repo, r.base) == 0
+
+
+def test_a_mark_on_a_maintainer_only_commit_is_refused(tmp_path, capsys):
+    subject = "feat(gate)!: the gate moved"
+    r = _plain_range(tmp_path, f"{subject}\n\nBREAKING CHANGE: run make gate-tip instead.")
+    tip = r.repo.git("rev-parse", "HEAD").strip()
+
+    assert _check(r.repo, r.base) == 1
+
+    out = capsys.readouterr().out
+    assert f"commit {tip} {subject}" in out
+    assert HIDDEN_MARK_RULE in out
+    assert REMEDIATION_RULE not in out
+
+
+def test_a_maintainer_only_commit_without_a_mark_passes(tmp_path):
+    r = _plain_range(tmp_path, "feat(gate): the gate moved")
+
+    assert _check(r.repo, r.base) == 0
+
+
+def test_a_breaking_text_cut_by_a_wrapped_word_colon_line_is_refused(tmp_path, capsys):
+    r = _plain_range(
+        tmp_path,
+        "feat(cli)!: x\n\nBREAKING CHANGE: the flag is gone; when the file\n"
+        "exists: move it aside.\nAssisted-by: Claude",
+    )
+
+    assert _check(r.repo, r.base) == 1
+
+    out = capsys.readouterr().out
+    assert "the line beginning `exists:` ends your BREAKING CHANGE text" in out
+    assert CUT_REMEDIATION_RULE in out
+
+
+def test_a_breaking_text_followed_by_trailers_passes(tmp_path):
+    r = _plain_range(
+        tmp_path,
+        "feat(cli)!: x\n\nBREAKING CHANGE: the flag is gone.\nDocs: the guide.\n"
+        "Assisted-by: Claude",
+    )
+
+    assert _check(r.repo, r.base) == 0
+
+
+def test_a_correction_without_remediation_is_refused(tmp_path, capsys):
+    repo = TmpGitRepo(tmp_path)
+    _seed(repo, ["otto:Alpha"])
+    repo.write("a", "x")
+    drop = repo.commit("feat: drop the old way")
+    repo.write("b", "x")
+    subject = "fix!: record the break"
+    correction = repo.commit(f"{subject}\n\nCorrects: {drop} feat: drop the old way")
+
+    assert _check(repo, drop) == 1
+
+    out = capsys.readouterr().out
+    assert f"commit {correction} {subject}" in out
+    assert REMEDIATION_RULE in out
+    assert "refused: Corrects" not in out
+
+
+def test_the_rule_ignores_history_before_the_range(tmp_path):
+    repo = _plain_range(tmp_path, "feat!: an old footerless mark").repo
+    start = repo.git("rev-parse", "HEAD").strip()
+    repo.write("later", "x")
+    repo.commit("feat: a plain change")
+
+    assert main([f"{start}..HEAD", "--repo", str(repo.root), "--golden", "golden.txt"]) == 0

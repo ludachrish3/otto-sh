@@ -95,6 +95,11 @@ updates:
         patterns:
           - "tailwindcss"
           - "@tailwindcss/*"
+      # @commitlint/cli, lint and load release in lockstep: the vitest test
+      # certifies lint/load, the commit-msg hook runs cli's copy.
+      commitlint:
+        patterns:
+          - "@commitlint/*"
       # react and react-dom must be the EXACT same version at runtime --
       # react-dom refuses to initialise otherwise ("Incompatible React
       # versions") -- and @types/react-dom peers on "@types/react": "^19.x"

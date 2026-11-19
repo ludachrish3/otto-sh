@@ -39,6 +39,17 @@ What git-cliff counts, mirrored here:
   ``commit_parsers`` keep the commit: git-cliff drops a skipped commit
   (``ci``, ``test``, ``style``, ``chore(release)``, anything unconventional)
   before it computes the census, so a ``test(api)!:`` mark bumps nothing.
+* **Remediation** is the full text of a commit's breaking footers, each with
+  its continuation lines up to the next footer line, and an empty one that
+  takes a trailer as its value remediates nothing. A marked commit with no
+  remediation is listed in ``Events.unremediated``, never refused. A breaking
+  footer whose next footer is a wrapped prose line (``exists: ...``, a token
+  that is neither in ``TRAILER_TOKENS`` nor trailer-shaped) is cut short, as
+  git-cliff cuts it: ``Events.cut_remediation`` lists it.
+
+``MAINTAINER_SCOPES`` is the home of contributing.md's "maintainer tooling is
+never breaking": a commit whose every scope is in it is maintainer-only, and a
+counted mark on one is listed in ``Events.hidden_marks``.
 
 A **correction** repairs a mark that reached ``main`` missing. It is an
 ordinary marked commit that also carries one ``Corrects: <full sha> <original
@@ -75,6 +86,7 @@ its own check and never accepted as a correction
 """
 
 import functools
+import itertools
 import os
 import re
 import subprocess
@@ -89,9 +101,28 @@ CLIFF_CONFIG = REPO_ROOT / "cliff.toml"
 CORRECTS = "Corrects"
 BREAKING = "breaking"
 BREAKING_TOKENS = ["BREAKING CHANGE", "BREAKING-CHANGE"]
+TRAILER_TOKENS = [
+    "Assisted-by",
+    "Co-Authored-By",
+    "Signed-off-by",
+    "Refs",
+    "Closes",
+    "Fixes",
+    "Resolves",
+    CORRECTS,
+]
+"""The footers that are bookkeeping, not prose: a published commit message omits them."""
+
+_TRAILER_KEYS = frozenset(token.casefold() for token in TRAILER_TOKENS)
+
+
+def is_trailer(token: str) -> bool:
+    """Whether *token* is one of :data:`TRAILER_TOKENS`, in any case (``Co-authored-by``)."""
+    return token.casefold() in _TRAILER_KEYS
+
 
 CORRECTION_RULE = (
-    "RULE: a correction is a marked commit (`type(scope)!:` or a `BREAKING CHANGE:` "
+    "RULE: a correction is a marked commit (`type(scope)!:` and a `BREAKING CHANGE:` "
     "footer, with a type the changelog keeps) whose footer block carries "
     "`Corrects: <full sha> <original subject>` for an ancestor it repairs, quoting "
     "that commit's subject exactly; each target is corrected once. See "
@@ -99,8 +130,13 @@ CORRECTION_RULE = (
 )
 
 _TYPE = r"[^\s()!:]+"
-_HEADER = re.compile(rf"^{_TYPE}(?:\([^()\r\n]+\))?(?P<bang>!)?:[ \t]*\S")
-_FOOTER = re.compile(rf"^(?P<token>BREAKING CHANGE|{_TYPE})(?::| #)(?P<value>.*)$")
+_HEADER = re.compile(
+    rf"^{_TYPE}(?:\((?P<scope>[^()\r\n]+)\))?(?P<bang>!)?:[ \t]*(?P<description>\S.*)"
+)
+_FOOTER = re.compile(rf"^(?P<token>BREAKING CHANGE|{_TYPE})(?P<separator>:| #)(?P<value>.*)$")
+# A token git itself would write as a trailer (`Docs:`, `See-Also:`): capitalised words
+# joined by hyphens. A footer token of any other shape (`exists:`) is a wrapped line.
+_TRAILER_SHAPE = re.compile(r"^[A-Z][A-Za-z0-9]*(-[A-Za-z0-9]+)*$")
 _CORRECTS_VALUE = re.compile(r"^(?P<target>[0-9a-f]{40}) (?P<subject>\S.*)$")
 # A blank line holds only Unicode White_Space, as Rust's `char::is_whitespace`
 # reads it: Python's `\s` also matches the ASCII separators \x1c-\x1f, Rust does not.
@@ -111,12 +147,90 @@ _RECORD = "\x1e"
 _FORMAT = f"--format=%H{_FIELD}%B{_RECORD}"
 
 
+# Conventional-commit scopes that name maintainer tooling. A commit whose every
+# scope is here is maintainer-only: contributing.md's "maintainer tooling is
+# never breaking" rule, and the release notes leave it out. A new maintainer
+# scope is added here. An unscoped commit is user-facing, and so are ``docs``,
+# ``e2e`` and ``test``, which names the ``otto test`` verb; the repository's own
+# harness is ``tests``.
+MAINTAINER_SCOPES: "frozenset[str]" = frozenset(
+    {
+        "agents",
+        "bed",
+        "budget",
+        "canary",
+        "changelog",
+        "chaos",
+        "ci",
+        "contributing",
+        "deps-dev",
+        "feedback",
+        "fixtures",
+        "gate",
+        "gate-fresh",
+        "gates",
+        "gc-freeze",
+        "githook",
+        "githooks",
+        "hermeticity",
+        "hostless",
+        "import-budget",
+        "integration",
+        "lab",
+        "lab-health",
+        "labs",
+        "lanes",
+        "lease",
+        "lint",
+        "lint-arch",
+        "make",
+        "makefile",
+        "matrix",
+        "measurements",
+        "nightly",
+        "nox",
+        "plan",
+        "plans",
+        "quality",
+        "release",
+        "scripts",
+        "spec",
+        "specs",
+        "stability",
+        "submodule",
+        "tasks",
+        "test-harness",
+        "testbed",
+        "tests",
+        "todo",
+        "ty",
+        "unit",
+        "vagrant",
+    }
+)
+
+
 @dataclass
 class Footer:
-    """One footer git-cliff would parse: its token and the first line of its value."""
+    """One footer git-cliff would parse.
+
+    *value* is the first line of its value, which correction validation reads.
+    *text* is the whole value: continuation lines up to the next footer line,
+    blank lines and indentation kept, trailing blank lines stripped.
+    *swallowed* is True when the footer had nothing after its separator and
+    took a next line that is itself footer-shaped (an ``Assisted-by:``
+    trailer, say) as its value. *separator* is ``:`` or `` #``. *start* is
+    the index of its token's body line, *value_line* that of the line its
+    value came from: *start* itself, unless the value was empty there.
+    """
 
     token: str
     value: str
+    text: str = field(default="", compare=False)
+    swallowed: bool = field(default=False, compare=False)
+    separator: str = field(default=":", compare=False)
+    start: int = field(default=0, compare=False)
+    value_line: int = field(default=0, compare=False)
 
 
 @dataclass
@@ -172,11 +286,27 @@ class Refusal:
 
 
 @dataclass
+class CutRemediation:
+    """A breaking footer that a wrapped line, *line* (``exists:``), ends early."""
+
+    commit: Commit
+    line: str
+
+
+@dataclass
 class Events:
-    """The validated release events of a range, and every refused correction."""
+    """The validated release events of a range, every refused correction, and the doubts.
+
+    *unremediated*, *hidden_marks* and *cut_remediation* are not refusals: the
+    release still bumps and ships. Only the mark checker refuses a new one.
+    """
 
     events: "list[Event]" = field(default_factory=list)
     refusals: "list[Refusal]" = field(default_factory=list)
+    unremediated: "list[Commit]" = field(default_factory=list)
+    hidden_marks: "list[Commit]" = field(default_factory=list)
+    """Counted breaking, yet maintainer-only: it bumps the version and shows on no page."""
+    cut_remediation: "list[CutRemediation]" = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -184,16 +314,13 @@ class Events:
 # ---------------------------------------------------------------------------
 
 
-def _parse_footers(body: str) -> "list[Footer] | None":
-    """Return the footers git-cliff parses out of *body*, or None when it cannot.
+def _footer_block_start(lines: "list[str]") -> "int | None":
+    """Index of the line that opens *lines*' footer block, or None when it has none.
 
-    None means the block ends in a footer with no value on any later line,
-    which git-cliff reads as an unconventional message. A paragraph starts at
-    the body's first line or after a blank line, and the block at the first
-    paragraph whose first line is a footer.
+    A paragraph starts at the body's first line or after a blank line, and the
+    block at the first paragraph whose first line is a footer.
     """
-    lines = body.split("\n")
-    start = next(
+    return next(
         (
             i
             for i, line in enumerate(lines)
@@ -201,25 +328,54 @@ def _parse_footers(body: str) -> "list[Footer] | None":
         ),
         None,
     )
+
+
+def _parse_footers(body: str) -> "list[Footer] | None":
+    """Return the footers git-cliff parses out of *body*, or None when it cannot.
+
+    None means the block ends in a footer with no value on any later line,
+    which git-cliff reads as an unconventional message. Inside the block every
+    footer-shaped line opens a footer, and every other line continues the
+    one above.
+    """
+    lines = body.split("\n")
+    start = _footer_block_start(lines)
     if start is None:
         return []
-    lines = lines[start:]
+    offset, lines = start, lines[start:]
     found = []
     i = 0
-    while i < len(lines):
-        match = _FOOTER.match(lines[i])
-        if match:
-            value = match["value"].strip()
-            if _BLANK.fullmatch(match["value"]):
-                # An empty value takes the next non-blank line, footer-shaped or not.
+    # The block opens on a footer line, and each footer's scan stops at the next one.
+    while i < len(lines) and (match := _FOOTER.match(lines[i])):
+        first = i
+        swallowed = False
+        if _BLANK.fullmatch(match["value"]):
+            # An empty value takes the next non-blank line, footer-shaped or not.
+            i += 1
+            while i < len(lines) and _BLANK.fullmatch(lines[i]):
                 i += 1
-                while i < len(lines) and _BLANK.fullmatch(lines[i]):
-                    i += 1
-                if i == len(lines):
-                    return None
-                value = lines[i].strip()
-            found.append(Footer(match["token"], value))
-        i += 1
+            if i == len(lines):
+                return None
+            value = lines[i].strip()
+            swallowed = _FOOTER.match(lines[i]) is not None
+        else:
+            value = match["value"].strip()
+        end = i + 1
+        while end < len(lines) and not _FOOTER.match(lines[end]):
+            end += 1
+        text = "\n".join([value, *lines[i + 1 : end]]).rstrip()
+        found.append(
+            Footer(
+                match["token"],
+                value,
+                text,
+                swallowed,
+                match["separator"],
+                offset + first,
+                offset + i,
+            )
+        )
+        i = end
     return found
 
 
@@ -238,6 +394,75 @@ def commit_footers(commit: Commit) -> "list[Footer]":
     if not is_conventional(commit.subject, commit.body, separated=commit.separated):
         return []
     return footers(commit.body)
+
+
+def remediation(commit: Commit) -> "list[str]":
+    """Return the full text of each breaking footer *commit* carries, in order.
+
+    An empty breaking footer that took a trailer as its value remediates
+    nothing, and neither does a blank one.
+    """
+    return [
+        f.text
+        for f in commit_footers(commit)
+        if f.token in BREAKING_TOKENS and not f.swallowed and f.text.strip()
+    ]
+
+
+def description(subject: str) -> str:
+    """Return the header's text after ``type(scope)!:``; an unconventional *subject* as is."""
+    header = _HEADER.match(subject)
+    return header["description"].rstrip() if header else subject
+
+
+def commit_scopes(subject: str) -> "list[str]":
+    """Return the header's scopes (a comma list, each stripped), or none."""
+    header = _HEADER.match(subject)
+    if header is None or header["scope"] is None:
+        return []
+    return [scope.strip() for scope in header["scope"].split(",")]
+
+
+def is_maintainer_only(commit: Commit) -> bool:
+    """Whether *commit* is scoped, and every scope is in :data:`MAINTAINER_SCOPES`."""
+    scopes = commit_scopes(commit.subject)
+    return bool(scopes) and all(scope in MAINTAINER_SCOPES for scope in scopes)
+
+
+def message_without_trailers(commit: Commit) -> str:
+    """Return *commit*'s body without its :data:`TRAILER_TOKENS` footers, stripped.
+
+    A trailer's own line goes, with the next line when the trailer was empty
+    and took that line, not itself footer-shaped, as its value. Every other
+    line stays verbatim: lines wrapped below a trailer and footer-shaped notes
+    (``BREAKING:``, ``Docs:``) included. An unconventional commit has no
+    footers, so its whole body stays.
+    """
+    lines = commit.body.split("\n")
+    drop: set[int] = set()
+    for footer in commit_footers(commit):
+        if is_trailer(footer.token):
+            drop.add(footer.start)
+            if footer.value_line != footer.start and not footer.swallowed:
+                drop.add(footer.value_line)
+    return "\n".join(line for n, line in enumerate(lines) if n not in drop).strip()
+
+
+def _is_cut(footer: Footer) -> bool:
+    """Whether *footer* is a wrapped prose line git-cliff opened as a footer."""
+    token = footer.token
+    known = is_trailer(token) or token in BREAKING_TOKENS
+    return not known and _TRAILER_SHAPE.match(token) is None
+
+
+def cut_remediation(commit: Commit) -> "list[CutRemediation]":
+    """Return each breaking footer of *commit* that the very next footer cuts short."""
+    found = commit_footers(commit)
+    return [
+        CutRemediation(commit, f"{after.token}{after.separator}")
+        for footer, after in itertools.pairwise(found)
+        if footer.token in BREAKING_TOKENS and _is_cut(after)
+    ]
 
 
 @dataclass
@@ -353,7 +578,11 @@ def read_commit(repo: Path, rev: str) -> Commit:
 
 
 def _range_tip(rev_range: str) -> str:
-    return rev_range.partition("..")[2].lstrip(".") or "HEAD"
+    """Return the revision *rev_range*'s history ends at: ``B`` of ``A..B``, or a bare one."""
+    _, dots, tip = rev_range.partition("..")
+    if not dots:
+        return rev_range
+    return tip.lstrip(".") or "HEAD"
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +699,11 @@ def release_events(repo: Path, rev_range: str) -> Events:
     because the census still counts its mark. Duplicates are judged against
     every valid claimant in the history of the range's tip, so a commit's
     verdict does not depend on where the range starts.
+
+    ``unremediated`` lists the events with no remediation text,
+    ``hidden_marks`` the maintainer-only ones, and ``cut_remediation`` each
+    breaking footer a wrapped ``word:`` line ends early. None is a refusal: the
+    release still bumps and ships; only the mark checker refuses a new one.
     """
     claimants = _claimants(repo, _range_tip(rev_range))
     result = Events()
@@ -480,4 +714,9 @@ def release_events(repo: Path, rev_range: str) -> Events:
         result.refusals += [Refusal(commit, reason) for reason in reasons]
         if counts_as_breaking(commit):
             result.events.append(Event(commit, [] if reasons else claims))
+            if not remediation(commit):
+                result.unremediated.append(commit)
+            if is_maintainer_only(commit):
+                result.hidden_marks.append(commit)
+            result.cut_remediation += cut_remediation(commit)
     return result

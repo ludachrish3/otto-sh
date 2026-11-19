@@ -405,3 +405,10 @@ gains a `+dev` marker (`otto %OTTO_VERSION%+dev documentation`). Both come from
 which classifies the build from Read the Docs' environment variables, falling
 back to `git describe`. Nothing here needs doing at release time — tagging is
 what flips it.
+
+The release-notes pages are rendered at build time from tagged git history, so
+every docs build needs the full history and every tag: the `docs` jobs in
+`ci.yml` and `release.yml` check out with `fetch-depth: 0`, Read the Docs
+unshallows in a `post_checkout` job, and the renderer refuses a shallow
+checkout rather than publish partial notes. Pushing the release tag is what adds
+its page; `make docs` rebuilds when the set of tags changes.

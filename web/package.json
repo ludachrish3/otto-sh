@@ -43,6 +43,9 @@
   "devDependencies": {
     "@bcoe/v8-coverage": "1.0.2",
     "@biomejs/biome": "2.6.7",
+    "@commitlint/cli": "21.2.4",
+    "@commitlint/lint": "21.2.4",
+    "@commitlint/load": "21.2.4",
     "@jridgewell/sourcemap-codec": "1.6.0",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",

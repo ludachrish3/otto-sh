@@ -14,6 +14,7 @@ The correction tests build throwaway repositories under ``tmp_path`` with
 import json
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from scripts import release_events
 from scripts.check_breaking_marks import main as check_main
 from scripts.release_bump import main as bump_main
 from scripts.release_events import (
+    BREAKING_TOKENS,
     Commit,
     Event,
     footers,
@@ -113,6 +115,185 @@ def test_the_footer_block_starts_at_the_first_footer_paragraph() -> None:
     ]
 
 
+def test_footer_text_keeps_continuation_lines_and_paragraphs() -> None:
+    # ad0edab3's shape. A footer-shaped continuation line (e.g. `{"hosts": ...`)
+    # OPENS A NEW FOOTER in git-cliff and in the model; that is parity, not a bug.
+    body = (
+        "Why.\n\nBREAKING CHANGE: ${sut_dir} is no longer expanded.\nDrop the prefix.\n\n"
+        "  indented example\nRefs: #1"
+    )
+    [breaking, refs] = footers(body)
+    assert breaking.value == "${sut_dir} is no longer expanded."
+    assert breaking.text == (
+        "${sut_dir} is no longer expanded.\nDrop the prefix.\n\n  indented example"
+    )
+    assert refs.text == "#1"
+
+
+def test_two_breaking_footers_both_remediate() -> None:
+    c = Commit("0" * 40, "feat!: x", "BREAKING CHANGE: one\nBREAKING-CHANGE: two")
+    assert release_events.remediation(c) == ["one", "two"]
+
+
+def test_an_empty_breaking_footer_that_swallows_a_trailer_remediates_nothing() -> None:
+    c = Commit("0" * 40, "feat!: x", "BREAKING CHANGE:\n\nAssisted-by: Claude Opus 5.5")
+    assert release_events.counts_as_breaking(c)
+    assert release_events.remediation(c) == []
+
+
+def test_an_empty_footer_taking_a_prose_line_remediates_with_it() -> None:
+    c = Commit("0" * 40, "feat!: x", "BREAKING CHANGE:\nUse --new.")
+    assert release_events.remediation(c) == ["Use --new."]
+
+
+@pytest.mark.parametrize(
+    ("subject", "expected"),
+    [
+        ("chore(gate)!: x", True),
+        ("feat(scripts,make): x", True),
+        ("feat(scripts, make): x", True),
+        ("feat(scripts,cli): x", False),
+        ("feat: x", False),
+        ("fix(host): x", False),
+        ("fix(docs): x", False),
+        # Generic words a user-facing commit could use stay user-facing.
+        ("fix(perf): x", False),
+        ("fix(hooks): x", False),
+        # `test` names the `otto test` verb; the repo's harness is `tests`.
+        ("feat(test)!: x", False),
+        ("fix(tests): x", True),
+        ("Not conventional", False),
+    ],
+)
+def test_is_maintainer_only(subject: str, expected: bool) -> None:
+    assert release_events.is_maintainer_only(Commit("0" * 40, subject, "")) is expected
+
+
+def test_commit_scopes() -> None:
+    assert release_events.commit_scopes("feat(scripts, make)!: x") == ["scripts", "make"]
+    assert release_events.commit_scopes("feat!: x") == []
+    assert release_events.commit_scopes("Not conventional") == []
+
+
+def test_unremediated_lists_footerless_marks_and_is_not_a_refusal(tmp_path) -> None:
+    repo = TmpGitRepo(tmp_path / "r", dates=DATE)
+    repo.write("a", "1")
+    repo.commit("feat: base")
+    repo.git("tag", "v0.1.0")
+    repo.write("a", "2")
+    bare = repo.commit("feat!: drop the old flag")
+    repo.write("a", "3")
+    repo.commit("feat!: rename\n\nBREAKING CHANGE: use --new.")
+    events = release_events.release_events(repo.root, "v0.1.0..HEAD")
+    assert [c.sha for c in events.unremediated] == [bare]
+    assert events.refusals == []
+
+
+def test_description() -> None:
+    assert release_events.description("fix(cli)!: rename a flag") == "rename a flag"
+    assert release_events.description("Not conventional") == "Not conventional"
+    assert release_events.description("fix(cli): trailing space \t ") == "trailing space"
+
+
+def test_message_without_trailers_drops_only_trailers() -> None:
+    c = Commit(
+        "0" * 40,
+        "fix(cli)!: rename a flag",
+        "Why it moved.\n\nBREAKING: run the migration first.\nDocs: see the guide.\n"
+        "Refs: #12\nAssisted-by: X\nCo-Authored-By: Y <y@x>",
+    )
+    assert release_events.message_without_trailers(c) == (
+        "Why it moved.\n\nBREAKING: run the migration first.\nDocs: see the guide."
+    )
+
+
+def test_message_without_trailers_keeps_an_unconventional_body_verbatim() -> None:
+    odd = Commit("0" * 40, "Not conventional", "Prose.\n\nBREAKING CHANGE: x\n")
+    assert release_events.message_without_trailers(odd) == "Prose.\n\nBREAKING CHANGE: x"
+
+
+@pytest.mark.parametrize(
+    ("body", "kept"),
+    [
+        # GitHub's and other spellings of a trailer token are trailers too.
+        ("Why.\n\nCo-authored-by: Y <y@x>\nAssisted-By: X\nsigned-off-by: Z", "Why."),
+        # A trailer's own line goes; a line wrapped below it is the author's text.
+        ("Why.\n\nAssisted-by: X\nwrapped note", "Why.\n\nwrapped note"),
+        # An empty trailer that took a footer-shaped note as its value keeps the note.
+        ("Why.\n\nRefs:\nBREAKING: note", "Why.\n\nBREAKING: note"),
+        # An empty trailer whose value is the next plain line takes that line with it.
+        ("Why.\n\nRefs:\n#12\nDocs: the guide.", "Why.\n\nDocs: the guide."),
+    ],
+)
+def test_message_without_trailers_removes_only_trailer_lines(body: str, kept: str) -> None:
+    c = Commit("0" * 40, "feat!: x", body)
+    assert release_events.message_without_trailers(c) == kept
+
+
+def test_a_trailer_between_notes_goes_and_the_notes_stay() -> None:
+    c = Commit("0" * 40, "feat!: x", "Spec: the design.\nAssisted-by: X\nPlan: none.")
+    assert release_events.message_without_trailers(c) == "Spec: the design.\nPlan: none."
+
+
+@dataclass
+class _Range:
+    events: release_events.Events
+    shas: "list[str]"
+
+
+def _events(tmp_path: Path, *messages: str) -> _Range:
+    """A tagged base, then one commit per message; the events past the tag."""
+    repo = TmpGitRepo(tmp_path / "r", dates=DATE)
+    repo.write("a", "0")
+    repo.commit("feat: base")
+    repo.git("tag", "v0.1.0")
+    shas = []
+    for i, message in enumerate(messages):
+        repo.write("a", str(i + 1))
+        shas.append(repo.commit(message))
+    return _Range(release_events.release_events(repo.root, "v0.1.0..HEAD"), shas)
+
+
+def test_hidden_marks_lists_maintainer_only_breaking_commits(tmp_path) -> None:
+    r = _events(
+        tmp_path,
+        "feat(gate)!: x\n\nBREAKING CHANGE: the gate moved.",
+        "feat(cli)!: y\n\nBREAKING CHANGE: the flag moved.",
+        "feat(gate): z",
+    )
+    assert [c.sha for c in r.events.hidden_marks] == [r.shas[0]]
+    assert r.events.refusals == []
+
+
+@pytest.mark.parametrize(
+    ("body", "cut"),
+    [
+        # A wrapped line opening with `word:` ends the breaking text early.
+        ("BREAKING CHANGE: the flag is gone; the file\nexists: move it.", "exists:"),
+        ("BREAKING CHANGE: colours are\nlowercase #rrggbb) now.", "lowercase #"),
+        # A trailer, a breaking footer or a git-trailer-shaped token is no cut.
+        ("BREAKING CHANGE: use --new.\nAssisted-by: X", None),
+        ("BREAKING CHANGE: use --new.\nRefs: #4", None),
+        ("BREAKING CHANGE: a.\nBREAKING CHANGE: b.", None),
+        ("BREAKING CHANGE: a.\nDocs: the guide.", None),
+        ("BREAKING CHANGE: a.\nSee-Also: the guide.", None),
+        # Trailer tokens match case-insensitively, as git and GitHub spell them.
+        ("BREAKING CHANGE: a.\ncloses #12", None),
+        ("BREAKING CHANGE: a.\nCo-authored-by: Y <y@x>", None),
+    ],
+)
+def test_cut_remediation_names_the_line_that_cut_it(tmp_path, body: str, cut: "str | None") -> None:
+    r = _events(tmp_path, f"feat(cli)!: x\n\n{body}")
+    found = [[c.commit.sha, c.line] for c in r.events.cut_remediation]
+    assert found == ([] if cut is None else [[r.shas[0], cut]])
+
+
+def test_a_bare_revision_range_tips_at_itself() -> None:
+    assert release_events._range_tip("v0.1.0") == "v0.1.0"
+    assert release_events._range_tip("v0.1.0..HEAD") == "HEAD"
+    assert release_events._range_tip("v0.1.0..") == "HEAD"
+
+
 def test_a_parser_row_the_model_does_not_mirror_is_refused(tmp_path: Path) -> None:
     config = tmp_path / "cliff.toml"
     config.write_text(
@@ -196,6 +377,12 @@ SHAPES = [
     "feat(a): an empty value skips a blank line\n\nRefs:\n\nBREAKING CHANGE: x",
     "fix(api)!: an empty corrects value\n\nBREAKING CHANGE: x\nCorrects:\n{A} " + ORIGINAL,
     "feat(a): the breaking value on the next line\n\nBREAKING CHANGE:\nthe details",
+    # A footer's value runs on to the next footer line, blank paragraphs and
+    # indentation included; an empty breaking footer takes a trailer as its value.
+    "feat(a)!: continuation\n\nBREAKING CHANGE: first.\nDrop it.\n\n  indented\nRefs: #1",
+    "feat(a)!: trailing blank\n\nBREAKING CHANGE: first.\nsecond\n\n\nRefs: #1",
+    "feat(a)!: swallowed trailer\n\nBREAKING CHANGE:\n\nAssisted-by: Claude Opus 5.5",
+    "feat(a)!: two breaking\n\nBREAKING CHANGE: one\nmore\nBREAKING-CHANGE: two",
     # An unconventional message: git-cliff keeps it through `^feat`/`^fix`, with
     # no mark and no footers. A header continued on its second line, or a
     # footer block ending in a footer with no value at all.
@@ -275,6 +462,20 @@ def test_the_model_reads_exactly_the_corrects_footers_git_cliff_reads(differenti
             f["value"].split("\n")[0].strip()
             for f in cliff.get("footers") or []
             if f["token"] == "Corrects"
+        ]
+    ]
+    assert wrong == []
+
+
+def test_the_model_reads_the_full_breaking_text_git_cliff_reads(differential) -> None:
+    """A breaking footer's ``text`` is git-cliff's whole footer value, continuations included."""
+    wrong = [
+        shape
+        for shape, cliff, commit in differential
+        if cliff is not None
+        and [f.text for f in release_events.commit_footers(commit) if f.token in BREAKING_TOKENS]
+        != [
+            f["value"].rstrip() for f in cliff.get("footers") or [] if f["token"] in BREAKING_TOKENS
         ]
     ]
     assert wrong == []

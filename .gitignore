@@ -57,6 +57,11 @@ docs/cli/known-good.md
 # (docs/conf.py, builder-inited); the committed copy would be the stale one.
 docs/architecture/modules.md
 
+# Rendered from git history (the tags merged into HEAD) by scripts/render_release_notes.py
+# on every Sphinx build (docs/conf.py, builder-inited); the committed copy would be the
+# stale one.
+docs/release-notes/
+
 # Claude files
 .claude
 

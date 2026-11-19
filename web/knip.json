@@ -10,6 +10,11 @@
     "src/api/export.gen.ts",
     "src/api/eventStyle.gen.ts"
   ],
-  "ignoreDependencies": ["@react-stately/utils", "input-otp", "json-schema-to-typescript"],
+  "ignoreDependencies": [
+    "@commitlint/cli",
+    "@react-stately/utils",
+    "input-otp",
+    "json-schema-to-typescript"
+  ],
   "treatConfigHintsAsErrors": true
 }

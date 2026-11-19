@@ -37,6 +37,12 @@ build:
     - libasound2t64
     - libatspi2.0-0t64
   jobs:
+    # RTD clones shallow, and the release-notes pages render from tagged history
+    # (scripts/render_release_notes.py refuses a shallow checkout). RTD's documented
+    # unshallow recipe, plus --tags; the `|| true` covers a clone already complete.
+    post_checkout:
+      - git fetch --unshallow --tags || true
+      - git fetch --tags
     # RTD's build image ships `asdf` preinstalled. uv isn't on RTD's curated
     # `tools:` list, so we use asdf to install and pin it into PATH.
     create_environment:

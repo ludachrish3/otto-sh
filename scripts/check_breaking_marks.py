@@ -77,6 +77,13 @@ Usage, from the repo root::
 before any git call, since a single ref names a checkout point, not the set
 of commits to scan -- and its END must be ``HEAD``.
 
+A breaking mark also needs remediation text: a ``BREAKING CHANGE:`` footer that
+tells users what to do (``Events.unremediated``; ``REMEDIATION_RULE``), a text
+no wrapped ``word:`` line cuts short (``Events.cut_remediation``;
+``CUT_REMEDIATION_RULE``), and a commit that is not maintainer-only
+(``Events.hidden_marks``; ``HIDDEN_MARK_RULE``). These are checked over the
+range whether or not the commit changes the API.
+
 Exit codes: 0 every breaking commit in range is marked and none is refused
 (or the range is empty); 1 at least one is not; 2 the range doesn't parse, or
 git could not resolve it (an unknown ref, a repo with no ``origin``, ...) --
@@ -118,9 +125,9 @@ from scripts.release_events import is_breaking_commit  # noqa: E402 -- path set 
 
 RULE = (
     "RULE: a commit that breaks the public API must be marked breaking -- "
-    "`type(scope)!:` in the subject or a `BREAKING CHANGE:`/`BREAKING-CHANGE:` "
-    "footer, on a type the changelog keeps -- however small the break looks. "
-    "Under the API dump that is any "
+    "`type(scope)!:` in the subject and a `BREAKING CHANGE:`/`BREAKING-CHANGE:` "
+    "footer (either alone still counts), on a type the changelog keeps -- "
+    "however small the break looks. Under the API dump that is any "
     "breaking finding (a removed name, a narrowed call, a changed default, a new "
     "obligation, a dropped format version) and any namespace removed from "
     "api/public.toml or downgraded from stable; before the cutover, any removed "
@@ -129,6 +136,24 @@ RULE = (
     "producer-schema decrease, a rollback, a missing manifest) fails marked or "
     "not: regenerate the dump with `make api-snapshot` in the commit that "
     "changes the surface."
+)
+
+REMEDIATION_RULE = (
+    "RULE: a breaking mark needs a `BREAKING CHANGE:` footer that tells users "
+    "what to do, or says plainly that nothing needs doing. The footer text is "
+    "published word for word on the release-notes pages; docs/contributing.md "
+    "(Breaking changes) has the rules."
+)
+
+HIDDEN_MARK_RULE = (
+    "RULE: a maintainer-only scope (MAINTAINER_SCOPES in scripts/release_events.py) "
+    "is never breaking: drop the mark, or use the user-facing scope it actually changes."
+)
+
+CUT_REMEDIATION_RULE = (
+    "RULE: git-cliff ends a BREAKING CHANGE footer at any line that starts with "
+    "`word:` or `word #`, so the release notes would publish it cut short; rewrap "
+    "the text so no line starts that way."
 )
 
 
@@ -945,11 +970,39 @@ def main(argv: "list[str]") -> int:
         print(f"  - refused: {refusal.reason} -- no breaking mark can excuse this")
         print()
 
+    for commit in events.unremediated:
+        print(f"commit {commit.sha} {commit.subject}")
+        print(
+            "  - a breaking mark needs a BREAKING CHANGE: footer that tells users what to do "
+            "(or says plainly nothing needs doing)"
+        )
+        print()
+
+    for commit in events.hidden_marks:
+        print(f"commit {commit.sha} {commit.subject}")
+        print("  - a maintainer-only commit carries a breaking mark")
+        print()
+
+    for cut in events.cut_remediation:
+        print(f"commit {cut.commit.sha} {cut.commit.subject}")
+        print(
+            f"  - the line beginning `{cut.line}` ends your BREAKING CHANGE text; "
+            "rewrap it so no line starts with `word:`"
+        )
+        print()
+
     if violations:
         print(RULE)
     if events.refusals:
         print(release_events.CORRECTION_RULE)
-    if violations or events.refusals:
+    if events.unremediated:
+        print(REMEDIATION_RULE)
+    if events.hidden_marks:
+        print(HIDDEN_MARK_RULE)
+    if events.cut_remediation:
+        print(CUT_REMEDIATION_RULE)
+    doubts = events.unremediated or events.hidden_marks or events.cut_remediation
+    if violations or events.refusals or doubts:
         return 1
 
     print(f"check-breaking-marks: OK ({len(shas)} commit(s) scanned)")

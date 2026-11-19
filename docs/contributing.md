@@ -405,9 +405,29 @@ change to maintainer tooling
 maintainer must adapt to; say what changed in the commit body instead.
 A public name is any name in the `__all__` of a namespace declared in
 `api/public.toml`; {doc}`api/stability` says which those are. Mark it with
-`type(scope)!:` in the subject or a `BREAKING CHANGE:` footer (either is
-accepted), however small the deletion looks. A rename is a deletion and an
-addition together, so it is marked too.
+`type(scope)!:` in the subject AND a `BREAKING CHANGE:` footer (below). The
+`commit-msg` hook (commitlint's `breaking-change-exclamation-mark` rule, set
+in `commitlint.config.mjs`) refuses one without the other as you commit.
+`make check-breaking` at push and in CI stays the authority; it still counts
+either one alone as a mark, since that mirrors git-cliff's census. Mark it
+however small the deletion looks. A rename is a deletion and an addition
+together, so it is marked too.
+
+Every breaking mark also needs a `BREAKING CHANGE:` footer that tells users
+what to do, or says plainly that nothing needs doing; `make check-breaking`
+refuses a mark without one. The footer is plain Markdown: paragraphs, lists,
+code, emphasis and `https` links. Anything else (raw HTML, a directive, a
+heading) shows the whole footer as literal text. The
+[release notes](release-notes/index.md) publish it word for word under the
+release's *Breaking changes*, so write it for users, not maintainers. git-cliff
+ends the footer at any line that starts with `word:` or `word #`, so rewrap a
+line such as `exists: ...`; `make check-breaking` refuses a footer cut by a
+line that is not a trailer.
+A commit whose every scope is in `MAINTAINER_SCOPES` (`scripts/release_events.py`) is
+maintainer tooling: never breaking, so `make check-breaking` refuses a mark on
+it, and left out of the release notes. The scope `test` names the `otto test`
+verb; work on the repository's own test harness uses the scope `tests` (or the
+`test` type, which the changelog skips).
 
 A settings or lab-file key change is breaking as well, though not yet
 enforced (a later schema-diff gate). `make check-breaking`
@@ -446,8 +466,9 @@ BREAKING CHANGE: `otto.Beta` is gone; import `otto.Alpha` instead.
 Corrects: 3f9c2a1e5b7d4c8f0a6e2b9d1c4f7a3e5b8d0c2f feat(api): drop Beta
 ```
 
-- **The correction carries the mark itself**: `type(scope)!:`, or a
-  `BREAKING CHANGE:` footer. A mark counts only where git-cliff's census
+- **The correction carries the mark itself**: `type(scope)!:` or a
+  `BREAKING CHANGE:` footer, and the footer is required either way (see
+  above). A mark counts only where git-cliff's census
   counts it. A footer belongs in the message's last paragraph, never inside
   prose, and the type must be one the changelog keeps (see the table under
   [Version management](#version-management)). A `test!:` or `ci!:` mark bumps
