@@ -1,11 +1,28 @@
 """A tiny NetBox REST stub for the real pynetbox client (spec §14: no mocking of pynetbox itself).
 
-Serves paginated ``/api/dcim/devices/`` and nothing else — every other path
+Serves paginated ``/api/dcim/devices/`` and
+``/api/virtualization/virtual-machines/`` and nothing else — every other path
 404s on purpose, so a pynetbox version that started calling ``/api/`` or
 ``/api/status/`` would fail loudly here rather than be quietly humoured.
 Records every request it answered so a test can assert construction made ZERO
-of them, and every query string so a test can assert the filter was forwarded.
-One page holds ``page_size`` devices.
+of them (and that a device-only configuration made zero virtual machine
+calls), and every query string so a test can assert each filter was forwarded
+to its own endpoint. One page holds ``page_size`` objects.
+
+Every object is served with the ``url`` a real NetBox gives it (its detail
+page, ``<endpoint><id>/``), because pynetbox behaves differently with one: a
+record that has a ``url`` answers an attribute the list response lacked by
+GETting that page. The stub serves the detail page too (the whole object, as
+a NetBox detail response is), and records the GET, so a test can assert both
+that a full list response costs no detail request and that a trimmed one
+costs exactly one per object.
+
+The list endpoints trim their output as NetBox does, so a payload can lack a
+field the way a real one does: ``fields=a,b`` keeps only those fields,
+``omit=a,b`` drops those, and ``brief=true`` keeps only NetBox's brief set
+(``id``, ``url``, ``display``, ``name``, ``description``). A trimmed field is
+ABSENT from the payload, not null. Pagination's ``next`` link carries the
+request's own query string, as NetBox's does.
 
 Binds ``127.0.0.1`` on port 0 (the kernel picks a free port) and serves from a
 daemon thread the context manager shuts down — no real network, no port
@@ -23,7 +40,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -117,26 +134,100 @@ def device(  # noqa: PLR0913 — a NetBox device payload has this many independe
     return payload
 
 
+def virtual_machine(
+    id_,
+    name,
+    *,
+    ip="10.1.0.1/24",
+    site="lab-a",
+    cluster="vmc-1",
+    platform="Ubuntu",
+    custom_fields=None,
+    status="active",
+    tags=("lab",),
+    drop=(),
+):
+    """One virtual machine payload in NetBox's own shape (virtualization.virtual_machines).
+
+    No ``oob_ip``, ``rack``, ``position`` or ``device_type``: NetBox's virtual
+    machine serializer has none of them. *drop* works as for :func:`device`.
+    """
+    payload = {
+        "id": id_,
+        "name": name,
+        "primary_ip4": None if ip is None else {"id": id_ * 10, "address": ip},
+        "site": None if site is None else {"id": 1, "name": site},
+        "cluster": None if cluster is None else {"id": 5, "name": cluster},
+        "platform": None if platform is None else {"id": 4, "name": platform},
+        "status": {"value": status, "label": status.title()},
+        "tags": [{"id": i, "name": t} for i, t in enumerate(tags, start=1)],
+        "custom_fields": dict(custom_fields or {}),
+    }
+    for key in drop:
+        payload.pop(key, None)
+    return payload
+
+
+_BRIEF_FIELDS = ("id", "url", "display", "name", "description")
+"""What NetBox's brief serializer keeps of a device or a virtual machine."""
+
+_DEVICES_PATH = "/api/dcim/devices/"
+_VMS_PATH = "/api/virtualization/virtual-machines/"
+
+
 class NetBoxStub:
     """A local NetBox API a real pynetbox client can talk to.
 
     ``requests`` is every path+query the stub answered, in order (recorded
     before the token is checked, so a rejected call still shows up);
-    ``queries`` is the parsed query string of each ``/api/dcim/devices/`` call.
+    ``queries`` is the parsed query string of each ``/api/dcim/devices/`` call
+    and ``vm_queries`` the same for each
+    ``/api/virtualization/virtual-machines/`` call.
 
     ``delay`` (seconds) makes every handler sleep before it answers: a NetBox
     that accepts the connection and then goes quiet, which is what a request
     timeout has to bound. Keep it small — the sleep is real.
+
+    ``forbidden`` is a set of endpoint paths the token may not read: each
+    answers 403, as NetBox does for a token whose permissions stop short of
+    that app (a dcim-only token asking the virtualization app).
     """
 
-    def __init__(self, devices, *, page_size=2, token=TOKEN, tls=None, delay=0.0):
+    def __init__(
+        self,
+        devices,
+        *,
+        virtual_machines=(),
+        page_size=2,
+        token=TOKEN,
+        tls=None,
+        delay=0.0,
+        forbidden=frozenset(),
+    ):
         self.devices = list(devices)
+        self.forbidden = frozenset(forbidden)
+        # Ids whose detail page 404s although the list serves them: a test
+        # sets it to see what one failed detail load does.
+        self.detail_missing: set[int] = set()
+        # Detail path -> fields its page serves over the listed object's: a
+        # test sets it to replay an object that changed between list and detail.
+        self.detail_overrides: dict[str, dict] = {}
+        # Detail path -> fields its page leaves out although the list serves
+        # them: a detail serializer narrower than the list's.
+        self.detail_drops: dict[str, set[str]] = {}
+        self.virtual_machines = list(virtual_machines)
         self.page_size = page_size
         self.token = token
         self.delay = delay
         self.requests: list[str] = []
         self.queries: list[dict[str, list[str]]] = []
+        self.vm_queries: list[dict[str, list[str]]] = []
         stub = self
+        # path -> (the objects it serves, where its query strings are recorded)
+        endpoints = {
+            _DEVICES_PATH: (self.devices, self.queries),
+            _VMS_PATH: (self.virtual_machines, self.vm_queries),
+        }
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *a):  # silence: the stub's log IS `stub.requests`
@@ -165,20 +256,49 @@ class NetBoxStub:
                 url = urlsplit(self.path)
                 if self.headers.get("Authorization") != f"Token {stub.token}":
                     return self._send(403, {"detail": "Invalid token"})
-                if url.path == "/api/dcim/devices/":
+                if any(url.path.startswith(path) for path in stub.forbidden):
+                    return self._send(
+                        403, {"detail": "You do not have permission to perform this action."}
+                    )
+                head, _, tail = url.path.rstrip("/").rpartition("/")
+                if f"{head}/" in endpoints and tail.isdigit():
+                    # A detail page: the whole object, never trimmed.
+                    objects, _queries = endpoints[f"{head}/"]
+                    for o in objects:
+                        if o["id"] == int(tail) and o["id"] not in stub.detail_missing:
+                            served = {"url": f"{stub.base}{url.path}", **o}
+                            served.update(stub.detail_overrides.get(url.path, {}))
+                            for key in stub.detail_drops.get(url.path, set()):
+                                served.pop(key, None)
+                            return self._send(200, served)
+                    return self._send(404, {"detail": "No Device matches the given query."})
+                if url.path in endpoints:
+                    objects, queries = endpoints[url.path]
                     q = parse_qs(url.query)
-                    stub.queries.append(q)
+                    queries.append(q)
                     offset = int(q.get("offset", ["0"])[0])
                     limit = int(q.get("limit", [str(stub.page_size)])[0]) or stub.page_size
                     limit = min(limit, stub.page_size)
-                    page = stub.devices[offset : offset + limit]
+                    page = [
+                        {"url": f"{stub.base}{url.path}{o['id']}/", **o}
+                        for o in objects[offset : offset + limit]
+                    ]
+                    if "fields" in q:
+                        wanted = q["fields"][0].split(",")
+                        page = [{k: v for k, v in o.items() if k in wanted} for o in page]
+                    if "omit" in q:
+                        dropped = q["omit"][0].split(",")
+                        page = [{k: v for k, v in o.items() if k not in dropped} for o in page]
+                    if q.get("brief", [""])[0].lower() in ("true", "1"):
+                        page = [{k: v for k, v in o.items() if k in _BRIEF_FIELDS} for o in page]
                     nxt = None
-                    if offset + limit < len(stub.devices):
-                        nxt = f"{stub.base}/api/dcim/devices/?limit={limit}&offset={offset + limit}"
+                    if offset + limit < len(objects):
+                        following = {**q, "limit": [str(limit)], "offset": [str(offset + limit)]}
+                        nxt = f"{stub.base}{url.path}?{urlencode(following, doseq=True)}"
                     return self._send(
                         200,
                         {
-                            "count": len(stub.devices),
+                            "count": len(objects),
                             "next": nxt,
                             "previous": None,
                             "results": page,

@@ -3628,6 +3628,9 @@ member	otto.inventory:NetBoxInventoryConfig.model_config	attribute
 member	otto.inventory:NetBoxInventoryConfig.timeout	field
 member	otto.inventory:NetBoxInventoryConfig.token_env	field
 member	otto.inventory:NetBoxInventoryConfig.url	field
+member	otto.inventory:NetBoxInventoryConfig.virtual_machines	field
+member	otto.inventory:NetBoxInventoryConfig.vm_filter	field
+member	otto.inventory:NetBoxInventoryConfig.vm_ip_source	field
 abstract	otto.inventory:NetBoxInventoryConfig	@final @manifest:subclass=false
 name	otto.inventory:RecordDifference	class
 mro	otto.inventory:RecordDifference	-

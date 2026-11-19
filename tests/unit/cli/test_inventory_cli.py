@@ -25,7 +25,7 @@ from otto import bootstrap
 from otto.cli.inventory import inventory_app
 from tests._fixtures.env_guard import preserved_timezone, set_timezone
 from tests._fixtures.project_scaffold import make_project
-from tests.unit.inventory.netbox_stub import TOKEN, NetBoxStub, device
+from tests.unit.inventory.netbox_stub import TOKEN, NetBoxStub, device, virtual_machine
 
 runner = CliRunner()
 
@@ -414,6 +414,37 @@ def test_list_reports_the_devices_netbox_made_it_skip(netbox_project):
     addressless = "skipped 1 device(s) with no address at ip_source 'primary_ip4': nb-noaddr"
     assert addressless in result.output
     assert "skipped 1 unnamed device(s): id 5" in result.output
+    assert "virtual machine" not in result.output  # a device-only table says nothing of VMs
+
+
+def test_list_names_skipped_virtual_machines_and_each_kind_s_ip_source(tmp_path, monkeypatch):
+    # Devices over their out-of-band address, VMs over primary_ip4: each skip
+    # row names the kind and the setting its address was read from.
+    devices = [
+        device(1, "nb1", oob_ip="10.9.9.1/32"),
+        device(4, "nb-noaddr"),  # a primary address, but no oob_ip
+        device(5, None),
+    ]
+    vms = [
+        virtual_machine(7, "vm1"),
+        virtual_machine(8, "vm-noaddr", ip=None),
+        virtual_machine(9, None),
+    ]
+    with NetBoxStub(devices, virtual_machines=vms, page_size=2) as stub:
+        monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
+        toml = _netbox_toml(stub, "0") + 'ip_source = "oob_ip"\nvirtual_machines = true\n'
+        _scaffold(tmp_path, monkeypatch, inventory_toml=toml)
+        result = _run(["list"])
+    assert result.exit_code == 0, result.output
+    assert "2 record(s) in netbox:" in result.output
+    output = " ".join(result.output.split())  # rich wraps long rows
+    assert "skipped 1 device(s) with no address at ip_source 'oob_ip': nb-noaddr" in output
+    assert (
+        "skipped 1 virtual machine(s) with no address at vm_ip_source 'primary_ip4': vm-noaddr"
+        in output
+    )
+    assert "skipped 1 unnamed device(s): id 5" in output
+    assert "skipped 1 unnamed virtual machine(s): id 9" in output
 
 
 @pytest.fixture

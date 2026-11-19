@@ -364,14 +364,18 @@ json inventory to NetBox migrates no credentials at all.
 
 Nothing is required of NetBox beyond a device per referenced host whose `name`
 is the key, an address the configured `ip_source` can read, and a read-only
-token.
+token. A host NetBox models as a **virtual machine** can be the key too, once
+you set `virtual_machines = true` ({ref}`netbox-virtual-machines`).
 
 | Key | Meaning |
 | --- | ------- |
 | `url` | Base URL of the instance. A trailing slash is normalised away, so two spellings are one inventory. |
 | `token_env` | Name of the environment variable holding the API token; default `NETBOX_TOKEN`. The token itself never sits in a settings file. |
 | `filter` | A NetBox device filter, forwarded verbatim (`{ site = "lab-a" }`). No filter means every device. |
-| `ip_source` | Where the management address comes from: `"primary_ip4"` (default), `"oob_ip"`, or `"cf:<custom field>"`. |
+| `virtual_machines` | Also read NetBox virtual machines; default `false`. Off, the backend never asks NetBox's virtualization app anything, so a token that can read only devices keeps working. |
+| `vm_filter` | A NetBox virtual machine filter, forwarded verbatim as `filter` is to devices (`{ cluster = "lab-vms" }`). No filter means every virtual machine. Setting it without `virtual_machines = true` is an error. |
+| `ip_source` | Where a device's management address comes from: `"primary_ip4"` (default), `"oob_ip"`, or `"cf:<custom field>"`. |
+| `vm_ip_source` | Where a virtual machine's management address comes from: `"primary_ip4"` (default) or `"cf:<custom field>"`. NetBox has no out-of-band address on a virtual machine, so `"oob_ip"` is refused. Devices keep their own `ip_source`. Setting it to anything but the default without `virtual_machines = true` is an error. |
 | `custom_fields` | Record field → NetBox custom-field name. Each mapped field **joins** `supplies`. |
 | `extra_custom_fields` | A list of custom-field names to carry through opaquely in `extra`. They are not record fields and never join `supplies`. |
 | `timeout` | Seconds one request to NetBox may take; default `30`, and it must be a positive number. It bounds an instance that has gone *unreachable* — without it the kernel's TCP connect timeout (around two minutes) does, and it does so **before** the stale snapshot below is served. |
@@ -397,7 +401,9 @@ all.
 
 ### The mapping
 
-How record fields map to NetBox device fields:
+How record fields map to NetBox device fields (a virtual machine maps the same
+way, less `rack`, `shelf` and `board`; {ref}`netbox-virtual-machines` lists the
+differences):
 
 | Record field | NetBox device |
 | ------------ | ------------- |
@@ -408,7 +414,7 @@ How record fields map to NetBox device fields:
 | `shelf` | the integer part of `position` — which NetBox serialises as a string, and which may be a half-U value like `"3.5"` |
 | `board` | `device_type.model` |
 | `os_name` | `platform.name` |
-| `is_virtual` | always `false` — devices only |
+| `is_virtual` | `false` for devices, `true` for virtual machines (`virtual_machines = true`) |
 | `extra` | `id`, `serial`, `asset_tag`, `status`, `tags` (names), plus any `extra_custom_fields` |
 | `slot`, `hw_version`, `sw_version`, `os_version`, `element_id` | **only if mapped** in `custom_fields`; otherwise the lab file carries them |
 | `interfaces` | not populated — this backend fetches devices, not their interfaces |
@@ -431,12 +437,69 @@ a record by accident.
   — fails the record's validation naming the device and the field.
 - `extra_custom_fields` must be a **list**, and may not name any of `id`,
   `serial`, `asset_tag`, `status` or `tags`: this backend already puts those in
-  `extra` from the device itself.
+  `extra` from the device itself. With `virtual_machines = true`, `cluster` is
+  taken too.
+
+(netbox-virtual-machines)=
+### Virtual machines
+
+Teams that model lab fixtures as NetBox virtual machines turn them on next to
+the devices:
+
+```toml
+[inventory]
+backend = "netbox"
+url = "https://netbox.example"
+filter = { site = "lab-a" }            # devices
+ip_source = "oob_ip"                   # devices are managed out of band
+virtual_machines = true
+vm_filter = { cluster = "lab-vms" }    # virtual machines
+vm_ip_source = "primary_ip4"           # the default; a VM has no oob_ip
+```
+
+Each virtual machine becomes a record keyed by its `name`, mapped as a device
+is, with these differences:
+
+| Record field | NetBox virtual machine |
+| ------------ | ---------------------- |
+| `ip` | the address at `vm_ip_source`, read as a device's is read at `ip_source` |
+| `site` | `site.name`, when the virtual machine has a site |
+| `os_name` | `platform.name`, when it has a platform |
+| `rack`, `shelf`, `board` | not populated: a virtual machine has no rack, position or device type |
+| `is_virtual` | `true`, always |
+| `extra` | `id`, `cluster` (the cluster's name), `status`, `tags` (names), plus any `extra_custom_fields` |
+
+Custom-field mappings apply to virtual machines unchanged, with one exception:
+a mapped `is_virtual` applies to devices only (an emulator modelled as a
+device can say it is virtual), because a virtual machine is virtual whatever a
+custom field says. A virtual machine with no name, or no address at
+`vm_ip_source`, is skipped the way a device is, and `otto inventory list`
+reports it as a virtual machine.
+
+Devices and virtual machines share **one** set of keys. A device and a virtual
+machine with the same name fail the fetch, naming both:
+
+```text
+netbox inventory https://netbox.example: duplicate name 'edge-17' (device id 3 and virtual machine id 7)
+```
+
+Rename one of them in NetBox, or narrow `filter` or `vm_filter` so that only
+one is selected.
+
+Both listings share one session, so `timeout`, certificate checks and error
+reporting are the same for both. A token that cannot read virtual machines
+fails the fetch with the inventory error described below, which then says
+which listing failed:
+
+```text
+netbox inventory https://netbox.example: listing virtual machines: RequestError: …
+```
 
 ### What a fetch skips, and what fails
 
 The whole filtered set is fetched once, on first use, into a dict keyed by
-device name; every lookup after that is a dict hit.
+device name (and virtual machine name, with `virtual_machines = true`); every
+lookup after that is a dict hit.
 
 - A device with **no name** is skipped.
 - A device with **no address** at `ip_source` is skipped.
@@ -445,6 +508,21 @@ Both are dropped from `list_keys()`, and `otto inventory list` reports how many
 of each the fetch passed over, so a device "missing from otto" shows as
 selected and skipped rather than never seen. Looking up an addressless device
 by name says exactly that, naming the device and the `ip_source`.
+
+A filter that trims NetBox's list output (`fields`, `omit`, `brief`) still
+works: an object the list left any field otto reads out of is read from its
+detail page instead, one extra request per object, inside the same fetch.
+Everything otto takes from that object, its name included, then comes from
+the detail page alone (when it is found by `id`), so an object renamed or corrected since the listing is
+read as it is now. That page is found by the object's `id`, or by its `url`
+when a `fields` projection left out `id`; a projection that keeps neither
+fails the fetch, naming the object and the field. Loaded by `url`, the object
+keeps any value the list served that its detail page omits. A full list response costs
+no such request, and neither does an object the list already shows is
+skipped: one served with no name, or with an empty address. A field the
+detail page lacks fails the fetch, naming the object and the field, except
+the two above: no name means unnamed and no address field means addressless,
+even when the list served one.
 
 Two devices sharing a name within the filtered set is an error naming both
 device ids. Connection, TLS, authentication and API failures all raise a single
@@ -466,7 +544,9 @@ returns a string opts out ({doc}`../extend/inventory-backends`).
 - **Where.** `<otto home>/inventory-cache/` — `~/.otto/inventory-cache/` unless
   `OTTO_HOME` says otherwise. One snapshot per distinct inventory
   configuration — the backend's parsed table, defaults filled in, plus
-  `cache_ttl` — named for a hash of it, written whole-or-not-at-all at mode
+  `cache_ttl` — named for a hash of it (a key a newer otto added, such as
+  NetBox's `virtual_machines`, is left out while it holds its default, so a
+  table written before it keeps its snapshot), written whole-or-not-at-all at mode
   `0600` with a small meta file beside it. Two projects whose tables parse to the
   same configuration share one snapshot. `otto inventory refresh` prints the
   snapshot's full path, which saves you guessing the hash.

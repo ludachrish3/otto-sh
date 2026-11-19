@@ -86,9 +86,11 @@ otto inventory list
 Every key the inventory holds, with its address, then the count and the label.
 
 A backend that had to pass over part of what it selected says so afterwards.
-The NetBox backend reports two kinds: devices with no address at the
-configured `ip_source`, and devices with no name (NetBox allows both, and the
-default filter is "everything"). Those lines appear only when the command
+The NetBox backend reports two reasons for each kind of object it lists:
+devices with no address at the configured `ip_source` and devices with no
+name (NetBox allows both, and the default filter is "everything"), then, with
+`virtual_machines = true`, virtual machines with no address at `vm_ip_source`
+and virtual machines with no name. Those lines appear only when the command
 actually fetched — a `list` served from a fresh snapshot selected nothing this
 run, so it has nothing to report.
 

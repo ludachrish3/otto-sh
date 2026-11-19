@@ -24,7 +24,7 @@ file-operation ceilings in ``scripts/import_budget.py`` bound what a bare
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, NamedTuple
 
 import typer
 from rich import box
@@ -290,26 +290,53 @@ def _skip_rows(inventory: "Inventory") -> "list[str]":
     """Return what the backend passed over on its last fetch, if it says (spec §9.2).
 
     Empty when the inventory answered from a snapshot: nothing was selected
-    this run, so there is nothing honest to report. Read through the two
-    public views rather than the backend's private buckets, so a NetBox-shaped
-    third-party backend can offer the same accounting.
+    this run, so there is nothing honest to report. Read through the public
+    views (:data:`_SKIP_VIEWS`, three per object kind) rather than the
+    backend's private buckets, so a NetBox-shaped third-party backend can
+    offer the same accounting.
     """
     backend = _backend_of(inventory)
     rows: list[str] = []
-    addressless = getattr(backend, "addressless_device_names", [])
-    if addressless:
-        source = getattr(backend, "ip_source", "?")
-        rows.append(
-            f"skipped {len(addressless)} device(s) with no address at ip_source "
-            f"{source!r}: {', '.join(addressless)}"
-        )
-    unnamed = getattr(backend, "unnamed_device_ids", [])
-    if unnamed:
-        rows.append(
-            f"skipped {len(unnamed)} unnamed device(s): "
-            f"{', '.join(f'id {i}' for i in sorted(unnamed))}"
-        )
+    for views in _SKIP_VIEWS:
+        addressless = getattr(backend, views.addressless, [])
+        if addressless:
+            source = getattr(backend, views.ip_source, "?")
+            rows.append(
+                f"skipped {len(addressless)} {views.noun}(s) with no address at "
+                f"{views.ip_source} {source!r}: {', '.join(addressless)}"
+            )
+        unnamed = getattr(backend, views.unnamed, [])
+        if unnamed:
+            rows.append(
+                f"skipped {len(unnamed)} unnamed {views.noun}(s): "
+                f"{', '.join(f'id {i}' for i in sorted(unnamed))}"
+            )
     return rows
+
+
+class _SkipViews(NamedTuple):
+    """Where a NetBox-shaped backend reports what it skipped of one object kind."""
+
+    noun: str
+    """The kind, as the rows name it."""
+    addressless: str
+    """The attribute naming its selected objects that have no address."""
+    unnamed: str
+    """The attribute listing the ids of its selected objects that have no name."""
+    ip_source: str
+    """The attribute (and setting) its addresses are read from."""
+
+
+_SKIP_VIEWS: "list[_SkipViews]" = [
+    _SkipViews("device", "addressless_device_names", "unnamed_device_ids", "ip_source"),
+    _SkipViews(
+        "virtual machine",
+        "addressless_virtual_machine_names",
+        "unnamed_virtual_machine_ids",
+        "vm_ip_source",
+    ),
+]
+"""Every object kind whose skips ``otto inventory list`` reports, in report order."""
 
 
 @inventory_app.command("list")
