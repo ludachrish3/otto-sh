@@ -24,10 +24,12 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.docs_tree import docs_sources
+
 PROMPT = re.compile(r"^\s*>>>(\s|$)")
 FENCE = re.compile(r"^\s*(?P<ticks>`{3,})(?P<info>.*)$")
 IGNORE = "<!-- doctest-lint: ignore -->"
-SKIP_PARTS = ("_build", "superpowers")
 _STANDARD_FENCE_TICKS = 3  # CommonMark: a standard fenced code block uses exactly 3 backticks
 
 
@@ -73,9 +75,7 @@ def main(argv: list[str]) -> int:
     roots = [Path(a) for a in argv[1:]] or [Path("docs")]
     failures = 0
     for root in roots:
-        for md in sorted(root.rglob("*.md")):
-            if any(part in SKIP_PARTS for part in md.parts):
-                continue
+        for md in docs_sources(root, suffixes=(".md",)):
             for n, why in lint_file(md):
                 print(f"{md}:{n}: {why}")
                 failures += 1

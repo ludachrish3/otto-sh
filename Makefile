@@ -2115,6 +2115,7 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 scripts/render_python_badge.py      \
                 scripts/render_release_notes.py     \
                 scripts/release_events.py           \
+                scripts/docs_tree.py                \
                 cliff.toml                          \
                 docs/_build/.release-tags           \
                 scripts/docs_api_reference.py       \

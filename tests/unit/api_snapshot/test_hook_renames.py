@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.docs_tree import docs_sources
 from tests._fixtures.otto_modules import import_otto_modules
 from tests._fixtures.paths import CHECKOUT_ROOT
 
@@ -103,9 +104,11 @@ TEXT_EXCEPTIONS = {
     # A tuple-unpacking loop variable over survey seams.
     "tests/unit/host/survey/test_engine.py": {"_login"},
 }
+# docs/ is read through scripts/docs_tree.py, which leaves out build output,
+# the archived specs and plans, and the pages rendered at build time (the
+# release notes quote the rename commits word for word).
 DOC_ROOTS = ["docs", "README.md"]
 CODE_ROOTS = ["src", "tests", "scripts", ".ast-grep"]
-NOT_SCANNED = ("docs/superpowers/", "docs/_build/")
 SUFFIXES = {".py", ".md", ".rst", ".yml", ".toml", ".txt"}
 
 
@@ -122,11 +125,12 @@ def _files(roots: "list[str]") -> "list[Path]":
     out: list[Path] = []
     for root in roots:
         base = CHECKOUT_ROOT / root
-        candidates = [base] if base.is_file() else base.rglob("*")
-        for path in candidates:
-            rel = path.relative_to(CHECKOUT_ROOT).as_posix()
-            if path.is_file() and path.suffix in SUFFIXES and not rel.startswith(NOT_SCANNED):
-                out.append(path)
+        if base.is_file():
+            out.append(base)
+        elif root == "docs":
+            out += docs_sources(base, suffixes=SUFFIXES)
+        else:
+            out += [p for p in base.rglob("*") if p.is_file() and p.suffix in SUFFIXES]
     return sorted(out)
 
 

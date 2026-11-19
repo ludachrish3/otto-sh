@@ -37,6 +37,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.docs_tree import SOURCE_SUFFIXES, docs_sources, is_source
+
 
 @dataclass(frozen=True)
 class Offense:
@@ -311,8 +314,10 @@ MAINTAINER_TARGETS = frozenset(
 
 DEVELOPING_DIRS = ["developing/", "architecture/"]
 DEVELOPING_FILES = ["contributing.md", "release_process.md"]
-SKIP_DIRS = ["superpowers/", "_build/", "_inventories/", "_static/", "_templates/", "examples/"]
-SUFFIXES = [".md", ".rst"]
+# Beyond what scripts/docs_tree.py leaves out of every check: the theme's static
+# assets and templates are not pages, and a docs/examples/ project's files are
+# that project's, which a reader downloads and never follows as a citation.
+ALSO_SKIP = ["_static/", "_templates/", "examples/"]
 
 INCLUDE_ALLOWED = ["docs/examples/", "src/otto/"]
 DOWNLOAD_ALLOWED = ["docs/examples/", "docs/_static/generated/examples/"]
@@ -447,16 +452,15 @@ def owned_tree(checkout: Path, env: dict[str, str] | None = None) -> Tree:
     return Tree.of([name for name in listed.split("\0") if name])
 
 
+_NOT_USER_PAGES = [*DEVELOPING_DIRS, *DEVELOPING_FILES, *ALSO_SKIP]
+"""What the lint leaves out beyond scripts/docs_tree.py: Developing otto, and ALSO_SKIP."""
+
+
 def in_scope(rel: str) -> bool:
     """Whether the docs-relative posix path *rel* is a user page the lint reads."""
-    if posixpath.splitext(rel)[1] not in SUFFIXES or rel in DEVELOPING_FILES:
+    if posixpath.splitext(rel)[1] not in SOURCE_SUFFIXES:
         return False
-    return not _excluded_dir(rel)
-
-
-def _excluded_dir(rel: str) -> bool:
-    """Whether *rel* lies under a Developing otto or skipped directory."""
-    return any(rel.startswith(prefix) for prefix in [*DEVELOPING_DIRS, *SKIP_DIRS])
+    return is_source(rel, also_skip=_NOT_USER_PAGES)
 
 
 def is_generated(text: str, suffix: str) -> bool:
@@ -1152,14 +1156,8 @@ def scan(docs_root: Path, checkout: Path, tree: Tree | None = None) -> list[Offe
     owned = owned_tree(checkout) if tree is None else tree
     examples = _example_projects(docs_root)
     offenses: list[Offense] = []
-    for dirpath, dirnames, filenames in os.walk(docs_root):
-        rel_dir = Path(dirpath).relative_to(docs_root).as_posix()
-        prefix = "" if rel_dir == "." else f"{rel_dir}/"
-        dirnames[:] = sorted(name for name in dirnames if not _excluded_dir(f"{prefix}{name}/"))
-        for name in sorted(filenames):
-            if in_scope(f"{prefix}{name}"):
-                page = Path(dirpath) / name
-                offenses += page_offenses(page, docs_root, checkout, owned, examples=examples)
+    for page in docs_sources(docs_root, also_skip=_NOT_USER_PAGES):
+        offenses += page_offenses(page, docs_root, checkout, owned, examples=examples)
     return offenses
 
 

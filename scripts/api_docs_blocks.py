@@ -52,9 +52,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.api_parse import parse_quietly  # noqa: E402 -- path set up above
-
-# Archived specs/plans carry dead paths on purpose; the built site is an output.
-SKIP_PARTS = ("_build", "superpowers")
+from scripts.docs_tree import docs_sources  # noqa: E402 -- path set up above
 
 # A fence delimiter is a run of 3+ backticks OR 3+ tildes (CommonMark allows
 # either) OR 3+ colons (MyST's ``colon_fence`` extension, enabled in
@@ -579,20 +577,15 @@ def literal_includes(path: Path, docs_root: Path) -> list[tuple[int, Path]]:
 def teaching_corpus(repo_root: Path) -> list[Path]:
     """Every file inside the teaching boundary, sorted.
 
-    The boundary (spec §3): docs pages (``docs/**/*.md`` and
-    ``docs/**/*.rst``, skipping ``_build`` and the archived
-    ``superpowers`` specs and plans), the top-level ``README.md``, every
-    ``docs/examples/**/*.py``, and every ``src/otto/examples/*.py``.
-    Nothing else in ``src/otto`` is teaching: a function's doctest there
-    tests that function.
+    The boundary (spec §3): the hand-written docs pages
+    (:func:`scripts.docs_tree.docs_sources`, which leaves out build output,
+    the archived specs and plans, and the pages rendered at build time), the
+    top-level ``README.md``, every ``docs/examples/**/*.py``, and every
+    ``src/otto/examples/*.py``. Nothing else in ``src/otto`` is teaching: a
+    function's doctest there tests that function.
     """
     docs = repo_root / "docs"
-    pages = [
-        p
-        for pattern in ("*.md", "*.rst")
-        for p in docs.rglob(pattern)
-        if not any(part in SKIP_PARTS for part in p.relative_to(docs).parts)
-    ]
+    pages = docs_sources(docs)
     files = [
         *pages,
         repo_root / "README.md",

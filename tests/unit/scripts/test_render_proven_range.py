@@ -146,7 +146,7 @@ def test_the_docs_build_renders_the_page_and_fails_when_the_renderer_does() -> N
     Every builder, not html-only: the link toctree names the page, so the doctest
     builder ``make docs`` also runs has to find it on disk. A non-zero exit raises.
     """
-    assert_conf_renders("scripts.render_proven_range", "docs/cli/known-good.md")
+    assert_conf_renders("scripts.render_proven_range", "cli/known-good.md")
 
 
 def test_sphinx_srcs_names_the_proven_range_and_its_renderer() -> None:

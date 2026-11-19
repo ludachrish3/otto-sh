@@ -6448,7 +6448,7 @@ def test_the_docs_build_renders_the_page_and_fails_when_the_renderer_does():
     also runs has to find it on disk too. A non-zero exit RAISES, which is what makes
     §5's fail-on-undeclared a build failure and not a warning.
     """
-    assert_conf_renders("scripts.render_support_matrix", "docs/architecture/support-matrix.md")
+    assert_conf_renders("scripts.render_support_matrix", "architecture/support-matrix.md")
 
 
 def test_the_page_is_reachable_from_the_architecture_index():

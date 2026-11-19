@@ -694,7 +694,7 @@ def test_cliff_toml_and_pyproject_spell_the_same_repository_url() -> None:
 
 
 def test_the_docs_build_renders_the_release_notes_and_fails_when_the_renderer_does() -> None:
-    assert_conf_renders("scripts.render_release_notes", "docs/release-notes/index.md")
+    assert_conf_renders("scripts.render_release_notes", "release-notes/")
 
 
 def test_the_renderers_reach_git_cliff_beside_the_interpreter() -> None:
