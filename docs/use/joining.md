@@ -53,6 +53,14 @@ directory it is staged to; neither list command contacts a host. See
 [Inspecting what a lab holds](../cli/index.md#inspecting-what-a-lab-holds)
 and {ref}`list-products-flag`.
 
+```{important}
+**Adding a Unix host of your own to the lab (BusyBox included)?** Probe it once
+and paste the pin it prints into its entry: `otto --lab my_lab host <id> probe`.
+Unpinned, each otto command that needs the host's userland probes it again.
+{doc}`../configuration/lab/probing-hosts` shows what the pin looks like and
+where it goes.
+```
+
 How wide otto renders when its output is piped or captured is set by
 `COLUMNS` ([Environment variables](../cli/index.md#environment-variables)).
 

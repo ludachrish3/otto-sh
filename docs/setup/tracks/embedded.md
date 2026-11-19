@@ -118,6 +118,15 @@ extensions instead. On a freshly booted board the answer is the list's
 otto --lab example_lab host dut exec 'llext list'
 ```
 
+```{important}
+**When otto logs in to `console`, the Unix console server, over SSH, probe it
+and paste the pin it prints into its entry in `lab_data/lab.json`:**
+`otto --lab example_lab host console probe`. Unpinned, each otto command that
+needs its userland probes it again. The board, `dut`, needs no userland pin.
+{doc}`../../configuration/lab/probing-hosts` shows what the pin looks like and
+where it goes. Then commit the change: `git commit -am "pin console"`.
+```
+
 ## The coverage runtime
 
 The extension carries its own coverage runtime: NASA's embedded-gcov, which

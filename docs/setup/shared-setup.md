@@ -81,6 +81,7 @@ referenced form.
 otto --list-labs
 otto --lab example_lab --list-hosts
 otto --lab example_lab host dut exec 'uname -r'
+otto --lab example_lab host dut probe
 ```
 
 `--list-labs` shows `example_lab`. `--list-hosts` needs `--lab`; it shows `dut`
@@ -90,6 +91,13 @@ the host's kernel version:
 ```text
 INFO     @dut   | uname -r
 INFO     @dut > | 6.8.0-86-generic
+```
+
+```{important}
+**Then probe `dut` and paste the pin it prints into its entry in `lab.json`.**
+Unpinned, each otto command that needs the host's userland probes it again,
+which is slow on a BusyBox device. {doc}`../configuration/lab/probing-hosts`
+shows what the pin looks like and where it goes.
 ```
 
 ## Before you declare products

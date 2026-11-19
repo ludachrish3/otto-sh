@@ -153,6 +153,14 @@ record are comment space.
 `element_id` and `extra` sit outside the `supplies` partition: a record may
 carry either whatever the deployment declares.
 
+```{important}
+**A referenced Unix host's probe pin (BusyBox included) goes in the lab file,
+beside `inventory`, never in the record:** paste what
+`otto --lab <lab> host <id> probe` prints into that host entry. Unpinned, each
+otto command that needs its userland probes it again. {doc}`lab/probing-hosts`
+shows what the pin looks like and where it goes.
+```
+
 ## Configuration
 
 An inventory is declared **once per user**, in otto's user-level settings file:

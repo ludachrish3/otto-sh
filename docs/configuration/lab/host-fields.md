@@ -100,11 +100,11 @@ connection-options reference.
 `userland_options` is the odd one out: it names no protocol.  It carries
 declared answers about the *device* — which elevation mechanism it has,
 which `timeout` calling convention its applet speaks, and so on — that otto
-otherwise probes for once per host and caches.  Every key defaults to
-"probe it", so the table is only worth writing to skip a probe or to correct
-one.  Run `otto host <id> probe` and otto prints the answers it settled as a
-`userland_options` object ready to paste in — see
-{ref}`userland-capabilities`.
+otherwise probes for again in each command that needs them.  Every key
+defaults to "probe it", so the table is only worth writing to skip a probe or
+to correct one.  Run `otto host <id> probe` and otto prints the answers it
+settled as a `userland_options` object ready to paste in — see
+{doc}`probing-hosts` and {ref}`userland-capabilities`.
 
 ```json
 "userland_options": { "elevation": "su", "timeout_style": "dash-t" }

@@ -510,20 +510,25 @@ otto for a team:
    order: sources are read in order and a later one overrides an earlier one
    one element (or one `labs` table entry) at a time, which is how a project
    layers its own equipment over a global database. See {doc}`host-sources`.
-3. **Decide on reservation gating** — leave it off (`backend = "none"`, the
+3. **Probe and pin every Unix host** — run `otto --lab <lab> host <id> probe`
+   once per Unix host, BusyBox included, and paste the pin it prints into its
+   entry. Unpinned, each otto command that needs a host's userland probes it
+   again. {doc}`lab/probing-hosts` shows what the pin looks like and where it
+   goes.
+4. **Decide on reservation gating** — leave it off (`backend = "none"`, the
    default) for sandbox labs, or wire `[reservations]` to your scheduler so otto
    refuses to clobber a held rack. Tell the team about the `--holder` and
    `-R` / `--skip-reservation-check` break-glass overrides *before* they need
    them. See {doc}`../cli/reservation/index`.
-4. **Register shared code** — put instruction/option modules under `libs` and
+5. **Register shared code** — put instruction/option modules under `libs` and
    list them in `init`; that is also where options classes register for
    `otto run` and `otto test`. Tests are plain pytest files under `tests`. See
    {doc}`../cli/run/index`, {doc}`../cli/test/index` and
    {doc}`../setup/options-classes`.
-5. **Set per-product preferences** — optional `[host_preferences]` /
+6. **Set per-product preferences** — optional `[host_preferences]` /
    `[os_profiles]` (this page, above, and {doc}`lab-config` / {doc}`os-profiles`).
-6. **Enable tab completion** — see {ref}`enabling-tab-completion`.
-7. **(Optional) Add TLS to the dashboard** — plain HTTP plus a per-run
+7. **Enable tab completion** — see {ref}`enabling-tab-completion`.
+8. **(Optional) Add TLS to the dashboard** — plain HTTP plus a per-run
    access key is the default and needs no setup; add TLS only if a lab
    needs it. A team owner creates a CA once and distributes trust to
    viewers; each machine that runs `otto monitor` then gets its own leaf

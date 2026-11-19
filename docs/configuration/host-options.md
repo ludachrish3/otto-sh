@@ -28,9 +28,9 @@ fragment on this page shows:
 One further table, ``userland_options``, sits alongside these but names no
 protocol: it declares facts about the *device* (which elevation mechanism it
 has, which ``timeout`` convention its applet speaks) that otto otherwise
-probes for once per host.  It layers exactly like the protocol tables,
-per-call override included.  `otto host <id> probe` prints the table ready to paste —
-see {ref}`userland-capabilities`.  See also {doc}`lab-config`.
+probes for again in each command that needs them.  It layers exactly like the
+protocol tables, per-call override included.  `otto host <id> probe` prints the
+table ready to paste — see {doc}`lab/probing-hosts` and {ref}`userland-capabilities`.  See also {doc}`lab-config`.
 
 ``reboot_options`` is a second such table: it names no protocol either, and
 bounds the ``reboot`` verb that every host family has (see

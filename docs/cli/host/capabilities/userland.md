@@ -2,6 +2,9 @@
 
 # Userland capabilities
 
+Setting up a lab? {doc}`../../../configuration/lab/probing-hosts` is the step
+to follow; this page is the reference behind it.
+
 otto adapts to the device's userland rather than assuming a GNU one: which
 elevation mechanism exists, which `timeout` calling convention the applet
 speaks, whether `base64` is there at all. Those answers are settled by a probe
