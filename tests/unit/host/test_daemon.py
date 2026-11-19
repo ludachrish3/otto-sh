@@ -219,3 +219,18 @@ class TestSentinelFraming:
 
     def test_split_preserves_empty_segments(self):
         assert split_token("otto-x:v1::b", "otto-x", "v1", 2) == ["", "b"]
+
+
+@pytest.mark.parametrize(
+    ("output", "failed"),
+    [
+        ("@ps-failed", True),
+        ("  @ps-failed  \n", True),
+        ("1 00:01 x @ps-failed", False),
+        ("", False),
+    ],
+)
+def test_ps_failed_reads_the_marker_on_a_line_of_its_own(output, failed):
+    from otto.host.daemon import ps_failed
+
+    assert ps_failed(output) is failed

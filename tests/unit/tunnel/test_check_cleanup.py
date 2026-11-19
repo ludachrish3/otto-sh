@@ -950,3 +950,46 @@ def test_the_sweep_marks_a_ps_that_fails(tmp_path) -> None:
         env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
     )
     assert scanned.stdout.splitlines() == ["@ps-failed"]
+
+
+# -- kill confirmation by pid, whatever the echo's version (#1131 review) ------------
+
+
+class _UnkillableHost:
+    """A host whose ``kill`` is refused and whose sweep keeps listing *lines*."""
+
+    id = "test3"
+
+    def __init__(self, lines: list[str]) -> None:
+        self.lines = lines
+        self.commands: list[str] = []
+
+    async def exec(self, cmd: str, timeout: float | None = None, **_: object):
+        from otto.result import CommandResult, Status
+
+        self.commands.append(cmd)
+        if cmd.startswith("kill "):
+            return CommandResult(status=Status.Failed, value="Operation not permitted", command=cmd)
+        return CommandResult(status=Status.Success, value="\n".join(self.lines), command=cmd)
+
+
+@pytest.mark.asyncio
+async def test_an_echo_of_an_undeclared_version_that_survives_its_kill_is_a_survivor(monkeypatch):
+    """The confirmation asks "is this pid still listed", not "can I read its tag"."""
+    from otto.host import daemon
+    from otto.tunnel import _tunnel_echoes
+
+    monkeypatch.setattr(daemon, "KILL_SETTLE_S", 0.05)
+    v9 = "4242 00:00:09 otto-check:v9:abcdef:-:udp:fwd-echo:test3 -b 65535 UDP4-LISTEN:1 PIPE"
+    host = _UnkillableHost([v9])
+    assert await _tunnel_echoes.kill_confirmed(host, [4242]) == {4242}
+    assert any(c.startswith("kill ") for c in host.commands)
+
+
+@pytest.mark.asyncio
+async def test_a_killed_echo_no_longer_listed_is_confirmed_gone(monkeypatch):
+    from otto.host import daemon
+    from otto.tunnel import _tunnel_echoes
+
+    monkeypatch.setattr(daemon, "KILL_SETTLE_S", 0.05)
+    assert await _tunnel_echoes.kill_confirmed(_UnkillableHost([]), [4242]) == set()

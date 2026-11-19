@@ -55,7 +55,7 @@ from ..check.sweep import (
     swept_note,
 )
 from ..check.verdict import FeatureResult, Verdict
-from ..host.daemon import PS_FAILED, etime_seconds, kill_command, ps_listing
+from ..host.daemon import PS_FAILED, etime_seconds, kill_command, ps_failed, ps_listing
 from ..host.errors import UnsupportedOnUserlandError
 from . import _check_rows as rows
 from ._check_rows import ProbeCtx, far_end, origin_end
@@ -621,7 +621,7 @@ async def _sweep(live: _Live) -> list[str]:
         if host is None:
             continue
         scanned = await check_root_run(host, SWEEP_SCAN)
-        if PS_FAILED in (scanned.value or "").split():
+        if ps_failed(scanned.value or ""):
             said.append(f"could not list processes on {host_id}; sweep skipped")
             continue
         by_tag: dict[str, list[_Tagged]] = {}

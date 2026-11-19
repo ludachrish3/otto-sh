@@ -30,13 +30,14 @@ import pytest_asyncio
 from rich.console import Console
 
 from otto.check import Verdict, render_sections
-from otto.host.daemon import kill_command, parse_ps_output
+from otto.host.daemon import kill_command
 from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from otto.tunnel.check import TunnelCheckReport, check_tunnel, tunnel_sections
 from otto.tunnel.check_probes import CHECK_PREFIX, SWEEP_COMMAND, EchoTag, echo_launch_command
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
+from tests._fixtures.bed_hygiene import check_echo_procs
 from tests._fixtures.labdata import host_data
 from tests._fixtures.tunnel_bed import (
     UNIX,
@@ -65,9 +66,6 @@ _MODULE_ID = "tests/e2e/test_tunnel_check_e2e.py"
 
 _PATH = [("test1", None), ("test2", None), ("test3", None)]
 
-_TAGGED = re.compile(rf"^{CHECK_PREFIX}:v\d+:")
-"""A real check echo's tag: the prefix, then a version segment."""
-
 
 # ---------------------------------------------------------------------------
 # Lab and bed hygiene
@@ -88,13 +86,11 @@ async def tunnel_lab():
 
 
 async def _check_echoes() -> list[tuple[str, int, str]]:
-    """Every ``otto-check:`` tagged process on the bed, as ``(host, pid, token)``.
+    """Every tunnel-check echo on the bed, as ``(host, pid, token)``.
 
-    Parsed from the raw :data:`SWEEP_COMMAND` output with the generic daemon
-    parser, not the check's own sentinel parser, so an echo of any version
-    counts: this is the oracle for the product's cleanup, not a reuse of it.
-    The version segment is required because the scan's own ``grep`` argv
-    carries the bare ``otto-check:`` needle and shows up in its ``ps`` snapshot.
+    Read by the bed oracle's :func:`~tests._fixtures.bed_hygiene.check_echo_procs`,
+    the reap's reading too, so the bracket and the reap agree on what an echo
+    is: this is the oracle for the product's cleanup, not a reuse of it.
     """
     hosts = [build_bed_host(ne) for ne in UNIX]
     found: list[tuple[str, int, str]] = []
@@ -103,9 +99,7 @@ async def _check_echoes() -> list[tuple[str, int, str]]:
             result = await host.exec(SWEEP_COMMAND, timeout=15, log=LogMode.QUIET)
             assert result.is_ok, f"sweep scan failed on {host.id}: {result.value!r}"
             found.extend(
-                (host.id, p.pid, p.token)
-                for p in parse_ps_output(result.value, CHECK_PREFIX)
-                if _TAGGED.match(p.token)
+                (host.id, pid, token) for pid, token in check_echo_procs(result.value, host.id)
             )
     finally:
         await asyncio.gather(*(h.close() for h in hosts), return_exceptions=True)

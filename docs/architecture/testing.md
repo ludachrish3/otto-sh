@@ -262,9 +262,9 @@ never co-run with any other bed-using lane. Two ingredients make its
 destructiveness safe to run at all:
 
 - **The `BedHygiene` oracle** (`tests/_fixtures/bed_hygiene.py`) snapshots a
-  host's remote state — tunnel daemons, impair timers, `nc` listeners, `tc`
-  qdiscs, `/tmp/otto-*` staging entries, shell-history digest, docker
-  containers and networks — over a *fresh* connection before a scenario
+  host's remote state — tunnel daemons, `otto tunnel check` echoes, impair
+  timers, `nc` listeners, `tc` qdiscs, `/tmp/otto-*` staging entries,
+  shell-history digest, docker containers, networks and e2e images — over a *fresh* connection before a scenario
   runs, and diffs it against another fresh-connection snapshot after. The
   diff is **new-only**: whatever dirt was already on the bed going in is
   snapshotted out and never blamed on the scenario, and only items that

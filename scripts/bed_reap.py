@@ -18,7 +18,8 @@ there was nothing:
 1. The unix bed hosts, direct or behind a hop (the chaos guest, whose sshd is
    awaited first: a guest interrupted mid-reboot is booting, not gone), each
    over a fresh connection, snapshotted by the hygiene oracle: the
-   otto-tunnel daemons it lists (by id), otto-impair timers, otto-placed
+   otto-tunnel daemons it lists (by id), otto-check echoes (with ``otto
+   tunnel check``'s confirmed kill), otto-impair timers, otto-placed
    qdiscs, nc listeners and ``/tmp/otto*`` staging entries are removed through
    otto's own removers.
 2. Docker, on the cell's container parents, under each host's own pool lease:
@@ -126,6 +127,20 @@ async def remove_tunnels(lab: Any, tunnel_ids: list[str]) -> list[str]:
             )
         removed.extend(report.removed_ids)
     return removed
+
+
+async def kill_echoes(host: Any, pids: list[int]) -> None:
+    """Kill the otto-check echoes *pids* on *host* with ``otto tunnel check``'s own confirmed kill.
+
+    Survivors, or a ``ps`` that could not list after the kill, raise.
+    """
+    from otto.tunnel import _tunnel_echoes
+
+    survivors = await _tunnel_echoes.kill_confirmed(host, pids)
+    if survivors is None:
+        raise RuntimeError("ps could not list processes after the otto-check echo kill")
+    if survivors:
+        raise RuntimeError(f"otto-check echoes survived their kill: {sorted(survivors)}")
 
 
 async def cancel_timers(host: Any) -> int:
@@ -253,7 +268,7 @@ def _await_hopped_guests(lab_file: Path, hosts: list[Any], out: Outcome) -> list
 
 
 async def _reap_host_state(lab: Any, host: Any, snapshot: "HygieneSnapshot", out: Outcome) -> None:
-    """Remove what *snapshot* lists on *host*: tunnels, timers, listeners, staging, qdiscs."""
+    """Remove what *snapshot* lists on *host*, each kind through its own remover."""
     hygiene = _hygiene()
     tunnel_ids = hygiene.tunnel_ids(snapshot)
     if tunnel_ids:
@@ -278,6 +293,14 @@ async def _reap_host_state(lab: Any, host: Any, snapshot: "HygieneSnapshot", out
             await clear_qdisc(host, dev)
             out.removed.append(f"{host.id}: otto qdisc on {dev} ({state.kind})")
             out.links_touched = True
+    # After the removers that cannot leave survivors: a stuck echo raises, and
+    # must not keep this host's timers, listeners, staging or qdiscs in place.
+    echoes = hygiene.echo_pids(snapshot)
+    if echoes:
+        await kill_echoes(host, echoes)
+        out.removed.extend(
+            f"{host.id}: tunnel-check echo {line}" for line in sorted(snapshot.check_echoes)
+        )
 
 
 async def _guarded(host: Any, bucket: list[str], step: Any) -> bool:

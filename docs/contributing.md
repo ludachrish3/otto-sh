@@ -858,6 +858,8 @@ inside the dashboard tree is a plain leaf and runs under `quick` like any other.
 a row, and an oracle census proves that every item pytest collects in every
 test module, changed alone, is selected by a lane the oracle emits.
 
+(gate-interrupt)=
+
 The bed lanes take [the bed lease](#bed-lease), so a second landing's gate on the same cell waits (`BED_LEASE_WAIT`) or fails fast naming the first ([`make gate-tip` only while a bed lane runs](#the-landings-gate-is-stamped)). A gate you interrupt (Ctrl-C, or a SIGTERM to `scripts/gate_tip.py` itself) waits for the lane it was running to stop, then, when it holds the lease, reaps the bed and releases the lease itself; a second Ctrl-C kills the lane outright, and the gate reaps and releases the same way once the lane's processes are gone, or, when some outlive the kill, keeps the lease, names them and tells you to run `make bed-reap` once they are ([the bed reap](#bed-reap)).
 
 A stamp is keyed by the committed tree, so a rebase or an amend that keeps the
@@ -1446,11 +1448,12 @@ scheduler.
 ### The bed reap
 
 A run that stops early leaves its state on the bed: the otto tunnel daemons,
-impair timers and `tc` qdiscs a test placed, the `nc` listeners and
-`/tmp/otto*` staging its hosts carry, orphan compose stacks and e2e images on
-the docker parents, a half-built coverage product on this machine, and a
-console a test left logged in. The bed reap (`scripts/bed_reap.py`) removes
-all of it through otto's own removers, judged by the hygiene oracle's probes
+`otto tunnel check` echoes (printed as `tunnel-check echo <pid>
+otto-check:...`), impair timers and `tc` qdiscs a test placed, the `nc`
+listeners and `/tmp/otto*` staging its hosts carry, orphan compose stacks and
+e2e images on the docker parents, a half-built coverage product on this
+machine, and a console a test left logged in. The bed reap
+(`scripts/bed_reap.py`) removes all of it through otto's own removers, judged by the hygiene oracle's probes
 (`tests/_fixtures/bed_hygiene.py`), under the lease. It never names a host:
 the cell's lab file says what the bed is. It reaches the chaos guest through
 its hop and waits for the guest to boot first
@@ -1490,10 +1493,10 @@ last line is `bed-reap: clean`:
 - `bed-reap: removed ...`: removed, nothing to do.
 - `bed-reap: failed ...`: a step did not work, and the line says what to run.
   A console it could not bring to its login prompt reads `bed-reap: failed
-  console <name>: <state> (...); see <what to run>`: `SILENT` or `DOWN` is a
-  guest that is not answering (`make qemu-restart`), `BUSY` is another client
-  holding the console port, and a reset that failed is `make console-logout`'s
-  to retry.
+  console <name>: <state> (...); see <what to run>`. `SILENT` or `DOWN` is a
+  guest that is not answering, and `BUSY` is another client holding the
+  console port; the line names the command for each. An echo that survived its kill names its pids: kill them on that
+  host by hand.
 - `bed-reap: unreachable <host>`: the host did not answer, so nothing on it was
   looked at.
 - `bed-reap: <host> still carries ...`: what is still on that host after the
@@ -1505,7 +1508,7 @@ fails stops the lane before any of its tests run, so the red is the bed's, not
 your change's. The reap refuses a bed another live run holds, and a run of your
 own whose processes are still running: wait for them, or kill them, then run it
 again. An interrupted `make gate-tip` runs the same reap by itself
-([the landing's gate](#the-landings-gate-is-stamped)).
+([an interrupted gate](#gate-interrupt)).
 
 The reap is quick when the bed is clean: a probe per host, and a probe per
 console that logs in (about 2.5 s each, so about 5 s on tech1). One step is
