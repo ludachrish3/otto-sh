@@ -10,6 +10,7 @@ nowhere.
 """
 
 import logging
+import re
 import textwrap
 
 import pytest
@@ -94,6 +95,49 @@ def test_a_netbox_record_that_fails_to_validate_logs_no_password(monkeypatch):
             inv.lookup("d1")
     text = _logged(exc.value)
     assert "_record_for" in text
+    assert PLANTED not in text
+
+
+def test_a_netbox_detail_page_that_404s_logs_no_password(monkeypatch):
+    # A projection without `url` is completed by id; that detail page 404s.
+    # The record the fetch was completing holds the raw custom fields.
+    monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
+    with NetBoxStub([_small_device_with_a_password()]) as stub:
+        stub.detail_missing = {1}
+        inv = _NetBoxInventory(url=stub.base, filter={"fields": "id,name,custom_fields"})
+        with pytest.raises(InventoryError, match="does not exist") as exc:
+            inv.list_keys()
+    text = _logged(exc.value)
+    assert re.search(r"netbox\.py:\d+ in complete\b", text)  # the frame that held the record
+    assert PLANTED not in text
+
+
+def _small_device_with_a_password():
+    """One device payload carrying only id, name and custom fields, a password among them.
+
+    Small so no container bound hides its custom fields in a rendered
+    frame, and built here so the test's own frame (shown in the traceback)
+    holds no copy of it: what is asserted is what the product's frames hold.
+    """
+    everything = set(device(1, "x"))
+    return device(
+        1,
+        "d1",
+        custom_fields={"mgmt": "10.0.0.5/24", "password": PLANTED},
+        drop=tuple(sorted(everything - {"id", "name", "custom_fields"})),
+    )
+
+
+def test_a_netbox_record_missing_a_required_field_logs_no_password(monkeypatch):
+    # The detail page lacks `site` too: the read that raises is the one that
+    # held the record's values.
+    monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
+    with NetBoxStub([_small_device_with_a_password()]) as stub:
+        inv = _NetBoxInventory(url=stub.base, ip_source="cf:mgmt")
+        with pytest.raises(InventoryError, match='no attribute "site"') as exc:
+            inv.list_keys()
+    text = _logged(exc.value)
+    assert re.search(r"netbox\.py:\d+ in _present\b", text)
     assert PLANTED not in text
 
 

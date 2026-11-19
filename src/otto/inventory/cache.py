@@ -123,9 +123,12 @@ def snapshot_slug_material(
 
     The inputs are the ones :meth:`~otto.inventory.config.CompiledInventory.same_as`
     compares: the backend, its NORMALIZED configuration (what its config model
-    parsed, defaults included; a :class:`~otto.registry.FrozenMap` is thawed)
-    and ``cache_ttl`` (``|ttl=<whole seconds>``). Never where the table was
-    declared: two projects naming one inventory share its snapshot.
+    dumped: defaults included, except a key the model leaves out while it
+    holds its default, as NetBox's ``virtual_machines`` is, so a table written
+    before that key existed keeps its snapshot; a
+    :class:`~otto.registry.FrozenMap` is thawed) and ``cache_ttl``
+    (``|ttl=<whole seconds>``). Never where the table was declared: two
+    projects naming one inventory share its snapshot.
 
     The backend's own ``label`` stands in for a key the backend adopted
     verbatim, because a backend NORMALISES its identity and a configuration

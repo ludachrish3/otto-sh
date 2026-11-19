@@ -26,7 +26,14 @@ from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import ConfigDict, ValidationError, ValidationInfo, field_validator
+from pydantic import (
+    ConfigDict,
+    SerializerFunctionWrapHandler,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_serializer,
+)
 from typing_extensions import final
 
 from ..models.base import OttoModel
@@ -100,8 +107,48 @@ class NetBoxInventoryConfig(OttoModel):
     extra_custom_fields: list[str] | None = None
     """NetBox custom field names carried through in ``record.extra``."""
 
+    virtual_machines: bool = False
+    """Also read NetBox virtual machines, as records with ``is_virtual`` true."""
+
+    vm_filter: dict[str, object] | None = None
+    """NetBox virtual machine filter, forwarded verbatim."""
+
+    vm_ip_source: str = "primary_ip4"
+    """Where a virtual machine's management address comes from."""
+
     timeout: float = 30.0
     """Seconds one HTTP request to NetBox may take."""
+
+    @model_serializer(mode="wrap")
+    def _omit_later_keys_at_their_defaults(self, handler: SerializerFunctionWrapHandler):  # noqa: ANN202
+        """Leave the keys :data:`_NETBOX_KEYS_OMITTED_AT_DEFAULT` names out while at their default.
+
+        The dump IS the normalized configuration, which
+        :meth:`CompiledInventory.same_as` compares and the snapshot slug
+        hashes. A key added after a table was written would otherwise enter
+        both with its default filled in, and the unchanged table would look
+        for its snapshot under a new name: a refetch on every project, and no
+        offline fallback if NetBox is down during the upgrade. A model
+        serializer rather than a field option, because it works across the
+        whole pydantic range otto supports.
+
+        NO return annotation, on purpose: pydantic builds the serialization
+        JSON schema from it, and ``dict[str, Any]`` would replace the
+        model's (its properties, ``url`` required, no extra keys) with an
+        unrestricted object.
+        """
+        dumped: dict[str, Any] = handler(self)
+        fields = type(self).model_fields
+        for name in _NETBOX_KEYS_OMITTED_AT_DEFAULT:
+            if name in dumped and getattr(self, name) == fields[name].default:
+                del dumped[name]
+        return dumped
+
+
+_NETBOX_KEYS_OMITTED_AT_DEFAULT: frozenset[str] = frozenset(
+    {"virtual_machines", "vm_filter", "vm_ip_source"}
+)
+"""NetBox keys newer than the first snapshot format: dumped only once set away from the default."""
 
 
 @final
