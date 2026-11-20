@@ -129,7 +129,7 @@ def test_drift_declared_but_dead_uses_the_declared_port_only_and_excludes_unknow
     assert [c.header for c in drift_table(rows).columns] == ["protocol", "kind", "drift", "detail"]
 
 
-def test_the_pin_is_built_from_supported_only_and_differing_only():
+def test_the_pin_drops_a_dead_term_and_names_each_moved_port():
     s = _survey(
         verdicts=[
             _v("ssh", 2222, "supported"),
@@ -160,10 +160,9 @@ def test_no_pin_when_the_menus_and_ports_already_match():
 def test_a_non_dialling_own_term_never_triggers_a_valid_terms_pin_by_itself():
     """console can never appear in the dialling subset the survey builds -- it has no port
 
-    to dial -- so comparing the built list against the host's FULL term menu
-    always differed and pinned a removal. The comparison has to drop to the
-    dialling subset of the host's own menu before it decides whether
-    anything changed.
+    to dial -- so a pin built from the dialled terms alone always differed
+    from the host's menu and pinned a removal. A non-dialling term is never
+    read as dead, so it stays in the pinned menu and the menu is unchanged.
     """
     s = _survey(
         verdicts=[_v("ssh", 1, "supported"), _v("scp", 1, "supported", kind="transfer")],
@@ -199,12 +198,135 @@ def test_a_valid_terms_pin_keeps_the_hosts_non_dialling_term():
     """A real change on the dialling side (telnet newly supported) still pins --
 
     and the pinned list keeps ``console`` rather than silently dropping it.
+    The newly found term goes last: the host's own entries keep their places.
     """
     s = _survey(
         verdicts=[_v("ssh", 1, "supported"), _v("telnet", 1, "supported")],
         supported=["ssh", "telnet"],
     )
-    assert menu_pin(["ssh", "console"], [], s) == ['valid_terms = ["ssh", "telnet", "console"]']
+    assert menu_pin(["ssh", "console"], [], s) == ['valid_terms = ["ssh", "console", "telnet"]']
+
+
+def test_a_valid_terms_pin_keeps_a_non_dialling_term_first():
+    """The first menu entry is the host's default term, so a pin must not move it.
+
+    A host declaring ``["console", "ssh"]`` used to get ``["ssh", "telnet",
+    "console"]``: pasting that pin changed the default term from console to ssh.
+    """
+    s = _survey(
+        verdicts=[_v("ssh", 1, "supported"), _v("telnet", 1, "supported")],
+        supported=["ssh", "telnet"],
+    )
+    assert menu_pin(["console", "ssh"], [], s) == ['valid_terms = ["console", "ssh", "telnet"]']
+
+
+def test_a_valid_terms_pin_appends_a_newly_found_term_after_the_declared_ones():
+    """A dialling default is protected too: ssh found on a telnet-only host goes after telnet."""
+    s = _survey(
+        verdicts=[_v("ssh", 1, "supported"), _v("telnet", 1, "supported")],
+        supported=["ssh", "telnet"],
+    )
+    assert menu_pin(["telnet"], [], s) == ['valid_terms = ["telnet", "ssh"]']
+
+
+def test_a_valid_terms_pin_drops_a_dead_term_and_keeps_the_rest_in_order():
+    s = _survey(
+        verdicts=[_v("ssh", 22, "login-failed"), _v("telnet", 23, "supported")],
+        declared_ports={"ssh": 22, "telnet": 23},
+        supported=["telnet"],
+    )
+    assert menu_pin(["telnet", "ssh", "console"], [], s) == ['valid_terms = ["telnet", "console"]']
+
+
+def test_a_declared_term_in_an_unknown_state_is_never_pinned_away():
+    """An unknown is a question, not an answer: it never feeds the pin.
+
+    telnet timing out on a host declaring ``["telnet", "ssh"]`` used to pin
+    ``["ssh"]``: no drift row, yet pasting the pin dropped telnet and made
+    ssh the default.
+    """
+    for state in sorted(UNKNOWN_STATES):
+        s = _survey(
+            verdicts=[_v("telnet", 23, state, tier="dial"), _v("ssh", 22, "supported")],
+            declared_ports={"ssh": 22, "telnet": 23},
+            supported=["ssh"],
+        )
+        assert drift_rows(["telnet", "ssh"], [], s) == []
+        assert menu_pin(["telnet", "ssh"], [], s) == [], state
+
+
+def test_a_term_found_beside_an_unknown_declared_one_is_appended_after_it():
+    s = _survey(
+        verdicts=[_v("telnet", 23, "timeout", tier="dial"), _v("ssh", 22, "supported")],
+        declared_ports={"ssh": 22, "telnet": 23},
+        supported=["ssh"],
+    )
+    assert menu_pin(["telnet"], [], s) == ['valid_terms = ["telnet", "ssh"]']
+
+
+def test_a_declared_transfer_the_survey_could_not_judge_is_never_pinned_away():
+    """``not-checkable`` and no verdict at all are both "no evidence": the entry stays."""
+    s = _survey(
+        verdicts=[
+            _v("ssh", 22, "supported"),
+            _v("scp", 22, "not-checkable", kind="transfer"),
+            _v("sftp", 22, "supported", kind="transfer"),
+        ],
+        declared_ports={"ssh": 22, "scp": 22, "sftp": 22, "nc": 9000},
+        supported=["sftp", "ssh"],
+    )
+    assert menu_pin(["ssh"], ["scp", "nc", "sftp"], s) == []
+    s.verdicts.append(_v("shell", 22, "supported", kind="transfer"))
+    assert menu_pin(["ssh"], ["scp", "nc", "sftp"], s) == [
+        'valid_transfers = ["scp", "nc", "sftp", "shell"]'
+    ]
+
+
+def test_a_term_dead_on_its_declared_port_but_working_on_another_stays_in_the_menu():
+    """The drift table calls it declared-but-dead; the pin moves its port, never drops it."""
+    s = _survey(
+        verdicts=[
+            _v("telnet", 23, "supported"),
+            _v("ssh", 22, "closed", tier="dial"),
+            _v("ssh", 2222, "supported"),
+        ],
+        declared_ports={"ssh": 22, "telnet": 23},
+        working_ports={"ssh": 2222},
+        supported=["ssh", "telnet"],
+    )
+    assert menu_pin(["telnet", "ssh"], [], s) == ['"ssh_options": {"port": 2222}']
+
+
+def test_a_valid_transfers_pin_keeps_the_hosts_order_and_appends_what_is_new():
+    """``valid_transfers`` has the same first-entry-is-default rule as ``valid_terms``.
+
+    The pin used to be sorted by name: ftp found on a host declaring
+    ``["sftp", "scp"]`` pinned ``["ftp", "scp", "sftp"]`` and made ftp the default.
+    """
+    s = _survey(
+        verdicts=[
+            _v("ssh", 22, "supported"),
+            _v("sftp", 22, "supported", kind="transfer"),
+            _v("scp", 22, "supported", kind="transfer"),
+            _v("ftp", 21, "supported", kind="transfer"),
+        ],
+        supported=["ftp", "scp", "sftp", "ssh"],
+    )
+    assert menu_pin(["ssh"], ["sftp", "scp"], s) == ['valid_transfers = ["sftp", "scp", "ftp"]']
+
+
+def test_a_valid_transfers_pin_drops_a_dead_transfer_and_keeps_the_rest_in_order():
+    s = _survey(
+        verdicts=[
+            _v("ssh", 22, "supported"),
+            _v("sftp", 22, "supported", kind="transfer"),
+            _v("scp", 22, "login-failed", kind="transfer"),
+            _v("ftp", 21, "supported", kind="transfer"),
+        ],
+        declared_ports={"ssh": 22, "sftp": 22, "scp": 22, "ftp": 21},
+        supported=["ftp", "sftp", "ssh"],
+    )
+    assert menu_pin(["ssh"], ["sftp", "scp", "ftp"], s) == ['valid_transfers = ["sftp", "ftp"]']
 
 
 def test_terminal_mapping_lines_name_each_term_and_what_was_observed():
