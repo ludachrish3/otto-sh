@@ -15,8 +15,8 @@ environment is the one that must satisfy all of them at once.
 ## Synopsis
 
 ```text
-otto env create [--force] [-- INSTALLER_ARGS...]
-otto env sync   [-- INSTALLER_ARGS...]
+otto env create [--force] [--otto VERSION] [-- INSTALLER_ARGS...]
+otto env sync   [--otto VERSION] [-- INSTALLER_ARGS...]
 otto env show
 ```
 
@@ -185,8 +185,9 @@ nothing rather than guessing.
 `otto env` builds and fills the environment with the uv installed with otto.
 How that uv relates to the uv you run yourself is explained under
 {ref}`Which uv runs what <which-uv-runs-what>`. The `last sync:` line that
-`create`, `sync` and {doc}`show` print names the otto and the uv that the last
-successful create or sync ran.
+`create`, `sync` and {doc}`show` print names the otto that the last successful
+create or sync installed and the uv it ran. That otto is the one that ran,
+unless {ref}`--otto <installing-a-different-otto>` named another release.
 
 Two failures come from this, before anything is built or changed:
 

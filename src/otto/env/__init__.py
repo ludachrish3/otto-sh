@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .manage import EnvBuildError as EnvBuildError
     from .manage import EnvExistsError as EnvExistsError
     from .manage import EnvMeta as EnvMeta
+    from .manage import EnvOttoSpecError as EnvOttoSpecError
     from .manage import EnvSelfRebuildError as EnvSelfRebuildError
     from .manage import EnvStatus as EnvStatus
     from .manage import EnvUninstallableProjectError as EnvUninstallableProjectError
@@ -41,6 +42,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "EnvUninstallableProjectError": "otto.env.manage",
     "EnvExistsError": "otto.env.manage",
     "EnvMeta": "otto.env.manage",
+    "EnvOttoSpecError": "otto.env.manage",
     "EnvSelfRebuildError": "otto.env.manage",
     "EnvStatus": "otto.env.manage",
     "META_FILENAME": "otto.env.manage",
@@ -77,6 +79,7 @@ __all__ = [
     "EnvBuildError",
     "EnvExistsError",
     "EnvMeta",
+    "EnvOttoSpecError",
     "EnvSelfRebuildError",
     "EnvStatus",
     "EnvUninstallableProjectError",

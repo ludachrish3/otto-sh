@@ -599,7 +599,154 @@ def _fill_hermetically(tmp_path, monkeypatch, root, passthrough):
     env = tmp_path / "env"
     uv, version = manage._acquire_uv(env)
     manage._relay(backends.create_venv(uv, env), [], "creating the venv")
-    monkeypatch.setattr(manage, "_otto_target", lambda: [str(_BEETROOT_WHEEL)])
     project = SimpleNamespace(name=root.name, root=root)
-    manage._fill(env, uv, version, manage._plan([project]), ["--no-index", *passthrough])
+    plan = manage._plan([project])
+    otto = manage._OttoInstall(target=[str(_BEETROOT_WHEEL)], named=False)
+    manage._fill(env, uv, version, plan, ["--no-index", *passthrough], otto)
     return env
+
+
+def _stand_in_otto_wheel(directory, version):
+    """Write a dependency-free wheel named ``otto-sh`` at *version* into *directory*.
+
+    It holds no code: it stands in for "another otto release" so ``--otto``
+    can be driven offline, where the real releases are not reachable.
+    """
+    import importlib.util
+
+    builder = WHEELS_DIR / "build_fixture_beetroot.py"
+    spec = importlib.util.spec_from_file_location("build_fixture_beetroot", builder)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.write_wheel(directory, "otto_sh", version, {})
+
+
+class TestOttoOption:
+    """``--otto`` on ``env sync`` and ``env create`` installs the otto the operator names."""
+
+    def test_create_installs_and_records_the_named_release(self, tmp_path):
+        home = tmp_path / "home"
+        wheels = tmp_path / "wheels"
+        _stand_in_otto_wheel(wheels, "0.0.1")
+        _stand_in_otto_wheel(wheels, "0.0.2")
+
+        created = _run(
+            ["env", "create", "--otto", "0.0.1", "--", "--no-index", "--find-links", str(wheels)],
+            home=home,
+            timeout=BUILD_TIMEOUT,
+        )
+
+        assert created.returncode == 0, created.stdout + created.stderr
+        env = _the_env(home)
+        assert f"created {env}" in created.stdout, created.stdout
+        assert "last sync:   otto 0.0.1," in created.stdout, created.stdout
+        assert json.loads((env / ".otto-env.json").read_text())["otto_version"] == "0.0.1"
+
+    def test_the_named_release_is_installed_and_recorded(self, tmp_path):
+        """A specifier is resolved by uv, and the env's record names what uv chose.
+
+        Two stand-in releases are on offer and the specifier admits only one,
+        so the recorded version can only have come from the env itself: it is
+        neither the running otto nor the text the operator typed.
+        """
+        home = tmp_path / "home"
+        wheels = tmp_path / "wheels"
+        _stand_in_otto_wheel(wheels, "0.0.1")
+        _stand_in_otto_wheel(wheels, "0.0.2")
+
+        synced = _run(
+            ["env", "sync", "--otto", "<0.0.2", "--", "--no-index", "--find-links", str(wheels)],
+            home=home,
+            timeout=BUILD_TIMEOUT,
+        )
+
+        assert synced.returncode == 0, synced.stdout + synced.stderr
+        env = _the_env(home)
+        assert f"last sync:   otto 0.0.1, uv {_otto_uv_version()}" in synced.stdout, synced.stdout
+        assert json.loads((env / ".otto-env.json").read_text())["otto_version"] == "0.0.1"
+        assert _has_dist(env, "otto-sh")
+        shown = _run(["env", "show"], home=home)
+        assert "last sync:   otto 0.0.1," in shown.stdout, shown.stdout
+
+    def test_sync_replaces_the_otto_an_existing_env_already_holds(self, tmp_path):
+        """The second sync changes the release in place and re-stamps the record."""
+        home = tmp_path / "home"
+        wheels = tmp_path / "wheels"
+        _stand_in_otto_wheel(wheels, "0.0.1")
+        _stand_in_otto_wheel(wheels, "0.0.2")
+        offline = ["--", "--no-index", "--find-links", str(wheels)]
+
+        first = _run(["env", "sync", "--otto", "0.0.1", *offline], home=home, timeout=BUILD_TIMEOUT)
+        assert first.returncode == 0, first.stdout + first.stderr
+        env = _the_env(home)
+        marker = env / "left-by-the-operator.txt"
+        marker.write_text("sync must not remove this")
+
+        second = _run(
+            ["env", "sync", "--otto", "0.0.2", *offline], home=home, timeout=BUILD_TIMEOUT
+        )
+
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert f"synced {env}" in second.stdout, second.stdout
+        assert "last sync:   otto 0.0.2," in second.stdout, second.stdout
+        assert marker.exists()
+
+    def test_a_malformed_otto_leaves_a_forced_create_s_old_env_standing(self, tmp_path):
+        home = tmp_path / "home"
+        wheels = tmp_path / "wheels"
+        _stand_in_otto_wheel(wheels, "0.0.1")
+        offline = ["--", "--no-index", "--find-links", str(wheels)]
+        built = _run(
+            ["env", "create", "--otto", "0.0.1", *offline], home=home, timeout=BUILD_TIMEOUT
+        )
+        assert built.returncode == 0, built.stdout + built.stderr
+        marker = _the_env(home) / "left-by-the-operator.txt"
+        marker.write_text("a refused create must not remove this")
+
+        refused = _run(["env", "create", "--force", "--otto", ">=0.0.1,,<1", *offline], home=home)
+
+        assert refused.returncode != 0, refused.stdout
+        assert "is not a version or a version specifier" in refused.stdout + refused.stderr
+        assert marker.exists()
+
+    def test_a_bare_version_means_exactly_that_release(self, tmp_path):
+        home = tmp_path / "home"
+        wheels = tmp_path / "wheels"
+        _stand_in_otto_wheel(wheels, "0.0.1")
+        _stand_in_otto_wheel(wheels, "0.0.2")
+
+        synced = _run(
+            ["env", "sync", "--otto", "0.0.1", "--", "--no-index", "--find-links", str(wheels)],
+            home=home,
+            timeout=BUILD_TIMEOUT,
+        )
+
+        assert synced.returncode == 0, synced.stdout + synced.stderr
+        assert "last sync:   otto 0.0.1," in synced.stdout, synced.stdout
+
+    def test_a_release_uv_cannot_find_fails_with_uvs_own_message(self, tmp_path):
+        home = tmp_path / "home"
+        wheels = tmp_path / "wheels"
+        _stand_in_otto_wheel(wheels, "0.0.1")
+
+        synced = _run(
+            ["env", "sync", "--otto", "99.0.0", "--", "--no-index", "--find-links", str(wheels)],
+            home=home,
+            timeout=BUILD_TIMEOUT,
+        )
+
+        assert synced.returncode != 0, synced.stdout
+        out = synced.stdout + synced.stderr
+        assert "installing otto failed" in out, out
+        assert "otto-sh==99.0.0" in out, out
+        assert not (_the_env(home) / ".otto-env.json").exists()
+
+    def test_a_malformed_otto_is_refused_and_builds_nothing(self, tmp_path):
+        home = tmp_path / "home"
+
+        synced = _run(["env", "sync", "--otto", "latest"], home=home)
+
+        assert synced.returncode != 0, synced.stdout
+        out = synced.stdout + synced.stderr
+        assert "--otto 'latest' is not a version or a version specifier" in out, out
+        assert not home.exists() or not any(home.rglob("env"))

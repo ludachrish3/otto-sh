@@ -5,13 +5,16 @@ and ``uv_bin``/``uv_version`` are counting stubs, so the recorded argvs are
 exactly the calls the operation would make to uv.
 """
 
+import dataclasses
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from otto.env import backends, manage
 from otto.env.backends import UvNotFoundError
+from otto.env.backends import venv_python as manage_backends_venv_python
 from otto.env.manage import (
     EnvSelfRebuildError,
     EnvUninstallableProjectError,
@@ -86,7 +89,7 @@ def acquired(monkeypatch, exec_seam, env, project):
     monkeypatch.setattr(backends, "uv_version", stubs.uv_version)
     monkeypatch.setattr(manage, "env_path", lambda: env)
     monkeypatch.setattr(manage, "_discovered_projects", lambda: [project])
-    monkeypatch.setattr(manage, "_otto_target", lambda: ["otto-sh==0"])
+    monkeypatch.setattr(manage, "_otto_target", lambda otto=None: ["otto-sh==0"])
 
     def _venv_makes_the_env(argv):
         if argv[1] == "venv":
@@ -623,3 +626,198 @@ def test_a_string_dynamic_is_not_substring_matched(acquired, exec_seam, env, mon
     assert static_dependencies(table) == ["beetroot"]
     build = create_env()
     assert build.virtual == ["virt"], "handed to uv, whose message is the diagnosis"
+
+
+_REAL_OTTO_TARGET = manage._otto_target
+"""The real target builder: the ``acquired`` fixture replaces the module's own."""
+
+
+@pytest.mark.parametrize(
+    ("spec", "requirement"),
+    [
+        ("0.19.0", "otto-sh==0.19.0"),
+        (" 0.19.0 ", "otto-sh==0.19.0"),
+        ("0.20.1.dev3", "otto-sh==0.20.1.dev3"),
+        ("==0.19.0", "otto-sh==0.19.0"),
+        (">=0.19,<0.20", "otto-sh>=0.19,<0.20"),
+        (">= 0.19 , < 0.20", "otto-sh>= 0.19 , < 0.20"),
+        ("~=0.19.2", "otto-sh~=0.19.2"),
+        ("==0.19.*", "otto-sh==0.19.*"),
+    ],
+)
+def test_otto_names_a_version_or_a_specifier(spec, requirement):
+    """A bare version means exactly that version; a specifier is used as written."""
+    assert manage._otto_target(spec) == [requirement]
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "",
+        "  ",
+        "latest",
+        "0.19.0 --index-url http://x",
+        "../otto",
+        "--no-deps",
+        "otto-sh==0.19.0",
+        "0.19.0 @ https://example.invalid/otto.whl",
+        # SpecifierSet skips an empty part, so each of these passed it and
+        # reached the installer malformed, after the env was touched.
+        ",",
+        ">=0.19,,<0.20",
+        ">=0.19,",
+        # Arbitrary equality: its operand need not be a version at all.
+        "===0.19.0",
+        "===--no-deps",
+        ">=0.19 ,\n<0.20",
+    ],
+)
+def test_an_otto_that_is_no_version_and_no_specifier_is_refused(spec):
+    with pytest.raises(manage.EnvOttoSpecError, match="not a version or a version specifier"):
+        manage._otto_target(spec)
+
+
+def _create_otto(env, otto):
+    return create_env(otto=otto, passthrough=list(_PASSTHROUGH))
+
+
+def _create_force_otto(env, otto):
+    env.mkdir()
+    return create_env(force=True, otto=otto, passthrough=list(_PASSTHROUGH))
+
+
+def _sync_no_env_otto(env, otto):
+    return sync_env(otto=otto, passthrough=list(_PASSTHROUGH))
+
+
+def _sync_existing_otto(env, otto):
+    env.mkdir()
+    return sync_env(otto=otto, passthrough=list(_PASSTHROUGH))
+
+
+OTTO_OPERATIONS = [
+    pytest.param(_create_otto, id="create"),
+    pytest.param(_create_force_otto, id="create-force"),
+    pytest.param(_sync_no_env_otto, id="sync-no-env"),
+    pytest.param(_sync_existing_otto, id="sync-existing"),
+]
+"""``--otto`` on both verbs: create and sync must treat the same spec the same way."""
+
+
+@pytest.mark.parametrize("operation", OTTO_OPERATIONS)
+def test_otto_installs_the_named_release_not_the_running_otto(
+    acquired, exec_seam, env, monkeypatch, operation
+):
+    """``--otto 0.19.0`` installs ``otto-sh==0.19.0`` as the otto step, on create and on sync.
+
+    The projects' install is unchanged, the operator's passthrough still ends
+    the otto install, and nothing names the running otto.
+    """
+    monkeypatch.setattr(manage, "_otto_target", _REAL_OTTO_TARGET)
+    monkeypatch.setattr(manage, "_env_contents", lambda env: None)
+
+    operation(env, "0.19.0")
+
+    installs = [argv for argv in exec_seam if argv[1:3] == ["pip", "install"]]
+    assert len(installs) == 2
+    otto_step = installs[-1]
+    assert otto_step[-len(_PASSTHROUGH) - 1 :] == ["otto-sh==0.19.0", *_PASSTHROUGH]
+    assert "-e" not in otto_step
+
+
+def test_sync_without_otto_still_installs_the_running_otto(acquired, exec_seam, env, monkeypatch):
+    seen = []
+    monkeypatch.setattr(manage, "_otto_target", lambda otto=None: seen.append(otto) or ["x"])
+    sync_env(passthrough=[])
+    assert seen == [None]
+
+
+@pytest.mark.parametrize("operation", OTTO_OPERATIONS)
+def test_a_malformed_otto_is_refused_before_anything_changes(
+    acquired, exec_seam, env, monkeypatch, operation
+):
+    """Refused before uv is acquired, so ``create --force`` leaves the old env standing."""
+    monkeypatch.setattr(manage, "_otto_target", _REAL_OTTO_TARGET)
+    with pytest.raises(manage.EnvOttoSpecError):
+        operation(env, "latest")
+    assert exec_seam == []
+    assert acquired.bin_calls == 0
+    assert not env.exists() or not any(env.iterdir())
+
+
+@pytest.mark.parametrize("operation", OTTO_OPERATIONS)
+def test_the_record_names_the_otto_the_installer_chose(
+    acquired, env, monkeypatch, tmp_path, operation
+):
+    """With ``--otto`` the env is asked which otto it holds: a specifier is not a version."""
+    monkeypatch.setattr(manage, "_otto_target", _REAL_OTTO_TARGET)
+    contents = dataclasses.replace(_contents(tmp_path), otto_version="0.19.4")
+    monkeypatch.setattr(manage, "_env_contents", lambda env: contents)
+
+    build = operation(env, ">=0.19,<0.20")
+
+    assert build.meta.otto_version == "0.19.4"
+    assert manage.read_meta(env).otto_version == "0.19.4"
+
+
+def test_without_otto_the_record_names_the_running_otto_and_the_env_is_not_asked(
+    acquired, env, monkeypatch
+):
+    def never(env):
+        raise AssertionError("the env was probed for a sync that named no otto")
+
+    monkeypatch.setattr(manage, "_env_contents", never)
+    build = sync_env(passthrough=[])
+    assert build.meta.otto_version == manage.get_version()
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [None, "no-otto"],
+    ids=["the-probe-fails", "the-env-holds-no-otto"],
+)
+def test_an_env_that_cannot_say_which_otto_it_holds_is_recorded_as_unknown(
+    acquired, env, monkeypatch, caplog, tmp_path, contents
+):
+    """The running otto is NOT what ``--otto`` installed, so the record never names it."""
+    monkeypatch.setattr(manage, "_otto_target", _REAL_OTTO_TARGET)
+    answer = None if contents is None else _contents(tmp_path)
+    monkeypatch.setattr(manage, "_env_contents", lambda env: answer)
+    with caplog.at_level("WARNING", logger="otto.env.manage"):
+        build = sync_env(otto="0.19.0", passthrough=[])
+    assert build.meta.otto_version == manage.UNKNOWN_OTTO == "unknown"
+    assert manage.read_meta(env).otto_version == "unknown"
+    assert "could not ask the environment which otto it now holds" in caplog.text
+
+
+def test_the_probe_runs_isolated_so_the_env_answers_for_itself(monkeypatch, tmp_path):
+    """``-I`` keeps the working directory and PYTHONPATH off the probe's ``sys.path``.
+
+    Without it a distribution visible there, another otto's dist-info for
+    one, is reported as the env's own and recorded as the otto installed.
+    """
+    env = tmp_path / "env"
+    python = manage_backends_venv_python(env)
+    python.parent.mkdir(parents=True)
+    python.write_text("")
+    seen = []
+
+    def run(argv, **kwargs):
+        seen.append(list(argv))
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(manage.subprocess, "run", run)
+    assert manage._env_contents(env) is None
+    assert seen == [[str(python), "-I", "-c", manage._PROBE_ENV]]
+
+
+def test_the_probe_reports_the_envs_otto_version(tmp_path):
+    """The probe script itself, run by this interpreter: it holds otto, so it names a version."""
+    import json
+    import subprocess
+    from importlib import metadata
+
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", manage._PROBE_ENV], capture_output=True, text=True, check=True
+    )
+    assert json.loads(out.stdout)["otto"] == metadata.version("otto-sh")

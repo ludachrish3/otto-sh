@@ -31,6 +31,17 @@ env_app = typer.Typer(
     help="Create and maintain this workspace's orchestration environment.",
 )
 
+_OTTO = Annotated[
+    str | None,
+    typer.Option(
+        "--otto",
+        metavar="VERSION",
+        help=(
+            "Install this otto release into the environment, not the otto that is "
+            "running: a version (0.19.0) or a specifier ('>=0.19,<0.20')."
+        ),
+    ),
+]
 _INSTALLER_ARGS = Annotated[
     list[str] | None,
     typer.Argument(help="After `--`, arguments passed verbatim to uv."),
@@ -38,7 +49,7 @@ _INSTALLER_ARGS = Annotated[
 
 
 def _last_sync(meta: "EnvMeta") -> str:
-    """Return the line naming the otto and the uv the last create/sync ran."""
+    """Return the line naming the otto the last create/sync installed and the uv it ran."""
     return f"  last sync:   otto {meta.otto_version}, uv {meta.uv_version}"
 
 
@@ -62,21 +73,25 @@ def create(
     force: Annotated[
         bool, typer.Option("--force", help="Remove an existing environment and rebuild it.")
     ] = False,
+    otto: _OTTO = None,
     installer_args: _INSTALLER_ARGS = None,
 ) -> None:
     """Build this workspace's orchestration environment from scratch."""
     from ..env.manage import create_env
 
-    build = create_env(force=force, passthrough=list(installer_args or []))
+    build = create_env(force=force, otto=otto, passthrough=list(installer_args or []))
     _report(build, verb="created")
 
 
 @env_app.command("sync")
-def sync(installer_args: _INSTALLER_ARGS = None) -> None:
+def sync(
+    otto: _OTTO = None,
+    installer_args: _INSTALLER_ARGS = None,
+) -> None:
     """Bring this workspace's orchestration environment up to date."""
     from ..env.manage import sync_env
 
-    build = sync_env(passthrough=list(installer_args or []))
+    build = sync_env(otto=otto, passthrough=list(installer_args or []))
     _report(build, verb="synced")
 
 

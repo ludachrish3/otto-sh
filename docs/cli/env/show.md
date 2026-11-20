@@ -25,9 +25,9 @@ environment: ~/.otto/134b91c0-project1-project4/env
 | `installed` | Whether that distribution is actually present in the environment. A {ref}`virtual project <env-what-goes-in>` has no distribution, so it reads `deps met` or `deps missing` instead |
 | `state` | `current`, `stale`, or why the project is skipped (see {ref}`env-what-goes-in`) |
 
-The `last sync:` line names the otto and the
-{ref}`uv otto runs <which-uv-runs-what>` as of the last successful
-{doc}`create` or {doc}`sync`; the `installed` column is checked live.
+The `last sync:` line names the otto that the last successful {doc}`create`
+or {doc}`sync` installed and the {ref}`uv otto runs <which-uv-runs-what>` it
+ran; the `installed` column is checked live.
 
 ## It never fails on a broken environment
 
