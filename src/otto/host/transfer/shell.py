@@ -65,6 +65,7 @@ import asyncio
 import base64
 import binascii
 import contextlib
+import functools
 import hashlib
 import logging
 import shlex
@@ -1086,7 +1087,11 @@ class UuencodeCodec(ShellCodec):
         exec_cmd: "Callable[..., Coroutine[Any, Any, CommandResult]]", quoted_scratch: str
     ) -> None:
         """Best-effort removal of the device-side scratch after a failed chunk."""
-        result = await exec_cmd(f"rm -f -- {quoted_scratch}")
+        try:
+            result = await exec_cmd(f"rm -f -- {quoted_scratch}")
+        except _RemoteStepError as e:
+            _logger.debug(f"sweep of uu scratch {quoted_scratch} failed (ignored): {e}")
+            return
         if not result.is_ok:
             _logger.debug(
                 f"sweep of uu scratch {quoted_scratch} failed (ignored): "
@@ -1122,6 +1127,14 @@ class UuencodeCodec(ShellCodec):
                 return ChunkLoopOutcome(k, f"chunk {k} was not a valid uuencode frame: {e}")
             loop.on_received(decoded)
         return ChunkLoopOutcome(num_chunks)
+
+
+class _RemoteStepError(Exception):
+    """A remote step's transport failed; see :meth:`ShellFileTransfer._remote_exec`.
+
+    Deliberately NOT an ``OSError``, so the local-I/O ``except OSError`` in
+    ``_put_one`` / ``_get_one`` cannot claim it.
+    """
 
 
 @final
@@ -1479,6 +1492,25 @@ class ShellFileTransfer(UnixFileTransfer):
     # Shell put
     # ------------------------------------------------------------------
 
+    async def _remote_exec(self, cmd: str, *, step: str, **kwargs: Any) -> CommandResult:
+        """Run *cmd* on the device; a transport ``OSError`` becomes :exc:`_RemoteStepError`.
+
+        *step* names what the command was doing, in the words the module's
+        exit-code messages use for it (``moving <temp> to <dst>``), so the
+        failure reads ``<step> failed: <transport text>``.
+
+        THE ONE PLACE a remote step's failure is told apart from a local
+        file's. Transport errors (``ConnectionError``, a session that never
+        became ready) are ``OSError`` subclasses, exactly like the local
+        read/write errors :meth:`_put_one` and :meth:`_get_one` catch as
+        ``could not read local file`` / ``local write failed``; routing every
+        remote call through here keeps those labels for the local disk alone.
+        """
+        try:
+            return await self._exec_cmd(cmd, **kwargs)
+        except OSError as e:
+            raise _RemoteStepError(f"{step} failed: {str(e) or repr(e)}") from e
+
     async def _put_one(
         self,
         src: Path,
@@ -1578,7 +1610,9 @@ class ShellFileTransfer(UnixFileTransfer):
 
             outcome = await codec.send_chunks(
                 PutChunkLoop(
-                    exec_cmd=self._exec_cmd,
+                    exec_cmd=functools.partial(
+                        self._remote_exec, step=f"writing a chunk to {temp}"
+                    ),
                     src=src,
                     temp=temp,
                     quoted_temp=quoted_temp,
@@ -1591,7 +1625,9 @@ class ShellFileTransfer(UnixFileTransfer):
                 return Result(status=Status.Error, msg=f"{src}: {outcome.error}")
 
             if outcome.chunks == 0:
-                create_result = await self._exec_cmd(f": > {quoted_temp}")
+                create_result = await self._remote_exec(
+                    f": > {quoted_temp}", step=f"creating empty temp {temp}"
+                )
                 if not create_result.is_ok:
                     await self._cleanup_temp(quoted_temp)
                     return Result(
@@ -1618,7 +1654,9 @@ class ShellFileTransfer(UnixFileTransfer):
                     status=Status.Error, msg=f"{src}: integrity check failed -- {mismatch}"
                 )
 
-            mv_result = await self._exec_cmd(f"mv -- {quoted_temp} {path_operand(dst)}")
+            mv_result = await self._remote_exec(
+                f"mv -- {quoted_temp} {path_operand(dst)}", step=f"moving {temp} to {dst}"
+            )
             if not mv_result.is_ok:
                 await self._cleanup_temp(quoted_temp)
                 return Result(
@@ -1631,6 +1669,9 @@ class ShellFileTransfer(UnixFileTransfer):
         except asyncio.CancelledError:
             await self._cleanup_temp_interrupted(quoted_temp)
             raise
+        except _RemoteStepError as e:
+            await self._cleanup_temp(quoted_temp)
+            return Result(status=Status.Error, msg=f"{src}: {e}")
         except OSError as e:
             await self._cleanup_temp(quoted_temp)
             return Result(status=Status.Error, msg=f"{src}: could not read local file: {e}")
@@ -1645,7 +1686,13 @@ class ShellFileTransfer(UnixFileTransfer):
         doesn't already cover. ``rm -f`` so a temp that was never created
         (the very first chunk failed) is not itself an error.
         """
-        result = await self._exec_cmd(f"rm -f -- {quoted_temp}")
+        try:
+            result = await self._remote_exec(
+                f"rm -f -- {quoted_temp}", step="removing the staged temp"
+            )
+        except _RemoteStepError as e:
+            _logger.debug(f"{self._name}: cleanup of {quoted_temp} failed (ignored): {e}")
+            return
         if not result.is_ok:
             _logger.debug(
                 f"{self._name}: cleanup of {quoted_temp} failed (ignored): "
@@ -1887,7 +1934,9 @@ class ShellFileTransfer(UnixFileTransfer):
 
                 outcome = await codec.fetch_chunks(
                     GetChunkLoop(
-                        exec_cmd=self._exec_cmd,
+                        exec_cmd=functools.partial(
+                            self._remote_exec, step=f"reading a chunk of {src}"
+                        ),
                         src=src,
                         total=total,
                         on_received=_received,
@@ -1924,6 +1973,9 @@ class ShellFileTransfer(UnixFileTransfer):
         except asyncio.CancelledError:
             self._cleanup_local_temp(temp)
             raise
+        except _RemoteStepError as e:
+            self._cleanup_local_temp(temp)
+            return Result(status=Status.Error, msg=f"{src}: {e}")
         except OSError as e:
             self._cleanup_local_temp(temp)
             return Result(status=Status.Error, msg=f"{src}: local write failed: {e}")
@@ -1984,7 +2036,9 @@ class ShellFileTransfer(UnixFileTransfer):
         """
         quoted = path_operand(remote_path)
         if checksum == "md5sum":
-            result = await self._exec_cmd(f"md5sum -- {quoted}")
+            result = await self._remote_exec(
+                f"md5sum -- {quoted}", step="md5sum verification command"
+            )
             if not result.is_ok:
                 return (
                     f"md5sum verification command failed (exit {result.retcode}): "
@@ -2056,7 +2110,7 @@ class ShellFileTransfer(UnixFileTransfer):
         """
         quoted_src = path_operand(src)
         cmd = f"stat -c %s -- {quoted_src}" if stat_size == "stat" else f"wc -c < {quoted_src}"
-        result = await self._exec_cmd(cmd)
+        result = await self._remote_exec(cmd, step=f"the size probe of {src}")
         if not result.is_ok:
             return None
         try:
