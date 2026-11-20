@@ -204,6 +204,12 @@ entry, an element, a cred, and each registered host type.  See
 
 ## kmodcov
 
+This area is optional. A project needs it only when it measures a kernel
+module with `coverage = "module"`, the method for a host whose kernel cannot provide a
+gcov tree in debugfs (`/sys/kernel/debug/gcov`); a `kmod` product with no coverage, or with
+`coverage = "kernel"`, needs none of it
+([Choosing a method](cov/instrumenting/kernel-modules.md#choosing-a-method)).
+
 `otto init --kmodcov` vendors the `otto_kmodcov` kernel-module coverage library
 into the project (`--kmodcov-dir`, default `third_party/otto_kmodcov`) and writes
 a consumer starter beside it — two sentinel translation units

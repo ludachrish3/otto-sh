@@ -223,18 +223,33 @@ Every run in the report carries its product: the runs page lists them as
 from, and one of them can be pinned to narrow every page to its runs.
 {doc}`../cli/cov/report` is the full report tour, pinning included.
 
+(coverage-kernel-module)=
 ## A kernel module
 
 A Linux kernel module is a product too, declared with `kind = "kmod"`
-instead of `kind = "shell"` — but a module has no process to write
-`GCOV_PREFIX` counters on exit, so a companion runtime, `otto_kmodcov`
-(`src/otto/kmodcov/`), does that job instead. A product links against it
-and declares `coverage = "module"`:
+instead of `kind = "shell"`. The product entry is all otto needs to load,
+unload and test the module; coverage for it is a separate, optional choice,
+made by the entry's `coverage` field: `"none"` (the default), `"kernel"` or
+`"module"`
+([Choosing a method](../cli/cov/instrumenting/kernel-modules.md#choosing-a-method)).
+
+A module has no process to write `GCOV_PREFIX` counters on exit, so
+something in the kernel has to keep them. Where the kernel has its own gcov,
+it does. Where it does not, `otto_kmodcov` does that job for your module
+alone: it is an optional convenience that makes coverage work on any kernel,
+needed only when the kernel cannot provide a gcov tree in debugfs
+(`/sys/kernel/debug/gcov`), which is what `coverage = "module"` is for. The example below uses it:
 
 ```{literalinclude} ../examples/quickstart-kmod/.otto/settings.toml
 :language: toml
-:start-after: "# doc: begin declare"
-:end-before: "# doc: end declare"
+:start-after: "# doc: begin product"
+:end-before: "# doc: end product"
+```
+
+```{literalinclude} ../examples/quickstart-kmod/.otto/settings.toml
+:language: toml
+:start-after: "# doc: begin library"
+:end-before: "# doc: end library"
 ```
 
 The library, `otto_kmodcov`, is not a product — nothing measures it — but a
@@ -251,9 +266,9 @@ other product's.
 
 Which of a module's lines a run can count — its init and exit routines
 especially — is on {ref}`kmod-init-coverage`.
-{doc}`../cli/cov/instrumenting/kernel-modules` has the rest: what a module
-lacks, instrumenting a module of your own, and the alternative
-`coverage = "kernel"` method. {doc}`tracks/kmod` builds one module from start to
+{doc}`../cli/cov/instrumenting/kernel-modules` has the rest: choosing a
+method, the `coverage = "kernel"` method, and instrumenting a module of your
+own for `otto_kmodcov`. {doc}`tracks/kmod` builds one module from start to
 finish.
 
 ## A Zephyr extension

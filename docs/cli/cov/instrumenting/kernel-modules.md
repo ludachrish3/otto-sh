@@ -1,15 +1,103 @@
-# Kernel-module products
+# Kernel-module coverage
 
 A `kind = "kmod"` product is a Linux kernel module, loaded and unloaded with
-`insmod`/`rmmod` instead of staged and run. Its coverage story is different
-from every other kind on this page's siblings, because a kernel module has
-no libc, no process exit, and — on most distribution kernels — no gcov
-runtime to hand counters to in the first place.
+`insmod`/`rmmod` instead of staged and run. Declaring one and managing it with
+otto needs nothing on this page: the product entry alone is enough, and it is
+documented under [The `kmod` kind](../../../configuration/declared-products-tools.md#the-kmod-kind).
 
-The `.ko` still crosses to the host before the `insmod`, and where it lands
-is the entry's `stage_dir` — one field, one rule, on every kind that places
-a file: see {doc}`../../../configuration/declared-products-tools`. The staged
-copy is removed once the module is resident.
+This page is for when you also want to **measure** the module. Coverage is
+optional, and there are two ways to collect it: the `kernel` method and the
+`module` method. Only the `module` method uses `otto_kmodcov`, the library
+most of this page describes.
+
+## Choosing a method
+
+The product's `coverage` field names the method:
+
+| `coverage` | When to use it | What you build and declare |
+|---|---|---|
+| `"none"` (the default) | you do not measure the module | nothing beyond the product entry |
+| `"kernel"` | the host's kernel has its own gcov: it was built with `CONFIG_GCOV_KERNEL` and has debugfs mounted, as development and debug kernels often are | the module compiled with the kernel's gcov profiling, and the product's `gcov_path`. No `otto_kmodcov` ([The `kernel` method](#the-kernel-method)) |
+| `"module"` | the host's kernel has no gcov of its own, which is most production and distribution kernels | `otto_kmodcov` built for that kernel and declared as a dev tool, and the module instrumented for it ([The `module` method](#the-module-method-otto_kmodcov)) |
+
+`otto_kmodcov` is a convenience: otto ships it so that a module can be
+measured on any kernel, including one you cannot rebuild. When the kernel
+already has gcov, prefer the `kernel` method and skip the library entirely.
+To check a host, look for the tree the kernel's gcov creates:
+
+```bash
+otto host <id> exec --sudo 'sh -c "test -d /sys/kernel/debug/gcov && echo kernel-gcov || echo no-kernel-gcov"'
+```
+
+It prints `kernel-gcov` when the tree is there. `no-kernel-gcov` has two
+causes: the kernel was built without `CONFIG_GCOV_KERNEL`, which calls for the
+`module` method, or it was built with it and debugfs is not mounted, in which
+case mount it (`mount -t debugfs none /sys/kernel/debug`) and use the `kernel`
+method.
+
+One rule holds for both methods: a module's init routine counts only when the
+module is loaded after the counters are reset, and its exit routine only when
+the module is unloaded before they are fetched. {ref}`kmod-init-coverage` and
+[what the report shows](#what-the-report-shows) explain it in the `module`
+method's terms.
+
+The `.ko` crosses to the host before the `insmod` whatever the method, and
+where it lands is the entry's `stage_dir` — one field, one rule, on every kind
+that places a file: see {doc}`../../../configuration/declared-products-tools`.
+The staged copy is removed once the module is resident.
+
+## The `kernel` method
+
+When the kernel itself has `CONFIG_GCOV_KERNEL`, the kernel maintains
+counters for every compiled-in and loaded object that was built with
+profiling, under its own `/sys/kernel/debug/gcov/` tree, keyed by the absolute
+path the object was built at. There is no library to build, no sentinel
+files and no macros in the module's source. Compile the module with the
+kernel's own profiling switch, `GCOV_PROFILE := y` in the module's `Kbuild`
+(the kernel's gcov documentation, `Documentation/dev-tools/gcov.rst`, covers
+it), and declare the product with `coverage = "kernel"` and its `gcov_path`:
+
+```toml
+[[products]]
+name = "mymod"
+kind = "kmod"
+artifact = "module/mymod.ko"
+coverage = "kernel"
+# The module's build directory, under the kernel's gcov tree.
+gcov_path = "/sys/kernel/debug/gcov/home/me/project/module"
+match = { id = "dut" }
+```
+
+`gcov_path` is `/sys/kernel/debug/gcov` followed by the absolute path of the
+directory the module was built in, on the machine that built it: a module
+built in `/home/me/project/module` has its counters under
+`/sys/kernel/debug/gcov/home/me/project/module`. It points the product at its
+own subtree of that tree, and otto
+copies the `.gcda` entries under it into `cov_dir` — debugfs entries report
+size 0, so `scp` cannot fetch them directly, and this copy is the materialize
+step. Resetting writes each entry under `gcov_path` individually, never the
+tree's own global reset, which would zero every other loaded module's counters
+along with this one's. See
+{doc}`../../../configuration/declared-products-tools` for the parameter
+table.
+
+## The `module` method: `otto_kmodcov`
+
+```{admonition} Optional
+:class: note
+
+`otto_kmodcov` is optional. You need it only when you want coverage for a
+module **and** the host's kernel cannot provide a gcov tree in debugfs
+(`/sys/kernel/debug/gcov`). A module with no coverage, or on a kernel that has
+that tree, needs none of it.
+```
+
+Use this method when the host's kernel has no gcov of its own. Everything from
+here to [Declaring the module and its library](#declaring-the-module-and-its-library)
+is about this method only: what the library is, how to get and build it, and
+how to instrument a module for it. The
+{doc}`kernel-module track <../../../setup/tracks/kmod>` walks the same steps
+on an example.
 
 ## What a module lacks
 
@@ -409,16 +497,26 @@ lies about its APIs, or to replace an untested arm that misbehaves:
 
 ## Declaring the module and its library
 
-The two live in different seams. The library is a `[[dev_tools]]` entry of
-kind `kmodcov` — project tooling nothing measures, one entry per kernel, pointed
-at the hosts running it by its `match` table — and the consumer is an
-ordinary `kmod` product with `coverage = "module"`:
+The two live in different seams. The consumer is an ordinary `kmod` product
+with `coverage = "module"`:
 
 ```{literalinclude} ../../../examples/quickstart-kmod/.otto/settings.toml
 :language: toml
 :caption: .otto/settings.toml
-:start-after: "# doc: begin declare"
-:end-before: "# doc: end declare"
+:start-after: "# doc: begin product"
+:end-before: "# doc: end product"
+```
+
+The library is a `[[dev_tools]]` entry of kind `kmodcov` — project tooling
+nothing measures, one entry per kernel, pointed at the hosts running it by its
+`match` table. A project declares it only when one of its modules sets
+`coverage = "module"`:
+
+```{literalinclude} ../../../examples/quickstart-kmod/.otto/settings.toml
+:language: toml
+:caption: .otto/settings.toml
+:start-after: "# doc: begin library"
+:end-before: "# doc: end library"
 ```
 
 otto loads the library on demand, at the consumer's own `install`, when it
@@ -487,21 +585,6 @@ the load and collected after the unload:
   --cov`'s post-run fetch — a test class's teardown does
   ({ref}`kmod-teardown-ensure`) — and the exit dump `KMODCOV_EXIT()` writes
   is what the fetch collects.
-
-## The `kernel` method
-
-When the kernel itself has `CONFIG_GCOV_KERNEL`, none of the above is
-needed: the kernel maintains counters for every compiled-in and loaded
-object under its own `/sys/kernel/debug/gcov/` tree, keyed by the absolute
-path the module was built at. `coverage = "kernel"` points a product at its
-own subtree of that tree (`gcov_path`) instead of loading `otto_kmodcov`, and
-otto copies the `.gcda` entries under it into `cov_dir` — debugfs entries
-report size 0, so `scp` cannot fetch them directly, and this copy is the
-materialize step. Resetting writes each entry under `gcov_path`
-individually, never the tree's own global reset, which would zero every
-other loaded module's counters along with this one's. See
-{doc}`../../../configuration/declared-products-tools` for the parameter
-table.
 
 ## What the report shows
 

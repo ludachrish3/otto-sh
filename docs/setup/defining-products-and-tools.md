@@ -89,6 +89,28 @@ data gets custom behaviour. Products that must be computed — one per version,
 one per run variant — are providers, in
 {doc}`../extend/product-providers`.
 
+### A kernel module
+
+A Linux kernel module is a product of `kind = "kmod"`. It needs no command
+strings, because otto knows the verbs: `insmod` to install, `rmmod` to
+uninstall, and the loaded-module list to check. The entry is the artifact and
+its hosts:
+
+```toml
+[[products]]
+name = "mymod"
+kind = "kmod"
+artifact = "module/mymod.ko"
+match = { id = "dut" }
+```
+
+That is all it takes for otto to manage the module and for tests to run
+against it. Measuring the module's coverage is a separate, optional step
+({ref}`coverage-kernel-module`); the `otto_kmodcov` library you may see
+mentioned there is one way to collect coverage, and a module you do not
+measure never needs it. {doc}`tracks/kmod` builds one module from start to
+finish.
+
 ## A dev tool
 
 A dev tool has the product's shape and a different lifecycle. Declare it the

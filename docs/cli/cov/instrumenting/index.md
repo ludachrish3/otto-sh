@@ -17,8 +17,9 @@ otto routes them through `llvm-cov` instead. Embedded RTOS targets have no
 filesystem otto can fetch `.gcda` files from, so their coverage rides the
 serial console via an instrumented LLEXT extension — a different pipeline,
 not just different flags. A kernel module has no process to flush counters
-at exit, so a companion runtime dumps them from inside the kernel instead —
-see {doc}`kernel-modules`. A container image run as a product has no
+at exit, so they are kept inside the kernel: by the kernel's own gcov where it
+has one, or by `otto_kmodcov`, a helper module otto ships for kernels that do
+not — see {doc}`kernel-modules`. A container image run as a product has no
 coverage pipeline of its own — whatever compiled it (GCC, clang) still
 applies inside — but getting its counters out from behind the docker
 daemon is its own story: see {doc}`containers`.
