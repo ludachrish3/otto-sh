@@ -419,6 +419,18 @@ def reap(cell: Cell, pid: int, *, full: bool = False, restart_qemu: bool = False
     if refusal is not None:
         _say(refusal)
         return EXIT_DIRTY
+    clean = False
+    try:
+        clean = _reap_held(cell, full=full, restart_qemu=restart_qemu)
+    finally:
+        # On the record, so a release keeps the lease after a failed reap even
+        # when the reap ran in a nested lane (an escaped exception counts).
+        bed_lease.record_reap(cell, clean=clean)
+    return 0 if clean else EXIT_DIRTY
+
+
+def _reap_held(cell: Cell, *, full: bool, restart_qemu: bool) -> bool:
+    """Reap *cell* under the lease the caller holds; print what was done; whether it is clean."""
     lab = bed_lease.load_labs(cell.lab_file, cell.labs)
     out = Outcome()
     hosts = _await_hopped_guests(cell.lab_file, unix_bed_hosts(lab, cell.lab_file), out)
@@ -445,8 +457,7 @@ def reap(cell: Cell, pid: int, *, full: bool = False, restart_qemu: bool = False
             print(_hygiene().format_residual_report(host, leftovers), flush=True)
     if out.clean:
         _say("clean")
-        return 0
-    return EXIT_DIRTY
+    return out.clean
 
 
 def _parser() -> argparse.ArgumentParser:

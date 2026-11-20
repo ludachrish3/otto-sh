@@ -254,7 +254,9 @@ def test_make_coverage_is_stamped_at_its_start_and_its_end():
     assert legs[0] == "$(call bed_acquire,coverage-python)", legs[0]
     assert legs[-1] == "$(call bed_release)", legs[-1]
     assert legs[1] == legs[-2] == "$(call bed_reap)", legs
-    legs = legs[2:-2]  # inside the lease and the reap (test_lane_invariants pins those lines)
+    legs = [
+        leg.removesuffix(" $(call bed_fail)") for leg in legs[2:-2]
+    ]  # inside the lease and the reap (test_lane_invariants pins those lines)
     marks = [line for line in legs if "$(COVERAGE_STAMP) mark" in line]
     assert marks == [
         "@$(COVERAGE_STAMP) mark dashboard",
@@ -1163,7 +1165,8 @@ def test_the_verify_lanes_call_the_verify_macro_after_the_lane_and_exit_on_it(
     joined = " ".join(recipe)
     assert f"$(call verify_matrix,{matrix},{module},{candidate})" in joined
     assert joined.index("lane=$$?") < joined.index("$(call verify_matrix")
-    assert joined.index("exit $$lane") < joined.index("exit $$verify")
+    assert joined.index("rc=$$lane") < joined.index("rc=$$verify")
+    assert joined.index("rc=$$verify") < joined.index("( exit $$rc ) $(call bed_fail)")
     assert "$(MAKE)" not in joined
     assert "schemas/" not in joined.replace(matrix, "")
 

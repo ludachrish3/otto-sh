@@ -1753,6 +1753,9 @@ def make_reachable(start: str, text: str) -> "list[str]":
     return seen
 
 
+_BED_FAIL = re.compile(r"\s*\$\(call bed_fail[^)]*\)")
+
+
 def nox_sessions_run_by(
     lines: "list[str]", assignments: "dict[str, str]"
 ) -> "list[tuple[str, str | None]]":
@@ -1761,7 +1764,8 @@ def nox_sessions_run_by(
     A python of None means the session's own default interpreter.
     """
     found: "list[tuple[str, str | None]]" = []
-    for line in lines:
+    for raw in lines:
+        line = _BED_FAIL.sub("", raw)  # the release-on-failure tail is not part of the command
         matches = list(_NOX_SESSIONS.finditer(line))
         # `$(MAKE) nox` names a make GOAL, not the program; strip those first.
         assert matches or not _NOX_WORD.search(_MAKE_CALL.sub("", line)), (
@@ -2628,7 +2632,7 @@ HOSTLESS_TARGETS = [
 Every Makefile target is in exactly one of the four lists (a test below), so a new
 target must be classified before it exists: an unclassified one fails the census.
 """
-QUICK_CLASSIFIER = " --unless-all-under tests/unit -- $(PATHS)"
+QUICK_CLASSIFIER = " $(QUICK_BED)"
 """`make quick` leases only when PATHS names a bed tree: the script's one classifier."""
 
 
@@ -2646,6 +2650,88 @@ def test_every_bed_target_takes_the_lease_first_and_releases_it_last(target: str
     assert lines[0] == f"$(call bed_acquire,{target})", (target, lines[0])
     assert lines[-1] == "$(call bed_release)", (target, lines[-1])
     assert len(lines) > 2, f"{target} leases nothing: only the lease lines are left"
+
+
+def _bed_targets_in_the_makefile() -> "list[str]":
+    """Every target whose recipe takes the lease, found in the Makefile, not named by hand."""
+    names = re.findall(r"^([A-Za-z0-9_.-]+)\s*:", _MAKEFILE_TEXT, flags=re.MULTILINE)
+    return sorted({n for n in names if any("call bed_acquire" in x for x in _bed_lines(n))})
+
+
+def _logical_steps(target: str) -> "list[str]":
+    """The live recipe of *target* as the shell sees it: continuation lines joined."""
+    steps: "list[str]" = []
+    joining = False
+    for raw in makefile_live_recipe(_MAKEFILE_TEXT, target):
+        piece = raw.strip()
+        if joining:
+            steps[-1] = steps[-1].removesuffix("\\").rstrip() + " " + piece
+        else:
+            steps.append(piece)
+        joining = piece.endswith("\\")
+    return steps
+
+
+def test_the_bed_target_census_found_the_lists_targets() -> None:
+    found = set(_bed_targets_in_the_makefile())
+    listed = {*BED_TARGETS_DIRECT, *BED_TARGETS_AGGREGATORS, "quick", "bed-reap"}
+    assert found == listed, sorted(found ^ listed)
+
+
+@pytest.mark.parametrize("target", _bed_targets_in_the_makefile())
+def test_a_failing_step_releases_the_lease_before_the_recipe_ends(target: str) -> None:
+    """#1011: make stops a recipe at its first failing line, so a step between the acquire and
+    the release must end in `$(call bed_fail...)` (capture the status, release, exit with it).
+
+    Three kinds of line are exempt, and the exemption is enforced: the lease macros, a banner
+    and a `-`-prefixed step (which cannot fail the recipe). A reap line is the opposite rule:
+    a failed reap leaves the bed's state unknown, so it KEEPS the lease and carries no
+    `bed_fail`.
+    """
+    steps = _logical_steps(target)
+    unguarded = [
+        s
+        for s in steps[1:-1]
+        if "$(call bed_fail" not in s
+        and not s.startswith(("$(call bed_reap", "@-", "$(call bed_acquire"))
+    ]
+    assert not unguarded, (target, unguarded)
+    reaps = [s for s in steps if s.startswith("$(call bed_reap")]
+    assert not [s for s in reaps if "bed_fail" in s], (target, reaps)
+    # A bare `exit` in a guarded step ends the recipe's shell before the trailing
+    # `bed_fail` can run, so the lease stays with the dead make. A status is
+    # passed on from a subshell, `( exit $$rc )`, which the guard then sees.
+    bare = [s for s in steps[1:-1] if re.search(r"(?<!\( )\bexit \$\$", s)]
+    assert not bare, (target, bare)
+
+
+@pytest.mark.parametrize("target", _bed_targets_in_the_makefile())
+def test_every_bed_target_dry_runs_to_valid_shell(target: str) -> None:
+    """`make -n` prints the recipe; it must parse (a macro that breaks syntax shows here).
+
+    A recipe line that names `$(MAKE)` is RUN even under `-n` (make's rule), so the
+    aggregators are left out: a dry run of them would print the nested lanes' output
+    and run their first lines for real. They end in the same macro as every other lane.
+    """
+    if any("$(MAKE)" in line for line in makefile_live_recipe(_MAKEFILE_TEXT, target)):
+        pytest.skip("a `$(MAKE)` line runs under `make -n`")
+    for extra in (
+        ["PATHS=tests/unit/x"],
+        ["PATHS=tests/integration/x", "RESTART_QEMU=1", "LOGOUT_CONSOLES=1"],
+    ):
+        dry = subprocess.run(
+            ["make", "-n", "--no-print-directory", target, *extra],
+            cwd=CHECKOUT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert dry.returncode == 0, (target, dry.stderr)
+        # recipes join with newlines inside multi-line statements, so parse the whole text
+        parsed = subprocess.run(
+            ["bash", "-n"], input=dry.stdout, capture_output=True, text=True, check=False
+        )
+        assert parsed.returncode == 0, (target, extra, parsed.stderr)
 
 
 @pytest.mark.parametrize("target", REAPED_TARGETS)
@@ -2674,9 +2760,10 @@ def test_quick_leases_and_reaps_only_for_a_bed_path() -> None:
     lines = _bed_lines("quick")
     assert "$(error quick: PATHS is required" in lines[0], lines[0]
     assert lines[1] == f"$(call bed_acquire,quick){QUICK_CLASSIFIER}", lines[1]
-    assert lines[2] == f"$(call bed_reap){QUICK_CLASSIFIER}", lines[2]
-    assert lines[-2] == f"$(call bed_reap){QUICK_CLASSIFIER}", lines[-2]
-    assert lines[-1] == f"$(call bed_release){QUICK_CLASSIFIER}", lines[-1]
+    assert lines[2] == "$(call bed_reap) $(QUICK_BED)", lines[2]
+    assert lines[-2] == "$(call bed_reap) $(QUICK_BED)", lines[-2]
+    assert lines[-1] == "$(call bed_release) $(QUICK_BED)", lines[-1]
+    assert "\nQUICK_BED = --unless-all-under tests/unit -- $(PATHS)\n" in _MAKEFILE_TEXT
 
 
 def test_the_hand_reap_is_the_full_reap_under_the_lease() -> None:
@@ -2698,7 +2785,10 @@ def test_the_lease_macros_are_what_the_recipes_rely_on() -> None:
     assert "\nLAB_FILE := tests/_fixtures/lab_data/tech1/lab.json\n" in text
     assert "\nBED_LEASE := uv run python scripts/bed_lease.py --lab $(LAB_FILE)\n" in text
     assert '\nbed_acquire = @$(BED_LEASE) acquire --pid $$PPID --purpose "$(1)"\n' in text
-    assert "\nbed_release = @$(BED_LEASE) release --pid $$PPID\n" in text
+    assert "\nbed_release = @$(BED_LEASE) release --pid $$PPID $(1)\n" in text
+    assert (
+        "\nbed_fail = || { rc=$$?; $(BED_LEASE) release --pid $$PPID $(1); exit $$rc; }\n" in text
+    )
     assert "\nBED_REAP := uv run python scripts/bed_reap.py --lab $(LAB_FILE)\n" in text
     assert "\nbed_reap = @$(BED_REAP) --pid $$PPID\n" in text
     assert "tests/_fixtures/lab_data/tech1/lab.json" not in text.replace(

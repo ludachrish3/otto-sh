@@ -98,6 +98,11 @@ def extra(tmp_path: Path) -> Path:
         f"\t@setsid $(MAKE) --no-print-directory -f Makefile -f {makefile} inner\n"
         "\t$(call bed_release)\n"
         "\n"
+        "red:\n"
+        "\t$(call bed_acquire,red)\n"
+        "\t@( exit 7 ) $(call bed_fail)\n"
+        "\t$(call bed_release)\n"
+        "\n"
         "inner:\n"
         "\t$(call bed_acquire,inner)\n"
         f"\t@$(BED_LEASE) status > {status}\n"
@@ -148,6 +153,16 @@ def test_a_nested_make_re_enters_the_outer_hold(root, extra, tmp_path):
     assert "for 'outer'" in status, status
     assert status.count("group ") == 2, status
     assert "released by pid" in done.stdout
+    assert "free" in _make(root, "bed-status").stdout
+
+
+@pytest.mark.timeout(300)
+def test_a_failing_step_releases_the_lease_and_keeps_its_status(root, extra):
+    """#1011: a failing step still frees the lease, and the recipe fails with the step's status."""
+    red = _make(root, "red", extra=extra, start_new_session=True)
+    assert red.returncode == 2, red.stdout + red.stderr  # make's own status for a failed recipe
+    assert "Error 7" in red.stderr, red.stderr  # the step's status is the recipe's
+    assert "released by pid" in red.stdout, red.stdout
     assert "free" in _make(root, "bed-status").stdout
 
 
