@@ -41,8 +41,9 @@ Other words these pages use:
 
 From the CLI, `otto host <id> exec` shows the command's output as it runs and
 exits with the command's exit code, or 255 when the command never finished.
-A timed-out command prints no message of its own: you see the output it wrote
-before the budget expired, and the exit code 255
+A timed-out command prints `Command timed out after <N>s` as an error, after
+the output it wrote before the budget expired, and the exit code is
+255
 ({doc}`/cli/host/exec`, {ref}`the host exit codes <host-exit-codes>`). From
 Python, `run` and `exec` hand back a {class}`~otto.result.CommandResult` whose
 fields hold the same answers: `retcode` is the command's own return code,

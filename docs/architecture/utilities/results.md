@@ -360,8 +360,9 @@ the timed-out result on every route: `timed_out` `True`, `status` `Error`,
 `retcode` `-1` and `exit_code` `255`. Where that is checked is on
 {ref}`Command contracts <command-contracts>`. The budget bounds the command,
 not only its output: a command that closes its output and keeps running times
-out too. The `value`'s first line is `Command timed out after <N>s`. When the
-command had printed anything, the next line starts what it had written when
+out too. The `value`'s first line is `Command timed out after <N>s`, and so
+is the `msg`, which the command line prints. When the command had printed
+anything, the next line starts what it had written when
 the budget expired, by the same rule as a finished command's value
 ({ref}`command-output-contract`): one final newline removed and nothing else,
 an unfinished last line included. When it had printed nothing, that first line

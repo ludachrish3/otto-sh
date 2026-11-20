@@ -4325,13 +4325,17 @@ def timed_out_result(
 
     Its ``value`` is ``Command timed out after <timeout>s``, then a newline and
     *output*'s value when the command printed anything before the deadline.
+    Its ``msg`` is that first line alone, so the command line, which prints a
+    failed result's ``msg``, says why the command failed (#1098).
     *route* is ``None`` for a shell session's command, whose route is recorded
     by the caller that chose the session.
     """
     printed = output.value()
+    reason = f"Command timed out after {timeout}s"
     return CommandResult(
         status=Status.Error,
-        value=f"Command timed out after {timeout}s" + (f"\n{printed}" if printed else ""),
+        value=reason + (f"\n{printed}" if printed else ""),
+        msg=reason,
         command=cmd,
         retcode=-1,
         timed_out=True,

@@ -50,6 +50,26 @@ def test_timed_out_result_has_one_shape(chunks: list[str], value: str):
     assert (r.timed_out, r.retcode, r.status, r.route) == (True, -1, Status.Error, "ssh-channel")
 
 
+def test_timed_out_result_says_so_in_its_msg():
+    # #1098: the CLI prints only `msg` for a failed result, so the reason is there too.
+    r = timed_out_result(cmd="c", timeout=5.0, output=ExecOutput(), route=None)
+    assert r.msg == "Command timed out after 5.0s"
+
+
+def test_a_timed_out_result_reaches_the_command_line(capsys):
+    import typer
+
+    from otto.cli.invoke import render_leaf_value
+
+    out = ExecOutput()
+    out.feed("partial\n")
+    r = timed_out_result(cmd="sleep 99", timeout=5.0, output=out, route=ExecRoute.SSH_CHANNEL)
+    with pytest.raises(typer.Exit) as exc:
+        render_leaf_value(r)
+    assert exc.value.exit_code == 255
+    assert "Command timed out after 5.0s" in capsys.readouterr().out
+
+
 @pytest.mark.asyncio
 async def test_the_local_reader_hands_over_an_unfinished_line_on_timeout():
     # Local exec's reader on a pipe that delivered "a\nhalf" and stays open.
