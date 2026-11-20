@@ -630,7 +630,7 @@ def test_a_containers_exec_through_its_parent_contends_safely_on_the_next_loop(c
         await asyncio.sleep(0)  # yield while holding the lock, so the other caller waits on it
         return _ClosableConn()
 
-    async def exec_on(self, conn, cmd, timeout=0.0, log=None):
+    async def exec_on(self, conn, cmd, timeout=0.0, log=None, exec_input=None):
         return CommandResult(
             status=Status.Success, value="", command=cmd, retcode=0, route="ssh-channel"
         )

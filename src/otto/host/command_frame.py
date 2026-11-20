@@ -47,6 +47,7 @@ from typing import Any, ClassVar
 
 from typing_extensions import final, override
 
+from ..logger.mode import ExecLogContext
 from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
 from .errors import RawLandingError
 from .exit_status import subshell_status_of
@@ -188,6 +189,14 @@ class ExecInput:
     (``SessionManager.open_session``); the frame then renders the payload
     under its identity guard (:meth:`CommandFrame.identity_guard`). ``None``
     for every session that carries no mark."""
+
+    exec_log: ExecLogContext | None = None
+    """A delegating host's log context, or ``None`` for a call logged by the host it runs on.
+
+    Set only by ``BaseHost._exec_delegated`` and read only through
+    ``delegated_exec_log``: by every route's log resolver, by the host that
+    logs the line it really runs at DEBUG, and by a container that is a hop
+    of another container's chain, which forwards it unchanged."""
 
 
 @final

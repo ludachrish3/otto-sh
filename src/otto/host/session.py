@@ -113,7 +113,7 @@ import logging
 
 from typing_extensions import final
 
-from ..logger.mode import LogMode
+from ..logger.mode import ExecLogContext, LogMode
 from ..logger.relay import log_lines
 from ..result import CommandNotRunError, CommandResult, NotRunResult, Results
 from ..utils import Status
@@ -380,6 +380,82 @@ def _log_sent(
         log_command(shown(text).rstrip(), mode)
 
 
+def delegated_exec_log(exec_input: "ExecInput | None") -> "ExecLogContext | None":
+    """Return the log context a delegating host handed this ``exec`` call, or ``None``.
+
+    The one read of whether a call is delegated: the route's log resolver
+    (:func:`resolve_exec_log`), the host that logs the line it really runs
+    (``BaseHost._exec_one``) and a container that is a hop of another
+    container's chain all ask it.
+    """
+    return exec_input.exec_log if exec_input is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class ExecLog:
+    """How one exec attempt logs: the context it logs under, and what that context implies."""
+
+    context: "ExecLogContext"
+    """What the attempt announces where, where its lines go, and under which mode.
+
+    The mode is already folded: nothing folds over it again."""
+
+    @property
+    def redact(self) -> bool:
+        """Whether the session's own diagnostics of this attempt are redacted."""
+        return self.context.mode is LogMode.NEVER
+
+    def announce(self) -> None:
+        """Log the command line, unless the mode is NEVER."""
+        if self.context.mode is not LogMode.NEVER:
+            self.context.log_command(self.context.command, self.context.mode)
+
+
+def resolve_exec_log(
+    *,
+    cmd: str,
+    mode: LogMode,
+    log_command: Callable[[str, LogMode], None],
+    log_output: Callable[[str, LogMode], None],
+    exec_input: "ExecInput | None",
+) -> ExecLog:
+    """Return the one answer to how an exec attempt logs: its own route's, or a delegating host's.
+
+    Every exec route (the ssh channel, a shell session, a local subprocess)
+    asks this once per attempt, through :func:`begin_exec_log`, and uses only
+    its answer. *mode* is the
+    route's own fold of the call's mode, and *log_command*/*log_output* its
+    host's sinks; a delegated call (``exec_input.exec_log``) ignores them and
+    logs the issued command and its output on the delegating host under the
+    context's already-resolved mode.
+    """
+    context = delegated_exec_log(exec_input) or ExecLogContext(
+        command=cmd, mode=mode, log_command=log_command, log_output=log_output
+    )
+    return ExecLog(context)
+
+
+def begin_exec_log(
+    cmd: str,
+    mode: LogMode,
+    log_command: Callable[[str, LogMode], None],
+    log_output: Callable[[str, LogMode], None],
+    *,
+    exec_input: "ExecInput | None",
+) -> ExecLog:
+    """Resolve how an exec attempt logs and log its command line: a route's first step.
+
+    The one opening of an attempt's log, so no route resolves without
+    announcing or announces what it did not resolve. The arguments are
+    :func:`resolve_exec_log`'s.
+    """
+    xl = resolve_exec_log(
+        cmd=cmd, mode=mode, log_command=log_command, log_output=log_output, exec_input=exec_input
+    )
+    xl.announce()
+    return xl
+
+
 async def _log_and_run(
     session: "ShellSession",
     log_command: Callable[[str, LogMode], None],
@@ -398,16 +474,16 @@ async def _log_and_run(
     default session (:meth:`SessionManager.run_cmd`, whose caller folded the
     mode) and a named or pooled session (``HostSession._run_one``, which
     folds it). Under NEVER nothing is logged and the session's own debug
-    trace is redacted.
+    trace is redacted. A delegated call (``exec_input.exec_log``) logs as
+    ``resolve_exec_log`` answers instead.
     """
-    if mode is not LogMode.NEVER:
-        log_command(cmd, mode)
+    xl = begin_exec_log(cmd, mode, log_command, log_output, exec_input=exec_input)
     return await session.run_cmd(
         cmd=cmd,
         expects=expects,
         timeout=timeout,
-        on_output=_sink_for(log_output, mode),
-        redact=mode is LogMode.NEVER,
+        on_output=_sink_for(xl.context.log_output, xl.context.mode),
+        redact=xl.redact,
         write_progress=write_progress,
         exec_input=exec_input,
     )
@@ -5214,7 +5290,9 @@ class SessionManager:
             case ExecRoute.SSH_CHANNEL:
                 assert self._connections is not None  # noqa: S101 — internal invariant: only a host with a transport plans the ssh channel
                 ssh_conn = await self._connections.ssh()
-                return await self.exec_on(conn=ssh_conn, cmd=cmd, timeout=timeout, log=log)
+                return await self.exec_on(
+                    conn=ssh_conn, cmd=cmd, timeout=timeout, log=log, exec_input=exec_input
+                )
             case _:
                 term = getattr(self._connections, "term", None)
                 raise ValueError(f'{self._name}: unsupported terminal type "{term}"')
@@ -5243,6 +5321,7 @@ class SessionManager:
         cmd: str,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
+        exec_input: ExecInput | None = None,
     ) -> CommandResult:
         """Run *cmd* on a fresh exec channel of *conn* — the SSH stateless arm.
 
@@ -5253,15 +5332,14 @@ class SessionManager:
         authenticated as that user. Logging, drain, timeout escalation
         (terminate → kill) and status mapping are unchanged.
 
-        This method logs the command itself (unless *log* is
-        :attr:`~otto.logger.mode.LogMode.NEVER`), so :meth:`exec_on_route` must NOT log
-        before dispatching here.
+        This method logs the command itself, through ``resolve_exec_log``
+        (nothing under :attr:`~otto.logger.mode.LogMode.NEVER`; a delegated
+        call's *exec_input* names whose log and which mode), so
+        :meth:`exec_on_route` must NOT log before dispatching here.
         """
         from ._asyncssh import asyncssh
 
-        mode = log
-        if mode is not LogMode.NEVER:
-            self._log_command(cmd, mode)
+        xl = begin_exec_log(cmd, log, self._log_command, self._log_output, exec_input=exec_input)
 
         async def stop_started(
             started: "asyncssh.SSHClientProcess[str]", exc: BaseException
@@ -5293,8 +5371,8 @@ class SessionManager:
                     _channel_chunks(process.stdout),
                     output,
                     lambda: _channel_returncode(process),
-                    self._log_output,
-                    mode,
+                    xl.context.log_output,
+                    xl.context.mode,
                 ),
                 timeout=timeout,
             )

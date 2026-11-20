@@ -29,12 +29,82 @@ owns:
   works" with no special-casing in the docker code path
 
 `exec(cmd)` on a container becomes
-`parent.exec(f"docker exec {ctr} sh -c {shlex.quote(cmd)}")`.
+`parent.exec(f"docker exec -i {ctr} sh -c {shlex.quote(cmd)}")`.
 `login()` opens a PTY-backed `docker exec -it ctr /bin/sh` over the
 parent's SSH conn (we extended `run_ssh_login()` with an optional
 `command=` kwarg). `get`/`put` are two-step: `parent.put` to a per-call
 staging dir under the parent's private staging root
 ({ref}`docker-staging`), then `parent.exec("docker cp ...")`.
+
+(docker-exec-logging)=
+
+### Where a container's exec is logged
+
+A container's `exec` is logged on the container. Its log records carry the
+container as their host and its name, `<parent>:<service>` (the short form
+of its id `<parent>.<usecase>.<service>`), so anything that filters or
+groups log records by host shows them under the container, not under the
+machine that runs docker:
+
+- the command line, as you issued it, at INFO;
+- each line the command prints, at INFO, while the command runs: a long
+  command's first lines are in the log before it ends. When exactly a line
+  is logged is the parent's rule for the way it ran the command, the same
+  as for a command of the parent's own ({ref}`command-output-log`).
+
+The parent host logs one record for the command, at DEBUG: the line it
+really ran, `docker exec -i <container id> sh -c '<your command>'`. It logs
+none of the output. That line appears only with `--log-level DEBUG`, and
+then on the console and in both log files ({doc}`../utilities/logging`).
+The first command otto sends to a container in a run is preceded by a
+lookup of the container's id, `docker ps -q --filter …`; that lookup is the
+parent's own command and is logged on the parent, at INFO.
+
+For `exec("ls /app")` on the service `api` of the host `test3`, at INFO:
+
+```text
+INFO     @test3:api   | ls /app
+INFO     @test3:api > | main.py
+```
+
+and at DEBUG, in addition:
+
+```text
+DEBUG    @test3       | docker exec -i 3f2a9c… sh -c 'ls /app'
+```
+
+**If you filter logs by host,** select the container to see what its
+commands printed. Selecting the parent shows the lookup and, at DEBUG, the
+`docker exec` lines, and none of the commands' output.
+
+**One log mode covers all of it.** The `exec`'s
+{ref}`log mode <log-mode-knob>` is the most restrictive of the container's
+and its parent's (and, for a container whose parent is itself a container,
+every host above it). It applies to the container's records and to the
+parent's DEBUG line alike. So with either host at `NEVER`, nothing of the
+`exec` is logged anywhere: no command, no output, and no DEBUG line on the
+parent. With either at `QUIET`, the command and its output are kept off the
+console and `console.log` and written to `verbose.log` only.
+
+**File transfers are different.** `put` and `get` are steps the container
+runs on its parent, and those steps are logged on the parent: the check
+that the container is running, the staging directory, `docker cp`, the
+clean-up, and the chown and chmod done as root. The exceptions are the
+steps that are themselves an `exec` in the container, which are logged on
+the container like any other `exec`: a chmod for a `put` with a mode when
+the call runs as the image's own user (no `user=` and no `user` declared
+for the container), creating missing directories, and listing a directory.
+
+**A parent of your own class.** The above holds for every host class otto
+ships and for a class derived from one that leaves `exec` as it is. Two
+kinds of parent are called through their own public `exec` instead, and the
+command and its output are then logged as that parent's, with the
+`docker exec` line as the command: a parent object that only imitates a
+host (it has `exec` but is not derived from otto's host base class), and a
+derived class that overrides `exec`. For a container inside a container,
+one such host anywhere above it decides for the whole chain.
+{doc}`../../extend/custom-host-classes` says what a derived class must keep
+doing for the lines to reach the container.
 
 ## Why not docker -H ssh://
 
@@ -315,8 +385,9 @@ base class. `-it` is required for SIGINT semantics: without a TTY,
 interrupt the foreground process. asyncssh's `term_type='dumb'`
 allocates the PTY for free.
 
-`exec()` stays stateless — it keeps the original
-`parent.exec("docker exec ...")` path and remains concurrent-safe.
+`exec()` stays stateless — each call is its own `docker exec` on the
+parent and remains concurrent-safe; where its lines are logged is
+{ref}`docker-exec-logging`.
 
 The container id is resolved lazily at session-open time so that
 hosts pre-registered as placeholders (with `container_id=""`) work

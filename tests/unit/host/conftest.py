@@ -663,8 +663,14 @@ async def unix_host_over_scripted(
     creds: "list[Cred]",
     replies: "dict[str, tuple[str, int]] | None" = None,
     refuses_fd0_dup: bool = False,
+    hang: "frozenset[str]" = frozenset({"c"}),
+    **fields: object,
 ) -> "tuple[UnixHost, list[Any]]":
     """A ``UnixHost`` over *term* whose shell sessions are scripted shells, and those sessions.
+
+    *fields* are further ``UnixHost`` fields (a console term's
+    ``valid_terms`` and ``console_options``). A command in *hang* begins and
+    never completes on its own: the test feeds its completion.
 
     The host is ``test_privilege._host_wired_to``'s, with a resolved userland
     declaring *elevation*; its manager's session factory builds
@@ -679,11 +685,13 @@ async def unix_host_over_scripted(
 
     userland = _declared_userland(elevation)
     await userland.resolve()
-    host = _host_wired_to(userland, creds, term=term)
+    host = _host_wired_to(userland, creds, term=term, **fields)
     sessions: list[Any] = []
 
     def factory(**_kw: object) -> Any:
-        session = scripted_shell_unopened(replies=replies, refuses_fd0_dup=refuses_fd0_dup)
+        session = scripted_shell_unopened(
+            replies=replies, refuses_fd0_dup=refuses_fd0_dup, hang=hang
+        )
         sessions.append(session)
         return session
 

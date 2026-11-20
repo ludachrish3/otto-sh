@@ -22,8 +22,7 @@ INFO     @docker-host   | docker run -d --name quickstart-banner -v
          GCOV_PREFIX=/tmp/quickstart-docker/banner -e GCOV_PREFIX_STRIP=3 quickstart-banner:latest
 INFO     @docker-host:tools   | test -x /opt/quickstart/wordcount
 INFO     @docker-host:tools   | test -x /opt/quickstart/shout
-INFO     @docker-host   | docker exec -i <id> sh -c 'mkdir -p /opt/quickstart'
-INFO     @docker-host > | <id>
+INFO     @docker-host:tools   | mkdir -p /opt/quickstart
 INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
          /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
          %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&
@@ -34,7 +33,7 @@ INFO     @docker-host > | directory 0 1777
 INFO     @docker-host > | directory 1000 700
 INFO     @docker-host   | mkdir -p
          /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>
-INFO     @docker-host   | banner: installed
+INFO     @docker-host > | <id>
 docker-host wordcount ━━━━ 2.3/2.3 MB <rate>
 INFO     @docker-host   | docker cp
          /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>/wordcount
@@ -42,7 +41,8 @@ INFO     @docker-host   | docker cp
 INFO     @docker-host   | rm -rf
          /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>
 INFO     @docker-host:tools   | wordcount: staged
-INFO     @docker-host   | docker exec -i <id> sh -c 'mkdir -p /opt/quickstart'
+INFO     @docker-host:tools   | mkdir -p /opt/quickstart
+INFO     @docker-host   | banner: installed
 INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
          /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
          %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&

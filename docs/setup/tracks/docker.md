@@ -261,8 +261,10 @@ The `docker container inspect` line is the installed check, and the daemon's
 running `docker run` again.
 
 Lines tagged `@docker-host:tools` are the container host's own: its name is
-the parent's id and the service. The `docker exec` and `docker cp` lines that
-carry out its work run on the parent, tagged `@docker-host`. otto works on
+the parent's id and the service. They include each command it runs in the
+container and what the command prints ({ref}`docker-exec-logging`). The
+steps that carry out a file transfer on the parent, `docker cp` among them,
+are tagged `@docker-host`. otto works on
 the parent and the container at once, so their lines interleave differently
 on each run. {ref}`docker-image-kind` documents every
 field of a `docker_image` entry, and

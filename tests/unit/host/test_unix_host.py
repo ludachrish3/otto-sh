@@ -715,7 +715,7 @@ class TestExec:
             seen["user"] = user
             return user_conn
 
-        async def fake_exec_on(conn, cmd, timeout=None, log=None):
+        async def fake_exec_on(conn, cmd, timeout=None, log=None, exec_input=None):
             seen["exec_conn"] = conn
             seen["cmd"] = cmd
             seen["log"] = log

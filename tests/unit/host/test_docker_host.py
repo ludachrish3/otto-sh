@@ -8,8 +8,9 @@ the placeholder ``container_id == ""`` guard.
 from __future__ import annotations
 
 import asyncio
+import logging
 import shlex
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,6 +27,7 @@ from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.private_root import CONTAINER_STAGING_ROOT
 from tests.conftest import active_context
+from tests.unit.host._exec_log import SU_LOGIN, all_records, records_of
 
 # The container's parent here is a mock, not a unix host with a login, so its
 # private staging root is answered for it; the root itself is pinned in
@@ -555,7 +557,7 @@ async def test_exec_inherits_an_enclosing_as_user_like_run_does(monkeypatch):
         sent.append(cmd)
         return _ok(cmd)
 
-    monkeypatch.setattr(UnixHost, "exec", _parent_exec)
+    monkeypatch.setattr(UnixHost, "_exec_delegated", _parent_exec)
 
     with _stubbed_docker_channel():
         await host.run("id")  # opens the default session
@@ -2361,3 +2363,674 @@ async def test_a_put_and_a_get_leave_no_staging_directory_for_the_container(tmp_
 
     assert stage_root.is_dir(), "the staging commands never ran against the fake parent"
     assert list(stage_root.iterdir()) == [], sorted(stage_root.rglob("*"))
+
+
+# ---------------------------------------------------------------------------
+# Where a container's exec is logged: on the container, under the chain's mode
+# ---------------------------------------------------------------------------
+
+_CMD_TOK = "cmdtok-ctr"
+_OUT_TOK = "outtok-ctr"
+
+
+def _wrapped_as(monkeypatch, container: DockerContainerHost, wire: str) -> None:
+    """*container*'s ``docker exec`` line is *wire*, whatever it is asked to wrap."""
+
+    async def fixed(cmd: str, *, interactive: bool = False, user: str | None = None) -> str:
+        return wire
+
+    monkeypatch.setattr(container, "_docker_exec", fixed)
+
+
+async def _scripted_parent(replies: dict, *, log, hang: frozenset = frozenset({"c"})):
+    """A real unix parent over scripted shells, standing at *log*, and its sessions."""
+    from tests.unit.host.conftest import unix_host_over_scripted
+
+    parent, sessions = await unix_host_over_scripted(
+        "telnet", elevation="su", creds=SU_LOGIN, replies=replies, hang=hang
+    )
+    parent.log = log
+    return parent, sessions
+
+
+def _delegations(monkeypatch, parent) -> list:
+    """The log context of every delegated call *parent* receives, in order."""
+    seen: list = []
+    original = parent._exec_delegated
+
+    async def spy(cmd, **kwargs):
+        seen.append(kwargs["exec_log"])
+        return await original(cmd, **kwargs)
+
+    monkeypatch.setattr(parent, "_exec_delegated", spy)
+    return seen
+
+
+def _container_trace(records: list, container) -> list:
+    """*container*'s records as (level, kind, text, mode)."""
+    from tests.conformance._log import output_record
+
+    trace = []
+    for r in records_of(records, container):
+        found = output_record(r, container)
+        if found is None:
+            trace.append((r.levelno, "cmd", getattr(r, "relayed", None), r.log_mode))
+        else:
+            trace.append((r.levelno, "out", found.text, found.log_mode))
+    return trace
+
+
+def _wire_on(records: list, host, *tokens: str) -> list:
+    """*host*'s records holding any of *tokens*, as (level, text, mode)."""
+    return [
+        (r.levelno, getattr(r, "relayed", None), getattr(r, "log_mode", None))
+        for r in records_of(records, host)
+        if any(t in f"{r.getMessage()} {getattr(r, 'relayed', '')}" for t in tokens)
+    ]
+
+
+@contextmanager
+def _suppressed(which: str | None, container, parent):
+    from otto.host.host import SuppressCommandOutput
+
+    if which is None:
+        yield
+    elif which == "policy":
+        with active_context(log_command_output=False):
+            yield
+    else:
+        host = {"container": container, "parent": parent, "global": None}[which]
+        with SuppressCommandOutput(host=host):
+            yield
+
+
+def _mode_rows():
+    from otto.logger.mode import LogMode as M
+
+    return [
+        pytest.param(M.NORMAL, M.NEVER, M.NORMAL, None, M.NEVER, id="parent-never"),
+        pytest.param(M.NEVER, M.NORMAL, M.NORMAL, None, M.NEVER, id="container-never"),
+        pytest.param(M.NORMAL, M.QUIET, M.NORMAL, None, M.QUIET, id="parent-quiet"),
+        pytest.param(M.QUIET, M.NORMAL, M.NORMAL, None, M.QUIET, id="container-quiet"),
+        pytest.param(M.NORMAL, M.NORMAL, M.NEVER, None, M.NEVER, id="call-never"),
+        pytest.param(M.NORMAL, M.NORMAL, M.NORMAL, None, M.NORMAL, id="all-normal"),
+        pytest.param(M.NORMAL, M.NORMAL, M.NORMAL, "container", M.QUIET, id="suppress-container"),
+        pytest.param(M.NORMAL, M.NORMAL, M.NORMAL, "parent", M.QUIET, id="suppress-parent"),
+        pytest.param(M.NORMAL, M.NORMAL, M.NORMAL, "global", M.QUIET, id="suppress-global"),
+        pytest.param(M.NORMAL, M.NORMAL, M.NORMAL, "policy", M.QUIET, id="policy-off"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("ctr_log", "parent_log", "call_log", "suppress", "mode"), _mode_rows())
+async def test_a_container_exec_logs_on_the_container_under_the_chain_s_mode(
+    monkeypatch, ctr_log, parent_log, call_log, suppress, mode
+):
+    """The issued command and output are the container's; the parent keeps the DEBUG wrapper."""
+    from otto.logger.mode import LogMode
+    from tests.conformance._log import records_containing
+
+    cmd = f"echo {_CMD_TOK}"
+    wire = f"docker exec -i abc123def456 sh -c 'echo {_CMD_TOK}'"
+    parent, _ = await _scripted_parent({wire: (_OUT_TOK, 0)}, log=parent_log)
+    container = _make_container(parent)
+    container.log = ctr_log
+    _wrapped_as(monkeypatch, container, wire)
+    delegated = _delegations(monkeypatch, parent)
+    try:
+        with (
+            _suppressed(suppress, container, parent),
+            all_records() as records,
+            records_containing(_CMD_TOK) as cmd_seen,
+            records_containing(_OUT_TOK) as out_seen,
+        ):
+            result = await container.exec(cmd, log=call_log)
+    finally:
+        await parent.close()
+    assert (result.retcode, result.value, result.command) == (0, _OUT_TOK, cmd)
+    assert [ctx.mode for ctx in delegated] == [mode], "the context carries the chain's mode"
+    if mode is LogMode.NEVER:
+        assert (cmd_seen, out_seen) == ([], [])
+        return
+    assert _container_trace(records, container) == [
+        (logging.INFO, "cmd", cmd, mode),
+        (logging.INFO, "out", _OUT_TOK, mode),
+    ]
+    assert _wire_on(records, parent, _CMD_TOK, _OUT_TOK) == [(logging.DEBUG, wire, mode)]
+
+
+@pytest.mark.asyncio
+async def test_a_shell_command_s_own_mode_decides_a_container_exec_s_log(monkeypatch):
+    """A ``ShellCommand``'s ``log`` beats the call's, either way, on a container as on any host."""
+    from otto.host.host import ShellCommand
+    from otto.logger.mode import LogMode
+    from tests.conformance._log import records_containing
+
+    cmd = f"echo {_CMD_TOK}"
+    wire = f"docker exec -i abc123def456 sh -c 'echo {_CMD_TOK}'"
+    parent, _ = await _scripted_parent({wire: (_OUT_TOK, 0)}, log=LogMode.NORMAL)
+    container = _make_container(parent)
+    container.log = LogMode.NORMAL
+    _wrapped_as(monkeypatch, container, wire)
+    try:
+        with records_containing(_CMD_TOK) as cmd_seen, records_containing(_OUT_TOK) as out_seen:
+            hidden = await container.exec(
+                ShellCommand(cmd=cmd, log=LogMode.NEVER), log=LogMode.NORMAL
+            )
+        with all_records() as records:
+            shown = await container.exec(
+                ShellCommand(cmd=cmd, log=LogMode.NORMAL), log=LogMode.NEVER
+            )
+    finally:
+        await parent.close()
+    assert (hidden.value, shown.value) == (_OUT_TOK, _OUT_TOK)
+    assert (cmd_seen, out_seen) == ([], [])
+    assert _container_trace(records, container) == [
+        (logging.INFO, "cmd", cmd, LogMode.NORMAL),
+        (logging.INFO, "out", _OUT_TOK, LogMode.NORMAL),
+    ]
+
+
+def _chain_rows():
+    from otto.logger.mode import LogMode as M
+
+    return [
+        pytest.param(M.NORMAL, M.NORMAL, False, M.NORMAL, id="all-normal"),
+        pytest.param(M.NEVER, M.NORMAL, False, M.NEVER, id="terminal-never"),
+        pytest.param(M.NORMAL, M.NEVER, False, M.NEVER, id="middle-never"),
+        pytest.param(M.NORMAL, M.QUIET, False, M.QUIET, id="middle-quiet"),
+        pytest.param(M.NORMAL, M.NORMAL, True, M.QUIET, id="middle-suppressed"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("terminal_log", "middle_log", "middle_suppressed", "mode"), _chain_rows())
+async def test_a_container_of_a_container_logs_on_the_originating_container(
+    monkeypatch, terminal_log, middle_log, middle_suppressed, mode
+):
+    """Only the container the caller asked logs command and lines; each hop keeps its wrapper.
+
+    The mode is the most restrictive over the whole chain, whichever host
+    restricts it: the terminal parent, or the container in the middle by its
+    own mode or by a suppression of it.
+    """
+    from otto.host.host import SuppressCommandOutput
+    from otto.logger.mode import LogMode
+    from tests.conformance._log import records_containing
+
+    cmd = f"echo {_CMD_TOK}"
+    wire_a = f"docker exec -i aaa sh -c 'echo {_CMD_TOK}'"
+    wire_b = f"docker exec -i bbb sh -c {shlex.quote(wire_a)}"
+    parent, _ = await _scripted_parent({wire_b: (_OUT_TOK, 0)}, log=terminal_log)
+    middle = _make_container(parent, container_id="bbb")
+    middle.log = middle_log
+    container = _make_container(middle, container_id="aaa")
+    container.log = LogMode.NORMAL
+    _wrapped_as(monkeypatch, middle, wire_b)
+    _wrapped_as(monkeypatch, container, wire_a)
+    to_middle = _delegations(monkeypatch, middle)
+    to_parent = _delegations(monkeypatch, parent)
+    quieted = SuppressCommandOutput(host=middle) if middle_suppressed else nullcontext()
+    try:
+        with (
+            quieted,
+            all_records() as records,
+            records_containing(_CMD_TOK) as cmd_seen,
+            records_containing(_OUT_TOK) as out_seen,
+        ):
+            result = await container.exec(cmd)
+    finally:
+        await parent.close()
+    assert (result.retcode, result.value, result.command) == (0, _OUT_TOK, cmd)
+    assert [ctx.mode for ctx in to_middle] == [mode], "the context carries the chain's mode"
+    assert to_parent == to_middle, "the middle container forwards the context unchanged"
+    if mode is LogMode.NEVER:
+        assert (cmd_seen, out_seen) == ([], []), "a NEVER anywhere up the chain silences every host"
+        return
+    assert _container_trace(records, container) == [
+        (logging.INFO, "cmd", cmd, mode),
+        (logging.INFO, "out", _OUT_TOK, mode),
+    ]
+    assert _wire_on(records, middle, _CMD_TOK, _OUT_TOK) == [(logging.DEBUG, wire_a, mode)]
+    assert _wire_on(records, parent, _CMD_TOK, _OUT_TOK) == [(logging.DEBUG, wire_b, mode)]
+
+
+@pytest.mark.asyncio
+async def test_a_parent_overriding_run_plan_with_today_s_signature_forwards_the_context():
+    """An override that hands its ``exec_input`` on to the stock dispatch logs on the container."""
+    from otto.host.unix_host import UnixHost
+    from otto.logger.mode import LogMode
+    from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn
+
+    calls = 0
+
+    class _OldSignatureParent(UnixHost):
+        async def _run_plan(self, plan, *, cmd, timeout, log, user, expects, exec_input):
+            nonlocal calls
+            calls += 1
+            return await super()._run_plan(
+                plan,
+                cmd=cmd,
+                timeout=timeout,
+                log=log,
+                user=user,
+                expects=expects,
+                exec_input=exec_input,
+            )
+
+    parent = _OldSignatureParent(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="u", password="p")],
+        term="ssh",
+        log=LogMode.NORMAL,
+    )
+    connections = MagicMock()
+    connections.term = "ssh"
+    connections.proxy_hops = []
+    connections.ssh = AsyncMock(return_value=FakeConn(FakeChannelProcess([f"{_OUT_TOK}\n"])))
+    parent._session_mgr._connections = connections
+    container = _make_container(parent)
+    container.log = LogMode.NORMAL
+    wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-old"))
+    with wired, all_records() as records:
+        result = await container.exec("echo old")
+    assert (result.retcode, result.value, calls) == (0, _OUT_TOK, 1)
+    assert _container_trace(records, container) == [
+        (logging.INFO, "cmd", "echo old", LogMode.NORMAL),
+        (logging.INFO, "out", _OUT_TOK, LogMode.NORMAL),
+    ]
+    assert _wire_on(records, parent, "wire-old", _OUT_TOK) == [
+        (logging.DEBUG, "wire-old", LogMode.NORMAL)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_structural_parent_keeps_today_s_public_exec():
+    """A parent that is no ``BaseHost`` is handed its own ``exec``, as before: no context."""
+    from otto.logger.mode import LogMode
+
+    parent = MagicMock(spec=["exec", "id", "name", "term", "log"])
+    parent.id = parent.name = "test3"
+    parent.term = "ssh"
+    parent.exec = AsyncMock(return_value=_ok(out="hi"))
+    container = _make_container(parent)
+    container.log = LogMode.QUIET
+    with patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-s")):
+        result = await container.exec("echo hi", expects=[("p", "r")], timeout=7.0)
+    assert result.value == "hi"
+    parent.exec.assert_awaited_once_with(
+        "wire-s", timeout=7.0, log=container._effective_log(LogMode.NORMAL), expects=[("p", "r")]
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_chain_ending_at_a_structural_parent_keeps_today_s_public_exec_at_every_hop(
+    monkeypatch,
+):
+    """No container of a chain that ends at a stand-in logs the command, at any level."""
+    from otto.logger.mode import LogMode
+    from tests.conformance._log import records_containing
+
+    parent = MagicMock(spec=["exec", "id", "name", "term", "log"])
+    parent.id = parent.name = "test3"
+    parent.term = "ssh"
+    parent.exec = AsyncMock(return_value=_ok(out=_OUT_TOK))
+    middle = _make_container(parent, container_id="bbb")
+    middle.log = LogMode.NORMAL
+    container = _make_container(middle, container_id="aaa")
+    container.log = LogMode.QUIET
+    wire_a = f"docker exec -i aaa sh -c 'echo {_CMD_TOK}'"
+    wire_b = f"docker exec -i bbb sh -c {shlex.quote(wire_a)}"
+    _wrapped_as(monkeypatch, middle, wire_b)
+    _wrapped_as(monkeypatch, container, wire_a)
+    with (
+        records_containing(_CMD_TOK) as cmd_seen,
+        records_containing(_OUT_TOK) as out_seen,
+    ):
+        result = await container.exec(f"echo {_CMD_TOK}", timeout=7.0)
+    assert result.value == _OUT_TOK
+    assert (cmd_seen, out_seen) == ([], [])
+    parent.exec.assert_awaited_once_with(
+        wire_b,
+        timeout=7.0,
+        log=middle._effective_log(container._effective_log(LogMode.NORMAL)),
+        expects=None,
+    )
+
+
+def _ssh_parent(cls, out: str):
+    """A *cls* ssh parent standing at NORMAL whose exec channel prints *out*, and its dialler."""
+    from otto.logger.mode import LogMode
+    from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn
+
+    parent = cls(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="u", password="p")],
+        term="ssh",
+        log=LogMode.NORMAL,
+    )
+    connections = MagicMock()
+    connections.term = "ssh"
+    connections.proxy_hops = []
+    connections.ssh = AsyncMock(return_value=FakeConn(FakeChannelProcess([f"{out}\n"])))
+    parent._session_mgr._connections = connections
+    return parent, connections.ssh
+
+
+@pytest.mark.asyncio
+async def test_a_parent_s_exec_override_that_refuses_refuses_its_containers_commands():
+    """A project ``exec`` override keeps running for the commands of the containers on it."""
+    from otto.host.unix_host import UnixHost
+
+    class _Refusing(UnixHost):
+        async def exec(self, cmd, **kwargs):
+            raise PermissionError(f"refused: {cmd}")
+
+    parent, dial = _ssh_parent(_Refusing, _OUT_TOK)
+    container = _make_container(parent)
+    wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-r"))
+    with wired, pytest.raises(PermissionError, match="refused: wire-r"):
+        await container.exec("echo refused")
+    dial.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_parent_s_exec_override_that_audits_sees_the_wrapper_and_logs_it_as_its_own():
+    """An override that records and calls ``super().exec`` sees the wrapper; the lines are its."""
+    from otto.host.unix_host import UnixHost
+    from otto.logger.mode import LogMode
+
+    seen: list = []
+
+    class _Auditing(UnixHost):
+        async def exec(self, cmd, **kwargs):
+            seen.append(cmd)
+            return await super().exec(cmd, **kwargs)
+
+    parent, _ = _ssh_parent(_Auditing, _OUT_TOK)
+    container = _make_container(parent)
+    container.log = LogMode.NORMAL
+    wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-au"))
+    with wired, all_records() as records:
+        result = await container.exec("echo audited")
+    assert (result.value, result.command, seen) == (_OUT_TOK, "echo audited", ["wire-au"])
+    assert _container_trace(records, container) == []
+    assert _container_trace(records, parent) == [
+        (logging.INFO, "cmd", "wire-au", LogMode.NORMAL),
+        (logging.INFO, "out", _OUT_TOK, LogMode.NORMAL),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_container_chain_that_loops_back_refuses_the_exec():
+    """A self-parent and a two-container loop each refuse at once; nothing reaches a parent."""
+    parent = _mock_parent()
+    alone = _make_container(parent, container_id="sss")
+    alone.parent = alone
+    with pytest.raises(ValueError, match="loops back"):
+        await alone.exec("echo x")
+    first = _make_container(parent, container_id="aaa")
+    second = _make_container(parent, container_id="bbb")
+    first.parent, second.parent = second, first
+    with pytest.raises(ValueError, match=f"loops back.*{second.name}.*{first.name}"):
+        await first.exec("echo x")
+    parent.exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_delegated_exec_keeps_its_lines_on_the_container():
+    """Lines read before a cancel are the container's; the parent keeps only the wrapper."""
+    from otto.logger.mode import LogMode
+    from tests.conformance._log import _watching_records
+    from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_host
+
+    proc = FakeChannelProcess(["outtok-x\n", "outtok-y\n"], hold_from=1, eof=False)
+    parent = channel_host(FakeConn(proc))
+    parent.log = LogMode.NORMAL
+    container = _make_container(parent)
+    container.log = LogMode.NORMAL
+    first_line = asyncio.Event()
+
+    def line_seen(record: logging.LogRecord) -> None:
+        if "outtok-x" in str(getattr(record, "relayed", "")):
+            first_line.set()
+
+    wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-cx"))
+    with wired, all_records() as records, _watching_records(line_seen, level=logging.DEBUG):
+        call = asyncio.create_task(container.exec("echo cancelled"))
+        try:
+            await asyncio.wait_for(first_line.wait(), timeout=10)
+            call.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await call
+        finally:
+            call.cancel()
+            await asyncio.gather(call, return_exceptions=True)
+    assert _container_trace(records, container) == [
+        (logging.INFO, "cmd", "echo cancelled", LogMode.NORMAL),
+        (logging.INFO, "out", "outtok-x", LogMode.NORMAL),
+    ]
+    assert _wire_on(records, parent, "wire-cx", "outtok") == [
+        (logging.DEBUG, "wire-cx", LogMode.NORMAL)
+    ]
+    owned = [*records_of(records, container), *records_of(records, parent)]
+    stray = [
+        r.getMessage()
+        for r in records
+        if "outtok" in f"{r.getMessage()} {getattr(r, 'relayed', '')}" and r not in owned
+    ]
+    assert stray == []
+
+
+@pytest.mark.asyncio
+async def test_a_parent_that_runs_and_logs_a_command_by_its_own_means_keeps_the_lines():
+    """A ``_run_plan`` that ignores the call's context logs the command as its own host's.
+
+    A pin of the documented contract for a host class that runs a command
+    by its own means, not of something this family does: the container gets
+    no record, and the parent logs the wrapper as any command of its own.
+    """
+    from otto.host.unix_host import UnixHost
+    from otto.logger.mode import LogMode
+
+    class _OwnMeans(UnixHost):
+        async def _run_plan(self, plan, *, cmd, timeout, log, user, expects, exec_input):
+            self._log_command(cmd, log)
+            self._log_output(_OUT_TOK, log)
+            return CommandResult(
+                status=Status.Success,
+                value=_OUT_TOK,
+                command=cmd,
+                retcode=0,
+                route=plan.route.value,
+            )
+
+    parent, dial = _ssh_parent(_OwnMeans, _OUT_TOK)
+    container = _make_container(parent)
+    container.log = LogMode.NORMAL
+    wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-own"))
+    with wired, all_records() as records:
+        result = await container.exec("echo own")
+    assert (result.value, result.command) == (_OUT_TOK, "echo own")
+    dial.assert_not_awaited()
+    assert _container_trace(records, container) == []
+    assert _container_trace(records, parent) == [
+        (logging.DEBUG, "cmd", "wire-own", LogMode.NORMAL),
+        (logging.INFO, "cmd", "wire-own", LogMode.NORMAL),
+        (logging.INFO, "out", _OUT_TOK, LogMode.NORMAL),
+    ]
+
+
+def _session_made(parent, sessions: list, count: int) -> "list[asyncio.Event]":
+    """One event per pooled session *parent* will open, set as its scripted shell is made."""
+    made = [asyncio.Event() for _ in range(count)]
+    mgr = parent._live_session_mgr()
+    factory = mgr._session_factory
+
+    def counted(**kw: object):
+        session = factory(**kw)
+        made[len(sessions) - 1].set()
+        return session
+
+    mgr._session_factory = counted
+    return made
+
+
+async def _began(made: "list[asyncio.Event]", sessions: list, index: int) -> None:
+    """Return once session *index* is made and its command has begun."""
+    await made[index].wait()
+    await sessions[index].began.wait()
+
+
+@pytest.mark.asyncio
+async def test_two_containers_on_one_parent_keep_their_own_lines_and_modes(monkeypatch):
+    """Concurrent delegated calls cross nothing; the reused pooled session logs as the parent's."""
+    from otto.host.exec_route import ExecRoute, container_route
+    from otto.logger.mode import LogMode
+    from tests.unit.host._session_feed import _completion
+
+    wire_n = "docker exec -i nnn sh -c 'echo cmdtok-n'"
+    wire_q = "docker exec -i qqq sh -c 'echo cmdtok-q'"
+    parent, sessions = await _scripted_parent(
+        {"echo plain": ("plain-out", 0)}, log=LogMode.NORMAL, hang=frozenset({wire_n, wire_q})
+    )
+    made = _session_made(parent, sessions, 3)
+    shown = _make_container(parent, container_id="nnn")
+    shown.log = LogMode.NORMAL
+    hidden = _make_container(parent, container_id="qqq")
+    hidden.log = LogMode.NEVER
+    _wrapped_as(monkeypatch, shown, wire_n)
+    _wrapped_as(monkeypatch, hidden, wire_q)
+    pooled = [("never-printed", "")]  # a prompt to answer: the pooled shell
+    calls: list = []
+    try:
+        with all_records() as records:
+            first = asyncio.ensure_future(shown.exec("echo cmdtok-n", expects=pooled))
+            calls.append(first)
+            await asyncio.wait_for(_began(made, sessions, 0), timeout=10)
+            second = asyncio.ensure_future(hidden.exec("echo cmdtok-q", expects=pooled))
+            calls.append(second)
+            await asyncio.wait_for(_began(made, sessions, 1), timeout=10)
+            for session, out in ((sessions[0], "outtok-n"), (sessions[1], "outtok-q")):
+                session.feed(
+                    _completion(
+                        session._frame, session._markers, session.written_frames[-1], out, 0
+                    )
+                )
+            results = await asyncio.gather(first, second)
+            plain = await parent.exec("echo plain", expects=[("never-printed", "")])
+    finally:
+        # A failed wait above must not leave a command running into the close.
+        for call in calls:
+            call.cancel()
+        await asyncio.gather(*calls, return_exceptions=True)
+        await parent.close()
+    pooled_route = container_route(ExecRoute.POOLED_SHELL.value)
+    assert [(r.value, r.route) for r in results] == [
+        ("outtok-n", pooled_route),
+        ("outtok-q", pooled_route),
+    ]
+    assert len(sessions) == 2, "the later ordinary command reused a pooled session"
+    leaked = [
+        r.getMessage()
+        for r in records
+        if any(
+            t in f"{r.getMessage()} {getattr(r, 'relayed', '')}" for t in ("cmdtok-q", "outtok-q")
+        )
+    ]
+    assert leaked == []
+    assert _container_trace(records, shown) == [
+        (logging.INFO, "cmd", "echo cmdtok-n", LogMode.NORMAL),
+        (logging.INFO, "out", "outtok-n", LogMode.NORMAL),
+    ]
+    assert _container_trace(records, hidden) == []
+    assert _wire_on(records, parent, "cmdtok-n", "outtok-n") == [
+        (logging.DEBUG, wire_n, LogMode.NORMAL)
+    ]
+    assert plain.value == "plain-out"
+    assert _container_trace(records, parent)[-2:] == [
+        (logging.INFO, "cmd", "echo plain", LogMode.NORMAL),
+        (logging.INFO, "out", "plain-out", LogMode.NORMAL),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_direct_parent_calls_carry_no_context_and_own_helpers_do(monkeypatch, tmp_path):
+    """Probe, staging, ``docker cp``, unstage and root chown/chmod are the parent's own calls."""
+    from otto.logger.mode import LogMode
+    from tests.unit.host._fake_channel import channel_host
+
+    parent = channel_host()
+    public: list = []
+    delegated: list = []
+
+    async def exec_(cmd, **kwargs):
+        public.append((cmd, kwargs.get("log")))
+        return _ok(cmd, out="abc123\n" if cmd.startswith("docker ps") else "")
+
+    async def exec_delegated(cmd, **kwargs):
+        delegated.append((cmd, kwargs["exec_log"]))
+        return _ok(cmd)
+
+    staged = _mock_parent()
+    monkeypatch.setattr(parent, "exec", exec_)
+    monkeypatch.setattr(parent, "_exec_delegated", exec_delegated)
+    monkeypatch.setattr(parent, "put", staged.put)
+    monkeypatch.setattr(parent, "get", staged.get)
+    container = _make_container(parent, container_id="")
+    container.log = LogMode.NORMAL
+
+    assert await container.is_running() is True
+    assert [(c.split()[:2], log) for c, log in public] == [(["docker", "ps"], LogMode.QUIET)]
+    assert delegated == []
+
+    public.clear()
+    f = tmp_path / "a.bin"
+    f.write_bytes(b"x")
+    (s1, _), (s2, _) = (
+        _sm(await container.put([f], Path("/data"), mode="644")),
+        _sm(await container.get(Path("/etc/os-release"), tmp_path / "out")),
+    )
+    assert (s1, s2) == (Status.Success, Status.Success)
+    publics = [cmd for cmd, _ in public]
+    for step in ("mkdir -p", "docker cp", "rm -rf"):
+        assert any(step in c for c in publics), (step, publics)
+    staged.put.assert_awaited_once()
+    staged.get.assert_awaited_once()
+    # The no-user chmod goes through the container's own exec: delegated, its log the container's.
+    assert [c for c, _ in delegated] == ["docker exec -i abc123 sh -c 'chmod 644 -- /data/a.bin'"]
+    assert delegated[0][1].log_command == container._log_command
+
+    public.clear()
+    delegated.clear()
+    rooted = _make_container(parent, user="postgres")
+    _sm(await rooted.put([f], Path("/data"), mode="644"))
+    rooted_steps = [c for c, _ in public if "chown" in c or "chmod" in c]
+    in_root = f"docker exec -i -u root {rooted.container_id} sh -c"
+    assert rooted_steps == [
+        f"{in_root} 'chown postgres /data/a.bin'",
+        f"{in_root} 'chmod 644 -- /data/a.bin'",
+    ], public
+    assert delegated == [], "root chown and chmod are the parent's own calls"
+
+    await container.exec("echo own")
+    assert [c for c, _ in delegated] == ["docker exec -i abc123 sh -c 'echo own'"]
+    assert delegated[-1][1].command == "echo own"
+
+
+@pytest.mark.asyncio
+async def test_exec_dry_run_reaches_no_delegated_entry(monkeypatch):
+    from tests.unit.host._fake_channel import channel_host
+
+    parent = channel_host()
+    entry = AsyncMock()
+    monkeypatch.setattr(parent, "_exec_delegated", entry)
+    monkeypatch.setattr(parent, "exec", AsyncMock())
+    container = _make_container(parent)
+    with active_context(dry_run=True):
+        result = await container.exec("echo hi")
+    assert result.status == Status.NotRun
+    entry.assert_not_awaited()
+    parent.exec.assert_not_awaited()

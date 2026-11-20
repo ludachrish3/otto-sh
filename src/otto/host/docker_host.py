@@ -38,7 +38,7 @@ from typing import Annotated
 
 from typing_extensions import final, override
 
-from ..logger.mode import LogMode
+from ..logger.mode import ExecLogContext, LogMode, effective_mode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, OptionSupport, SessionIdentity, UserSupport
@@ -72,6 +72,7 @@ from .session import (
     SessionManager,
     ShellSession,
     _DockerSshSession,
+    delegated_exec_log,
     identity_fold,
 )
 from .shell_quote import path_operand, shell_operand
@@ -136,6 +137,23 @@ def _caller_pairs(
 
 
 # ---------------------------------------------------------------------------
+def _host_label(host: object) -> str:
+    """Name *host* in a message: its ``name``, else its type."""
+    return str(getattr(host, "name", type(host).__name__))
+
+
+def _carries_exec_log(above: "list[Host]") -> bool:
+    """Whether every host in *above* can carry a delegated exec log context.
+
+    Each must be an otto host whose public ``exec`` is otto's own: a
+    structural stand-in has no delegated entry, and a project override of
+    ``exec`` (one that refuses, audits or redirects commands) would be
+    bypassed by it. Either keeps the public ``exec`` at every hop.
+    """
+    own = (BaseHost.exec, DockerContainerHost.exec)
+    return all(isinstance(h, BaseHost) and type(h).exec in own for h in above)
+
+
 # The private docker staging root on a parent
 # ---------------------------------------------------------------------------
 
@@ -1034,6 +1052,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         in the container is what elevation means there. ``user`` and
         ``sudo`` together refuse: both choose the ``-u``.
 
+        The command and its output are logged on this container, and so are
+        the container's own helpers that run through ``exec`` (a chmod with
+        no effective user, a recursive mkdir, a directory listing); the
+        probe and the transfer steps it runs on its parent log on the parent
+        (:ref:`docker-exec-logging`).
+
         Explicit two-argument ``super()`` — see ``_mkdir_all`` for why a
         bare ``super()`` raises on this ``@dataclass(slots=True)`` class.
 
@@ -1081,7 +1105,51 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         whether it needs a shell to honour *expects*. ``docker exec -i`` keeps stdin
         open, so the parent's pooled shell can answer a prompt across it.
         """
-        return await self._exec_via_parent(cmd, timeout, log=log, user=user, expects=expects)
+        return await self._exec_via_parent(
+            cmd, timeout, log=log, user=user, expects=expects, exec_input=exec_input
+        )
+
+    def _hosts_above(self) -> "list[Host]":
+        """Return the hosts above this container, nearest first, ending at its first non-container.
+
+        The one walk of the parent chain: each container parent continues it
+        to its own parent, and the first host that is not a container ends
+        it (that host is included). A container's parent is a plain field, so
+        a chain can be made to loop back on itself; the walk is synchronous,
+        so it refuses a repeated host rather than spinning.
+
+        Raises:
+            ValueError: the chain reaches a host it has already passed,
+                which no container can run its commands through.
+        """
+        passed: "list[object]" = [self]
+        above: "list[Host]" = []
+        host = self.parent
+        while True:
+            if any(host is seen for seen in passed):
+                names = " -> ".join(_host_label(h) for h in [*passed, host])
+                raise ValueError(
+                    f"{self.name}: its parent chain loops back on itself ({names}); "
+                    f"a container's parents must end at a host that is not a container"
+                )
+            above.append(host)
+            if not isinstance(host, DockerContainerHost):
+                return above
+            passed.append(host)
+            host = host.parent
+
+    def _chain_log(self, log: LogMode, above: "list[Host] | None" = None) -> LogMode:
+        """Return the most restrictive mode over this container and every host above it.
+
+        This container contributes its fold of *log*; each otto host of the
+        chain (``_hosts_above``, walked here unless the caller already has
+        it as *above*) its own standing fold (its ``log`` and any
+        suppression of it).
+        """
+        chain = self._hosts_above() if above is None else above
+        modes = [self._effective_log(log)]
+        modes += [h._effective_log(LogMode.NORMAL) for h in chain if isinstance(h, BaseHost)]  # noqa: SLF001 — each host's own fold
+        return effective_mode(*modes)
 
     async def _exec_via_parent(
         self,
@@ -1090,6 +1158,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
         expects: "list[Expect | CredentialExpect] | None" = None,
+        *,
+        exec_input: "ExecInput | None" = None,
     ) -> CommandResult:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent.
 
@@ -1115,14 +1185,45 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         container. They are the caller's own pairs only: a container elevates
         with ``docker exec -u root`` (see :meth:`exec`), so no elevation
         password answer exists on this route to forward.
+
+        When every host above this container (``_hosts_above``) is an otto
+        host whose public ``exec`` is otto's own, the parent runs the wrapper
+        through its private delegated entry with a log context: the command
+        as issued and each output line live are this container's records,
+        under the most restrictive mode over the whole chain (``_chain_log``),
+        and the parent logs only the wrapper, at DEBUG. A context that arrived
+        on *exec_input* (this container is itself a hop of another
+        container's chain, which that container already judged) is
+        forwarded unchanged, so the originating container keeps the lines.
+        Any other chain gets the parent's public ``exec``, as before: a
+        structural stand-in folds and logs as it always did, and a project
+        override of ``exec`` keeps seeing every command.
+
+        Raises:
+            ValueError: the parent chain loops back on itself.
         """
         if is_dry_run():
             return self._dry_run_result(cmd, log)
+        incoming = delegated_exec_log(exec_input)
+        above = self._hosts_above() if incoming is None else None
         pairs = _caller_pairs(expects, self.name)
         wrapped = await self._docker_exec(cmd, user=self._effective_user(user))
-        result = await self.parent.exec(
-            wrapped, timeout=timeout, log=self._effective_log(log), expects=pairs
-        )
+        if isinstance(self.parent, BaseHost) and (
+            incoming is not None or (above is not None and _carries_exec_log(above))
+        ):
+            exec_log = incoming or ExecLogContext(
+                command=cmd,
+                mode=self._chain_log(log, above),
+                log_command=self._log_command,
+                log_output=self._log_output,
+            )
+            result = await self.parent._exec_delegated(  # noqa: SLF001 — the delegated entry
+                wrapped, exec_log=exec_log, expects=pairs, timeout=timeout
+            )
+        else:
+            result = await self.parent.exec(
+                wrapped, timeout=timeout, log=self._effective_log(log), expects=pairs
+            )
         # Replace the wrapped command in the result so callers see what they
         # asked for, not the docker-exec wrapper. `replace` rather than a field
         # list so new CommandResult fields are carried through automatically.

@@ -391,7 +391,7 @@ class TestTheSshRowPromotesOffTheRawChannel:
         mgr = _mgr(term="ssh")
         ran: list[str] = []
 
-        async def _fake_exec_on(conn, cmd, timeout=None, log=None):
+        async def _fake_exec_on(conn, cmd, timeout=None, log=None, exec_input=None):
             ran.append(cmd)
             return CommandResult(status=Status.Success, value="RAW", command=cmd, retcode=0)
 
@@ -556,6 +556,8 @@ class _SwitchedShellGone(_StubExecSession):
         if exec_input is not None and exec_input.identity is not None and self.gone:
             self._identity_lost = True
             return CommandResult(status=Status.Failed, value=NEVER_RAN, command=cmd, retcode=-1)
+        if on_output is not None:
+            on_output("OUT")  # a command that ran relays its line, as a session does
         return CommandResult(status=Status.Success, value="OUT", command=cmd, retcode=0)
 
 

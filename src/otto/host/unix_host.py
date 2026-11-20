@@ -1061,7 +1061,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         if plan.as_user is not None:
             conn = await self._live_connections().ssh_as(user=plan.as_user)
             return await mgr.exec_on(
-                conn=conn, cmd=cmd, timeout=timeout, log=self._effective_log(log)
+                conn=conn,
+                cmd=cmd,
+                timeout=timeout,
+                log=self._effective_log(log),
+                exec_input=exec_input,
             )
         return await self._exec_on_manager_route(
             plan.route,

@@ -16,6 +16,8 @@ otto --lab my_lab host router1 exec "cd /tmp && ls -la"
 ```
 
 The host's built-in logging shows the command and its output as it runs.
+For a container host they are logged under the container, not under the
+host that runs docker ({ref}`docker-exec-logging`).
 `exec` exits with the command's own status (see {ref}`host-exit-codes`).
 
 ## Running as another user
