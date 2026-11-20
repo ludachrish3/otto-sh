@@ -62,6 +62,18 @@ product preference, and so on down to the dataclass default.  The
 fully resolved options are baked into the `UnixHost` at construction
 time.
 
+(option-number-fields)=
+**Numeric fields take a number.**  Every numeric field of every `*_options`
+table (a port, a timeout, a size, a count) takes a JSON or TOML number,
+in `lab.json`, in `[host_preferences]`, in a per-call override and in a
+direct `*Options(...)` call alike.  A boolean or a string is refused, naming
+the field, rather than converted: `"down_timeout": false` is an error, not
+`0` (which would skip the reboot's down phase), and `"port": "2222"` is an
+error, not `2222`.  A seconds field takes an integer or a decimal (`5` or
+`5.0`); a whole-number field (a port, a size, a count, `cols`, `rows`)
+takes an integer, or a decimal with nothing after the point (`2222.0` is
+read as `2222`); `7.5` is refused there.
+
 For one-off tuning at the call site (e.g. a single test wants a
 different port), pass an `*_options=` keyword to `get_host()` /
 `all_hosts()`.  See {ref}`per-call-overrides` under Extend.

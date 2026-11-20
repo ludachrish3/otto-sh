@@ -25,7 +25,8 @@ that matters.  Under each selector, two kinds of values are allowed:
 - **Option tables** (`ssh_options`, `telnet_options`, `sftp_options`,
   `scp_options`, `ftp_options`, `nc_options`, `userland_options`,
   `reboot_options`) — per-key
-  value overrides.
+  value overrides.  A numeric key takes a number, never a boolean or a
+  string (see {ref}`numeric fields take a number <option-number-fields>`).
 
 ```toml
 # .otto/settings.toml

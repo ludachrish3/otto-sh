@@ -22,6 +22,27 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
 
+def _refuse_spec_non_numbers(runtime: "type[DataclassInstance]", data: object) -> object:
+    """Return *data*, refusing a non-number in any numeric field of *runtime* before coercion.
+
+    Each spec runs this as a ``mode="before"`` validator, so pydantic never
+    gets to turn ``false`` into ``0.0`` or ``"5"`` into ``5``. The rule is
+    :func:`otto.host.options.refuse_non_number`, the one the runtime
+    dataclasses run when they are built; the field kinds are read from
+    *runtime*, so the spec cannot disagree with the dataclass it builds.
+    The ``TypeError`` becomes a ``ValueError`` so pydantic reports it as a
+    validation error located at the table; the message names the field.
+    A whole-number ``float`` in an ``int`` field passes through, and
+    pydantic's own coercion stores it as an ``int``.
+    """
+    if isinstance(data, dict):
+        try:
+            rt.refuse_non_numbers(runtime, data)
+        except TypeError as e:
+            raise ValueError(str(e)) from None
+    return data
+
+
 def _extra_names_no_field(
     extra: dict[str, Any], runtime: "type[DataclassInstance]"
 ) -> dict[str, Any]:
@@ -51,6 +72,11 @@ class SshOptionsSpec(OttoModel):
     pass-through kwargs. Builds a ``SshOptions`` runtime dataclass via
     ``to_runtime()``.
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _numbers_are_numbers(cls, data: object) -> object:
+        return _refuse_spec_non_numbers(rt.SshOptions, data)
 
     port: int = rt.field_default(rt.SshOptions, "port")
     known_hosts: str = rt.field_default(rt.SshOptions, "known_hosts")
@@ -117,6 +143,11 @@ class FtpOptionsSpec(OttoModel):
     passive-mode command order. Builds a ``FtpOptions`` runtime dataclass via ``to_runtime()``.
     """
 
+    @model_validator(mode="before")
+    @classmethod
+    def _numbers_are_numbers(cls, data: object) -> object:
+        return _refuse_spec_non_numbers(rt.FtpOptions, data)
+
     port: int = rt.field_default(rt.FtpOptions, "port")
     encoding: str = rt.field_default(rt.FtpOptions, "encoding")
     socket_timeout: float | None = rt.field_default(rt.FtpOptions, "socket_timeout")
@@ -157,6 +188,11 @@ class SftpOptionsSpec(OttoModel):
     dict for pass-through kwargs. Builds a ``SftpOptions`` runtime dataclass via ``to_runtime()``.
     """
 
+    @model_validator(mode="before")
+    @classmethod
+    def _numbers_are_numbers(cls, data: object) -> object:
+        return _refuse_spec_non_numbers(rt.SftpOptions, data)
+
     env: dict[str, str] | None = rt.field_default(rt.SftpOptions, "env")
     send_env: list[str] | None = rt.field_default(rt.SftpOptions, "send_env")
     extra: dict[str, Any] = Field(default_factory=dict)
@@ -190,6 +226,11 @@ class ScpOptionsSpec(OttoModel):
     open ``extra`` dict for pass-through kwargs. Builds a ``ScpOptions`` runtime dataclass
     via ``to_runtime()``.
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _numbers_are_numbers(cls, data: object) -> object:
+        return _refuse_spec_non_numbers(rt.ScpOptions, data)
 
     preserve: bool = rt.field_default(rt.ScpOptions, "preserve")
     recurse: bool = rt.field_default(rt.ScpOptions, "recurse")
@@ -228,6 +269,11 @@ class TelnetOptionsSpec(OttoModel):
     bytes via ``_encode_login_prompt``. Builds a ``TelnetOptions`` runtime dataclass
     via ``to_runtime()``.
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _numbers_are_numbers(cls, data: object) -> object:
+        return _refuse_spec_non_numbers(rt.TelnetOptions, data)
 
     port: int = rt.field_default(rt.TelnetOptions, "port")
     write_chunk_size: int = rt.field_default(rt.TelnetOptions, "write_chunk_size")
@@ -281,6 +327,11 @@ class ConsoleOptionsSpec(OttoModel):
     connect), and the paced-write and terminal fields shared with telnet.
     Builds a ``ConsoleOptions`` runtime dataclass via ``to_runtime()``.
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _numbers_are_numbers(cls, data: object) -> object:
+        return _refuse_spec_non_numbers(rt.ConsoleOptions, data)
 
     server: str = rt.field_default(rt.ConsoleOptions, "server")
     port: int = Field(default=0, ge=0, le=65535)
@@ -350,6 +401,11 @@ class NcOptionsSpec(OttoModel):
     a ``NcOptions`` runtime dataclass via ``to_runtime()``.
     """
 
+    @model_validator(mode="before")
+    @classmethod
+    def _numbers_are_numbers(cls, data: object) -> object:
+        return _refuse_spec_non_numbers(rt.NcOptions, data)
+
     exec_name: str = rt.field_default(rt.NcOptions, "exec_name")
     port: int = rt.field_default(rt.NcOptions, "port")
     port_strategy: NcPortStrategy = rt.field_default(rt.NcOptions, "port_strategy")
@@ -386,6 +442,11 @@ class SnmpOptionsSpec(OttoModel):
     ``to_runtime()``.
     """
 
+    @model_validator(mode="before")
+    @classmethod
+    def _numbers_are_numbers(cls, data: object) -> object:
+        return _refuse_spec_non_numbers(rt.SnmpOptions, data)
+
     oids: tuple[str, ...] = ()
     community: str = rt.field_default(rt.SnmpOptions, "community")
     port: int = rt.field_default(rt.SnmpOptions, "port")
@@ -415,6 +476,11 @@ class TftpOptionsSpec(OttoModel):
     Validates port, optional server IP override, transfer block size, and per-block timeout.
     Builds a ``TftpOptions`` runtime dataclass via ``to_runtime()``.
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _numbers_are_numbers(cls, data: object) -> object:
+        return _refuse_spec_non_numbers(rt.TftpOptions, data)
 
     port: int = rt.field_default(rt.TftpOptions, "port")
     server_ip: str | None = rt.field_default(rt.TftpOptions, "server_ip")
@@ -514,6 +580,11 @@ class RebootOptionsSpec(OttoModel):
     runtime dataclass, whose ``__post_init__`` is the one bounds policy, so lab
     data and ``[host_preferences]`` obey it identically.
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _numbers_are_numbers(cls, data: object) -> object:
+        return _refuse_spec_non_numbers(rt.RebootOptions, data)
 
     timeout: float = rt.field_default(rt.RebootOptions, "timeout")
     down_timeout: float = rt.field_default(rt.RebootOptions, "down_timeout")

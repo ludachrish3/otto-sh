@@ -31,9 +31,11 @@ def test_local_port_forward_validates_and_is_frozen():
     with pytest.raises(dataclasses.FrozenInstanceError):
         fwd.listen_port = 9090  # type: ignore[misc]
 
-    # validates: a non-numeric port is rejected; pydantic names the field.
+    # validates: a non-numeric port is rejected, by the rule every numeric
+    # option shares (#1001), and pydantic names the field.
     with pytest.raises(
-        ValidationError, match=r"(?m)^listen_port\n\s+Input should be a valid integer"
+        ValidationError,
+        match=r"(?m)^listen_port\n\s+Value error, listen_port must be an integer, got str",
     ):
         LocalPortForward(
             listen_host="localhost", listen_port="not-a-port", dest_host="web", dest_port=80
