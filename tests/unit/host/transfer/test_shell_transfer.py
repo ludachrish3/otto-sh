@@ -147,7 +147,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import IO, cast
+from typing import IO, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1518,6 +1518,71 @@ class TestShellPutPerFileFailure:
         assert rm_calls, "a failed empty-file temp creation must still clean up"
         assert all("empty.bin.otto-" in c for c in rm_calls)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("step", "named"),
+        [("printf", "writing a chunk to"), ("mv ", "moving"), ("rm ", "mv refused")],
+        ids=["chunk-write", "mv", "cleanup-rm-keeps-original-error"],
+    )
+    async def test_a_transport_failure_in_a_remote_step_is_not_called_a_local_read_failure(
+        self, tmp_path: Path, step: str, named: str
+    ) -> None:
+        """#1141: a transport error is an ``OSError`` too, but the local file read fine."""
+        payload = b"hello"
+        src = tmp_path / "f.bin"
+        src.write_bytes(payload)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        inner = _RecordingExec(answer_when=_size_answer(len(payload)))
+
+        async def exec_cmd(cmd: str, **kwargs: object) -> CommandResult:
+            # "rm " variant: mv fails normally, then the cleanup rm's transport dies.
+            if step == "rm ":
+                if cmd.startswith("mv "):
+                    inner.calls.append(cmd)
+                    return _err("mv refused")
+                if cmd.startswith("rm "):
+                    raise ConnectionError("shell never became ready after open")
+            elif cmd.startswith(step):
+                raise ConnectionError("shell never became ready after open")
+            return await inner(cmd, **kwargs)
+
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft.run_put([src], dest_dir, progress_factory=None)
+
+        assert per_file[src].status is Status.Error
+        assert "could not read local file" not in per_file[src].msg
+        # The "rm " case is the regression test for a cleanup transport failure
+        # escaping run_put: the ORIGINAL error (the mv refusal) must survive it.
+        assert named in per_file[src].msg
+        if step != "rm ":
+            assert "shell never became ready after open" in per_file[src].msg
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_local_source_is_still_called_a_local_read_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"hello")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+        real_open = Path.open
+
+        def _open(self: Path, *args: Any, **kwargs: Any) -> Any:
+            if self == src:
+                raise PermissionError(13, "Permission denied")
+            return real_open(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", _open)
+        ft = _make_ft(_RecordingExec(answer_when=_size_answer(5)))
+
+        per_file = await ft.run_put([src], dest_dir, progress_factory=None)
+
+        assert per_file[src].status is Status.Error
+        assert "could not read local file" in per_file[src].msg
+
 
 # ---------------------------------------------------------------------------
 # Interrupt (cancellation), both directions -- mutation "an interrupted
@@ -2673,6 +2738,43 @@ def _make_the_staged_temps_close_fail(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestShellGetPerFileFailure:
+    @pytest.mark.asyncio
+    async def test_a_transport_failure_during_a_get_is_not_called_a_local_write_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """#1141's twin: the remote session failed, the local disk did not."""
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 10)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        async def exec_cmd(cmd: str, **_kwargs: object) -> CommandResult:
+            raise ConnectionError("shell never became ready after open")
+
+        ft = _make_ft(exec_cmd)
+
+        per_file = await ft.run_get([src], dest_dir, progress_factory=None)
+
+        assert per_file[src].status is Status.Error
+        assert "local write failed" not in per_file[src].msg
+        assert "the size probe of" in per_file[src].msg
+        assert "shell never became ready after open" in per_file[src].msg
+
+    @pytest.mark.asyncio
+    async def test_a_transport_error_with_no_text_still_names_itself(self, tmp_path: Path) -> None:
+        """A bare ``ConnectionResetError()`` has an empty ``str``: the reason still names it."""
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 10)
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        async def exec_cmd(cmd: str, **_kwargs: object) -> CommandResult:
+            raise ConnectionResetError
+
+        per_file = await _make_ft(exec_cmd).run_get([src], dest_dir, progress_factory=None)
+
+        assert per_file[src].msg.endswith("failed: ConnectionResetError()")
+
     @pytest.mark.asyncio
     async def test_a_failed_size_probe_fails_before_any_chunk_read(self, tmp_path: Path) -> None:
         src = tmp_path / "payload.bin"
@@ -4502,3 +4604,26 @@ async def test_a_failed_cleanups_device_output_is_relayed_verbatim(caplog):
         await ft._cleanup_temp("'/tmp/t'")
     rendered = [shown(r) for r in caplog.records]
     assert f"test2: cleanup of '/tmp/t' failed (ignored): {output}" in rendered, rendered
+
+
+class TestUuScratchSweepIsBestEffort:
+    @pytest.mark.asyncio
+    async def test_a_dead_transport_in_the_sweep_does_not_replace_the_chunk_error(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"hello")
+        dest_dir = tmp_path / "dest"
+        dest_dir.mkdir()
+
+        async def exec_cmd(cmd: str, **_kwargs: object) -> CommandResult:
+            if cmd.startswith("rm "):
+                raise ConnectionError("transport died in sweep")
+            return _err("chunk refused")
+
+        ft = _make_ft(exec_cmd, base64_flag="absent")
+
+        per_file = await ft.run_put([src], dest_dir, progress_factory=None)
+
+        assert per_file[src].status is Status.Error
+        assert "chunk refused" in per_file[src].msg
