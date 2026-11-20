@@ -69,6 +69,7 @@ from otto.docker.resolve import UseCaseResolutionError
 from otto.env import (
     EnvBuildError,
     EnvExistsError,
+    EnvOttoSpecError,
     EnvSelfRebuildError,
     EnvUninstallableProjectError,
 )
@@ -181,6 +182,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (EnvBuildError, RuntimeError),
     (EnvSelfRebuildError, RuntimeError),
     (EnvUninstallableProjectError, ValueError),
+    (EnvOttoSpecError, ValueError),
     # A settings error like the model-level ones, which are pydantic
     # ValidationErrors — so an `except ValueError` around config loading
     # catches a cross-project [logging.levels] conflict too.

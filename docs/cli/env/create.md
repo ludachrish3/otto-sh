@@ -3,12 +3,13 @@
 Build this workspace's orchestration environment from scratch.
 
 ```text
-otto env create [--force] [-- INSTALLER_ARGS...]
+otto env create [--force] [--otto VERSION] [-- INSTALLER_ARGS...]
 ```
 
 | Option | Description |
 | ------ | ----------- |
 | `--force` | Remove an existing environment and rebuild it |
+| `--otto VERSION` | Install this otto release into the environment, not the otto that is running. See {ref}`installing-a-different-otto` |
 | `-- ...` | Everything after `--` is passed to uv verbatim |
 
 ```console

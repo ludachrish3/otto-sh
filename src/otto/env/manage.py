@@ -52,6 +52,7 @@ print(json.dumps({
     "dists": [d.metadata["Name"] or "" for d in m.distributions()],
     "python": ".".join(str(n) for n in sys.version_info[:3]),
     "markers": marker_env,
+    "otto": next((d.version for d in m.distributions(name="otto-sh")), None),
 }))
 """
 """Run INSIDE the env to report what it holds, where, and on which Python. Asking
@@ -313,8 +314,57 @@ def _plan(projects: "list[Project]") -> "_InstallPlan":
     )
 
 
-def _otto_target() -> "list[str]":
-    """Return the installer arguments that put THIS otto into the env.
+class EnvOttoSpecError(OttoError, ValueError):
+    """``--otto`` was given something that is neither a version nor a version specifier."""
+
+
+def _otto_requirement(spec: str) -> str:
+    """Return the ``otto-sh`` requirement that ``--otto`` *spec* names.
+
+    A bare version means exactly that version (``0.19.0`` is ``otto-sh==0.19.0``);
+    anything else must be a PEP 440 specifier set (``>=0.19,<0.20``) and is used
+    as written. otto only spells the requirement: finding a release that
+    matches it is the installer's job, and its refusal is relayed verbatim.
+
+    Every comma-separated part is parsed by itself: ``SpecifierSet`` skips an
+    empty part, so ``,`` and ``>=0.19,,<0.20`` would pass it and reach the
+    installer malformed, after the env was touched. ``===`` (match this exact
+    string, whatever it is) is refused too: it is the one operator whose
+    operand need not be a version.
+    """
+    from packaging.specifiers import InvalidSpecifier, Specifier
+    from packaging.version import InvalidVersion, Version
+
+    text = spec.strip()
+    try:
+        Version(text)
+    except InvalidVersion:
+        pass
+    else:
+        return f"otto-sh=={text}"
+    refusal = EnvOttoSpecError(
+        f"--otto {spec!r} is not a version or a version specifier — "
+        "give a version such as 0.19.0, or a specifier such as '>=0.19,<0.20'"
+    )
+    if any(ch in text for ch in "\r\n"):
+        # One line only: each part is stripped below, which would let a line
+        # break beside a comma through to the installer.
+        raise refusal
+    for part in text.split(","):
+        try:
+            operator = Specifier(part.strip()).operator
+        except InvalidSpecifier as exc:
+            raise refusal from exc
+        if operator == "===":
+            raise refusal
+    return f"otto-sh{text}"
+
+
+def _otto_target(otto: "str | None" = None) -> "list[str]":
+    """Return the installer arguments that put otto into the env.
+
+    With *otto* (``otto env sync --otto``), that is the release the operator
+    named (:func:`_otto_requirement`). Without it, it is THIS otto.
 
     otto is installed the way otto is installed. On a dev checkout that is an
     EDITABLE install, so pinning ``otto-sh==<version>`` would fetch a released
@@ -323,8 +373,51 @@ def _otto_target() -> "list[str]":
     apart, and otto's own dist-info can. An otto that came from a wheel has no
     checkout to point at, and pins.
     """
+    if otto is not None:
+        return [_otto_requirement(otto)]
     dist_url = _editable_source()
     return ["-e", str(dist_url)] if dist_url is not None else [f"otto-sh=={get_version()}"]
+
+
+UNKNOWN_OTTO = "unknown"
+"""What an env's record says for its otto when the env could not be asked which it holds."""
+
+
+@dataclasses.dataclass(frozen=True)
+class _OttoInstall:
+    """Which otto one ``create``/``sync`` puts in the env, decided before the env is touched."""
+
+    target: "list[str]"
+    """Installer arguments for the otto step (:func:`_otto_target`)."""
+
+    named: bool
+    """Whether the operator named the release (``--otto``), so the installer chose the version."""
+
+
+def _otto_install(otto: "str | None") -> _OttoInstall:
+    """Decide the otto step for ``--otto`` *otto*, refusing a malformed one."""
+    return _OttoInstall(target=_otto_target(otto), named=otto is not None)
+
+
+def _installed_otto(env: Path, install: _OttoInstall) -> str:
+    """Return the otto version to record for the env after its installs.
+
+    Without ``--otto`` the otto installed is the otto that ran. With it, the
+    installer chose a release matching the operator's spec, so the env's own
+    interpreter is asked which one. If it cannot answer, the record says
+    :data:`UNKNOWN_OTTO`: naming the running otto would state a version that
+    was not installed.
+    """
+    if not install.named:
+        return get_version()
+    contents = _env_contents(env)
+    if contents is None or contents.otto_version is None:
+        logger.warning(
+            "could not ask the environment which otto it now holds; its record says %r",
+            UNKNOWN_OTTO,
+        )
+        return UNKNOWN_OTTO
+    return contents.otto_version
 
 
 def _editable_source() -> "Path | None":
@@ -454,9 +547,18 @@ def _acquire_uv(env: Path) -> "tuple[Path, str]":
 
 
 def _fill(
-    env: Path, uv: Path, version: str, plan: "_InstallPlan", passthrough: "list[str]"
+    env: Path,
+    uv: Path,
+    version: str,
+    plan: "_InstallPlan",
+    passthrough: "list[str]",
+    otto: _OttoInstall,
 ) -> "EnvBuild":
-    """Install *plan*'s project targets plus otto itself into the venv at *env*."""
+    """Install *plan*'s project targets, then *otto*, into the venv at *env*.
+
+    *otto* is decided by the caller before the env is touched, so a malformed
+    ``--otto`` is refused with nothing changed.
+    """
     from .backends import install
 
     if plan.virtual:
@@ -471,8 +573,8 @@ def _fill(
             _refuse_unsupported_python(plan.virtual, contents.python_version)
     if plan.targets:
         _relay(install(uv, env, plan.targets, passthrough), plan.projects, "installing projects")
-    _relay(install(uv, env, _otto_target(), passthrough), plan.projects, "installing otto")
-    meta = EnvMeta(uv_version=version, otto_version=get_version())
+    _relay(install(uv, env, otto.target, passthrough), plan.projects, "installing otto")
+    meta = EnvMeta(uv_version=version, otto_version=_installed_otto(env, otto))
     write_meta(env, meta)
     return EnvBuild(
         env=env,
@@ -491,6 +593,7 @@ def _create(
     *,
     force: bool,
     passthrough: "list[str]",
+    otto: _OttoInstall,
 ) -> "EnvBuild":
     """Build the venv at *env* from scratch with the already-acquired *uv*."""
     from .backends import create_venv
@@ -503,15 +606,19 @@ def _create(
             )
         shutil.rmtree(env)
     _relay(create_venv(uv, env), plan.projects, "creating the venv")
-    return _fill(env, uv, version, plan, passthrough)
+    return _fill(env, uv, version, plan, passthrough, otto)
 
 
 def create_env(
     *,
     force: bool = False,
+    otto: "str | None" = None,
     passthrough: "list[str] | None" = None,
 ) -> "EnvBuild":
     """Build this workspace's orchestration venv from scratch.
+
+    *otto* names the otto release to put in it, exactly as for
+    :func:`sync_env`; a malformed one is refused with the old env standing.
 
     Refuses an existing env naming ``--force``; ``--force`` removes it first,
     which is the recovery story for a wedged env. otto's uv is acquired BEFORE
@@ -523,13 +630,18 @@ def create_env(
     filled venv behind, and with ``--force`` the old one is already gone.
     """
     plan = _plan(_discovered_projects())
+    install = _otto_install(otto)
     env = env_path()
     uv, version = _acquire_uv(env)
-    return _create(env, plan, uv, version, force=force, passthrough=passthrough or [])
+    return _create(env, plan, uv, version, force=force, passthrough=passthrough or [], otto=install)
 
 
-def sync_env(*, passthrough: "list[str] | None" = None) -> "EnvBuild":
+def sync_env(*, otto: "str | None" = None, passthrough: "list[str] | None" = None) -> "EnvBuild":
     """Bring this workspace's orchestration venv up to date, creating it if absent.
+
+    *otto* names the otto release to put in the env, as a version or a PEP 440
+    specifier (``otto env sync --otto``); None installs the otto that is
+    running. The env's record then names the release the installer chose.
 
     NEVER destroys anything. It is the verb every error message names, so it
     has to stay safe to suggest -- including when the thing it is suggested
@@ -541,11 +653,14 @@ def sync_env(*, passthrough: "list[str] | None" = None) -> "EnvBuild":
     or none at all, is simply re-stamped when the installs succeed.
     """
     plan = _plan(_discovered_projects())
+    install = _otto_install(otto)
     env = env_path()
     uv, version = _acquire_uv(env)
     if not env.exists():
-        return _create(env, plan, uv, version, force=False, passthrough=passthrough or [])
-    return _fill(env, uv, version, plan, passthrough or [])
+        return _create(
+            env, plan, uv, version, force=False, passthrough=passthrough or [], otto=install
+        )
+    return _fill(env, uv, version, plan, passthrough or [], install)
 
 
 def _discovered_projects() -> "list[Project]":
@@ -627,6 +742,9 @@ class _EnvContents:
     marker_env: "dict[str, str] | None"
     """Its PEP 508 marker values, or None when it cannot compute them."""
 
+    otto_version: "str | None" = None
+    """The ``otto-sh`` version installed in it, or None when it holds no otto."""
+
 
 def _env_contents(env: Path) -> "_EnvContents | None":
     """Return what *env* holds, or None if its interpreter cannot answer.
@@ -641,7 +759,10 @@ def _env_contents(env: Path) -> "_EnvContents | None":
     if not python.is_file():
         return None
     probe = subprocess.run(  # noqa: S603 — fixed argv, path derived from the env we own
-        [str(python), "-c", _PROBE_ENV],
+        # -I: the env answers for itself. Without it the probe's sys.path also
+        # holds the working directory and PYTHONPATH, and a distribution there
+        # (another otto's dist-info, say) would be reported as the env's own.
+        [str(python), "-I", "-c", _PROBE_ENV],
         capture_output=True,
         text=True,
         check=False,
@@ -655,6 +776,7 @@ def _env_contents(env: Path) -> "_EnvContents | None":
             site_dirs=[Path(d) for d in raw["site"]],
             python_version=str(raw["python"]),
             marker_env=raw["markers"],
+            otto_version=raw.get("otto"),
         )
     except (ValueError, KeyError, TypeError):
         return None

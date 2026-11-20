@@ -44,33 +44,49 @@ def _record_line(arcname: str, data: bytes) -> str:
     return f"{arcname},sha256={digest},{len(data)}"
 
 
-def build(outdir: Path) -> Path:
-    """Write the wheel into *outdir* and return its path."""
+def write_wheel(outdir: Path, name: str, version: str, package: "dict[str, bytes]") -> Path:
+    """Write a pure-Python wheel for *name* at *version* into *outdir* and return its path.
+
+    *name* is the distribution name as a wheel filename spells it (underscores).
+    *package* maps archive names to the package's own files; it may be empty,
+    which makes a wheel that installs a distribution and no code. The
+    dist-info (METADATA, WHEEL and a RECORD whose hashes match) is written here,
+    for every wheel the suite builds.
+    """
     outdir.mkdir(parents=True, exist_ok=True)
-    wheel = outdir / f"{DIST}-py3-none-any.whl"
+    dist = f"{name}-{version}"
+    wheel = outdir / f"{dist}-py3-none-any.whl"
     files: "dict[str, bytes]" = {
+        **package,
+        f"{dist}.dist-info/METADATA": (
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            "Summary: otto test fixture package\n"
+        ).encode(),
+        f"{dist}.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nGenerator: otto-fixture\n"
+            b"Root-Is-Purelib: true\nTag: py3-none-any\n"
+        ),
+    }
+    records = [_record_line(arcname, data) for arcname, data in files.items()]
+    records.append(f"{dist}.dist-info/RECORD,,")
+    files[f"{dist}.dist-info/RECORD"] = ("\n".join(records) + "\n").encode()
+    with zipfile.ZipFile(wheel, "w", zipfile.ZIP_DEFLATED) as zf:
+        for arcname, data in files.items():
+            zf.writestr(arcname, data)
+    return wheel
+
+
+def build(outdir: Path) -> Path:
+    """Write the beetroot wheel into *outdir* and return its path."""
+    package = {
         f"{NAME}/__init__.py": (
             '"""otto test fixture package. Never published to any index."""\n'
             f'__version__ = "{VERSION}"\n\n\n'
             "def beet() -> str:\n"
             '    return "otto-fixture-beetroot"\n'
         ).encode(),
-        f"{DIST}.dist-info/METADATA": (
-            f"Metadata-Version: 2.1\nName: {NAME}\nVersion: {VERSION}\n"
-            "Summary: otto test fixture package\n"
-        ).encode(),
-        f"{DIST}.dist-info/WHEEL": (
-            b"Wheel-Version: 1.0\nGenerator: otto-fixture\n"
-            b"Root-Is-Purelib: true\nTag: py3-none-any\n"
-        ),
     }
-    records = [_record_line(name, data) for name, data in files.items()]
-    records.append(f"{DIST}.dist-info/RECORD,,")
-    files[f"{DIST}.dist-info/RECORD"] = ("\n".join(records) + "\n").encode()
-    with zipfile.ZipFile(wheel, "w", zipfile.ZIP_DEFLATED) as zf:
-        for name, data in files.items():
-            zf.writestr(name, data)
-    return wheel
+    return write_wheel(outdir, NAME, VERSION, package)
 
 
 if __name__ == "__main__":
