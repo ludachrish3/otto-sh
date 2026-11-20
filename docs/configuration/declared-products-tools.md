@@ -60,7 +60,7 @@ command can install.
 |---|---|---|
 | `shell` | the `install` / `check` / `uninstall` commands you write | `.gcda` under `cov_dir`, fetched with `find` |
 | `embedded` | the host's binary loader (a Zephyr LLEXT extension) | dumped over the console by the embedded collector |
-| `kmod` | the kernel's module loader (`insmod`/`rmmod`) | `none`, or `module` (the `otto_kmodcov` runtime dumps to `cov_dir`), or `kernel` (`CONFIG_GCOV_KERNEL`'s debugfs tree copied to `cov_dir`) |
+| `kmod` | the kernel's module loader (`insmod`/`rmmod`) | optional: `none` (the default), or `kernel` (`CONFIG_GCOV_KERNEL`'s debugfs tree copied to `cov_dir`), or `module` (the `otto_kmodcov` runtime dumps to `cov_dir`, for a kernel with no gcov of its own) |
 | `docker_image` | a docker daemon (`docker load`/`pull`, `run -d`, `rm -f`) | `.gcda` under `cov_dir`, bind-mounted into the container |
 
 ## Matching
@@ -418,7 +418,24 @@ from the entry above it.
 Built in, in both seams: a Linux kernel module, loaded with `insmod` and
 unloaded with `rmmod`. A product's `kmod` and a dev tool's `kmod` are two
 separate factories, each registered in its own registry — the product form
-carries coverage; the dev-tool form is a plain module with none.
+can carry coverage; the dev-tool form is a plain module with none.
+
+Of the params below, a `kmod` product needs only `artifact`. This is a
+complete entry, and otto loads, unloads and tests the module with it:
+
+```toml
+[[products]]
+name = "mymod"
+kind = "kmod"
+artifact = "module/mymod.ko"
+match = { id = "dut" }
+```
+
+Coverage is optional and separate. Its default is `"none"`, and the
+`otto_kmodcov` library ([the kmodcov subtype](#the-kmodcov-subtype)) is needed
+only for `coverage = "module"`.
+[Choosing a method](../cli/cov/instrumenting/kernel-modules.md#choosing-a-method)
+says when to use each value and what each needs.
 
 | Param | Meaning |
 |---|---|
@@ -475,7 +492,9 @@ tool — is documented next.
 
 `kind = "kmodcov"` is the `kmod` dev tool with `module_name` fixed to
 `otto_kmodcov`: one entry per kernel, matched by `match` exactly as any other
-dev tool.
+dev tool. Declare it only for a host that carries a `kmod` product with
+`coverage = "module"`. A `kmod` product with no coverage, or with
+`coverage = "kernel"`, needs no such entry.
 
 | Param | Meaning |
 |---|---|

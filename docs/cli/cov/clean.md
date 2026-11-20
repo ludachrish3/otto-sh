@@ -15,7 +15,8 @@ product that is not a coverage build is left alone. Each product kind resets
 its own way: a Unix or container product deletes the counters under its own
 `cov_dir`, then the directories that removal left empty, then the `cov_dir`
 itself if nothing is left in it; a {doc}`kernel-module product <instrumenting/kernel-modules>`
-writes its sysfs `reset` file; an embedded board calls its exported
+writes its sysfs `reset` file, or with `coverage = "kernel"` zeroes its own
+entries in the kernel's gcov tree; an embedded board calls its exported
 `reset_fn` over the console (see {ref}`coverage-embedded-reset` for what
 that export looks like and the two rules the real boards forced on it). A
 host with no instrumented product at all is printed, not silently skipped —

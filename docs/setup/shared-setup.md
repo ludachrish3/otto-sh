@@ -119,7 +119,7 @@ every host in those labs. The hosts they admit also bound what
 ## Next
 
 - {doc}`tracks/shell` — a complete project: two command-line tools, tests, three-tier coverage and a custom metric.
-- {doc}`tracks/kmod` — a kernel module: its coverage library, an e2e test, a GoogleTest unit test of its logic, and three-tier coverage.
+- {doc}`tracks/kmod` — a kernel module: the module as a product, an e2e test, a GoogleTest unit test of its logic, and optional three-tier coverage.
 - {doc}`tracks/embedded` — a Zephyr extension: its coverage runtime, an e2e test, a GoogleTest unit test of its logic, and three-tier coverage.
 - {doc}`tracks/docker` — tools in containers: two in a compose service, one in an image of its own, with tests and three-tier coverage.
 - {doc}`defining-products-and-tools` — put your products on the host.
