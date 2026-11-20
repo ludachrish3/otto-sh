@@ -17,7 +17,7 @@ from ..utils import Status
 from .exec_route import ExecRoute
 
 NO_RETURN_CODE = "Process did not provide a return code"
-"""The ``value`` of :func:`no_return_code_result`."""
+"""The ``value`` and ``msg`` of :func:`no_return_code_result`."""
 
 
 def _signalled(n: int) -> int:
@@ -60,6 +60,7 @@ def no_return_code_result(*, cmd: str, route: ExecRoute) -> CommandResult:
     return CommandResult(
         status=Status.Error,
         value=NO_RETURN_CODE,
+        msg=NO_RETURN_CODE,
         command=cmd,
         retcode=-1,
         route=route.value,

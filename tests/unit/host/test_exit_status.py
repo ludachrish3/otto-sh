@@ -124,3 +124,12 @@ def test_run_s_brace_frame_status_is_what_the_shell_reports():
     framed = BashFrame().frame("f() { return 271; }; f", m=M)
     out = subprocess.run(["dash"], check=False, input=framed, capture_output=True, text=True).stdout
     assert BashFrame().extract_retcode(out, m=M) == 271
+
+
+def test_no_return_code_result_says_so_in_its_msg():
+    # #1098: the CLI prints only `msg` for a failed result.
+    from otto.host.exec_route import ExecRoute
+    from otto.host.exit_status import NO_RETURN_CODE, no_return_code_result
+
+    r = no_return_code_result(cmd="c", route=ExecRoute.LOCAL_SUBPROCESS)
+    assert r.msg == NO_RETURN_CODE == r.value

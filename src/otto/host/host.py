@@ -1430,7 +1430,9 @@ def _first_failure_reason(result: Result) -> str:
         return ""
     first_line = next(iter(str(failure.value or "").strip().splitlines()), "")
     if failure.timed_out:
-        return first_line
+        # The builder owns the reason (`timed_out_result` sets `msg`); a result
+        # built without it still carries the reason on its value's first line.
+        return failure.msg or first_line
     return f"exit {failure.retcode}: {first_line}" if first_line else f"exit {failure.retcode}"
 
 
