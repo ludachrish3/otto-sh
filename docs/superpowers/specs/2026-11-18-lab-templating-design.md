@@ -779,6 +779,20 @@ instances only. Raw upstream output is never cached.
    file-discovery consolidation, and post-composition links (sections 6.4–6.9,
    7.1 and 7.3).
 
+   **Examples and walkthroughs use templating (maintainer, 2026-11-19).**
+   Phase 3 is not done until:
+   - The testbed lab configs template their Ubuntu VMs. In
+     `tests/_fixtures/lab_data/tech1-inventory/`, the VM name and address
+     correlate (`testN` is `10.10.200.(10+N)`), which is how users are
+     expected to template their own labs. The tech1 configs render the same
+     hosts from one Jsonnet function instead of restating each VM.
+   - Examples use templating wherever a repeated host or lab shape appears.
+   - The lab configuration walkthroughs teach templating as a step.
+   - Every page that explains templating passes a naive-reader walkthrough.
+     A Haiku agent, given only the docs, sets up a templated lab from the
+     walkthrough. Each point where it fails or misreads is fixed in the docs,
+     and the walkthrough is rerun until it succeeds.
+
 Phases 2 and 3 run in parallel once phase 1 lands. The last pull request adds
 one real end-to-end acceptance test: NetBox and Jsonnet inventories →
 template → composed lab.
