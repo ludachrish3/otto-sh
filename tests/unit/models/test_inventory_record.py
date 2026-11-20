@@ -11,8 +11,11 @@ from otto.models.inventory import (
     coerce_digit_string,
 )
 
+_NO_HOST_TWIN = {"extra", "groups", "labels"}
+"""Record fields with no host-spec twin: the opaque table and the discovery vocabulary."""
 
-def test_every_record_field_except_extra_is_a_hostspec_field():
+
+def test_every_record_field_with_a_host_twin_is_a_hostspec_field():
     """Spec §4: record field names are HostSpec field names, 1:1 — no mapping table in core.
 
     ``hw_version``/``sw_version`` were carved out while they were declared on
@@ -23,19 +26,24 @@ def test_every_record_field_except_extra_is_a_hostspec_field():
     (``element_id``): a key is a fact the record ASSERTS about the element the
     host belongs to, cross-checked against ``element.id`` and never filled
     (spec 2026-09-05 §8.6), so it names an ``Element`` field rather than a host
-    entry's. Every other record field is a host field, and a stray one fails
-    this.
+    entry's. ``extra``, ``groups`` and ``labels`` have no twin anywhere: the
+    first is opaque, the other two are discovery data (lab-templating spec
+    §6.2) the join never copies. Every other record field is a host field, and
+    a stray one fails this.
     """
-    record_fields = set(InventoryRecord.model_fields) - {"extra"}
+    record_fields = set(InventoryRecord.model_fields) - _NO_HOST_TWIN
     allowed = set(HostSpec.model_fields) | INVENTORY_KEY_FIELDS
     assert record_fields <= allowed, sorted(record_fields - allowed)
     assert "ip" in record_fields  # not vacuous
     # The exception is exactly the key set, not a licence for any absent field.
     assert INVENTORY_KEY_FIELDS.isdisjoint(HostSpec.model_fields)
+    # ... and the no-twin set really has none: a host field of the same name
+    # would turn "never copied" into a silent drop.
+    assert _NO_HOST_TWIN.isdisjoint(HostSpec.model_fields)
 
 
 def test_fillable_fields_are_derived_not_listed():
-    expected = frozenset(InventoryRecord.model_fields) - {"element_id", "extra"}
+    expected = frozenset(InventoryRecord.model_fields) - {"element_id", *_NO_HOST_TWIN}
     assert expected == FILLABLE_INVENTORY_FIELDS
     assert "ip" in FILLABLE_INVENTORY_FIELDS
     assert frozenset({"element_id"}) == INVENTORY_KEY_FIELDS

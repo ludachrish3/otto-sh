@@ -260,6 +260,21 @@ init
   otto's (`"json"` ships with otto); the `json` store takes `path`, anchored to
   the project root. See {doc}`inventory`.
 
+\[\[inventories\]\]
+: Optional array of tables declaring **named inventories**, one entry per
+  inventory, each read only by references that name it.  An entry reserves
+  four keys: `name` (required, non-empty, unique in the file), `backend` and
+  `cache_ttl` (as in `[inventory]`), and `creds`, a sub-table
+  (`[inventories.creds]`, the same keys as `[creds]`) holding the creds store
+  for that entry alone.  Every other key belongs to the backend, `creds_file`
+  included.  An entry named `default` binds the inventory bare references
+  use, as `[inventory]` would, so one file may not declare both, nor give the
+  `default` entry a `creds` sub-table beside a `[creds]` table.  A project
+  that declares any `[[inventories]]` and a `[creds]` table without binding
+  `default` itself (by `[inventory]` or a `default` entry) is refused: that
+  `[creds]` would bind to the process `default`, so move it into the owning
+  entry's `creds` sub-table.  See {ref}`named-inventories`.
+
 \[logging.levels\]
 : Optional table setting the per-library noise floor — which third-party
   loggers' records enter otto's funnel at all.  Otto quiets a few known-noisy
@@ -310,8 +325,8 @@ fails validation, naming the file and pointing here.
 
 One file sits outside every project root: `~/.otto/settings.toml`, otto's
 **user-level** settings.  It holds what is true of the person and the machine
-rather than of a project — today that is three tables, `[inventory]`,
-`[creds]` and `[cache]`:
+rather than of a project — today that is `[inventory]`, `[creds]`,
+`[[inventories]]` and `[cache]`:
 
 ```toml
 [inventory]
@@ -332,6 +347,11 @@ inventory.  It lives under otto's home, so `OTTO_HOME` relocates it along
 with everything else there, and a relative path inside it anchors to that
 directory (`~/.otto`) rather than to any project.  A project-only table pasted into
 it is an error naming the key — this file is not a second `settings.toml`.
+
+`[[inventories]]` takes the same entries as in a project file, under the
+same rules, except one: the user file's `[creds]` beside named entries is
+not refused: it stays the creds store for `default`, as today.  See
+{ref}`named-inventories`.
 
 `[cache]` takes one key, `enabled`, and is otto's own rather than a
 backend's. What turning it off covers and how to flip it is on

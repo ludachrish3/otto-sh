@@ -77,7 +77,7 @@ def test_write_and_read_round_trip_and_no_password_is_written(tmp_path, monkeypa
     mock_project.init = []
     mock_project.libs = []
     mock_project.tests = []
-    mock_project.inventory_settings = {}
+    mock_project.settings = {}
     entries = {"u1": [{"login": "u", "protocols": [], "proxy": False}]}
     cc.write_cache([mock_project], instructions=[], hosts=["u1"], logins_by_host=entries)
     out = cc.read_cache([mock_project])
@@ -98,7 +98,7 @@ def test_read_cache_rejects_a_malformed_login_map(tmp_path, monkeypatch):
     mock_project.init = []
     mock_project.libs = []
     mock_project.tests = []
-    mock_project.inventory_settings = {}
+    mock_project.settings = {}
     cc.write_cache([mock_project], instructions=[], hosts=[])
     data = json.loads(cc._cache_path().read_text())
     data["sections"]["names"]["payload"]["logins_by_host"] = ["not", "a", "dict"]

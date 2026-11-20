@@ -31,7 +31,9 @@ from typing_extensions import final
 
 if TYPE_CHECKING:
     from ..host.host import Host
+    from ..host.inventory_ref import MachineIdentity
     from ..inventory.protocol import Inventory
+    from ..inventory.view import InventoryView
     from ..link.model import Link
     from .protocol import LabRepository
 
@@ -55,6 +57,35 @@ def _describe(host: "Host") -> str:
     if isinstance(host, RemoteHost):
         return describe_identity(host.element.name, host.board, host.slot, host.ip)
     return f"host {host.id!r} ({type(host).__name__})"
+
+
+def _merge_collision(
+    *,
+    host_id: str,
+    mine: "MachineIdentity",
+    mine_lab: str,
+    theirs: "MachineIdentity",
+    theirs_lab: str,
+) -> str:
+    """Return the ``+`` collision message for two machines declared under *host_id*.
+
+    It names both addresses and, when they match (two inventories reusing one
+    address), both identities as ``name/key``.
+    """
+    from ..host.inventory_ref import spell_ref
+
+    hint = "Give the elements distinct names, or set board/slot."
+    if mine.ip != theirs.ip:
+        return (
+            f"Duplicate host id {host_id!r} for different hosts "
+            f"({mine.ip} in {mine_lab!r} vs {theirs.ip} in {theirs_lab!r}). {hint}"
+        )
+    return (
+        f"Duplicate host id {host_id!r} for different machines at one address "
+        f"({mine.ip} as {spell_ref(ref=mine.ref)} in {mine_lab!r} vs {theirs.ip} as "
+        f"{spell_ref(ref=theirs.ref)} in {theirs_lab!r}): two inventories, or two keys of one, "
+        f"name two machines. {hint}"
+    )
 
 
 def split_lab_names(value: str) -> list[str]:
@@ -135,6 +166,16 @@ class Lab:
     last: positional construction must keep working.
     """
 
+    _identities: "dict[str, list[MachineIdentity]]" = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+    """Every machine identity merged into each host id, in merge order.
+
+    The stored host is the last one merged, but a later merge must be judged
+    against every declaration it replaced, or the verdict would depend on the
+    order and grouping of ``+``. Filled by :meth:`_identity_history`.
+    """
+
     def __post_init__(self) -> None:
         """Seed ``component_names`` with this lab's own name when the caller left it empty.
 
@@ -212,11 +253,47 @@ class Lab:
             merged[link.id] = link
         return list(merged.values())
 
+    def _identity_history(self, *, host_id: str) -> "list[MachineIdentity]":
+        """Return every machine identity merged under *host_id*, seeding it from the host.
+
+        A lab that has merged nothing under *host_id* holds one identity, its
+        own host's; a host that is not a
+        :class:`~otto.host.remote_host.RemoteHost` (or no host) has none.
+        """
+        from ..host.inventory_ref import MachineIdentity
+        from ..host.remote_host import RemoteHost
+
+        if host_id not in self._identities:
+            host = self.hosts.get(host_id)
+            self._identities[host_id] = (
+                [MachineIdentity(ip=host.ip, ref=host.inventory_ref)]
+                if isinstance(host, RemoteHost)
+                else []
+            )
+        return self._identities[host_id]
+
+    def _replace_host(self, *, host_id: str, other: "Lab | None") -> None:
+        """Replace the host under *host_id*, and its identity history, with *other*'s.
+
+        The one place a host and the history it is judged by change together:
+        the host *other* holds under *host_id* is stored with every identity
+        *other* merged under it, and with ``None`` both go. A history left behind by
+        a replaced host would let a later :meth:`__add__` accept a machine
+        that conflicts with the surviving one.
+        """
+        if other is None:
+            del self.hosts[host_id]
+            self._identities.pop(host_id, None)
+            return
+        self._identities[host_id] = list(other._identity_history(host_id=host_id))  # noqa: SLF001 — another Lab, narrowed from Optional
+        self.hosts[host_id] = other.hosts[host_id]
+
     def __add__(
         self,
         other: "Lab",
     ) -> "Lab":
 
+        from ..host.inventory_ref import first_conflict
         from ..host.remote_host import RemoteHost
 
         pre_merge_name = self.name
@@ -240,26 +317,32 @@ class Lab:
             existing = self.hosts.get(host.id)
             # A host declared in multiple labs is reconstructed as a DISTINCT
             # object per lab, so object identity cannot tell "same host, two labs"
-            # from "two different hosts, colliding id". Use the connection identity
-            # (ip): same id + same ip = the same host (dedup, no error); same id +
-            # different ip = two different machines colliding (fail loud). Only
-            # RemoteHosts carry an ``ip`` and only they are merged here (built-in
-            # ``local`` is injected post-merge, containers post-load).
-            # (``existing is host`` would trivially share ``ip`` too, so the
-            # ``existing.ip != host.ip`` check below already excludes it —
-            # no separate identity check needed.)
-            if (
-                existing is not None
-                and isinstance(existing, RemoteHost)
-                and isinstance(host, RemoteHost)
-                and existing.ip != host.ip
-            ):
-                raise ValueError(
-                    f"Duplicate host id {host.id!r} for different hosts "
-                    f"({existing.ip} in {pre_merge_name!r} vs {host.ip} in {other.name!r}). "
-                    "Give the elements distinct names, or set board/slot."
-                )
-            self.hosts[host.id] = host
+            # from "two different hosts, colliding id". Judge the machine
+            # instead (``same_machine``): its address and inventory provenance.
+            # Every identity either side has merged under this id is checked
+            # against every one the other has, so ``a + (b + c)`` and
+            # ``(a + b) + c`` agree. Only RemoteHosts carry an ``ip`` and only
+            # they are merged here (built-in ``local`` is injected post-merge,
+            # containers post-load).
+            theirs = other._identity_history(host_id=host.id)
+            if isinstance(existing, RemoteHost) and isinstance(host, RemoteHost):
+                mine = self._identity_history(host_id=host.id)
+                for incoming in theirs:
+                    clash = first_conflict(incoming=incoming, seen=mine)
+                    if clash is not None:
+                        raise ValueError(
+                            _merge_collision(
+                                host_id=host.id,
+                                mine=clash,
+                                mine_lab=pre_merge_name,
+                                theirs=incoming,
+                                theirs_lab=other.name,
+                            )
+                        )
+                self._identities[host.id] = [*mine, *theirs]
+                self.hosts[host.id] = host
+            else:
+                self._replace_host(host_id=host.id, other=other)
 
         by_id = {link.id: link for link in self.links}
         by_id.update({link.id: link for link in other.links})
@@ -291,6 +374,34 @@ def _json_source(search_paths: list[Path]) -> "LabRepository":
     return LAB_REPOSITORIES.build(prepared=prepared)
 
 
+def _load_components(
+    lab_names: list[str],
+    *,
+    repository: "LabRepository",
+    preferences: dict[str, dict[str, Any]] | None,
+    view: "InventoryView",
+) -> list[Lab]:
+    """Load each of *lab_names* from *repository* through *view*, in order.
+
+    A composite decides availability once, in one status report, for every
+    component; any other repository loads through
+    :func:`~otto.labs.load_lab_through`.
+    """
+    from .composite import CompositeLabRepository
+    from .views import load_lab_through
+
+    if isinstance(repository, CompositeLabRepository):
+        report = repository.lab_status_report(view=view)
+        return [
+            repository.load_lab_reported(name, preferences=preferences, view=view, report=report)
+            for name in lab_names
+        ]
+    return [
+        load_lab_through(repository=repository, name=name, preferences=preferences, view=view)
+        for name in lab_names
+    ]
+
+
 def load_lab(
     labnames: str | list[str],
     *,
@@ -298,6 +409,7 @@ def load_lab(
     preferences: dict[str, dict[str, Any]] | None = None,
     repository: "LabRepository | None" = None,
     inventory: "Inventory | None" = None,
+    view: "InventoryView | None" = None,
 ) -> Lab:
     """
     Build a Lab object from one or more lab names.
@@ -330,6 +442,12 @@ def load_lab(
         ``inventory`` key resolve against it (spec 2026-08-28 host-inventory
         §6). ``None`` — the default — makes a referenced entry an error, which
         is exactly what a process with no ``[inventory]`` table should say.
+        It stands for a view holding it alone as ``default``
+        (:meth:`~otto.inventory.InventoryView.of_default`).
+    view : InventoryView | None
+        The process inventory view (:func:`otto.inventory.build_inventory_view`)
+        every component resolves its references through, named inventories
+        included. Give *inventory* or *view*, not both.
 
     Returns
     -------
@@ -340,8 +458,26 @@ def load_lab(
         describing that same component, and ``component_names`` lists those
         components in order.
 
+    Raises
+    ------
+    ValueError
+        If both *inventory* and *view* are given.
+    LabUnavailableError
+        If a :class:`~otto.labs.composite.CompositeLabRepository` reports a
+        component unavailable.
+
     Notes
     -----
+    For a :class:`~otto.labs.composite.CompositeLabRepository` (every
+    configured process), availability is decided once for the whole
+    selection: :meth:`~otto.labs.composite.CompositeLabRepository.lab_status_report`
+    runs once, however many components ``a+b`` names, and each component
+    loads through
+    :meth:`~otto.labs.composite.CompositeLabRepository.load_lab_reported`.
+    Any other repository loads each component through
+    :func:`~otto.labs.load_lab_through`, with no report: a legacy backend's
+    labs are all available.
+
     The built-in ``local`` host is injected after the merge and belongs to no
     component, so it is attributed to ``component_names[0]`` — the first lab
     the caller named. Attributing it to the composite ("a+b") would name a lab
@@ -349,6 +485,8 @@ def load_lab(
     the caller actually selected, and for the overwhelmingly common
     single-lab case the two answers coincide.
     """
+    if inventory is not None and view is not None:
+        raise ValueError("load_lab() takes inventory= or view=, not both")
     match labnames:
         case str():
             lab_names = split_lab_names(labnames)
@@ -371,10 +509,11 @@ def load_lab(
             sources.append(LabSource(label="json", repository=_json_source(search_paths)))
         repository = CompositeLabRepository(sources)
 
-    labs = [
-        repository.load_lab(name, preferences=preferences, inventory=inventory)
-        for name in lab_names
-    ]
+    if view is None:
+        from ..inventory.view import InventoryView
+
+        view = InventoryView.of_default(inventory=inventory)
+    labs = _load_components(lab_names, repository=repository, preferences=preferences, view=view)
 
     # lazy: keeps ``import otto.labs.loader`` from loading otto.host
     # (tests/unit/test_import_contracts.py pins this)

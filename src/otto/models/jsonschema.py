@@ -55,13 +55,19 @@ from typing import Any
 from pydantic.json_schema import models_json_schema
 
 from ..host.connections import TERM_BACKENDS
+from ..host.inventory_ref import inventory_reference_schema
 from ..host.os_profile import registered_host_specs
 from ..host.specs import HostSpec
 from ..host.transfer import TRANSFER_BACKENDS
 from ..link.impairer import IMPAIRERS, build_impairer
 from ..version import get_version
 from .base import CredSpec
-from .inventory import FILLABLE_INVENTORY_FIELDS, InventoryRecord
+from .inventory import (
+    FILLABLE_INVENTORY_FIELDS,
+    INVENTORY_V2_FORMAT,
+    InventoryInstance,
+    InventoryRecord,
+)
 from .lab import ElementSpec, LabEntrySpec
 from .link import LinkSpec
 from .monitor import (
@@ -240,14 +246,17 @@ def _allow_inventory_reference(doc: dict[str, Any]) -> None:
     # "references nothing" (R7), so the entry is inline and still owes an
     # ``ip``, and the empty string is an ``InventoryError``. Both failed this
     # schema on the missing ``ip`` before the relaxation, so omitting this
-    # would widen a hole rather than open the intended one.
+    # would widen a hole rather than open the intended one. The value schema
+    # is the normalizer's own (the field property states its nullable form),
+    # so the schema accepts exactly the bare and qualified forms the loader
+    # does.
     doc.setdefault("allOf", []).append(
         {
             "anyOf": [
                 {"required": list(required)},
                 {
                     "required": ["inventory"],
-                    "properties": {"inventory": {"type": "string", "minLength": 1}},
+                    "properties": {"inventory": inventory_reference_schema(nullable=False)},
                 },
             ]
         }
@@ -370,22 +379,63 @@ def _monitor_export_schema() -> dict[str, Any]:
 
 
 def _inventory_schema() -> dict[str, Any]:
-    """Build the json inventory backend's file schema: ``{key: InventoryRecord}`` (spec §9.1, §11).
+    """Build the json inventory backend's file schema: either document format (spec §9.1, §11).
 
-    ``$schema`` is the editor-wiring string; ``_``-prefixed top-level keys and
-    record keys are comment space, mirroring what ``parse_inventory_document``
-    skips and ``InventoryRecord._strip`` drops.
+    Mirrors :func:`~otto.inventory.json_backend.parse_discovery_document`:
+    a top-level ``$format`` holding a string selects the versioned document
+    (``otto.inventory.v2``: ``records`` and ``instances`` maps, nothing else),
+    and anything else is the flat ``{key: InventoryRecord}`` document, where a
+    ``$format`` key holding a record is a host. ``$schema`` is the
+    editor-wiring string; ``_``-prefixed keys are comment space at the top
+    level, in each map and in each record and instance, mirroring what the
+    parser skips and the models strip.
     """
     record = InventoryRecord.model_json_schema(ref_template="#/$defs/{model}")
     _inject_interface_shorthand(record)
     _allow_comment_keys(record)
     defs = record.pop("$defs", {})
     defs["InventoryRecord"] = record
-    return {
+    instance = InventoryInstance.model_json_schema(ref_template="#/$defs/{model}")
+    _allow_comment_keys(instance)
+    # Mirror the model's refusal of a key repeated in one list.
+    instance["properties"]["members"]["uniqueItems"] = True
+    instance["properties"]["roles"]["additionalProperties"]["uniqueItems"] = True
+    instance["properties"]["roles"]["propertyNames"] = {"minLength": 1}
+    defs["InventoryInstance"] = instance
+
+    def _map_of(model: str) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "patternProperties": {"^_": {}},
+            "additionalProperties": {"$ref": f"#/$defs/{model}"},
+        }
+
+    flat = {
         "type": "object",
         "properties": {"$schema": {"type": "string"}},
         "patternProperties": {"^_": {}},
         "additionalProperties": {"$ref": "#/$defs/InventoryRecord"},
+    }
+    v2 = {
+        "type": "object",
+        "required": ["$format"],
+        "properties": {
+            "$schema": {"type": "string"},
+            "$format": {"const": INVENTORY_V2_FORMAT},
+            "records": _map_of("InventoryRecord"),
+            "instances": _map_of("InventoryInstance"),
+        },
+        "patternProperties": {"^_": {}},
+        "additionalProperties": False,
+    }
+    return {
+        "if": {
+            "type": "object",
+            "required": ["$format"],
+            "properties": {"$format": {"type": "string"}},
+        },
+        "then": v2,
+        "else": flat,
         "$defs": defs,
     }
 

@@ -1,7 +1,9 @@
 """Inventory findings for the ``otto init`` doctor (spec §11, §13).
 
 Pure — takes an inventory and the keys the lab files reference, returns
-strings — so ``otto.init`` stays the one reader of a project's files.
+strings — so ``otto.init`` stays the one reader of a project's files. Which
+inventory a reference counts against is the view's decision
+(:meth:`~otto.inventory.InventoryView.selected_name`), never restated here.
 """
 
 import stat
@@ -9,46 +11,100 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from ..host.inventory_ref import InventoryReference, normalize_reference
 from ..models.lab import ElementSpec
 from .creds import CredsOverlay
+from .errors import InventoryError
 from .protocol import Inventory
+from .view import InventoryView
 
 _ORPHAN_LIST_CAP = 10
 
 
-def references_inventory(host_data: "dict[str, Any]") -> bool:
-    """Whether *host_data* names a non-empty string ``inventory`` key (R7).
+def _reference_of(host_data: "dict[str, Any]") -> "InventoryReference | None":
+    """*host_data*'s reference, or ``None`` for none and for a malformed one.
 
-    Mirrors the first checks :func:`otto.inventory.resolve_host_entry` makes
-    before it ever touches an actual inventory: a missing or ``None`` key
-    means "references nothing" (an entry that never mentioned the
-    inventory), and any other non-string — the empty string included — is a
-    malformed reference, a problem of its own regardless of whether an
-    inventory even resolves. Both cases return ``False`` here: a caller
-    using this to decide "does resolving this entry need a working
-    inventory" must not gate an unrelated finding (a bogus ``os_type``, a
-    malformed key) behind the inventory resolving at all. The single
-    definition is shared by :func:`referenced_keys` and
-    ``otto.init.doctor._validate_lab``'s broken-declaration skip so the two
-    cannot drift apart.
+    The one reading of a host entry's reference here: a missing or ``None``
+    key references nothing, and a value the normalizer refuses (the empty
+    string, a non-string, a misspelled qualified reference) is a malformed
+    reference, a problem resolving the entry reports on its own.
     """
-    key = host_data.get("inventory")
-    return isinstance(key, str) and bool(key)
+    try:
+        return normalize_reference(value=host_data.get("inventory"))
+    except ValueError:
+        return None
 
 
-def referenced_keys(element_lists: "Iterable[list[ElementSpec]]") -> set[str]:
-    """Every ``inventory`` key any host entry names, across all files."""
-    keys: set[str] = set()
+def referenced_references(
+    *, element_lists: "Iterable[list[ElementSpec]]"
+) -> "list[InventoryReference]":
+    """Every well-formed reference any host entry states, across all files.
+
+    De-duplicated and sorted. A bare and a qualified reference to the same
+    record stay two entries: ``qualified`` is kept, for the caller that
+    applies a project's policy on bare references.
+    """
+    refs: set[InventoryReference] = set()
     for elements in element_lists:
         for element in elements:
             for host_data in element.hosts:
-                if references_inventory(host_data):
-                    keys.add(host_data["inventory"])
+                ref = _reference_of(host_data)
+                if ref is not None:
+                    refs.add(ref)
+    return sorted(refs)
+
+
+def selected_inventory(host_data: "dict[str, Any]", *, view: InventoryView) -> "str | None":
+    """Return the name of the inventory *host_data*'s reference selects in *view*, or ``None``.
+
+    ``None`` when the entry references nothing (no ``inventory`` key, or
+    ``None``) or its reference is malformed, read by
+    :func:`~otto.host.inventory_ref.normalize_reference` as
+    :func:`referenced_references` reads it, and when *view* selects no inventory for
+    it: a bare reference its project refuses (D1), or a name none
+    configures. Those are problems of the entry itself, which resolving it
+    reports. Selection only: nothing is built or looked up beyond what
+    :meth:`~otto.inventory.InventoryView.selected_name` reads.
+    """
+    reference = _reference_of(host_data)
+    return None if reference is None else _selected(reference, view=view)
+
+
+def _selected(reference: InventoryReference, *, view: InventoryView) -> "str | None":
+    try:
+        return view.selected_name(reference=reference)
+    except InventoryError:  # BareReferenceRefused included
+        return None
+
+
+def referenced_by_name(
+    *, references: "Iterable[InventoryReference]", view: InventoryView
+) -> "dict[str, set[str]]":
+    """Return each inventory name and the keys *references* select in it, under *view*'s policy.
+
+    *view* is the project's own (:meth:`~otto.inventory.InventoryView.for_project`),
+    so a bare reference counts against ``default`` only where the project
+    allows it. A reference the view refuses (D1) or cannot place counts
+    against no inventory: it is a lab problem, never a reference to
+    ``default``. No lookup is made.
+    """
+    keys: dict[str, set[str]] = {}
+    for reference in references:
+        name = _selected(reference, view=view)
+        if name is not None:
+            keys.setdefault(name, set()).add(reference.key)
     return keys
 
 
 def orphan_warning(inventory: Inventory, *, referenced: set[str]) -> "str | None":
-    """Return the warning for records no lab file here references (spec §11), or ``None``."""
+    """Return the warning for records no lab file here references (spec §11), or ``None``.
+
+    *referenced* is the keys this project's references select in *this*
+    inventory (:func:`referenced_by_name`); a key referenced in another
+    inventory of the same label does not count. The text names the
+    inventory by its label only: the doctor attributes it to the
+    inventory's name, once.
+    """
     orphans = sorted(set(inventory.list_keys()) - referenced)
     if not orphans:
         return None

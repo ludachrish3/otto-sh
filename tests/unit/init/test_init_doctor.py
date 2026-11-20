@@ -608,8 +608,8 @@ def test_a_null_inventory_key_entry_is_still_validated_when_the_declaration_is_b
     skipped right alongside genuinely-referencing entries whenever the
     declaration was broken, silently hiding an unrelated bad ``os_type`` on
     that same entry. The fix keys the skip on
-    :func:`~otto.inventory.doctor.references_inventory` instead, which is
-    ``False`` for ``null`` — this entry must be validated regardless of the
+    :func:`~otto.inventory.doctor.selected_inventory` instead, which is
+    ``None`` for ``null`` — this entry must be validated regardless of the
     (unrelated) broken declaration.
     """
     home = tmp_path / "home"
@@ -1330,3 +1330,442 @@ def test_every_tests_dir_consumer_reads_the_same_dirs(tmp_path: Path, configured
     assert reads(tmp_path) == (True, True, True)
     shutil.move(str(home / "test_example.py"), str(other / "test_example.py"))
     assert reads(tmp_path) == (False, False, False)
+
+
+# ── Named inventories: every name checked, each finding attributed (#1176) ─────
+
+_LOGINS = [{"login": "u", "password": "p"}]
+
+
+def _entry_toml(name: str, path: str) -> str:
+    """One ``[[inventories]]`` json entry named *name* over *path*, supplying ``ip``."""
+    return (
+        f'[[inventories]]\nname = "{name}"\nbackend = "json"\npath = "{path}"\nsupplies = ["ip"]\n'
+    )
+
+
+def _named_project(
+    root: Path,
+    *,
+    name: str = "proj",
+    tables: str = "",
+    records: "dict[str, dict] | None" = None,
+    references: "list[object] | tuple[object, ...]" = (),
+) -> Path:
+    """A project whose json lab's hosts state *references*, one element each.
+
+    *tables* is settings text written BEFORE ``[[lab.sources]]``, so a
+    top-level key in it stays top-level. *records* maps a file under *root*
+    to the inventory records it holds.
+    """
+    files = {path: json.dumps(held) for path, held in (records or {}).items()}
+    elements = [
+        {
+            "name": f"e{index}",
+            "labs": ["bench"],
+            "hosts": [{"inventory": reference, "os_type": "unix", "creds": _LOGINS}],
+        }
+        for index, reference in enumerate(references)
+    ]
+    files["lab/lab.json"] = json.dumps({"labs": {"bench": {}}, "elements": elements})
+    extra = tables + '\n[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n'
+    return make_project(root, name=name, extra=extra, files=files)
+
+
+def _qualified(name: str, key: str) -> dict[str, str]:
+    return {"name": name, "key": key}
+
+
+def orphan_findings(report: DoctorReport) -> dict[str, list[str]]:
+    """Each attributed orphan warning's inventory name and the keys it lists."""
+    import re
+
+    found: dict[str, list[str]] = {}
+    for warning in report.warnings:
+        match = re.match(
+            r"(?P<name>[\w-]+): inventory '[^']*': \d+ record\(s\) referenced by no lab "
+            r"file here: (?P<keys>.*?) \(expected",
+            warning,
+        )
+        if match:
+            found[match["name"]] = match["keys"].split(", ")
+    return found
+
+
+def _projects(*roots: Path) -> list:
+    from otto.config.project import Project
+
+    return [Project(root=root) for root in roots]
+
+
+def _catalog(*roots: Path):
+    from otto.inventory.config import deferred_inventory_view
+
+    return deferred_inventory_view(projects=_projects(*roots))
+
+
+def test_orphans_count_qualified_references_per_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    root = _named_project(
+        tmp_path / "p",
+        tables=_entry_toml("physical", "physical.json") + _entry_toml("virtual", "virtual.json"),
+        records={
+            "physical.json": {"a": {"ip": "10.1.0.1"}, "b": {"ip": "10.1.0.2"}},
+            "virtual.json": {"a": {"ip": "10.2.0.1"}, "c": {"ip": "10.2.0.3"}},
+        },
+        references=[_qualified("physical", "a")],
+    )
+    report = check_project(root)
+    assert report.ok, _text(report)
+    assert orphan_findings(report) == {"physical": ["b"], "virtual": ["a", "c"]}
+
+
+def test_two_names_sharing_a_label_are_told_apart(tmp_path, monkeypatch):
+    from otto.init.doctor import InventoryLabel
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    root = _named_project(
+        tmp_path / "p",
+        tables=_entry_toml("physical", "shared.json") + _entry_toml("virtual", "shared.json"),
+        records={"shared.json": {"a": {"ip": "10.1.0.1"}, "b": {"ip": "10.1.0.2"}}},
+        references=[_qualified("physical", "a")],
+    )
+    report = check_project(root)
+    assert report.ok, _text(report)
+    label = f"json:{root / 'shared.json'}"
+    assert orphan_findings(report) == {"physical": ["b"], "virtual": ["a", "b"]}
+    assert report.inventories == [
+        InventoryLabel(name="physical", label=label, creds_label=None),
+        InventoryLabel(name="virtual", label=label, creds_label=None),
+    ]
+    assert report.inventory_label is None  # no default resolves
+
+
+def test_a_cross_project_reference_uses_the_active_catalog(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    a = _named_project(
+        tmp_path / "A",
+        name="proj-a",
+        tables=_entry_toml("physical", "physical.json"),
+        records={"physical.json": {"k": {"ip": "10.1.0.1"}, "spare": {"ip": "10.1.0.2"}}},
+        references=[_qualified("physical", "k")],
+    )
+    b = _named_project(tmp_path / "B", name="proj-b", references=[_qualified("physical", "k")])
+    alone = check_project(b)
+    assert not alone.ok
+    assert "references inventory 'physical' (key 'k'), which is not configured" in _text(alone)
+    report = check_project(b, catalog=_catalog(a, b))
+    assert report.ok, _text(report)
+    assert orphan_findings(report) == {}  # physical is A's: its orphans are A's to report
+    assert [entry.name for entry in report.inventories] == ["physical"]
+
+
+def test_a_d1_refused_reference_is_a_problem_and_not_a_default_reference(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "user.json").write_text(json.dumps({"k": {"ip": "10.9.0.1"}}))
+    (home / "settings.toml").write_text(  # scaffold-exempt: the otto home's user file
+        f'[inventory]\nbackend = "json"\npath = "{home / "user.json"}"\nsupplies = ["ip"]\n'
+    )
+    monkeypatch.setenv("OTTO_HOME", str(home))
+    root = _named_project(
+        tmp_path / "p",
+        tables=_entry_toml("physical", "physical.json"),
+        records={"physical.json": {"a": {"ip": "10.1.0.1"}}},
+        references=["k", _qualified("physical", "a")],
+    )
+    report = check_project(root)
+    assert not report.ok
+    problems = report.verdict(name="lab").problems
+    assert len(problems) == 1, problems
+    assert "bare inventory reference 'k' is refused" in problems[0]
+    assert orphan_findings(report) == {"default": ["k"]}
+
+
+def test_a_missing_key_in_a_named_inventory_is_attributed(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    root = _named_project(
+        tmp_path / "p",
+        tables=_entry_toml("physical", "physical.json"),
+        records={"physical.json": {"a": {"ip": "10.1.0.1"}}},
+        references=[_qualified("physical", "zz")],
+    )
+    report = check_project(root)
+    assert not report.ok
+    [problem] = report.verdict(name="lab").problems
+    assert "element 'e0' hosts[0] physical: " in problem
+    assert "'zz'" in problem
+
+
+def test_a_failing_named_inventory_beside_a_healthy_one(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    broken = '[[inventories]]\nname = "physical"\nbackend = "json"\nsupplies = ["ip"]\n'
+    root = _named_project(
+        tmp_path / "p",
+        tables=broken + _entry_toml("virtual", "virtual.json"),
+        records={"virtual.json": {"a": {"ip": "10.2.0.1"}, "c": {"ip": "10.2.0.3"}}},
+        references=[_qualified("physical", "x"), _qualified("virtual", "a")],
+    )
+    report = check_project(root)
+    assert not report.ok
+    [problem] = report.verdict(name="lab").problems
+    assert problem.startswith("inventory: physical: "), problem
+    assert "path: Field required" in problem, problem
+    assert orphan_findings(report) == {"virtual": ["c"]}
+    assert [entry.name for entry in report.inventories] == ["virtual"]
+
+
+def test_a_programming_error_in_an_own_build_is_a_traceback(tmp_path, monkeypatch):
+    """Only the catalog route catches every error: otto's own builds raise as on main."""
+    from otto.inventory import config
+
+    def broken(**_kwargs):
+        raise TypeError("a bug in otto")
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(config, "build_named_inventory_from_declarations", broken)
+    root = _named_project(
+        tmp_path / "p",
+        tables=_entry_toml("physical", "physical.json"),
+        records={"physical.json": {"a": {"ip": "10.1.0.1"}}},
+        references=[_qualified("physical", "a")],
+    )
+    with pytest.raises(TypeError, match="a bug in otto"):
+        check_project(root)
+
+
+def test_any_error_a_catalog_raises_is_a_problem_row(tmp_path, monkeypatch):
+    """A catalog is any view: its per-name build may raise anything, never out of the doctor."""
+    from otto.inventory import InventoryView
+
+    class Exploding(dict):
+        def get(self, name, default=None):
+            raise RuntimeError(f"backend for {name} is down")
+
+        def __contains__(self, name):
+            return True
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    root = _named_project(tmp_path / "p", references=[_qualified("physical", "k")])
+    report = check_project(root, catalog=InventoryView(inventories=Exploding()))
+    assert not report.ok
+    [problem] = report.verdict(name="lab").problems
+    assert problem == "inventory: physical: RuntimeError: backend for physical is down"
+
+
+def test_an_external_name_ignores_an_unrelated_default_disagreement(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    default = '[inventory]\nbackend = "json"\npath = "default.json"\nsupplies = ["ip"]\n'
+    a = _named_project(
+        tmp_path / "A",
+        name="proj-a",
+        tables=default,
+        records={"default.json": {"d": {"ip": "10.0.0.1"}}},
+        references=["d", _qualified("physical", "k")],
+    )
+    b = _named_project(
+        tmp_path / "B",
+        name="proj-b",
+        tables=default + _entry_toml("physical", "physical.json"),
+        records={
+            "default.json": {"e": {"ip": "10.0.0.2"}},
+            "physical.json": {"k": {"ip": "1.1.1.1"}},
+        },
+    )
+    report = check_project(a, catalog=_catalog(a, b))
+    assert report.ok, _text(report)
+
+
+def test_a_user_declared_name_is_known_standalone(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "vms.json").write_text(json.dumps({"k": {"ip": "10.3.0.1"}}))
+    user_file = _entry_toml("vms", str(home / "vms.json"))
+    (home / "settings.toml").write_text(user_file)  # scaffold-exempt: the otto home's user file
+    monkeypatch.setenv("OTTO_HOME", str(home))
+    root = _named_project(tmp_path / "p", references=[_qualified("vms", "k")])
+    report = check_project(root)
+    assert report.ok, _text(report)
+    assert orphan_findings(report) == {}  # the user's inventory: not this project's to report
+
+
+def test_a_default_only_project_reports_as_before(tmp_path, monkeypatch):
+    from otto.init.doctor import InventoryLabel
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    _scaffold_all(tmp_path)
+    inv = _set_inventory_records(
+        tmp_path, {"device-01.lab.example": {"ip": "10.0.0.1"}, "spare": {"ip": "10.0.0.2"}}
+    )
+    creds = tmp_path / "lab_data" / "creds.json"
+    report = check_project(tmp_path)
+    assert report.ok, _text(report)
+    assert report.inventories == [
+        InventoryLabel(name="default", label=f"json:{inv}", creds_label=f"json:{creds}")
+    ]
+    [orphan] = [w for w in report.warnings if "referenced by no lab file" in w]
+    assert orphan.startswith(f"inventory 'json:{inv}': 1 record(s)"), orphan
+
+
+def test_existing_workspaces_keep_todays_default(tmp_path, monkeypatch):
+    """Task 0's three doctor workspaces, each checked against the active catalog: unchanged."""
+    from otto.init import doctor as doctor_module
+    from tests.unit.labs import test_unchanged_loading as pins
+
+    real = doctor_module.check_project
+    checked: list[Path] = []
+
+    def against_the_catalog(root: Path) -> DoctorReport:
+        checked.append(root)
+        return real(root, catalog=_catalog(*sorted(root.parent.iterdir())))
+
+    monkeypatch.setattr(doctor_module, "check_project", against_the_catalog)
+    assert pins.doctor(tmp_path) == json.loads(pins.DOCTOR_GOLDEN.read_text())
+    assert len(checked) == 6
+
+
+# ── The same, through ``otto init``: the CLI hands the active catalog over ──────
+
+
+def _init(root: Path):
+    from otto.cli.init import init_command
+    from tests._fixtures.dispatch import DispatchRunner
+
+    return DispatchRunner().invoke(
+        init_command, ["--schemas", "--path", str(root)], spec_name="init"
+    )
+
+
+def _activate(monkeypatch, *roots: Path) -> None:
+    """Make *roots* the active projects, discovered for real under the dispatch harness.
+
+    ``DispatchRunner`` stubs the composition root clean unless a test chose
+    its own; this one is the real discovery, so ``otto init`` sees *roots*.
+    """
+    import os
+
+    from otto import bootstrap
+
+    real = bootstrap.bootstrap
+
+    def discovered():
+        return real()
+
+    monkeypatch.setenv("OTTOPATH", os.pathsep.join(str(root) for root in roots))
+    monkeypatch.setenv("COLUMNS", "600")
+    monkeypatch.setattr(bootstrap, "bootstrap", discovered)
+    bootstrap._reset()
+
+
+def test_a_catalog_conflict_is_a_problem_row_from_the_cli(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    physical = {"physical.json": {"k": {"ip": "10.1.0.1"}}}
+    a = _named_project(
+        tmp_path / "A",
+        name="proj-a",
+        tables=_entry_toml("physical", "physical.json"),
+        records=physical,
+        references=[_qualified("physical", "k")],
+    )
+    b = _named_project(tmp_path / "B", name="proj-b", references=[_qualified("physical", "k")])
+    c = _named_project(
+        tmp_path / "C",
+        name="proj-c",
+        tables=_entry_toml("physical", "other.json"),
+        records={"other.json": {"k": {"ip": "10.1.0.9"}}},
+    )
+    _activate(monkeypatch, a, b, c)
+    result = _init(b)
+    assert result.exit_code == 1, result.output
+    [row] = [line for line in result.output.splitlines() if "two active projects" in line]
+    assert "inventory: physical: " in row
+    assert str(a / ".otto" / "settings.toml") in row
+    assert str(c / ".otto" / "settings.toml") in row
+    passed = _init(a)
+    assert passed.exit_code == 0, passed.output
+    assert f"inventory physical: json:{a / 'physical.json'}" in passed.output
+
+
+def test_a_named_creds_row_lines_up_with_its_inventory_row(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    tables = (
+        _entry_toml("physical", "physical.json")
+        + '[inventories.creds]\nbackend = "json"\npath = "creds.json"\n'
+    )
+    root = _named_project(
+        tmp_path / "p",
+        tables=tables,
+        records={"physical.json": {"a": {"ip": "10.1.0.1"}}, "creds.json": {"a": []}},
+        references=[_qualified("physical", "a")],
+    )
+    (root / "creds.json").chmod(0o600)
+    monkeypatch.setenv("COLUMNS", "600")
+    result = _init(root)
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    [inventory] = [line for line in lines if line.startswith("inventory physical: ")]
+    [creds] = [line for line in lines if line.startswith("creds physical:")]
+    assert inventory.index("json:") == creds.index("json:"), [inventory, creds]
+    assert creds.endswith(f"json:{root / 'creds.json'}")
+
+
+def test_a_malformed_user_settings_file_is_a_problem_row(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    user_file = home / "settings.toml"
+    user_file.write_text("not valid toml [[[")  # scaffold-exempt: malformed TOML under test
+    monkeypatch.setenv("OTTO_HOME", str(home))
+    default = '[inventory]\nbackend = "json"\npath = "default.json"\nsupplies = ["ip"]\n'
+    root = _named_project(
+        tmp_path / "p",
+        tables=default,
+        records={"default.json": {"k": {"ip": "10.0.0.1"}}},
+        references=["k"],
+    )
+    _activate(monkeypatch, root)
+    result = _init(root)
+    assert result.exit_code == 1, result.output
+    assert "Traceback" not in result.output
+    rows = [line for line in result.output.splitlines() if str(user_file) in line]
+    assert len(rows) == 1, result.output
+    assert "inventory: " in rows[0]
+
+
+@pytest.mark.parametrize("toml", ["[inventories]\nname = 'vms'\n", "inventories = ['vms']\n"])
+def test_a_malformed_inventories_table_is_a_problem_row(tmp_path, monkeypatch, toml):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    root = _named_project(tmp_path / "p", tables=toml, references=[_qualified("vms", "k")])
+    # Not activated: an active project that fails to load stops every command
+    # at the bootstrap gate, before the doctor. This is the project otto init
+    # checks before it is ever put on OTTOPATH.
+    monkeypatch.setenv("COLUMNS", "600")
+    result = _init(root)
+    assert result.exit_code == 1, result.output
+    assert "Traceback" not in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    settings = root / ".otto" / "settings.toml"
+    assert any(str(settings) in line for line in result.output.splitlines()), result.output
+
+
+def test_an_inventory_only_project_reports_its_broken_declaration_once(tmp_path, monkeypatch):
+    """A project that only supplies inventories has no lab to report them in (Astra I7).
+
+    Its own ``[[inventories]]`` entry that does not build is one settings
+    problem, and no warning or label repeats it.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    root = tmp_path / "supplier"
+    make_project(
+        root,
+        name="supplier",
+        extra='[[inventories]]\nname = "physical"\nbackend = "nope:unregistered"\n',
+    )
+    report = check_project(root)
+    assert not report.ok
+    assert report.verdict(name="lab").state == "absent"
+    [problem] = report.verdict(name="settings").problems
+    assert problem.startswith("inventory: physical: "), problem
+    assert "nope:unregistered" in problem
+    assert report.warnings == []
+    assert report.inventories == []
+    assert _text(report).count("inventory: physical:") == 1

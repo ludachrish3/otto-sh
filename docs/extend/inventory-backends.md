@@ -35,11 +35,12 @@ Two rules that are easy to miss:
   does not affect a run that does not need it.
 - **A record may not carry a field outside `supplies`.** Otto's join copies
   exactly `supplies`, so a record stating more than the deployment declared is
-  a partition violation, not a bonus. Two fields are exempt: `element_id`, a
+  a partition violation, not a bonus. Four fields are exempt: `element_id`, a
   cross-checked fact rather than a filled one — opt-in, named in `supplies`
   like any other field, and checked against `element.id` (never copied) only
-  when a deployment does that; otherwise a stated value is simply inert — and
-  `extra`, opaque and with no host field to collide with.
+  when a deployment does that; otherwise a stated value is simply inert —
+  `extra`, opaque and with no host field to collide with, and `groups` and
+  `labels`, discovery data that never reaches a host.
 
 Validate the `supplies` declaration with
 {func}`~otto.inventory.protocol.check_supplies`, which is what both built-ins
@@ -119,8 +120,8 @@ project" — for the usual declaration there is no project involved. Its `origin
 the settings file, for messages.
 
 Otto decides which tables name the same inventory, and keys the snapshot
-cache, by the *parsed* configuration (plus `cache_ttl`), never by the
-declaring directory or file: a relative path that one project anchors and the
+cache, by the *parsed* configuration (plus `cache_ttl`; the snapshot's key
+leaves out `max_stale`, below), never by the declaring directory or file: a relative path that one project anchors and the
 absolute path another project writes are one inventory.
 
 A factory that raises, or that returns something without the protocol's
@@ -148,6 +149,56 @@ then overrides the store for the logins it names. A backend whose
 `supplies` includes `creds` is never snapshot-cached (below). Writing a store
 of your own is {doc}`creds-backends`.
 
+(inventory-discovery)=
+
+## Declaring instances
+
+A backend whose source of record knows which machines form one instance (a
+rig, a pod) can say so by also implementing
+{class}`~otto.inventory.discovery.SupportsDiscovery`: one method,
+`inventory_discovery()`, that returns a
+{class}`~otto.inventory.discovery.Discovery` holding every record and the
+instances, each an {class}`~otto.models.inventory.InventoryInstance`.
+
+```python
+from otto.inventory import Discovery
+from otto.models import InventoryInstance
+
+
+class MyInventory:
+    ...
+
+    def inventory_discovery(self) -> Discovery:
+        records = {key: self.lookup(key) for key in self.list_keys()}
+        rigs = self._fetch_rigs()  # {"rig-7": {"dut": ["edge-17"], "tgen": ["ixia-9"]}}
+        return Discovery(
+            records=records,
+            instances={name: InventoryInstance(roles=roles) for name, roles in rigs.items()},
+        )
+```
+
+- The capability is optional and detected by the method's presence. otto
+  reads every inventory through
+  {func}`~otto.inventory.discovery.discover_inventory`, which calls
+  `inventory_discovery()` when the backend has it and otherwise looks up
+  every key `list_keys()` returns. The name is deliberately distinctive, so a
+  `discover()` method of your own is never mistaken for it.
+- `instances=None` (the default) means your backend has no notion of
+  instances. `{}` means it has one and declares none. Return `{}` when the
+  upstream has an instance map that happens to be empty.
+- Members are **your own keys**, never another inventory's name or key. A
+  member needs no record, so an instance whose machines have all gone is
+  still reported.
+- Each list in an instance is sorted for you. A key repeated in one list is
+  refused, and so is a key in `members` that also plays a role, because
+  `members` holds keys without one. One key may play several roles.
+- `records` holds what `lookup` returns for each key: the same records, not a
+  second view of them. The creds overlay merges the store's creds into each
+  record exactly as its own `lookup` does, and passes instances through.
+
+The built-in `json` backend has the capability: its `otto.inventory.v2`
+document declares instances ({doc}`../configuration/inventory`).
+
 (inventory-fingerprint-contract)=
 
 ## Opting into the snapshot cache
@@ -171,13 +222,17 @@ free:
   {class}`~otto.inventory.cache.SnapshotCache` whenever `cache_ttl` is greater
   than zero (and your registration allows it). A snapshot younger than the TTL is served without calling you at
   all; an older one triggers one `list_keys()` + `lookup()` sweep and an atomic
-  rewrite; and when you raise, a snapshot of any age is served with a warning
-  naming its age. The cache then supplies the fingerprint you could not — the
-  snapshot's content hash — so completion caches normally.
+  rewrite; and when you raise, the error you raise decides whether the
+  snapshot is served ({ref}`inventory-backend-failures`). The cache then
+  supplies the fingerprint you could not — the snapshot's content hash — so
+  completion caches normally.
 
 The snapshot is written in the same stage-1 document shape the `json` backend
 reads, so an operator can copy one out of otto's home and point a `json`
-inventory at it.
+inventory at it. In that document a `_`-prefixed key is a comment, so a
+record key or instance name starting with `_` cannot be stored: otto refuses
+such a discovery with {class}`~otto.inventory.InventoryDataError` before
+anything is served or written, rather than lose the name on the next read.
 
 A snapshot never holds credentials, so a backend whose own `supplies` includes
 `creds` is **refused** the cache rather than quietly losing them for the rest
@@ -185,6 +240,65 @@ of the TTL. The fix is on your side of the API: leave `creds` out of
 `supplies` and let the deployment's `[creds]` store carry them instead. An
 operator who cannot change the backend still has `cache_ttl = "0"`. The error
 names your backend and the settings file that declared it.
+
+(inventory-backend-failures)=
+
+### Saying why a fetch failed
+
+When the snapshot cache wraps you and a fetch raises, the class you raise
+decides whether the snapshot on disk is served in its place. The decision is
+otto's, made once, and the age of the snapshot is shown either way:
+
+- {class}`~otto.inventory.InventoryDataError` for bad DATA from the source:
+  missing output, output that does not parse, a record missing a field you
+  need. A snapshot is never served for it.
+- {class}`~otto.inventory.InventoryUnreachableError` for a TRANSIENT outage:
+  a refused connection, a timeout. A snapshot is served only while its total
+  age is at most the `max_stale` you pass: `InventoryUnreachableError(message,
+  max_stale=...)`. Without one, it is never served.
+- A plain {class}`~otto.inventory.InventoryError` keeps the behaviour every
+  backend had before the typed errors: a snapshot of any age is served, with a
+  warning. The built-in NetBox backend raises only this.
+
+`max_stale` is your backend's setting, so add it to your config model as an
+optional string and parse it with {func}`~otto.inventory.parse_max_stale`,
+which reads the `cache_ttl` grammar and names `max_stale` in its errors:
+
+```python
+from datetime import timedelta
+
+from pydantic import ConfigDict
+
+from otto.inventory import InventoryUnreachableError, parse_max_stale
+from otto.models import OttoModel
+from my_company.cmdb import fetch_keys
+
+
+class MyInventoryConfig(OttoModel):
+    model_config = ConfigDict(frozen=True)
+
+    url: str
+    max_stale: str | None = None
+
+
+class MyInventory:
+    def __init__(self, *, url: str, max_stale: str | None) -> None:
+        self.url = url
+        self._max_stale: timedelta | None = parse_max_stale(text=max_stale)
+
+    def list_keys(self) -> list[str]:
+        try:
+            return fetch_keys(self.url)
+        except ConnectionError as e:
+            raise InventoryUnreachableError(f"{self.url}: {e}", max_stale=self._max_stale) from e
+```
+
+Name the key exactly `max_stale`. Like `cache_ttl`, it is a key otto
+interprets, whatever your backend does with it, and unlike `cache_ttl` it is
+not part of the snapshot's identity: an operator who raises it during an
+outage is served the snapshot already on disk instead of a fresh, empty one,
+and any other key name would move the snapshot when it changes. Never give
+`max_stale` another meaning in your configuration.
 
 ## Verify your backend
 
@@ -235,6 +349,15 @@ def test_the_lab_resolves_through_the_inventory(tmp_path):
         lab="rig",
     )
 ```
+
+If your backend implements `inventory_discovery()`
+({ref}`inventory-discovery`), the helper also checks it against the rest of
+your backend: discovery's record keys must equal `list_keys()`, each record
+must equal what `lookup` returns for its key, and `instances` must be `None`
+or a dict of {class}`~otto.models.inventory.InventoryInstance` by name. A
+discovery that reads its upstream by a different route than `lookup` and
+drifts from it fails here, instead of a template seeing one machine and a lab
+another.
 
 ## Migration note for custom lab repositories
 

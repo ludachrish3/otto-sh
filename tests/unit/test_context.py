@@ -312,25 +312,27 @@ async def test_open_context_sets_and_tears_down():
 
 
 @pytest.mark.asyncio
-async def test_open_context_with_a_lab_object_never_imports_or_calls_build_inventory(
+async def test_open_context_with_a_lab_object_never_builds_an_inventory_binding(
     monkeypatch,
 ):
     """A `Lab` object skips inventory resolution entirely — the `else` arm never runs.
 
     Patched to EXPLODE rather than merely counting calls: a spy only proves
-    our own test writes the call, not that ``open_context`` makes it. If
-    ``build_inventory`` ran on the ``Lab``-object path, this fixture would
-    already know it (this module is imported well after ``otto.inventory``
-    elsewhere in the suite, so a plain ``sys.modules`` check would be
-    unreliable here).
+    our own test writes the call, not that ``open_context`` makes it. The
+    patch is ``build_binding_from_declarations``, the one walk every inventory
+    builder runs (``build_inventory_view``, which a lab build calls, and
+    ``build_inventory`` alike), so no route can build an inventory unseen. If
+    it ran on the ``Lab``-object path, this fixture would already know it
+    (this module is imported well after ``otto.inventory`` elsewhere in the
+    suite, so a plain ``sys.modules`` check would be unreliable here).
     """
     import otto
     import otto.inventory.config as inventory_config
 
     def _must_not_run(*args, **kwargs):
-        raise AssertionError("build_inventory must not run for a Lab object")
+        raise AssertionError("no inventory may be built for a Lab object")
 
-    monkeypatch.setattr(inventory_config, "build_inventory", _must_not_run)
+    monkeypatch.setattr(inventory_config, "build_binding_from_declarations", _must_not_run)
 
     lab = _lab_with("test1")
     async with otto.open_context(lab=lab) as ctx:

@@ -304,6 +304,62 @@ below):
 LabNotFoundError: Lab 'site' cannot be loaded: no project declares a [[lab.sources]] entry in .otto/settings.toml
 ```
 
+(source-failure-scope)=
+
+### When a source is down, and unavailable labs
+
+Before it loads a lab, otto asks every source which labs it declares and
+whether each one can be loaded now. What a failing source costs depends on
+whether it declares a **scope**: the lab names it can contribute to at all,
+as exact names and literal prefixes. The built-in `json` backend declares no
+scope. A custom backend declares one through `lab_scope()`
+({doc}`../extend/lab-source-backends`).
+
+- **A source without a scope fails every lab.** It could contribute an
+  element to any lab, so no lab is complete without it. Its error propagates
+  from every lab load, naming the source, as it always has.
+- **A source with a scope fails only the labs inside it.** A lab outside the
+  scope loads from the other sources, and the failed source is not asked for
+  it at all. That holds for a healthy scoped source too: otto never loads a
+  lab from a source whose scope excludes it, so its elements reach only the
+  labs inside its scope, whatever their membership patterns match. A lab
+  inside the scope fails, whether or not any source declares it, because the
+  failed source might have contributed an element to it. A name inside the
+  scope that nobody declares is therefore *unavailable*, not unknown. When
+  the failed source can still list its lab names, `--list-labs` shows each of
+  them, unavailable with the source's reason. Another source declaring the
+  lab available does not clear the failure, in either source order:
+
+  ```text
+  LabUnavailableError: Lab 'bench' is unavailable: source my_project/cmdb failed: connection refused
+  ```
+
+  A scoped source that reports a lab outside its own scope is a broken
+  backend, and every lab load fails naming it.
+
+A `labs` entry can also mark a lab unavailable on purpose with
+`"unavailable": "<reason>"` ({doc}`lab/files-and-membership`). Across sources
+it follows the override rule of the entry it sits on: the **last** source that
+declares the lab decides, wholesale. A later declaration without
+`unavailable` makes the lab available again, and a later declaration with it
+takes the lab out of service. The error names the reason and the declaration:
+
+```text
+LabUnavailableError: Lab 'bench' is unavailable: rack B is being recabled (/proj/lab/lab.json: lab 'bench')
+```
+
+The two causes read differently on purpose. A declared outage is a decision
+someone wrote down: the error quotes their reason and where they wrote it. A
+source failure is an accident: the error names the source that failed and its
+own error text. That includes a scoped source that answered which labs it
+declares but then failed while loading one of them; that load fails the same
+way, naming the source. A source without a scope that fails while loading
+propagates its own error, as before.
+
+{class}`~otto.labs.LabUnavailableError` is a
+[`LabRepositoryError`](../api/labs.rst) but not a
+{class}`~otto.labs.LabNotFoundError`: the lab exists, it is out of reach.
+
 ## Credentials and login proxies
 
 A host's `creds` field is an **ordered list** of cred entries, each with a

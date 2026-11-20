@@ -101,6 +101,7 @@ def _write_cache_like_entry(projects) -> None:
         links=cc.collect_links(projects),
         logins_by_host=cc.collect_logins_by_host(projects),
         docker_default_parent_by_lab=cc.collect_docker_default_parent_by_lab(projects),
+        inventory_names=cc.collect_inventory_names(projects),
         shim=build_shim_payload(projects, app=cli.app, pending_key=cli.pending_key),
     )
 
@@ -1133,12 +1134,21 @@ def _creds_overlay(path: Path):
     )
 
 
+def _inventory_view(path: Path):
+    """A named view (not default-only, which passes through): its fingerprint is its own."""
+    from otto.inventory import InventoryView
+    from otto.inventory.json_backend import JsonInventory
+
+    return InventoryView(inventories={"physical": JsonInventory(path)})
+
+
 # Every class in otto that names its freshness files, by class name. A new
 # one joins here, or the coverage guard below fails.
 _STAT_SOURCES = {
     "JsonInventory": _json_inventory,
     "_JsonCredsStore": _json_creds_store,
     "CredsOverlay": _creds_overlay,
+    "InventoryView": _inventory_view,
 }
 
 # Classes that define stat_paths without being a source themselves.

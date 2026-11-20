@@ -69,7 +69,11 @@ def test_lab_schema_v2_sections():
     labs = lab["properties"]["labs"]
     assert labs["type"] == "object"
     assert labs["additionalProperties"] == {"$ref": "#/$defs/LabEntrySpec"}
-    assert set(lab["$defs"]["LabEntrySpec"]["properties"]) == {"resources", "metadata"}
+    assert set(lab["$defs"]["LabEntrySpec"]["properties"]) == {
+        "resources",
+        "metadata",
+        "unavailable",
+    }
     elements = lab["properties"]["elements"]
     assert elements["type"] == "array"
     el = lab["$defs"]["ElementSpec"]
@@ -357,9 +361,10 @@ def test_inventory_schema_is_the_record_keyed_by_inventory_key():
     doc = build_schemas()["inventory"]
     assert doc["$id"].endswith("/inventory.schema.json")
     assert doc["x-otto-version"]
-    assert doc["additionalProperties"] == {"$ref": "#/$defs/InventoryRecord"}
-    assert doc["properties"]["$schema"] == {"type": "string"}
-    assert doc["patternProperties"]["^_"] == {}
+    flat = doc["else"]  # the flat document; ``then`` is the v2 one (tests/unit/inventory)
+    assert flat["additionalProperties"] == {"$ref": "#/$defs/InventoryRecord"}
+    assert flat["properties"]["$schema"] == {"type": "string"}
+    assert flat["patternProperties"]["^_"] == {}
     record = doc["$defs"]["InventoryRecord"]
     assert record["patternProperties"]["^_"] == {}
     assert "ip" in record["required"]

@@ -134,16 +134,31 @@ def reject_unresolved_reference(host_data: dict[str, Any]) -> None:
     under schema-legal round-tripping, and that is not a reference (R7). A
     referenced entry has no address of its own; validating it here would
     fail on ``ip`` with a message that points at the wrong thing. The lab
-    loader resolves every entry (:func:`otto.inventory.resolve_host_entry`)
+    loader resolves every entry (:func:`otto.inventory.resolve_view_entry`,
+    or :func:`otto.inventory.resolve_host_entry` for ``default`` alone)
     before it reaches any factory function — this guard is for callers that
-    hand-build dicts.
+    hand-build dicts. A qualified reference is named ``name/key``.
     """
-    if host_data.get("inventory") is not None:
-        raise ValueError(
-            f"host entry references inventory key {host_data['inventory']!r} but was not "
-            "resolved; call otto.inventory.resolve_host_entry(entry, inventory) first "
-            "(the lab loader does this for every entry it builds)"
-        )
+    value = host_data.get("inventory")
+    if value is None:
+        return
+    from .inventory_ref import normalize_reference  # lazy: refusal path only
+
+    try:
+        reference = normalize_reference(value=value)
+    except ValueError:
+        reference = None
+    view_resolver = "otto.inventory.resolve_view_entry(entry, view=view, element=element)"
+    if reference is not None and reference.qualified:
+        named = f"inventory reference {reference.name}/{reference.key}"
+        call = view_resolver
+    else:
+        named = f"inventory key {value!r}"
+        call = f"otto.inventory.resolve_host_entry(entry, inventory) (or {view_resolver})"
+    raise ValueError(
+        f"host entry references {named} but was not resolved; call {call} first "
+        "(the lab loader does this for every entry it builds)"
+    )
 
 
 def _check_preferences_shape(preferences: "dict[str, Any]") -> None:

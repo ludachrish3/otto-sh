@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from .inventory import FILLABLE_INVENTORY_FIELDS as FILLABLE_INVENTORY_FIELDS
     from .inventory import INVENTORY_KEY_FIELDS as INVENTORY_KEY_FIELDS
     from .inventory import SUPPLIES_EXEMPT_FIELDS as SUPPLIES_EXEMPT_FIELDS
+    from .inventory import InventoryInstance as InventoryInstance
     from .inventory import InventoryRecord as InventoryRecord
     from .monitor import ChartSpec as ChartSpec
     from .monitor import ChartSpecRecord as ChartSpecRecord
@@ -73,6 +74,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "ToolchainSpec": "otto.host.specs",
     "FILLABLE_INVENTORY_FIELDS": "otto.models.inventory",
     "INVENTORY_KEY_FIELDS": "otto.models.inventory",
+    "InventoryInstance": "otto.models.inventory",
     "InventoryRecord": "otto.models.inventory",
     "SUPPLIES_EXEMPT_FIELDS": "otto.models.inventory",
     "ChartSpec": "otto.models.monitor",
@@ -145,6 +147,7 @@ __all__ = [
     "EventRecord",
     "FtpOptionsSpec",
     "HostSnapshot",
+    "InventoryInstance",
     "InventoryRecord",
     "LabSnapshot",
     "LinkEndpointSnapshot",

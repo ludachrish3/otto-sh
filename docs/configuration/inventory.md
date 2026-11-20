@@ -145,13 +145,22 @@ A record is a subset of these. Names are host-field names, one for one.
 | `slot` | integer | Physical slot number. |
 | `is_virtual` | boolean | `true` for a VM or emulator. Default `false`. |
 | `element_id` | integer | A **cross-checked fact**, not data: named in `supplies` to opt in, then checked against the element's `id` — never filled either way. |
+| `groups` | array of strings | Memberships: a role, a tag, a group (`["edge", "pod-7"]`). Discovery data for lab templates; never copied onto a host. Every entry must be a string. |
+| `labels` | object | Scalar facts about the instance the machine belongs to (`{"pod": "007", "vlan": 12}`). Each value is a string or an integer, kept as written: `"007"` stays a string. A boolean, a fractional number, an array or an object is refused, naming the key and the label. Never copied onto a host. |
 | `extra` | object | Opaque table otto never reads. Reaches the host as `host.inventory_ref.extra`. |
 
 Unknown field names are refused naming the key. `_`-prefixed keys inside a
 record are comment space.
 
-`element_id` and `extra` sit outside the `supplies` partition: a record may
-carry either whatever the deployment declares.
+`element_id`, `extra`, `groups` and `labels` sit outside the `supplies`
+partition: a record may carry any of them whatever the deployment declares.
+
+`groups` and `labels` are a record's discovery vocabulary: what a lab template
+selects machines by and substitutes into a layout. No host field has their
+names, and the join never copies them onto a host. Today only a JSON record
+states them. A NetBox record carries no `groups` or `labels` yet: mapping
+NetBox roles and tags to `groups`, and custom fields to `labels`, is tracked
+in [#1192](https://github.com/ludachrish3/otto-sh/issues/1192).
 
 ```{important}
 **A referenced Unix host's probe pin (BusyBox included) goes in the lab file,
@@ -218,19 +227,117 @@ settings file still carrying it fails validation with a message pointing here.
 Move the path to `[creds] backend = "json"` / `path = "…"`; the file's contents
 need no change.
 
+(named-inventories)=
+
+### Named inventories
+
+A project may declare several inventories, each under a name, as an array of
+`[[inventories]]` tables in its `.otto/settings.toml`, and your user file
+`~/.otto/settings.toml` may declare them too
+([Field reference](settings.md#field-reference),
+[User-level settings](settings.md#user-level-settings)):
+
+```toml
+[[inventories]]
+name = "physical"
+backend = "netbox"
+url = "https://netbox.example"
+
+[[inventories]]
+name = "virtual"
+backend = "json"
+path = "lab_data/virtual.json"
+
+[[inventories]]
+name = "fixtures"
+backend = "json"
+path = "lab_data/inventory.json"
+```
+
+An entry reserves exactly four keys: `name`, `backend`, `cache_ttl` and
+`creds`. Every other key belongs to the backend, as under `[inventory]`, and
+`creds_file` is one of them. A host entry consults a named inventory only
+through the **qualified** reference, which names it:
+
+```json
+{"inventory": {"name": "physical", "key": "edge-17"}}
+```
+
+**Names are process-wide.** Every active project and the user file share one
+catalog. Two active projects that declare the same name must agree on it, as
+two `[inventory]` tables must: the same backend, the same parsed settings
+(defaults filled in, paths anchored), the same `cache_ttl` and the same
+credentials binding (both without a `creds` sub-table, or both with the same
+store). Otherwise bootstrap fails, naming both settings files and the
+entry. A name a project declares wins over the same name in the user file;
+a name only the user file declares comes from there.
+
+**`default` is today's inventory.** The inventory a bare
+`"inventory": "edge-17"` reference resolves through is named `default`, and
+it is exactly what [Resolution order](#resolution-order) below builds from
+`[inventory]` and `[creds]`. A `[[inventories]]` entry named `default` takes
+part in that order as an `[inventory]` table would, so one file may declare
+`default` in one form or the other, never both. A configuration with no
+`[[inventories]]` behaves exactly as before.
+
+**Credentials bind to one inventory.** An entry's `creds` sub-table
+(`[inventories.creds]`, the same keys as `[creds]`) is the creds store of
+that entry alone. `[creds]` binds to `default` only: a store is never an
+implicit source for another inventory. A project that declares any
+`[[inventories]]` and a `[creds]` table without binding `default` itself (by
+`[inventory]` or an entry named `default`) is refused at bootstrap, because
+that `[creds]` would bind to the process `default`, possibly the user's own
+inventory, and the named inventory would lose its credentials. Move the
+table into the owning entry:
+
+```toml
+[[inventories]]
+name = "physical"
+backend = "json"
+path = "lab_data/physical.json"
+
+[inventories.creds]
+backend = "json"
+path = "lab_data/creds.json"
+```
+
+**Bare references need `default` bound by the project.** A project that
+declares any `[[inventories]]` may use bare references only if it binds
+`default` itself, by keeping its `[inventory]` or by an entry named
+`default`. Otherwise every bare reference in it fails with one error that
+quotes the qualified form to write instead. This closes a migration trap:
+a project moves its `[inventory]` into an entry named `physical` while your
+user file still declares a personal `[inventory]`, and the project's old bare
+references would otherwise resolve against your personal machines. A
+qualified `{"name": "default", ...}` reference is always allowed.
+
+**A lab source is not an inventory.** A lab source (`[[lab.sources]]`) says
+which hosts a lab has and what otto does with them; an inventory says what is
+true of each machine (its address, interfaces and credentials), keyed by an
+inventory key. A source's host entry *references* an inventory; the two are
+declared, named and resolved separately, which is why the reference's field is
+`name` and never `source`.
+
 ### Resolution order
 
-First hit wins:
+`default`, the inventory bare references resolve through, is found first hit
+wins:
 
 1. `[inventory]` in an **active project's** `.otto/settings.toml` — the
-   per-project override.
-2. `[inventory]` in `~/.otto/settings.toml`.
+   per-project override. An `[[inventories]]` entry named `default` counts
+   as that file's `[inventory]`.
+2. `[inventory]` in `~/.otto/settings.toml`, or its entry named `default`.
 3. Nothing. Inline hosts work as always; a referenced entry fails with an
    error naming **both** places it could have been declared.
 
+`[creds]` is found the same way, independently (a `default` entry's `creds`
+sub-table counts as that file's `[creds]`). Every other name follows the same
+order on its own: the active projects that declare it, else the user file
+([Named inventories](#named-inventories)).
+
 There is no implicit discovery: an inventory is always declared, in one of
-exactly two files, and a process has exactly one. An empty `[inventory]` table
-declares nothing and falls through to the user file.
+exactly two files, and a process has exactly one of each name. An empty
+`[inventory]` table declares nothing and falls through to the user file.
 
 When more than one active project declares `[inventory]`, the tables must be
 **identical** — same backend, the same parsed configuration (defaults
@@ -261,13 +368,16 @@ Unless run with `--inline-hosts`, `otto init` writes live `[inventory]` and
 — so a new project starts in the three-file shape and grows `supplies` as the
 inventory takes over more fields. With `--inline-hosts` it writes one
 `lab.json` and leaves both tables commented out. The user-level file is still
-where a shared inventory lives: delete
-the project tables once one exists, or keep them as this project's override.
-Two active projects that both keep their scaffolded tables fail bootstrap,
-naming both files: tables compare by their parsed configuration, paths
-**anchored**, and each project's own `lab_data/inventory.json` anchors to its own
-root, so the paths never match. Move the tables to `~/.otto/settings.toml`, or
-delete one project's.
+where a shared inventory lives: delete the project tables once one exists, or
+keep them as this project's override. Keep `[creds]` only while the project
+binds `default`: once it declares `[[inventories]]`, a `[creds]` table without
+`[inventory]` (or an entry named `default`) beside it is refused (*Credentials
+bind to one inventory*, under [Named inventories](#named-inventories)). Two
+active projects that both keep their scaffolded tables fail bootstrap, naming
+both files: tables compare by their parsed configuration, paths **anchored**,
+and each project's own `lab_data/inventory.json` anchors to its own root, so
+the paths never match. Move the tables to `~/.otto/settings.toml`, or delete
+one project's.
 
 ## The json backend
 
@@ -302,6 +412,59 @@ A JSON object mapping key → record, with nothing otto-shaped in it.
 `otto init` generates `inventory.schema.json` beside `lab.schema.json`, so an
 editor can validate this file as you type it; the editor wiring is in
 {doc}`../cli/schema/editors`.
+
+### Declaring instances: the `otto.inventory.v2` document
+
+An *instance* is a set of keys that belong together, such as the machines of
+one test rig. A json inventory declares instances in a second document
+format, selected by a top-level `"$format"` marker:
+
+```json
+{
+  "$schema": "~/.otto/schemas/inventory.schema.json",
+  "$format": "otto.inventory.v2",
+  "records": {
+    "edge-17": { "ip": "10.0.0.17", "groups": ["dut"] },
+    "ixia-9": { "ip": "10.0.0.90" }
+  },
+  "instances": {
+    "rig-7": { "roles": { "dut": ["edge-17"], "tgen": ["ixia-9"] } },
+    "rig-8": { "members": ["edge-18", "ixia-10"] },
+    "rig-9": {}
+  }
+}
+```
+
+- **Why a marker.** Every bare top-level name, `instances` and `records`
+  included, is already a legal inventory key in the flat document above. otto
+  never guesses the format from the keys. A document is v2 only when its
+  `"$format"` value is a string. Without that marker the document is flat and
+  keeps its meaning, so a flat file with a host named `$format`, `records` or
+  `instances` reads exactly as before.
+- **The v2 document.** `records` is the flat document's key-to-record map,
+  with the same rules. `instances` maps an instance name to its instance.
+  Both are optional. At the top level, `$schema` and `_`-prefixed keys are
+  comment space. Inside `records` and `instances`, and inside each instance,
+  only `_`-prefixed keys are. Any other top-level key is an error, and so is
+  any `$format` string other than `otto.inventory.v2`.
+- **Roles and plain members.** `roles` maps a role name to the keys that play
+  it (`rig-7`'s `dut` is `edge-17`). `members` lists keys that belong to the
+  instance without a role. Each list is a set of non-empty keys, which otto
+  sorts. Two rules apply, and a break of either is an error naming the
+  instance and the key:
+  - a key appears at most once in one list;
+  - a key in `members` plays no role, so it may not also appear in `roles`.
+
+  One key may play several roles. Role names must be non-empty.
+- **Members are this inventory's own keys.** A member needs no record in
+  `records`. A rig whose machines have all gone is still reported, which only
+  an explicit instance map can do.
+- **Three results.** A flat document declares no instances: the inventory
+  *does not support* them. A v2 document without instances supports them and
+  declares none. An instance with no members, like `rig-9`, is legal.
+
+A backend of your own declares instances through the discovery method
+{ref}`described for backend authors <inventory-discovery>`.
 
 (credentials-layered)=
 
@@ -561,9 +724,11 @@ returns a string opts out ({doc}`../extend/inventory-backends`).
 - **Fresh.** A snapshot younger than the TTL is served **without contacting the
   backend** — the ordinary otto invocation costs one file read. Older, a fetch
   runs and the snapshot is rewritten atomically.
-- **Unreachable, with a snapshot of any age.** The snapshot is served and a
-  warning names its age and its fetch time in UTC. With no snapshot at all, the
-  failure is the error, as it would be uncached.
+- **A failed fetch, with a snapshot on disk.** Whether the snapshot is served
+  depends on the error the backend raised (below). When it is served, a
+  warning names its age and its fetch time in UTC; when it is refused, the
+  error names them instead. With no readable snapshot at all, the failure is
+  the error, as it would be uncached.
 - **The snapshot is a stage-1 document.** You can copy one out of
   `inventory-cache/` and point a `json` inventory at it.
 
@@ -586,10 +751,46 @@ Run against an inventory that has no snapshot — a `json` one, or a remote one
 with `cache_ttl = "0"` — it exits 1 saying which of the two it is, so
 `otto inventory refresh && …` does not proceed as though a fetch had happened.
 
+### When an expired snapshot is served
+
+A backend reports a failed fetch with one of three errors, and the error
+decides whether the snapshot on disk may stand in for the fetch:
+
+| The backend raised | The snapshot is served |
+| ------------------ | ---------------------- |
+| {class}`~otto.inventory.InventoryError` (a plain one) | At any age, with the warning. The built-in NetBox backend raises only this, so NetBox behaves exactly as before, and a `[inventory]` table for NetBox takes no `max_stale`. |
+| {class}`~otto.inventory.InventoryUnreachableError` (a transient outage) | Only when the backend's `max_stale` is set and the snapshot's age is at most `max_stale`, with the warning. Otherwise the fetch fails with an `InventoryUnreachableError` naming the snapshot and its age. |
+| {class}`~otto.inventory.InventoryDataError` (bad data from the source) | Never. The fetch fails with an `InventoryDataError` naming the snapshot and its age. |
+
+**`max_stale`** is a setting of a backend that raises
+`InventoryUnreachableError`, written beside its other keys, in the
+`cache_ttl` grammar (`"48h"`, `"2d"`). Its default is unset, so an
+unreachable backend's expired snapshot is never served. `max_stale = "0"`
+means the same as leaving it unset: an expired snapshot is never served
+(unlike `cache_ttl = "0"`, which turns caching off). Five things to know:
+
+- It only bounds serving after a **failed** refresh. A fresh snapshot,
+  younger than `cache_ttl`, is served without a fetch whatever `max_stale`
+  says.
+- It counts the snapshot's **total** age since it was fetched, not the time
+  past `cache_ttl`. With `cache_ttl = "24h"` and `max_stale = "48h"`, a
+  snapshot fetched 30 hours ago is served during an outage, one fetched 49
+  hours ago is not, and one exactly 48 hours old still is.
+- It is policy, not data: it is **not** part of the snapshot's identity, so
+  raising it during an outage serves the snapshot you already have rather
+  than looking for a new one. Two declarations of one inventory must still
+  agree on it.
+- The age is taken when the fetch gives up, so a slow timeout cannot serve
+  a snapshot that passed `max_stale` while otto waited. The warning and the
+  refusal name the command that refreshes this inventory:
+  `otto inventory refresh --inventory physical` for a named one.
+- Which keys a backend takes is the backend's to say: check its
+  documentation for `max_stale`.
+
 ## What the doctor checks
 
 `otto init` in a project validates every host entry the way the loader will,
-against the inventory that project would resolve. Problems fail the run
+against the inventories that project would resolve. Problems fail the run
 (exit 1); warnings never change the exit code. The resolved inventory's label
 is printed once, so you can see which one answered:
 
@@ -599,10 +800,48 @@ inventory: json:/home/me/lab/inventory.json
 
 and a second row, `creds: json:/…/creds.json`, when a store resolves.
 
+The doctor checks every inventory the project uses, not only `default`
+({ref}`named-inventories`):
+
+- `default` is the project's own `[inventory]` (or its `[[inventories]]`
+  entry named `default`), else the user file's. That is how the doctor chose
+  it before named inventories, even where `otto` run with several active
+  projects resolves `default` differently; see #1186.
+- Each name the project's own settings file declares is built from that file
+  alone, so `otto init` checks exactly what it just wrote.
+- Any other name a lab file references, such as a `physical` another active
+  project declares, comes from the active projects' inventories when the
+  project is active. One name at a time: a disagreement about `default`, or
+  about another name, never fails the name being checked. A project not yet
+  on `OTTOPATH` takes such names from the user file's `[[inventories]]`.
+
+Each inventory other than `default` that resolves gets its own label row:
+
+```text
+inventory physical: json:/home/me/lab/physical.json
+```
+
+When the doctor checks more than `default`, every finding about one
+inventory begins with that inventory's name, so two inventories with the same
+label are told apart:
+
+```text
+physical: inventory 'json:/home/me/lab/hosts.json': 1 record(s) referenced by no lab file here: b …
+```
+
+A project that uses only `default` gets its findings exactly as before, with
+no name in front.
+
 ### Problems
 
 - A dead reference — a key the inventory does not hold — naming the file, the
-  element, the host index, the key and the inventory label.
+  element, the host index, the key and the inventory label (and the
+  inventory's name, as above).
+- A reference to an inventory name that is not configured, listing the names
+  that are.
+- A bare reference in a project that declares `[[inventories]]` without
+  binding `default` itself, naming the qualified form to write instead. It
+  is never counted as a reference to `default`.
 - A referenced entry when **no** inventory is configured, naming both places it
   could have been declared.
 - A malformed reference (the empty string, a non-string).
@@ -611,17 +850,28 @@ and a second row, `creds: json:/…/creds.json`, when a store resolves.
   collision is what you are told about first.
 - A broken `[inventory]` declaration, or an unparseable user settings file,
   reported **once** rather than once per referencing entry. Those entries are
-  skipped for that run and validate again once the declaration is fixed.
+  skipped for that run and validate again once the declaration is fixed. The
+  same holds for any inventory that fails to build: a broken `[[inventories]]`
+  entry, or two active projects that declare one name differently, which is
+  reported naming both files. The other inventories are still checked. A
+  project with no lab files, one that only supplies inventories to its
+  siblings, still has each inventory its own settings file declares built,
+  and a failure is reported once under `settings`.
 - `[creds]` declared with no `[inventory]` resolvable, naming the file.
 
 ### Warnings
+
+Each is reported for `default` and for each inventory the project's own
+settings file declares.
 
 - A **stale snapshot** the doctor was served because the remote backend was
   unreachable, naming its age and the `otto inventory refresh` that replaces
   it. `otto init` reports it in the table itself, as the `otto inventory` verbs
   do.
 - **Orphan records** — keys no lab file in this project references, up to ten
-  of them by name and a count for the rest. During the bridge the inventory is
+  of them by name and a count for the rest. Only the references that select
+  that inventory count: `{"name": "physical", "key": "a"}` counts for
+  `physical` alone, and never for a `virtual` that also holds `a`. During the bridge the inventory is
   expected to be wider than any one project, so this is information, not a
   defect. A project that has adopted nothing yet gets it listing everything,
   which is exactly the state the bridge starts from — the warning is how you
@@ -636,6 +886,10 @@ and a second row, `creds: json:/…/creds.json`, when a store resolves.
 `otto inventory` reads the configured inventory. Every verb is read-only, needs
 no lab and touches no host — see {doc}`../cli/inventory/index` for the full
 treatment, including the three exit codes `diff` uses.
+
+Each verb reads `default` unless `--inventory NAME` names one of the
+[named inventories](#named-inventories): `otto inventory list --inventory
+physical` lists `physical`'s records, and builds no other inventory.
 
 | Verb | What it answers |
 | ---- | --------------- |
@@ -654,16 +908,32 @@ hash for a cached remote one. So NetBox-backed completion caches exactly as a
 file-backed one does, and no TAB keystroke depends on the inventory service
 being reachable.
 
-Completion resolves the inventory **once per process**, the way commands do:
-the projects on `OTTOPATH` that agree on a declaration, else the user file
+Completion resolves the inventories **once per process**, the way commands do:
+`default` and every [named inventory](#named-inventories), each from the
+projects on `OTTOPATH` that agree on its declaration, else the user file
 ([Resolution order](#resolution-order)). A project that only *references* keys
 therefore completes against an inventory another project — or the user file —
-declares, and a broken declaration empties completion for every project, not just
-the one carrying it, until it is fixed. An entry completion could not build is
-skipped silently, never warned about, so when a host does not come up, ask
+declares, and a broken declaration of any name empties completion for every
+project, not just the one carrying it, until it is fixed. A qualified
+reference completes through its named inventory, and every named inventory
+contributes to the fingerprint: editing `virtual`'s file refreshes completion
+as editing `default`'s does. A workspace without `[[inventories]]` fingerprints
+exactly as before. A bare reference that a project refuses
+([Named inventories](#named-inventories)) offers no host, and the refusal is
+listed with the other dropped entries. `otto inventory … --inventory <TAB>`
+offers every declared name, read from settings alone: no inventory is built or
+fetched for it.
+
+Completion is not yet availability-aware: it still offers the hosts of a lab
+marked `unavailable` ({ref}`lab-files`), which `--lab` refuses to load.
+[#1185](https://github.com/ludachrish3/otto-sh/issues/1185) tracks bringing
+completion in line with what a command would dispatch.
+
+An entry completion could not build is skipped silently, never warned about,
+so when a host does not come up, ask
 [`otto cache info`](../cli/cache/index.md#info): its closing block shows the
-inventory as completion resolved it, the hosts offered, and every entry dropped
-with the reason.
+inventory as completion resolved it, the hosts offered, and every entry
+dropped with the reason.
 
 Two situations leave completion **uncached**. Both stay correct — the ids still
 come from a real load — and cost only speed:
@@ -695,7 +965,9 @@ below).
 - **Records carry facts only**: the management address, test-network
   interfaces, `is_virtual`, the location fields where you know them, versions
   as the declared state. If a value only matters to otto, it belongs in the lab
-  file.
+  file. `labels` are facts *about the instance*, available to templates, and
+  never otto behaviour: `os_type`, terms and option tables stay in otto's
+  files.
 - **Declare `supplies` to match what your eventual owner will supply.** The lab
   files are then already in their stage-2 shape, and `otto inventory diff`
   compares like with like. Leaving it at the default (everything) is fine for a

@@ -109,8 +109,20 @@ from otto.host.transfer.registry import TransferBackendError, TransferConstructi
 from otto.host.transport import HopTransportTornDownError
 from otto.init.errors import InitInputError
 from otto.instruction_catalog import ProjectInstructionError
-from otto.inventory import InventoryConstructionError, InventoryError, InventoryKeyError
-from otto.labs.errors import LabNotFoundError, LabRepositoryError, LabSourceConstructionError
+from otto.inventory import (
+    BareReferenceRefused,
+    InventoryConstructionError,
+    InventoryDataError,
+    InventoryError,
+    InventoryKeyError,
+    InventoryUnreachableError,
+)
+from otto.labs.errors import (
+    LabNotFoundError,
+    LabRepositoryError,
+    LabSourceConstructionError,
+    LabUnavailableError,
+)
 from otto.lifecycle import SyncPhaseInterrupt
 from otto.link.manage import (
     LinkCommandFailedError,
@@ -257,6 +269,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ReadGateClosed, ConnectionError),
     (LabRepositoryError, Exception),
     (LabNotFoundError, Exception),
+    (LabUnavailableError, Exception),
     (LabSourceConstructionError, ValueError),
     (TermBackendError, Exception),
     (TermConstructionError, ValueError),
@@ -264,6 +277,9 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (TransferConstructionError, ValueError),
     (InventoryError, Exception),
     (InventoryKeyError, Exception),
+    (InventoryDataError, Exception),
+    (InventoryUnreachableError, Exception),
+    (BareReferenceRefused, Exception),
     (InventoryConstructionError, ValueError),
     (PowerControlError, Exception),
     (PowerConstructionError, ValueError),
@@ -368,6 +384,9 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         OptionsCollisionError,
         LabRepositoryError,
         LabNotFoundError,
+        # A lab its data or a failed source marks unavailable (lab templating,
+        # #1176) is the lab-repository pair's own concept, rootless with it.
+        LabUnavailableError,
         # The term and transfer backends' shared bases: a backend that could
         # not be built is otto's own concept; each construction error beneath
         # keeps ValueError, the root the registry's lookup always raised.
@@ -381,6 +400,14 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         # mangle every message this class exists to carry.
         InventoryError,
         InventoryKeyError,
+        # Lab templating's typed inventory failures sit under that pair and
+        # keep its rootlessness: inventory data that is wrong, a source that
+        # cannot be reached and a bare reference a project refuses (D1) are
+        # all otto's own concepts, never a stdlib error a caller was already
+        # catching.
+        InventoryDataError,
+        InventoryUnreachableError,
+        BareReferenceRefused,
         # A creds store's failure (I/O, parse, network, auth, a bad entry) is
         # the same "otto's own concept" as the inventory pair above — no
         # stdlib type otto ever raised for this before the store existed.

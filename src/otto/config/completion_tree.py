@@ -279,13 +279,21 @@ def _triple_of(path: "Path", st: "os.stat_result | Unreadable | None") -> list[A
 
 
 def _build_inventory(projects: "list[Project]") -> Any:
-    from ..inventory.config import build_inventory
+    """Return the process inventory view, or ``None`` when it holds no inventory."""
+    from ..inventory.config import build_inventory_view
 
-    return build_inventory(projects=projects)
+    view = build_inventory_view(projects=projects)
+    return view if view.names() else None
 
 
 def inventory_block(projects: "list[Project]") -> dict[str, Any]:
-    """Return the process inventory's freshness as the shim can check it (spec §3.2)."""
+    """Return the process inventory view's freshness as the shim can check it (spec §3.2).
+
+    ``none`` without an inventory; ``stat`` with the view's ``stat_paths()``
+    (every named inventory's files, ``default``'s alone in a view holding
+    only it); ``opaque`` when any inventory names no files, or resolving or
+    stat-ing failed.
+    """
     from ..inventory.protocol import SupportsStatPaths
 
     try:

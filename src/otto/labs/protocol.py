@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -11,10 +12,14 @@ from typing import (
 
 from typing_extensions import final
 
+from ..host.inventory_ref import InventoryRef
+from .drops import Diagnostic
+
 if TYPE_CHECKING:
     # Annotation only: runtime code never constructs a Lab from this module,
     # so the string annotations below are read by static type-checking alone.
     from ..inventory.protocol import Inventory
+    from ..inventory.view import InventoryView
     from .loader import Lab
 
 
@@ -152,6 +157,13 @@ class HostSummary:
     the backend does not fill them — then ``--user`` completes to nothing on
     that host, and nothing else changes."""
 
+    inventory_ref: InventoryRef = field(default_factory=InventoryRef)
+    """The qualified identity this summary was resolved from.
+
+    The inventory's name and key, and whether the entry named the inventory
+    (see :class:`~otto.host.inventory_ref.InventoryRef`). Empty for an inline
+    host, and for a backend that does not fill it."""
+
 
 def logins_of_creds(*, creds: "Iterable[Any]") -> list[LoginSummary]:
     """Summarise cred entries (``Cred`` or ``CredSpec``) to login identities, record order.
@@ -227,4 +239,120 @@ class SupportsHostSummaries(Protocol):
         referenced entry cannot be identified and is skipped, like any other
         unresolvable record.
         """
+        ...
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class LabStatus:
+    """Whether one lab a source declares can be loaded now, and why not."""
+
+    name: str
+    """The lab's name."""
+
+    unavailable: Diagnostic | None = None
+    """Why the lab cannot be loaded, or ``None`` when it can."""
+
+    @property
+    def available(self) -> bool:
+        """Return whether the lab can be loaded, which is when :attr:`unavailable` is ``None``."""
+        return self.unavailable is None
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class LabScope:
+    """The lab names a source can declare: exact :attr:`names` and literal :attr:`prefixes`."""
+
+    names: frozenset[str] = frozenset()
+    """Lab names the source may declare, exactly."""
+
+    prefixes: frozenset[str] = frozenset()
+    """Literal prefixes (not patterns) of the lab names the source may declare."""
+
+    def contains(self, *, name: str) -> bool:
+        """Return whether lab *name* is in this scope: an exact name, or one with a prefix."""
+        return name in self.names or any(name.startswith(prefix) for prefix in self.prefixes)
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class SourceRef:
+    """One lab source, as a report names it."""
+
+    label: str
+    """The source's label, e.g. ``json:/home/me/lab``."""
+
+    project_root: Path | None
+    """The root of the project that declared the source, or ``None`` for none."""
+
+
+@runtime_checkable
+class SupportsInventoryView(Protocol):
+    """Optional capability: load a lab through the whole inventory view.
+
+    A backend that implements it receives the
+    :class:`~otto.inventory.InventoryView`, so a qualified ``{"name": ...,
+    "key": ...}`` reference reaches the named inventory. A backend without it
+    is called through :meth:`LabRepository.load_lab` with
+    :attr:`~otto.inventory.InventoryView.bare_inventory`
+    (:func:`otto.labs.load_lab_through` decides it).
+    """
+
+    def load_lab_in_view(
+        self,
+        name: str,
+        *,
+        preferences: dict[str, dict[str, Any]] | None = None,
+        view: "InventoryView",
+    ) -> "Lab":
+        """Load lab *name*, resolving every reference through *view*.
+
+        *preferences* is :meth:`LabRepository.load_lab`'s. Resolve each entry
+        with :func:`~otto.inventory.resolve_view_entry`, and raise as
+        :meth:`LabRepository.load_lab` does.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsHostSummariesInView(Protocol):
+    """Optional capability: :class:`SupportsHostSummaries` resolved through the inventory view.
+
+    The same contract, and the same conformance rules; only the inventory
+    argument is the whole view.
+    """
+
+    def list_host_summaries_in_view(self, *, view: "InventoryView") -> list[HostSummary]:
+        """Every host this backend knows, across every lab, each reference resolved through *view*.
+
+        Fill each summary's :attr:`HostSummary.inventory_ref` from the
+        resolved entry. An entry the view cannot resolve is skipped.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsLabStatus(Protocol):
+    """Optional capability: say which declared labs can be loaded now.
+
+    A backend without it reports every :meth:`LabRepository.list_labs` name
+    available (:func:`otto.labs.lab_statuses`).
+    """
+
+    def list_lab_status(self, *, view: "InventoryView") -> list[LabStatus]:
+        """Return one :class:`LabStatus` per lab this backend declares."""
+        ...
+
+
+@runtime_checkable
+class SupportsLabScope(Protocol):
+    """Optional capability: declare which lab names this backend can declare at all.
+
+    A scoped source is consulted only for names inside its scope, so its
+    failure spares labs outside it. ``None`` means unscoped.
+    """
+
+    def lab_scope(self) -> LabScope | None:
+        """Return this backend's :class:`LabScope`, or ``None`` when it is unscoped."""
         ...

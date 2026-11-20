@@ -6,6 +6,9 @@
   stage-1 file; exit 1 on any difference.
 - ``refresh`` — force a fetch of a cached remote inventory.
 
+Each verb reads one inventory: ``default`` (today's) unless ``--inventory
+NAME`` names an ``[[inventories]]`` entry (#1176).
+
 Lab-free, and settings-only: §8 resolves the process inventory from the active
 projects' ``[inventory]`` tables and the user settings file, and from nothing
 else — no lab, no root option and no host reaches it. That is why the verbs
@@ -30,13 +33,16 @@ import typer
 from rich import box
 from rich import print as rprint
 
+from ..host.inventory_ref import DEFAULT_INVENTORY
+from .completers import completion_source
 from .invoke import fail
 
 if TYPE_CHECKING:
     from rich.text import Text
 
+    from ..inventory.discovery import Discovery
     from ..inventory.protocol import Inventory
-    from ..models.inventory import InventoryRecord
+    from ..inventory.snapshot import RecordDifference
 
 inventory_app = typer.Typer(
     name="inventory",
@@ -76,6 +82,11 @@ def _no_inventory_message() -> str:
     The RESOLVED user file rather than the ``~/.otto/settings.toml`` spelling
     the load path uses: ``OTTO_HOME`` relocates it wholesale, and a message
     naming a file the reader does not have sends them to edit the wrong one.
+
+    Deliberately distinct from :func:`otto.inventory.view.no_default_message`:
+    that one answers a host's reference and names its KEY; this one answers a
+    verb asked for ``default`` with nothing configured, so it has no key to
+    name and names the resolved user file instead.
     """
     from ..config.user_settings import user_settings_path
 
@@ -97,8 +108,16 @@ difference, which is the failure ``diff(1)`` gave the code away for.
 """
 
 
-def _inventory(code: int = 1) -> "Inventory":
-    """Resolve the process inventory the way bootstrap does; ``fail`` on none or on error.
+def _inventory(code: int = 1, *, name: str = DEFAULT_INVENTORY) -> "Inventory":
+    """Resolve the inventory named *name* the way bootstrap does; ``fail`` on none or on error.
+
+    ``default`` is today's resolution, unchanged: a ``default`` declared
+    nowhere fails with :func:`_no_inventory_message`. Any other name is
+    selected from the process view by
+    :meth:`~otto.inventory.view.InventoryView.select_name`, which builds that
+    name alone (:func:`~otto.inventory.config.deferred_inventory_view`), so a
+    broken ``default`` never stops ``--inventory physical``; an undeclared
+    name fails listing the declared ones.
 
     A BROKEN declaration is loud and distinct from "nothing declared": the
     former names the settings file and what is wrong with it, the latter names
@@ -114,11 +133,14 @@ def _inventory(code: int = 1) -> "Inventory":
 
     del bootstrap
     from ..declared import get_projects
-    from ..inventory.config import build_inventory
+    from ..inventory.config import build_inventory, deferred_inventory_view
     from ..inventory.errors import InventoryError
 
     try:
-        inventory = build_inventory(projects=get_projects())
+        if name == DEFAULT_INVENTORY:
+            inventory = build_inventory(projects=get_projects())
+        else:
+            inventory = deferred_inventory_view(projects=get_projects()).select_name(name=name)
     except InventoryError as e:
         from rich.text import Text
 
@@ -132,8 +154,47 @@ def _inventory(code: int = 1) -> "Inventory":
     return inventory
 
 
-def _records(inventory: "Inventory", code: int = 1) -> "dict[str, InventoryRecord]":
-    """Every record this inventory holds; ``fail`` when the backend cannot answer.
+@completion_source(kind="payload", key="inventory_names", sort=True)
+def _inventory_name_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+    """Completion source for ``--inventory``: every declared inventory name.
+
+    The ``names`` cache's ``inventory_names`` when present, which the shim
+    answers a warm TAB from; else
+    :func:`~otto.config.completion_cache.collect_inventory_names` over
+    discovery's projects (:func:`otto.config.project.discover`, never
+    ``get_projects()``, which runs user init code). Either way the names come
+    from settings alone: a TAB never constructs an inventory, loads a lab or
+    fetches.
+    """
+    try:
+        from ..config.completion_cache import collect_inventory_names
+        from ..config.project import discover
+        from ..registry import get_completion_names
+
+        cached = get_completion_names()
+        if cached is not None and isinstance(cached.get("inventory_names"), list):
+            names = [str(n) for n in cached["inventory_names"]]
+        else:
+            names = collect_inventory_names(discover().projects)
+    except Exception:  # noqa: BLE001 — completion must never crash the shell
+        return []
+    return sorted(n for n in names if n.startswith(incomplete))
+
+
+_InventoryName = Annotated[
+    str,
+    typer.Option(
+        "--inventory",
+        metavar="NAME",
+        help="The inventory to read: `default`, or an `\\[\\[inventories]]` entry's name.",
+        autocompletion=_inventory_name_completer,
+    ),
+]
+"""The ``--inventory NAME`` option every verb takes: one definition, one completion source."""
+
+
+def _discovery(inventory: "Inventory", code: int = 1) -> "Discovery":
+    """Every record this inventory holds, and its instances; ``fail`` when it cannot answer.
 
     THE ONE CHOKE POINT for the three verbs that read the whole inventory, and
     therefore where the stale-snapshot notice is rendered: a verb that resolved
@@ -141,14 +202,15 @@ def _records(inventory: "Inventory", code: int = 1) -> "dict[str, InventoryRecor
     report belongs where the records come from rather than at three call sites
     one of which will eventually forget.
     """
+    from ..inventory.discovery import discover_inventory
     from ..inventory.errors import InventoryError
 
     try:
-        records = {key: inventory.lookup(key) for key in inventory.list_keys()}
+        found = discover_inventory(inventory=inventory)
     except InventoryError as e:
         fail(e, code, soft_wrap=True)
     _stale_row(inventory)
-    return records
+    return found
 
 
 def _stale_row(inventory: "Inventory") -> None:
@@ -168,20 +230,6 @@ def _stale_row(inventory: "Inventory") -> None:
         _row(cache.stale_notice)
 
 
-def _unwrapped(inventory: "Inventory") -> "Inventory":
-    """Peel the creds overlay off, exposing whatever it wraps.
-
-    ``construct_inventory`` puts the snapshot cache on first and the creds
-    overlay OUTERMOST (a snapshot must never hold credentials), so the cache —
-    when there is one — is exactly one layer in.
-    """
-    from ..inventory.creds import CredsOverlay
-
-    while isinstance(inventory, CredsOverlay):
-        inventory = inventory.inner
-    return inventory
-
-
 def _creds_row(inventory: "Inventory") -> None:
     """Print the ``creds:`` row naming the store when the overlay is configured.
 
@@ -196,8 +244,9 @@ def _creds_row(inventory: "Inventory") -> None:
 def _backend_of(inventory: "Inventory") -> "Inventory":
     """Return the innermost object — the backend itself, past both core wrappers."""
     from ..inventory.cache import SnapshotCache
+    from ..inventory.creds import below_creds_overlay
 
-    inner = _unwrapped(inventory)
+    inner = below_creds_overlay(inventory=inventory)
     return inner.inner if isinstance(inner, SnapshotCache) else inner
 
 
@@ -232,13 +281,14 @@ def _cell(value: "Any") -> "Text":
 @inventory_app.command("lookup")
 def lookup(
     key: Annotated[str, typer.Argument(help="Inventory key to resolve.")],
+    inventory_name: _InventoryName = DEFAULT_INVENTORY,
 ) -> None:
     """Show the resolved record for KEY — creds as login names only, never passwords."""
     from rich.table import Table
 
     from ..console import id_column
 
-    inventory = _inventory()
+    inventory = _inventory(name=inventory_name)
     from ..inventory.errors import InventoryError
 
     try:
@@ -340,14 +390,14 @@ _SKIP_VIEWS: "list[_SkipViews]" = [
 
 
 @inventory_app.command("list")
-def list_records() -> None:
+def list_records(inventory_name: _InventoryName = DEFAULT_INVENTORY) -> None:
     """List every inventory key with its address."""
     from rich.table import Table
 
     from ..console import id_column
 
-    inventory = _inventory()
-    records = _records(inventory)
+    inventory = _inventory(name=inventory_name)
+    records = _discovery(inventory).records
     table = Table(box=box.ROUNDED)
     id_column(table, "key")
     id_column(table, "ip")
@@ -364,17 +414,24 @@ def list_records() -> None:
 def export(
     path: Annotated[Path, typer.Argument(help="Stage-1 JSON file to write.")],
     force: Annotated[bool, typer.Option("--force", help="Overwrite an existing file.")] = False,
+    inventory_name: _InventoryName = DEFAULT_INVENTORY,
 ) -> None:
-    """Write the inventory as a stage-1 JSON file (sorted keys, no creds)."""
-    inventory = _inventory()
+    """Write the inventory as a stage-1 JSON file (sorted keys, no creds).
+
+    An inventory that declares instances is written in the
+    `otto.inventory.v2` format, records and instances; any other is written
+    as the flat document.
+    """
+    inventory = _inventory(name=inventory_name)
     # Checked BEFORE the fetch: a refusal must leave the file untouched, and
     # an operator who mistyped a path should not pay a NetBox round trip to
     # find out.
     if path.exists() and not force:
         fail(f"{path} exists; pass --force to overwrite it", soft_wrap=True)
-    from ..inventory.snapshot import records_to_document, write_document_atomically
+    from ..inventory.snapshot import discovery_to_document, write_document_atomically
 
-    doc = records_to_document(records=_records(inventory))
+    found = _discovery(inventory)
+    doc = discovery_to_document(discovery=found)
     # The same writer the snapshot cache uses: write-then-rename, so a reader
     # never sees a half-written document, and mode 0600 — a stage-1 document
     # carries no credentials but does describe a whole estate.
@@ -387,18 +444,21 @@ def export(
         write_document_atomically(path, doc)
     except OSError as e:
         fail(f"{path}: {e}", soft_wrap=True)
-    _row(f"wrote {len(doc)} record(s) from {inventory.label} to {path}")
+    wrote = f"{len(found.records)} record(s)"
+    if found.instances is not None:
+        wrote += f" and {len(found.instances)} instance(s)"
+    _row(f"wrote {wrote} from {inventory.label} to {path}")
 
 
-def _document_records(path: Path) -> "dict[str, InventoryRecord]":
-    """Parse one stage-1 file; ``fail`` naming the file and what is wrong with it.
+def _document_discovery(path: Path) -> "Discovery":
+    """Parse one stage-1 file, either format; ``fail`` naming the file and what is wrong.
 
     Only ``diff`` reads a file, so every failure here exits
     :data:`_CANNOT_ANSWER` — an unreadable file is "I could not compare", never
     "the two sides differ".
     """
     from ..inventory.errors import InventoryError
-    from ..inventory.snapshot import document_to_records
+    from ..inventory.snapshot import document_to_discovery
     from ..models.inventory import FILLABLE_INVENTORY_FIELDS
 
     try:
@@ -414,7 +474,9 @@ def _document_records(path: Path) -> "dict[str, InventoryRecord]":
         # `supplies`: an older export may hold a field this deployment no
         # longer supplies, and the diff is how you SEE that rather than a
         # parse error that hides it.
-        return document_to_records(data=data, source=str(path), supplies=FILLABLE_INVENTORY_FIELDS)
+        return document_to_discovery(
+            data=data, source=str(path), supplies=FILLABLE_INVENTORY_FIELDS
+        )
     except InventoryError as e:
         fail(e, _CANNOT_ANSWER, soft_wrap=True)
 
@@ -434,6 +496,37 @@ the file" from "the file says nothing about its site".
 """
 
 
+def _difference_table(
+    differences: "list[RecordDifference]", *, key_column: str, whole: str
+) -> None:
+    """Render one table of diff rows: *key_column*, field, left, right.
+
+    *whole* names the field cell of a ``field=None`` row (one side only),
+    where an empty cell means ABSENT rather than unstated. A ``whole_map``
+    row is about the whole instance map, so its field cell says so; the flag
+    decides it, never the key, which a record or instance may share.
+    """
+    from rich.table import Table
+
+    from ..console import id_column
+
+    table = Table(box=box.ROUNDED)
+    for column in (key_column, "field", "left", "right"):
+        id_column(table, column)
+    for difference in differences:
+        empty = _ABSENT if difference.field is None else _UNSTATED
+        field = difference.field
+        if field is None:
+            field = "(whole map)" if difference.whole_map else whole
+        table.add_row(
+            _cell(difference.key),
+            _cell(field),
+            _cell(difference.left if difference.left is not None else empty),
+            _cell(difference.right if difference.right is not None else empty),
+        )
+    rprint(table)
+
+
 @inventory_app.command("diff")
 def diff(
     path: Annotated[Path, typer.Argument(help="Stage-1 JSON file to compare against.")],
@@ -444,64 +537,57 @@ def diff(
             "never read."
         ),
     ] = None,
+    inventory_name: _InventoryName = DEFAULT_INVENTORY,
 ) -> None:
     """Compare the inventory with a stage-1 file; exit 1 when anything differs.
 
     Exit codes follow `diff(1)`: 0 no differences, 1 differences, 2 could not
     answer.
 
+    Records are compared field by field and, when either side declares
+    instances, instances by `members` and `roles` in a second table.
+
     With a second file (`other`) the comparison is between the two files
     (yesterday's export against today's) and the configured inventory is not
-    read at all, because nothing in the answer depends on it.
+    read at all, because nothing in the answer depends on it; `--inventory`
+    is then ignored.
     """
     # Developer note: the "could not answer" exit status is `_CANNOT_ANSWER`.
-    from rich.table import Table
-
-    from ..console import id_column
-    from ..inventory.snapshot import diff_records
+    from ..inventory.snapshot import diff_instances, diff_records
 
     if other is not None:
-        left_label, left = str(path), _document_records(path)
-        right_label, right = str(other), _document_records(other)
+        left_label, left = str(path), _document_discovery(path)
+        right_label, right = str(other), _document_discovery(other)
     else:
-        inventory = _inventory(_CANNOT_ANSWER)
-        left_label, left = inventory.label, _records(inventory, _CANNOT_ANSWER)
-        right_label, right = str(path), _document_records(path)
+        inventory = _inventory(_CANNOT_ANSWER, name=inventory_name)
+        left_label, left = inventory.label, _discovery(inventory, _CANNOT_ANSWER)
+        right_label, right = str(path), _document_discovery(path)
 
-    differences = diff_records(left=left, right=right)
-    if not differences:
+    records = diff_records(left=left.records, right=right.records)
+    instances = diff_instances(left=left.instances, right=right.instances)
+    if not records and not instances:
         _row(f"no differences between {left_label} and {right_label}")
         return
 
     _row(f"left:  {left_label}")
     _row(f"right: {right_label}")
-    table = Table(box=box.ROUNDED)
-    for column in ("key", "field", "left", "right"):
-        id_column(table, column)
-    for difference in differences:
-        # field=None is "this key is on one side only" — a whole-record row,
-        # where an empty cell means ABSENT rather than unstated.
-        empty = _ABSENT if difference.field is None else _UNSTATED
-        table.add_row(
-            _cell(difference.key),
-            _cell(difference.field if difference.field is not None else "(whole record)"),
-            _cell(difference.left if difference.left is not None else empty),
-            _cell(difference.right if difference.right is not None else empty),
-        )
-    rprint(table)
+    if records:
+        _difference_table(records, key_column="key", whole="(whole record)")
+    if instances:
+        _difference_table(instances, key_column="instance", whole="(whole instance)")
     _row(_DIFF_LEGEND)
     raise typer.Exit(code=1)
 
 
 @inventory_app.command("refresh")
-def refresh() -> None:
+def refresh(inventory_name: _InventoryName = DEFAULT_INVENTORY) -> None:
     """Force a fetch of a cached remote inventory and rewrite its snapshot."""
     from datetime import datetime, timezone
 
     from ..inventory.cache import format_age, snapshot_cache_of
     from ..inventory.errors import InventoryError
 
-    inventory = _inventory()
+    inventory = _inventory(name=inventory_name)
     cache = snapshot_cache_of(inventory=inventory)
     if cache is None:
         # An error, not a cheerful no-op: the operator asked for a fetch and

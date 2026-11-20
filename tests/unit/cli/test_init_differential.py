@@ -61,7 +61,8 @@ def test_area_flags_reach_scaffold_candidates_exactly(
     chosen = scaffold_kwargs["areas"]
     assert chosen == ["lab"]
     assert config.root == tmp_path.resolve()
-    check.assert_called_once_with(tmp_path.resolve())
+    # Not an active project's root: the doctor gets no catalog of active inventories.
+    check.assert_called_once_with(tmp_path.resolve(), catalog=None)
 
 
 def test_inline_hosts_alone_reaches_the_library_and_never_prompts(tmp_path: Path) -> None:

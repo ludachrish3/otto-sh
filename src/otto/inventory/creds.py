@@ -1,5 +1,6 @@
 """The creds overlay and the by-identity merge (spec 2026-09-06 creds-store §5.4, §6.1)."""
 
+import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ from .protocol import Inventory
 
 if TYPE_CHECKING:
     from ..creds.protocol import CredsStore
+    from .discovery import Discovery
 
 
 def _stated(entry: dict[str, Any]) -> dict[str, Any]:
@@ -151,10 +153,26 @@ class CredsOverlay:
 
     def lookup(self, key: str) -> InventoryRecord:
         """Return the inner record with the store's creds merged UNDER its own (spec §6.1)."""
+        return self._merged(key, self.inner.lookup(key))
+
+    def inventory_discovery(self) -> "Discovery":
+        """Discover the inner inventory, every record merged exactly as :meth:`lookup` merges it.
+
+        Instances pass through untouched: the store holds creds, not membership.
+        """
+        # Function-local: otto.inventory is on the bootstrap path.
+        from .discovery import discover_inventory
+
+        found = discover_inventory(inventory=self.inner)
+        return dataclasses.replace(
+            found, records={key: self._merged(key, rec) for key, rec in found.records.items()}
+        )
+
+    def _merged(self, key: str, record: InventoryRecord) -> InventoryRecord:
+        """Return *record* (the inner one for *key*) with the store's creds merged under its own."""
         # Function-local: otto.inventory is on the bootstrap path.
         from ..creds.errors import CredsError
 
-        record = self.inner.lookup(key)
         try:
             supplied = self.store.lookup(key)
         except CredsError as e:
@@ -192,3 +210,29 @@ class CredsOverlay:
         store_stat = getattr(self.store, "stat_paths", None)
         store_paths = store_stat() if callable(store_stat) else None
         return None if store_paths is None else [*paths, *store_paths]
+
+
+def below_creds_overlay(*, inventory: Inventory) -> Inventory:
+    """Return what *inventory*'s creds overlays wrap: THE one peel of otto's wrapper stack.
+
+    ``construct_inventory`` puts the snapshot cache on first and the creds
+    overlay OUTERMOST (a snapshot must never hold credentials), so whatever
+    this returns is the cache when there is one, else the backend itself. A
+    loop rather than a single ``.inner``, so a second overlay layer cannot
+    silently hide the cache from every caller. An inventory with no overlay is
+    returned as it is.
+    """
+    while isinstance(inventory, CredsOverlay):
+        inventory = inventory.inner
+    return inventory
+
+
+def creds_store_label(*, inventory: object) -> "str | None":
+    """Return the label of otto's credentials store over *inventory*: the one store-label reader.
+
+    Only a :class:`CredsOverlay` has otto's store; anything else answers
+    ``None``, and a third-party backend's own ``store`` attribute is never
+    read: it is that backend's business, and it may be offline or no label at
+    all.
+    """
+    return inventory.store.label if isinstance(inventory, CredsOverlay) else None

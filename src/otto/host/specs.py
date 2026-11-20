@@ -78,6 +78,7 @@ from .construction import (
 )
 from .embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
 from .interface import Interface
+from .inventory_ref import inventory_reference_schema, normalize_reference
 from .login_proxy import LOGIN_PROXIES, LoginProxyError, resolve_chain, via_cred
 from .option_specs import (
     ConsoleOptionsSpec,
@@ -549,11 +550,22 @@ class HostSpec(OttoModel):
     shelf: int | None = None
     hop: str | None = None
 
+    # The precise schema rides on ``Field(json_schema_extra=...)``, not on a
+    # ``WithJsonSchema`` in the ``Annotated``: autodoc renders the annotation's
+    # metadata reprs verbatim, and that repr's embedded dict is not a type, so
+    # the nitpicky docs build fails on it (the same reason as IntOrStr above).
+    # The emitted schema is identical either way: the extra's ``anyOf`` replaces
+    # the one pydantic derives from the loose type.
     inventory: Annotated[
-        str | None, Consume("the loader resolves the entry from this inventory key")
-    ] = None
-    """Inventory key this entry is resolved from (spec 2026-08-28 host-inventory §5).
-    Spec-only: the loader consumes it and never forwards it to the host."""
+        str | dict[str, Any] | None,
+        Consume("the loader resolves the entry from this inventory reference"),
+    ] = Field(default=None, json_schema_extra=inventory_reference_schema(nullable=True))
+    """Inventory reference this entry is resolved from (spec 2026-08-28 host-inventory §5):
+    a bare key (``"edge-17"``, through the ``default`` inventory) or a qualified
+    ``{"name": "<inventory>", "key": "<key>"}``. Read by
+    :func:`~otto.host.inventory_ref.normalize_reference`, which validates it here
+    too; the field keeps the stated form. Spec-only: the loader consumes it and
+    never forwards it to the host."""
 
     is_virtual: bool = False
     has_bash: bool = True
@@ -695,11 +707,10 @@ class HostSpec(OttoModel):
     def _resources(cls, v: set[str]) -> set[str]:
         return resources_nonempty(v)
 
-    @field_validator("inventory")
+    @field_validator("inventory", mode="before")
     @classmethod
-    def _inventory_key_nonempty(cls, v: str | None) -> str | None:
-        if v is not None and not v:
-            raise ValueError("'inventory' must name a key (a non-empty string)")
+    def _inventory_reference(cls, v: object) -> object:
+        normalize_reference(value=v)  # refuses what the join would; keeps the stated form
         return v
 
     @field_validator("command_frame")

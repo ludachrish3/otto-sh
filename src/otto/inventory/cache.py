@@ -2,9 +2,12 @@
 
 A snapshot younger than the TTL is served WITHOUT contacting the backend, so
 the ordinary otto invocation costs one file read; an older one triggers a fetch
-and an atomic rewrite; an unreachable backend with a snapshot of any age serves
-the snapshot and WARNS with its age. A lab that loaded yesterday should load
-today, and the warning is what keeps the staleness visible rather than silent.
+and an atomic rewrite; a backend that fails with a snapshot on disk serves the
+snapshot and WARNS with its age, unless :func:`stale_refusal` refuses it: a
+data error never falls back, an unreachable backend only within its
+``max_stale``, and a plain :class:`~otto.inventory.errors.InventoryError`
+(NetBox's) at any age. A lab that loaded yesterday should load today, and the
+warning is what keeps the staleness visible rather than silent.
 
 The cache also gives a remote backend the ``fingerprint()`` it could not
 produce on its own — the snapshot's content hash — which is what lets shell
@@ -20,6 +23,7 @@ computed and nothing is opened until the first ``lookup``/``list_keys``.
 """
 
 import contextlib
+import dataclasses
 import hashlib
 import json
 import logging
@@ -31,15 +35,22 @@ from typing import Any
 
 from typing_extensions import final
 
+from ..host.inventory_ref import DEFAULT_INVENTORY
 from ..models.base import secret_safe_json_default
 from ..models.inventory import InventoryRecord
-from .creds import CredsOverlay
-from .errors import InventoryError, InventoryKeyError
+from .creds import below_creds_overlay
+from .discovery import Discovery, discover_inventory
+from .errors import (
+    InventoryDataError,
+    InventoryError,
+    InventoryKeyError,
+    InventoryUnreachableError,
+)
 from .protocol import Inventory
 from .snapshot import (
+    discovery_to_document,
     document_hash,
-    document_to_records,
-    records_to_document,
+    document_to_discovery,
     write_document_atomically,
 )
 
@@ -116,19 +127,41 @@ def format_age(age: timedelta) -> str:
     return f"{days}d {spare_hours}h"
 
 
+SNAPSHOT_POLICY_KEYS: frozenset[str] = frozenset({"max_stale"})
+"""Backend keys that are POLICY rather than data, and so never part of a snapshot's identity.
+
+``max_stale`` says how long an existing snapshot may be served during an
+outage; it does not change what a fetch returns. Keyed into the slug, raising
+it during an outage (the moment an operator reaches for it) would look for a
+new, empty snapshot and orphan the one that could have been served.
+"""
+
+
 def snapshot_slug_material(
     backend: str, label: str, normalized: "Mapping[str, Any]", *, cache_ttl: timedelta
 ) -> str:
     """Return the identity a snapshot is keyed by (§9.5).
 
     The inputs are the ones :meth:`~otto.inventory.config.CompiledInventory.same_as`
-    compares: the backend, its NORMALIZED configuration (what its config model
-    dumped: defaults included, except a key the model leaves out while it
-    holds its default, as NetBox's ``virtual_machines`` is, so a table written
-    before that key existed keeps its snapshot; a
-    :class:`~otto.registry.FrozenMap` is thawed) and ``cache_ttl``
-    (``|ttl=<whole seconds>``). Never where the table was declared: two
-    projects naming one inventory share its snapshot.
+    compares: the backend, its NORMALIZED configuration (what its config
+    model dumped, a :class:`~otto.registry.FrozenMap` thawed) and
+    ``cache_ttl`` (``|ttl=<whole seconds>``). Never where the table was
+    declared: two projects naming one inventory share its snapshot.
+
+    Two kinds of key are excluded from the configuration, each so an
+    unchanged table keeps its snapshot:
+
+    - DATA keys at their default, left out by the backend's config model
+      itself (NetBox's ``virtual_machines``, ``vm_filter`` and
+      ``vm_ip_source``), so a table written before the key existed keeps the
+      slug it had; set away from the default, they are data and separate two
+      configurations.
+    - POLICY keys (:data:`SNAPSHOT_POLICY_KEYS`, ``max_stale``) at EVERY
+      value, dropped here: they decide whether a snapshot may be served, not
+      what it holds. A configuration without ``max_stale`` keeps today's slug,
+      and changing ``max_stale`` keeps the snapshot.
+      :meth:`~otto.inventory.config.CompiledInventory.same_as` still compares
+      them, so two declarations of one inventory must agree on them.
 
     The backend's own ``label`` stands in for a key the backend adopted
     verbatim, because a backend NORMALISES its identity and a configuration
@@ -150,13 +183,94 @@ def snapshot_slug_material(
         for key, value in config.items()
         if isinstance(value, str) and label == f"{backend}:{value.rstrip('/')}"
     }
-    residue = {key: value for key, value in config.items() if key not in adopted}
+    residue = {
+        key: value
+        for key, value in config.items()
+        if key not in adopted and key not in SNAPSHOT_POLICY_KEYS
+    }
     ttl = int(cache_ttl.total_seconds())
     from ..config.home import secret_digest_key  # function-local, as config.py's use is
 
     hook = secret_safe_json_default(secret_digest_key)
     dumped = json.dumps(residue, sort_keys=True, default=hook)
     return f"{backend}|{label}|{dumped}|ttl={ttl}"
+
+
+def _snapshot_phrase(*, fetched_at: datetime, age: timedelta) -> str:
+    """``from 2026-08-27 09:14 UTC, 31h old``: how every stale message states a snapshot's age.
+
+    One phrase for the stale notice ("using cached snapshot from …") and for
+    every refusal ("the cached snapshot (from …) is not served"), so an
+    operator reads the same fetch time and age whichever way the cache decided.
+    """
+    return f"from {fetched_at:%Y-%m-%d %H:%M UTC}, {format_age(age)} old"
+
+
+def refresh_remedy(*, inventory_name: str = DEFAULT_INVENTORY) -> str:
+    """Return the command that replaces *inventory_name*'s snapshot, quoted for a message.
+
+    The one remedy every stale notice and refusal names: ```otto inventory
+    refresh``` for ``default``, with ``--inventory <name>`` for any other.
+    """
+    suffix = "" if inventory_name == DEFAULT_INVENTORY else f" --inventory {inventory_name}"
+    return f"`otto inventory refresh{suffix}`"
+
+
+def stale_refusal(
+    *,
+    error: InventoryError,
+    label: str,
+    fetched_at: datetime,
+    age: timedelta,
+    inventory_name: str = DEFAULT_INVENTORY,
+) -> "InventoryError | None":
+    """Decide whether an expired snapshot may stand in for a failed fetch (lab templating [D2]).
+
+    The one place the decision is made. *error* is what the backend raised;
+    *fetched_at* and *age* describe the snapshot on disk. Returns ``None`` to
+    serve the snapshot (the caller then records the stale notice), or a NEW
+    error for the caller to raise ``from`` *error*:
+
+    - :class:`~otto.inventory.errors.InventoryDataError`: always refused, a
+      new ``InventoryDataError``. The source answered wrongly, and data nobody
+      can vouch for must not run a lab.
+    - :class:`~otto.inventory.errors.InventoryUnreachableError`: served while
+      its ``max_stale`` is set and *age* is at most it (inclusive), otherwise
+      refused, a new ``InventoryUnreachableError`` keeping ``max_stale``.
+      *age* is the snapshot's total age, not its age past the TTL.
+    - Any other :class:`~otto.inventory.errors.InventoryError` (NetBox's, and
+      every backend written before the typed errors): served at any age, as
+      before.
+
+    A refusal names *label* and the snapshot (``_snapshot_phrase``), so
+    the age is shown whichever way the decision goes, and the command that
+    refreshes *inventory_name* (:func:`refresh_remedy`). The refusal is of the
+    D2 base class, never a backend's subclass, whose constructor this cannot
+    know.
+    """
+    phrase = _snapshot_phrase(fetched_at=fetched_at, age=age)
+    remedy = refresh_remedy(inventory_name=inventory_name)
+    if isinstance(error, InventoryDataError):
+        return InventoryDataError(
+            f"inventory '{label}' returned unusable data ({error}); the cached snapshot "
+            f"({phrase}) is not served for a data error — fix the source, then run {remedy}"
+        )
+    if not isinstance(error, InventoryUnreachableError):
+        return None
+    limit = error.max_stale
+    if limit is not None and age <= limit:
+        return None
+    why = (
+        "no max_stale is set in its inventory table"
+        if limit is None
+        else f"{format_age(age)} is past the max_stale of {format_age(limit)} in its "
+        "inventory table"
+    )
+    return InventoryUnreachableError(
+        f"inventory '{label}' unreachable ({error}); the cached snapshot ({phrase}) is not "
+        f"served, because {why} — run {remedy} once the inventory is reachable",
+        max_stale=limit,
+    )
 
 
 @final
@@ -210,7 +324,7 @@ _NO_META = _SnapshotMeta(fetched_at=None, sha256=None, content_sha256=None)
 class _StoredSnapshot:
     """A snapshot that is on disk AND readable, with its age at the moment it was read."""
 
-    records: "dict[str, InventoryRecord]"
+    discovery: Discovery
     fetched_at: datetime
     age: timedelta
 
@@ -236,6 +350,9 @@ class SnapshotCache:
     clock : Callable[[], datetime] | None
         Injectable "now", so a test pins an age instead of sleeping. Must
         return an AWARE datetime; the default is UTC.
+    inventory_name : str
+        The inventory's name, for the refresh command a stale notice or
+        refusal names (:func:`refresh_remedy`); ``default`` when omitted.
     """
 
     def __init__(
@@ -246,8 +363,10 @@ class SnapshotCache:
         cache_dir: Path,
         slug_material: str,
         clock: "Callable[[], datetime] | None" = None,
+        inventory_name: str = DEFAULT_INVENTORY,
     ) -> None:
         self.inner = inner
+        self._inventory_name = inventory_name
         self.label = inner.label
         self.supplies = frozenset(inner.supplies)
         self._ttl = ttl
@@ -255,7 +374,7 @@ class SnapshotCache:
         slug = hashlib.sha256(slug_material.encode()).hexdigest()[:_SLUG_CHARS]
         self.snapshot_path = Path(cache_dir) / f"{slug}.json"
         self.meta_path = Path(cache_dir) / f"{slug}.meta.json"
-        self._records: "dict[str, InventoryRecord] | None" = None
+        self._discovery: "Discovery | None" = None
         self._hash: "str | None" = None
         self.stale_notice: "str | None" = None
         """Set when this object served a snapshot because the backend was unreachable.
@@ -349,7 +468,7 @@ class SnapshotCache:
         try:
             raw = self.snapshot_path.read_bytes()
             data: Any = json.loads(raw)
-            records = document_to_records(
+            discovery = document_to_discovery(
                 data=data, source=str(self.snapshot_path), supplies=self.supplies
             )
         except (OSError, ValueError, InventoryError) as e:
@@ -366,10 +485,17 @@ class SnapshotCache:
             # until then `fingerprint()` answers `None`, which is honest.
             with contextlib.suppress(OSError):
                 self._write_meta(meta.fetched_at, self._hash, content)
-        return _StoredSnapshot(records=records, fetched_at=meta.fetched_at, age=age)
+        return _StoredSnapshot(discovery=discovery, fetched_at=meta.fetched_at, age=age)
 
-    def _fetch_and_write(self, *, write_required: bool = False) -> "dict[str, InventoryRecord]":
-        """Ask *inner* for everything, write the snapshot, then the meta beside it.
+    def _fetch_and_write(self, *, write_required: bool = False) -> Discovery:
+        """Discover *inner* whole, write the snapshot, then the meta beside it.
+
+        Discovery, not a key walk of its own: a backend that declares instances
+        is asked through its capability, so the snapshot keeps them, and every
+        other backend is walked exactly as before
+        (:func:`~otto.inventory.discovery.discover_inventory`), its snapshot
+        the same flat document byte for byte
+        (:func:`~otto.inventory.snapshot.discovery_to_document`).
 
         Snapshot first: a meta file naming a snapshot that does not exist yet
         would let a concurrent reader believe in one, whereas a snapshot with
@@ -391,8 +517,8 @@ class SnapshotCache:
         *write_required* flips that for :meth:`refresh`, where the user asked
         for the write and a warning they cannot see is not an answer.
         """
-        records = {key: self.inner.lookup(key) for key in self.inner.list_keys()}
-        doc = records_to_document(records=records)
+        discovery = discover_inventory(inventory=self.inner)
+        doc = discovery_to_document(discovery=discovery)
         self._hash = document_hash(doc)
         write_key = f"write:{self.snapshot_path}"
         try:
@@ -426,7 +552,7 @@ class SnapshotCache:
         # a notice left standing would have `otto inventory refresh` reporting
         # the outage it just cleared.
         self.stale_notice = None
-        return records
+        return discovery
 
     def _warn_stale(self, stored: _StoredSnapshot, error: InventoryError) -> None:
         """Record an unreachable backend on this object, and log it once per process.
@@ -439,10 +565,11 @@ class SnapshotCache:
         serving stale. That is the silent-staleness bug one layer down: the
         second resolution is the one the CLI verb holds.
         """
+        phrase = _snapshot_phrase(fetched_at=stored.fetched_at, age=stored.age)
+        remedy = refresh_remedy(inventory_name=self._inventory_name)
         message = (
-            f"inventory '{self.label}' unreachable ({error}): using cached snapshot from "
-            f"{stored.fetched_at:%Y-%m-%d %H:%M UTC}, {format_age(stored.age)} old — run "
-            "`otto inventory refresh` to replace it once the inventory is reachable"
+            f"inventory '{self.label}' unreachable ({error}): using cached snapshot {phrase} — run "
+            f"{remedy} to replace it once the inventory is reachable"
         )
         self.stale_notice = message
         key = str(self.snapshot_path)
@@ -451,28 +578,55 @@ class SnapshotCache:
         _warned_snapshots.add(key)
         logger.warning(message)
 
-    def _ensure(self) -> "dict[str, InventoryRecord]":
-        """Return this process's records: fresh snapshot, a fetch, or stale snapshot + warning."""
-        if self._records is not None:
-            return self._records
+    def _ensure(self) -> Discovery:
+        """Return this process's discovery: fresh snapshot, a fetch, or stale snapshot + warning.
+
+        A failed fetch falls back to the stored snapshot only when
+        :func:`stale_refusal` allows it; a refusal is raised from the
+        backend's error, and nothing is memoized, so the next call tries again.
+        """
+        if self._discovery is not None:
+            return self._discovery
         now = self._clock()
         stored = self._stored(now)
         if stored is not None and stored.age < self._ttl:
-            self._records = stored.records
-            return self._records
+            self._discovery = stored.discovery
+            return self._discovery
         try:
-            self._records = self._fetch_and_write()
+            self._discovery = self._fetch_and_write()
         except InventoryError as e:
             if stored is None:
                 raise  # nothing to fall back on: the caller's error is the real one
+            # The age when the fetch gave up, not when it began: a slow
+            # timeout must not serve a snapshot that has meanwhile passed
+            # its max_stale. The decision and the notice read this one age.
+            stored = dataclasses.replace(stored, age=self._clock() - stored.fetched_at)
+            refusal = stale_refusal(
+                error=e,
+                label=self.label,
+                fetched_at=stored.fetched_at,
+                age=stored.age,
+                inventory_name=self._inventory_name,
+            )
+            if refusal is not None:
+                raise refusal from e
             self._warn_stale(stored, e)
-            self._records = stored.records
-        return self._records
+            self._discovery = stored.discovery
+        return self._discovery
 
     # -- protocol ----------------------------------------------------------
+    def inventory_discovery(self) -> Discovery:
+        """Return every record and the instances, resolving the snapshot on the first call.
+
+        The same answer the backend gives (its instances, or ``None`` when it
+        has no notion of them), whether it came off the wire or out of the
+        snapshot.
+        """
+        return self._ensure()
+
     def lookup(self, key: str) -> InventoryRecord:
         """Return the record for *key*, resolving the snapshot on the first call."""
-        records = self._ensure()
+        records = self._ensure().records
         try:
             return records[key]
         except KeyError:
@@ -480,7 +634,7 @@ class SnapshotCache:
 
     def list_keys(self) -> list[str]:
         """Every key the snapshot holds, sorted; resolves it on the first call."""
-        return sorted(self._ensure())
+        return sorted(self._ensure().records)
 
     def fingerprint(self) -> "str | None":
         """Return the stored snapshot's content hash, or ``None`` when it cannot be trusted.
@@ -539,19 +693,15 @@ class SnapshotCache:
         """
         meta = self._meta()
         previous = self._clock() - meta.fetched_at if meta.fetched_at is not None else None
-        self._records = self._fetch_and_write(write_required=True)
-        return RefreshResult(previous_age=previous, count=len(self._records))
+        self._discovery = self._fetch_and_write(write_required=True)
+        return RefreshResult(previous_age=previous, count=len(self._discovery.records))
 
 
 def snapshot_cache_of(*, inventory: Inventory) -> "SnapshotCache | None":
     """Return the :class:`SnapshotCache` inside *inventory*, or ``None`` if it is uncached.
 
-    THE one reader of otto's wrapper stack. ``construct_inventory`` puts the
-    cache on first and the creds overlay OUTERMOST (a snapshot must never hold
-    credentials), so the cache — when there is one — sits exactly one layer in.
-    The peel is a loop rather than a single ``.inner`` so that adding a second
-    core wrapper later cannot silently turn every caller's answer into
-    "uncached".
+    The cache, when there is one, sits directly below the creds overlays
+    (:func:`~otto.inventory.creds.below_creds_overlay`, the one peel).
 
     Public because ``SnapshotCache.stale_notice`` has to reach surfaces that
     report staleness in their own output — ``otto inventory``'s table row and
@@ -561,6 +711,5 @@ def snapshot_cache_of(*, inventory: Inventory) -> "SnapshotCache | None":
     write, which runs before the root callback installs a console handler; both
     verbs would then report success against a snapshot days old.
     """
-    while isinstance(inventory, CredsOverlay):
-        inventory = inventory.inner
-    return inventory if isinstance(inventory, SnapshotCache) else None
+    inner = below_creds_overlay(inventory=inventory)
+    return inner if isinstance(inner, SnapshotCache) else None

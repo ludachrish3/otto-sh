@@ -1,0 +1,1937 @@
+{
+  "example-source": {
+    "ex": {
+      "hosts": {
+        "inline1": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "inline1",
+          "hop": null,
+          "id": "inline1",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "10.9.0.1",
+          "lab_info": "ex",
+          "logins": [
+            "admin"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "ex"
+        },
+        "local": {
+          "class": "LocalHost",
+          "id": "local",
+          "logins": [],
+          "source_lab": "ex"
+        },
+        "test1": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test1",
+          "hop": null,
+          "id": "test1",
+          "interfaces": {
+            "bbeth-1350": {
+              "ip": "198.51.100.18",
+              "subnet": "198.51.100.16/30"
+            },
+            "eth2": {
+              "ip": "192.168.1.11",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "json:<root>/tests/_fixtures/lab_data/tech1-inventory/inventory.json",
+          "inventory_key": "test1",
+          "ip": "10.10.200.11",
+          "lab_info": "ex",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "ex"
+        }
+      },
+      "links": {
+        "inline1--local": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "inline1",
+            "interface": null,
+            "ip": "10.9.0.1",
+            "port": null
+          }
+        },
+        "local--test1": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          }
+        }
+      },
+      "metadata": {},
+      "resources": [
+        "test1"
+      ]
+    }
+  },
+  "getting-started-inventory": {
+    "unix": {
+      "hosts": {
+        "local": {
+          "class": "LocalHost",
+          "id": "local",
+          "logins": [],
+          "source_lab": "unix"
+        },
+        "test1": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test1",
+          "hop": null,
+          "id": "test1",
+          "interfaces": {
+            "bbeth-1350": {
+              "ip": "198.51.100.18",
+              "subnet": "198.51.100.16/30"
+            },
+            "eth2": {
+              "ip": "192.168.1.11",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "json:<root>/docs/examples/getting-started-inventory/inventory.json",
+          "inventory_key": "test1",
+          "ip": "10.10.200.11",
+          "lab_info": "unix",
+          "logins": [
+            "root",
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "unix"
+        },
+        "test2": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 4001,
+            "rows": 24,
+            "server": "test1",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test2",
+          "hop": null,
+          "id": "test2",
+          "interfaces": {
+            "eth2": {
+              "ip": "192.168.1.12",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "json:<root>/docs/examples/getting-started-inventory/inventory.json",
+          "inventory_key": "test2",
+          "ip": "10.10.200.12",
+          "lab_info": "unix",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [
+            "test2-console"
+          ],
+          "source_lab": "unix"
+        },
+        "test3": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test3",
+          "hop": null,
+          "id": "test3",
+          "interfaces": {
+            "eth2": {
+              "ip": "192.168.1.13",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "json:<root>/docs/examples/getting-started-inventory/inventory.json",
+          "inventory_key": "test3",
+          "ip": "10.10.200.13",
+          "lab_info": "unix",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "unix"
+        }
+      },
+      "links": {
+        "local--test1": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          }
+        },
+        "local--test2": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test2",
+            "interface": null,
+            "ip": "10.10.200.12",
+            "port": null
+          }
+        },
+        "local--test3": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test3",
+            "interface": null,
+            "ip": "10.10.200.13",
+            "port": null
+          }
+        }
+      },
+      "metadata": {
+        "unix": {
+          "description": "unix regression bed"
+        }
+      },
+      "resources": [
+        "unix-bench"
+      ]
+    }
+  },
+  "tech1": {
+    "busybox": {
+      "hosts": {
+        "bb1161-qemu": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "bb1161",
+          "hop": "test1",
+          "id": "bb1161-qemu",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "198.51.100.1",
+          "lab_info": "busybox",
+          "logins": [
+            "root"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "busybox"
+        },
+        "bb1211-qemu": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "bb1211",
+          "hop": "test1",
+          "id": "bb1211-qemu",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "198.51.100.5",
+          "lab_info": "busybox",
+          "logins": [
+            "root"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "busybox"
+        },
+        "bb1281-qemu": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "bb1281",
+          "hop": "test1",
+          "id": "bb1281-qemu",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "198.51.100.9",
+          "lab_info": "busybox",
+          "logins": [
+            "root"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "busybox"
+        },
+        "bb1310-qemu": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "bb1310",
+          "hop": "test1",
+          "id": "bb1310-qemu",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "198.51.100.13",
+          "lab_info": "busybox",
+          "logins": [
+            "root"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "busybox"
+        },
+        "bb1350-qemu": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": false,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 2450,
+            "rows": 24,
+            "server": "test1",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "bb1350",
+          "hop": "test1",
+          "id": "bb1350-qemu",
+          "interfaces": {
+            "eth0": {
+              "ip": "198.51.100.17",
+              "subnet": "198.51.100.16/30"
+            }
+          },
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "198.51.100.17",
+          "lab_info": "busybox",
+          "logins": [
+            "root"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "busybox"
+        },
+        "local": {
+          "class": "LocalHost",
+          "id": "local",
+          "logins": [],
+          "source_lab": "busybox"
+        },
+        "test1": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test1",
+          "hop": null,
+          "id": "test1",
+          "interfaces": {
+            "bbeth-1350": {
+              "ip": "198.51.100.18",
+              "subnet": "198.51.100.16/30"
+            },
+            "eth2": {
+              "ip": "192.168.1.11",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "10.10.200.11",
+          "lab_info": "busybox",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "busybox"
+        }
+      },
+      "links": {
+        "bb1161-qemu--test1": {
+          "a": {
+            "host": "test1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          },
+          "b": {
+            "host": "bb1161-qemu",
+            "interface": null,
+            "ip": "198.51.100.1",
+            "port": null
+          }
+        },
+        "bb1211-qemu--test1": {
+          "a": {
+            "host": "test1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          },
+          "b": {
+            "host": "bb1211-qemu",
+            "interface": null,
+            "ip": "198.51.100.5",
+            "port": null
+          }
+        },
+        "bb1281-qemu--test1": {
+          "a": {
+            "host": "test1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          },
+          "b": {
+            "host": "bb1281-qemu",
+            "interface": null,
+            "ip": "198.51.100.9",
+            "port": null
+          }
+        },
+        "bb1310-qemu--test1": {
+          "a": {
+            "host": "test1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          },
+          "b": {
+            "host": "bb1310-qemu",
+            "interface": null,
+            "ip": "198.51.100.13",
+            "port": null
+          }
+        },
+        "bb1350-qemu--test1": {
+          "a": {
+            "host": "test1",
+            "interface": "bbeth-1350",
+            "ip": "198.51.100.18",
+            "port": null
+          },
+          "b": {
+            "host": "bb1350-qemu",
+            "interface": "eth0",
+            "ip": "198.51.100.17",
+            "port": null
+          }
+        },
+        "local--test1": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          }
+        },
+        "test1--test2": {
+          "a": {
+            "host": "test1",
+            "interface": "eth2",
+            "ip": "192.168.1.11",
+            "port": null
+          },
+          "b": {
+            "host": "test2",
+            "interface": "eth2",
+            "ip": "192.168.1.12",
+            "port": null
+          }
+        }
+      },
+      "metadata": {
+        "busybox": {}
+      },
+      "resources": [
+        "bb1161",
+        "bb1211",
+        "bb1281",
+        "bb1310",
+        "bb1350",
+        "test1"
+      ]
+    },
+    "chaos": {
+      "hosts": {
+        "local": {
+          "class": "LocalHost",
+          "id": "local",
+          "logins": [],
+          "source_lab": "chaos"
+        },
+        "test4": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test4",
+          "hop": null,
+          "id": "test4",
+          "interfaces": {
+            "eth2": {
+              "ip": "192.168.1.14",
+              "subnet": "192.168.1.0/24"
+            },
+            "ubeth-data": {
+              "ip": "203.0.113.6",
+              "subnet": "203.0.113.4/30"
+            }
+          },
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "10.10.200.14",
+          "lab_info": "chaos",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "chaos"
+        },
+        "ubu2404-qemu": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "ubu2404",
+          "hop": "test4",
+          "id": "ubu2404-qemu",
+          "interfaces": {
+            "eth1": {
+              "ip": "203.0.113.1",
+              "subnet": "203.0.113.0/30"
+            },
+            "eth2": {
+              "ip": "203.0.113.5",
+              "subnet": "203.0.113.4/30"
+            }
+          },
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "203.0.113.1",
+          "lab_info": "chaos",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "chaos"
+        }
+      },
+      "links": {
+        "local--test4": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test4",
+            "interface": null,
+            "ip": "10.10.200.14",
+            "port": null
+          }
+        },
+        "test4--ubu2404-qemu": {
+          "a": {
+            "host": "test4",
+            "interface": "ubeth-data",
+            "ip": "203.0.113.6",
+            "port": null
+          },
+          "b": {
+            "host": "ubu2404-qemu",
+            "interface": "eth2",
+            "ip": "203.0.113.5",
+            "port": null
+          }
+        }
+      },
+      "metadata": {
+        "chaos": {
+          "description": "reboot chaos: test4 and its QEMU Ubuntu guest"
+        }
+      },
+      "resources": [
+        "test4",
+        "ubu2404"
+      ]
+    },
+    "embedded": {
+      "hosts": {
+        "local": {
+          "class": "LocalHost",
+          "id": "local",
+          "logins": [],
+          "source_lab": "embedded"
+        },
+        "test4": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test4",
+          "hop": null,
+          "id": "test4",
+          "interfaces": {
+            "eth2": {
+              "ip": "192.168.1.14",
+              "subnet": "192.168.1.0/24"
+            },
+            "ubeth-data": {
+              "ip": "203.0.113.6",
+              "subnet": "203.0.113.4/30"
+            }
+          },
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "10.10.200.14",
+          "lab_info": "embedded",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "embedded"
+        },
+        "zephyr27-fat": {
+          "class": "ZephyrHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "zephyr27-fat",
+          "hop": "test4",
+          "id": "zephyr27-fat",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "192.0.2.13",
+          "lab_info": "embedded",
+          "logins": [],
+          "os_type": "zephyr",
+          "resources": [],
+          "source_lab": "embedded"
+        },
+        "zephyr37-fat": {
+          "class": "ZephyrHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "zephyr37-fat",
+          "hop": "test4",
+          "id": "zephyr37-fat",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "192.0.2.1",
+          "lab_info": "embedded",
+          "logins": [],
+          "os_type": "zephyr",
+          "resources": [],
+          "source_lab": "embedded"
+        },
+        "zephyr37-lfs": {
+          "class": "ZephyrHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "zephyr37-lfs",
+          "hop": "test4",
+          "id": "zephyr37-lfs",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "192.0.2.5",
+          "lab_info": "embedded",
+          "logins": [],
+          "os_type": "zephyr",
+          "resources": [],
+          "source_lab": "embedded"
+        },
+        "zephyr37-llext": {
+          "class": "ZephyrHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 2323,
+            "rows": 24,
+            "server": "test4",
+            "settle": 0.5,
+            "write_chunk_delay": 0.015,
+            "write_chunk_size": 64
+          },
+          "element": "zephyr37-llext",
+          "hop": "test4",
+          "id": "zephyr37-llext",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "192.0.2.33",
+          "lab_info": "embedded",
+          "logins": [],
+          "os_type": "zephyr",
+          "resources": [],
+          "source_lab": "embedded"
+        },
+        "zephyr37-nofs": {
+          "class": "ZephyrHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 2325,
+            "rows": 24,
+            "server": "test4",
+            "settle": 0.5,
+            "write_chunk_delay": 0.015,
+            "write_chunk_size": 64
+          },
+          "element": "zephyr37-nofs",
+          "hop": "test4",
+          "id": "zephyr37-nofs",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "192.0.2.37",
+          "lab_info": "embedded",
+          "logins": [],
+          "os_type": "zephyr",
+          "resources": [],
+          "source_lab": "embedded"
+        },
+        "zephyr44-lfs": {
+          "class": "ZephyrHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "zephyr44-lfs",
+          "hop": "test4",
+          "id": "zephyr44-lfs",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "192.0.2.29",
+          "lab_info": "embedded",
+          "logins": [],
+          "os_type": "zephyr",
+          "resources": [],
+          "source_lab": "embedded"
+        },
+        "zephyr44-llext": {
+          "class": "ZephyrHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 2324,
+            "rows": 24,
+            "server": "test4",
+            "settle": 0.5,
+            "write_chunk_delay": 0.015,
+            "write_chunk_size": 64
+          },
+          "element": "zephyr44-llext",
+          "hop": "test4",
+          "id": "zephyr44-llext",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "192.0.2.34",
+          "lab_info": "embedded",
+          "logins": [],
+          "os_type": "zephyr",
+          "resources": [],
+          "source_lab": "embedded"
+        }
+      },
+      "links": {
+        "local--test4": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test4",
+            "interface": null,
+            "ip": "10.10.200.14",
+            "port": null
+          }
+        },
+        "test4--ubu2404-qemu": {
+          "a": {
+            "host": "test4",
+            "interface": "ubeth-data",
+            "ip": "203.0.113.6",
+            "port": null
+          },
+          "b": {
+            "host": "ubu2404-qemu",
+            "interface": "eth2",
+            "ip": "203.0.113.5",
+            "port": null
+          }
+        },
+        "test4--zephyr27-fat": {
+          "a": {
+            "host": "test4",
+            "interface": null,
+            "ip": "10.10.200.14",
+            "port": null
+          },
+          "b": {
+            "host": "zephyr27-fat",
+            "interface": null,
+            "ip": "192.0.2.13",
+            "port": null
+          }
+        },
+        "test4--zephyr37-fat": {
+          "a": {
+            "host": "test4",
+            "interface": null,
+            "ip": "10.10.200.14",
+            "port": null
+          },
+          "b": {
+            "host": "zephyr37-fat",
+            "interface": null,
+            "ip": "192.0.2.1",
+            "port": null
+          }
+        },
+        "test4--zephyr37-lfs": {
+          "a": {
+            "host": "test4",
+            "interface": null,
+            "ip": "10.10.200.14",
+            "port": null
+          },
+          "b": {
+            "host": "zephyr37-lfs",
+            "interface": null,
+            "ip": "192.0.2.5",
+            "port": null
+          }
+        },
+        "test4--zephyr37-llext": {
+          "a": {
+            "host": "test4",
+            "interface": null,
+            "ip": "10.10.200.14",
+            "port": null
+          },
+          "b": {
+            "host": "zephyr37-llext",
+            "interface": null,
+            "ip": "192.0.2.33",
+            "port": null
+          }
+        },
+        "test4--zephyr37-nofs": {
+          "a": {
+            "host": "test4",
+            "interface": null,
+            "ip": "10.10.200.14",
+            "port": null
+          },
+          "b": {
+            "host": "zephyr37-nofs",
+            "interface": null,
+            "ip": "192.0.2.37",
+            "port": null
+          }
+        },
+        "test4--zephyr44-lfs": {
+          "a": {
+            "host": "test4",
+            "interface": null,
+            "ip": "10.10.200.14",
+            "port": null
+          },
+          "b": {
+            "host": "zephyr44-lfs",
+            "interface": null,
+            "ip": "192.0.2.29",
+            "port": null
+          }
+        },
+        "test4--zephyr44-llext": {
+          "a": {
+            "host": "test4",
+            "interface": null,
+            "ip": "10.10.200.14",
+            "port": null
+          },
+          "b": {
+            "host": "zephyr44-llext",
+            "interface": null,
+            "ip": "192.0.2.34",
+            "port": null
+          }
+        }
+      },
+      "metadata": {
+        "embedded": {}
+      },
+      "resources": [
+        "test4",
+        "zephyr27_fat",
+        "zephyr37_fat",
+        "zephyr37_lfs",
+        "zephyr37_llext",
+        "zephyr37_nofs",
+        "zephyr44_lfs",
+        "zephyr44_llext"
+      ]
+    },
+    "unix": {
+      "hosts": {
+        "local": {
+          "class": "LocalHost",
+          "id": "local",
+          "logins": [],
+          "source_lab": "unix"
+        },
+        "test1": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test1",
+          "hop": null,
+          "id": "test1",
+          "interfaces": {
+            "bbeth-1350": {
+              "ip": "198.51.100.18",
+              "subnet": "198.51.100.16/30"
+            },
+            "eth2": {
+              "ip": "192.168.1.11",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "10.10.200.11",
+          "lab_info": "unix",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "unix"
+        },
+        "test2": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 4001,
+            "rows": 24,
+            "server": "test1",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test2",
+          "hop": null,
+          "id": "test2",
+          "interfaces": {
+            "eth2": {
+              "ip": "192.168.1.12",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "10.10.200.12",
+          "lab_info": "unix",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [
+            "test2-console"
+          ],
+          "source_lab": "unix"
+        },
+        "test3": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test3",
+          "hop": null,
+          "id": "test3",
+          "interfaces": {
+            "eth2": {
+              "ip": "192.168.1.13",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "10.10.200.13",
+          "lab_info": "unix",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "unix"
+        }
+      },
+      "links": {
+        "bb1350-qemu--test1": {
+          "a": {
+            "host": "test1",
+            "interface": "bbeth-1350",
+            "ip": "198.51.100.18",
+            "port": null
+          },
+          "b": {
+            "host": "bb1350-qemu",
+            "interface": "eth0",
+            "ip": "198.51.100.17",
+            "port": null
+          }
+        },
+        "local--test1": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          }
+        },
+        "local--test2": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test2",
+            "interface": null,
+            "ip": "10.10.200.12",
+            "port": null
+          }
+        },
+        "local--test3": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test3",
+            "interface": null,
+            "ip": "10.10.200.13",
+            "port": null
+          }
+        },
+        "test1--test2": {
+          "a": {
+            "host": "test1",
+            "interface": "eth2",
+            "ip": "192.168.1.11",
+            "port": null
+          },
+          "b": {
+            "host": "test2",
+            "interface": "eth2",
+            "ip": "192.168.1.12",
+            "port": null
+          }
+        }
+      },
+      "metadata": {
+        "unix": {
+          "description": "unix regression bed"
+        }
+      },
+      "resources": [
+        "test1",
+        "test2",
+        "test3"
+      ]
+    }
+  },
+  "tech1-inventory": {
+    "busybox": {
+      "hosts": {
+        "local": {
+          "class": "LocalHost",
+          "id": "local",
+          "logins": [],
+          "source_lab": "busybox"
+        },
+        "test1": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test1",
+          "hop": null,
+          "id": "test1",
+          "interfaces": {
+            "bbeth-1350": {
+              "ip": "198.51.100.18",
+              "subnet": "198.51.100.16/30"
+            },
+            "eth2": {
+              "ip": "192.168.1.11",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "json:<root>/tests/_fixtures/lab_data/tech1-inventory/inventory.json",
+          "inventory_key": "test1",
+          "ip": "10.10.200.11",
+          "lab_info": "busybox",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "busybox"
+        }
+      },
+      "links": {
+        "local--test1": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          }
+        }
+      },
+      "metadata": {
+        "busybox": {}
+      },
+      "resources": [
+        "bb1161",
+        "bb1211",
+        "bb1281",
+        "bb1310",
+        "bb1350",
+        "test1"
+      ]
+    },
+    "unix": {
+      "hosts": {
+        "local": {
+          "class": "LocalHost",
+          "id": "local",
+          "logins": [],
+          "source_lab": "unix"
+        },
+        "test1": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test1",
+          "hop": null,
+          "id": "test1",
+          "interfaces": {
+            "bbeth-1350": {
+              "ip": "198.51.100.18",
+              "subnet": "198.51.100.16/30"
+            },
+            "eth2": {
+              "ip": "192.168.1.11",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "json:<root>/tests/_fixtures/lab_data/tech1-inventory/inventory.json",
+          "inventory_key": "test1",
+          "ip": "10.10.200.11",
+          "lab_info": "unix",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "unix"
+        },
+        "test2": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 4001,
+            "rows": 24,
+            "server": "test1",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test2",
+          "hop": null,
+          "id": "test2",
+          "interfaces": {
+            "eth2": {
+              "ip": "192.168.1.12",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "json:<root>/tests/_fixtures/lab_data/tech1-inventory/inventory.json",
+          "inventory_key": "test2",
+          "ip": "10.10.200.12",
+          "lab_info": "unix",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [
+            "test2-console"
+          ],
+          "source_lab": "unix"
+        },
+        "test3": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "test3",
+          "hop": null,
+          "id": "test3",
+          "interfaces": {
+            "eth2": {
+              "ip": "192.168.1.13",
+              "subnet": "192.168.1.0/24"
+            }
+          },
+          "inventory_backend": "json:<root>/tests/_fixtures/lab_data/tech1-inventory/inventory.json",
+          "inventory_key": "test3",
+          "ip": "10.10.200.13",
+          "lab_info": "unix",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "unix"
+        }
+      },
+      "links": {
+        "local--test1": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          }
+        },
+        "local--test2": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test2",
+            "interface": null,
+            "ip": "10.10.200.12",
+            "port": null
+          }
+        },
+        "local--test3": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "test3",
+            "interface": null,
+            "ip": "10.10.200.13",
+            "port": null
+          }
+        }
+      },
+      "metadata": {
+        "unix": {
+          "description": "unix regression bed"
+        }
+      },
+      "resources": [
+        "test1",
+        "test2",
+        "test3"
+      ]
+    }
+  },
+  "tech2": {
+    "unix_alt": {
+      "hosts": {
+        "alt1": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "alt1",
+          "hop": null,
+          "id": "alt1",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "10.10.200.11",
+          "lab_info": "unix_alt",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "unix_alt"
+        },
+        "alt2": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "alt2",
+          "hop": null,
+          "id": "alt2",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "10.10.200.12",
+          "lab_info": "unix_alt",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "unix_alt"
+        },
+        "alt3": {
+          "class": "UnixHost",
+          "console_options": {
+            "cols": 400,
+            "dial": "ssh",
+            "echo_negotiation_timeout": 3.0,
+            "encoding": false,
+            "escapes_iac": true,
+            "extra": {},
+            "login": true,
+            "login_prompt": null,
+            "login_timeout": 10.0,
+            "logout": true,
+            "password_prompt": null,
+            "port": 0,
+            "rows": 24,
+            "server": "",
+            "settle": 0.5,
+            "write_chunk_delay": 0.0,
+            "write_chunk_size": 0
+          },
+          "element": "alt3",
+          "hop": null,
+          "id": "alt3",
+          "interfaces": {},
+          "inventory_backend": "",
+          "inventory_key": "",
+          "ip": "10.10.200.13",
+          "lab_info": "unix_alt",
+          "logins": [
+            "test",
+            "vagrant"
+          ],
+          "os_type": "unix",
+          "resources": [],
+          "source_lab": "unix_alt"
+        },
+        "local": {
+          "class": "LocalHost",
+          "id": "local",
+          "logins": [],
+          "source_lab": "unix_alt"
+        }
+      },
+      "links": {
+        "alt1--local": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "alt1",
+            "interface": null,
+            "ip": "10.10.200.11",
+            "port": null
+          }
+        },
+        "alt2--local": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "alt2",
+            "interface": null,
+            "ip": "10.10.200.12",
+            "port": null
+          }
+        },
+        "alt3--local": {
+          "a": {
+            "host": "local",
+            "interface": null,
+            "ip": "",
+            "port": null
+          },
+          "b": {
+            "host": "alt3",
+            "interface": null,
+            "ip": "10.10.200.13",
+            "port": null
+          }
+        }
+      },
+      "metadata": {
+        "unix_alt": {}
+      },
+      "resources": [
+        "alt1",
+        "alt2",
+        "alt3"
+      ]
+    }
+  }
+}

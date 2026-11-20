@@ -47,7 +47,6 @@ def project_double(
         (test_dir / "t.py").write_text(f"def {DOUBLE_TEST_NAME}():\n    pass\n")
     # A real Project always has settings; the coverage decision reads them.
     project.settings = settings if settings is not None else {}
-    project.inventory_settings = {}
     # No [project] table, as a real Project without one: a context whose projects
     # are this double resolves the whole-lab fallback, not a Mock's scope.
     project.project_scope = None

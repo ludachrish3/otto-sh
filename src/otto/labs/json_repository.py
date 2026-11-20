@@ -18,17 +18,20 @@ from ..host.remote_host import describe_identity
 from ..models.base import OttoModel, compact_validation_error, wrap_secret_values
 from ..models.lab import ElementSpec, LabEntrySpec
 from ..utils import anchor_path
+from .drops import Diagnostic
 from .errors import (
     LabNotFoundError,
     LabRepositoryError,
 )
-from .protocol import HostSummary, logins_of_host_data
+from .protocol import HostSummary, LabStatus, logins_of_host_data
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from ..host.element import Element
+    from ..host.inventory_ref import MachineIdentity
     from ..inventory.protocol import Inventory
+    from ..inventory.view import InventoryView
     from ..registry import Configured
 
     # Annotation only: load_lab() below imports Lab at call time, so a
@@ -351,10 +354,12 @@ class _JsonFileLabRepository:
         when this source's ``labs`` table declares *name*.
 
         *inventory* is the process inventory referenced entries resolve
-        against (spec 2026-08-28 host-inventory §6). The join happens HERE,
-        once per entry, before the factory ever sees the dict; ``None`` means
-        a referenced entry is an error naming the file, the element and the
-        index.
+        against (spec 2026-08-28 host-inventory §6): :meth:`load_lab_in_view`
+        over the view it stands for
+        (:meth:`~otto.inventory.InventoryView.of_default`). ``None`` means a
+        referenced entry is an error naming the file, the element and the
+        index, and so does a qualified reference to any inventory but
+        ``default``.
 
         Raises
         ------
@@ -365,7 +370,30 @@ class _JsonFileLabRepository:
             If a lab.json is malformed, a host's data is invalid, or an entry
             references an inventory key that cannot be resolved.
         """
-        from ..inventory.resolve import resolve_host_entry  # lazy: see the note above
+        from ..inventory.view import InventoryView  # lazy: see the note above
+
+        return self.load_lab_in_view(
+            name, preferences=preferences, view=InventoryView.of_default(inventory=inventory)
+        )
+
+    def load_lab_in_view(
+        self,
+        name: str,
+        *,
+        preferences: dict[str, dict[str, Any]] | None = None,
+        view: "InventoryView",
+    ) -> "Lab":
+        """Load this source's contribution to *name*, each reference resolved through *view*.
+
+        The :class:`~otto.labs.protocol.SupportsInventoryView` capability, and
+        what :meth:`load_lab` runs. The join happens HERE, once per entry,
+        before the factory ever sees the dict
+        (:func:`~otto.inventory.resolve_view_entry`): a bare reference
+        resolves through ``default`` and a qualified one through the
+        inventory it names. *preferences* and the errors are
+        :meth:`load_lab`'s.
+        """
+        from ..inventory.resolve import resolve_view_entry  # lazy: see the note above
         from .loader import Lab
 
         try:
@@ -405,7 +433,7 @@ class _JsonFileLabRepository:
         for element, path in members:
             runtime = element.to_element()
             for idx, host_data in enumerate(element.hosts):
-                _add_host(lab, host_data, runtime, idx, path, preferences, inventory, self.profiles)
+                _add_host(lab, host_data, runtime, idx, path, preferences, view, self.profiles)
 
         from ..link.derive import addressing_from_dict, resolve_declared_links
 
@@ -433,11 +461,11 @@ class _JsonFileLabRepository:
                 # Resolved inside the per-item try: a referenced entry has no
                 # address of its own, so a link naming one is only derivable
                 # once the record is joined on — and an entry belonging to
-                # ANOTHER lab (whose key this process's inventory may not
+                # ANOTHER lab (whose key this process's inventories may not
                 # hold) is skipped here exactly like any other unresolvable
                 # record, rather than failing this lab's load.
                 host_id, host_addressing = addressing_from_dict(
-                    resolve_host_entry(h, inventory=inventory, element=runtime).host_data,
+                    resolve_view_entry(h, view=view, element=runtime).host_data,
                     runtime,
                     profiles=self.profiles,
                 )
@@ -482,7 +510,20 @@ class _JsonFileLabRepository:
     def list_host_summaries(self, *, inventory: "Inventory | None" = None) -> list[HostSummary]:
         """Every host across the configured lab files, without building hosts.
 
-        The :class:`~otto.labs.protocol.SupportsHostSummaries` fast path.
+        The :class:`~otto.labs.protocol.SupportsHostSummaries` fast path:
+        :meth:`list_host_summaries_in_view` over the view *inventory* stands
+        for (:meth:`~otto.inventory.InventoryView.of_default`). Without an
+        inventory a referenced entry is skipped, like any other unresolvable
+        record.
+        """
+        from ..inventory.view import InventoryView  # lazy: see the note above
+
+        return self.list_host_summaries_in_view(view=InventoryView.of_default(inventory=inventory))
+
+    def list_host_summaries_in_view(self, *, view: "InventoryView") -> list[HostSummary]:
+        """Every host across the configured lab files, each reference resolved through *view*.
+
+        The :class:`~otto.labs.protocol.SupportsHostSummariesInView` fast path.
         Each id comes from :func:`~otto.host.factory.host_identity`, which
         applies the same profile merge and validation
         :func:`~otto.host.factory.create_host_from_dict` applies — so an id
@@ -493,19 +534,27 @@ class _JsonFileLabRepository:
         ``labs`` is each element's patterns resolved against the labs THIS
         source declares; ``lab_patterns`` carries the patterns themselves, so
         the composite can re-resolve them against every source's declarations.
+        A lab's ``unavailable`` reason filters nothing here.
 
-        A referenced entry is identified through its record, so a summary may
-        carry an inventory-supplied ``ip``; without the inventory such an
-        entry is skipped, like any other unresolvable record.
+        A referenced entry is identified through its record
+        (:func:`~otto.inventory.resolve_view_entry`), so a summary may carry an
+        inventory-supplied ``ip``, and its ``inventory_ref`` names the
+        inventory and key. An entry the view cannot resolve is skipped, like
+        any other unresolvable record.
 
         Best-effort, like :meth:`list_labs`: a malformed file or host entry
         is skipped rather than raised — these feed completion, which must
-        never crash the shell. Two records deriving one id resolve by
-        address, the rule ``Lab.__add__``
-        applies when labs merge: the same ip is the same machine, so the later
-        record's labs fold into the first summary; a different ip is a
-        different machine, so the later record is dropped (via
-        ``otto.labs.drops.record_drop``) naming both declarations.
+        never crash the shell. Each skip is one drop
+        (``otto.labs.drops.record_drop``); a bare reference the view refuses
+        records its own, so the skip adds none.
+
+        Two records deriving one id resolve by machine, the rule ``Lab.__add__``
+        applies when labs merge (:func:`~otto.host.inventory_ref.first_conflict`
+        over every identity already folded into that id). The same machine —
+        one address, and one inventory when both are referenced — folds the
+        later record's labs into the first summary. A different machine is
+        dropped, naming both declarations: two addresses, or two inventories
+        (or two qualified keys of one) reusing one address.
 
         One shape folds here yet is refused by :meth:`load_lab`: two records
         that compose one id at the SAME ip and share a LAB name (element
@@ -513,12 +562,14 @@ class _JsonFileLabRepository:
         an id the lab refuses to load; the refusal, which names both
         declarations, is the honest answer at load.
         """
-        from ..inventory.errors import InventoryError  # lazy: see the note above
-        from ..inventory.resolve import resolve_host_entry
-        from .drops import record_drop
+        from ..host.inventory_ref import MachineIdentity  # lazy: see the note above
+        from ..inventory.errors import InventoryError
+        from ..inventory.resolve import resolve_view_entry
+        from .drops import is_refusal, record_drop
 
         by_id: dict[str, HostSummary] = {}
-        kept_as: dict[str, str] = {}  # id -> the kept record's declaration, for a drop
+        # id -> every machine identity folded into it, each with its declaration
+        folded: dict[str, list[_Declared]] = {}
 
         try:
             docs = self._load_documents(best_effort=True)
@@ -538,49 +589,53 @@ class _JsonFileLabRepository:
                     record_drop(f"{doc.path}: element {element.name!r}", str(e))
                     continue
                 for index, entry in enumerate(element.hosts):
+                    where = f"{doc.path}: element {element.name!r} hosts[{index}]"
                     try:
-                        host_data = resolve_host_entry(
-                            entry, inventory=inventory, element=runtime
-                        ).host_data
+                        resolved = resolve_view_entry(entry, view=view, element=runtime)
+                        host_data = resolved.host_data
                         identity = host_identity(host_data, element=runtime, profiles=self.profiles)
                     except (ValueError, TypeError, InventoryError) as e:
                         # Skipped, never raised — but SAID: this is the one
                         # place a referenced entry silently fell out of
                         # completion (see otto.labs.drops). A ValidationError is
                         # rendered without its input, as the loader renders it.
-                        reason = (
-                            compact_validation_error(e)
-                            if isinstance(e, ValidationError)
-                            else str(e)
-                        )
-                        record_drop(f"{doc.path}: element {element.name!r} hosts[{index}]", reason)
+                        # A refused bare reference already recorded its drop.
+                        if not is_refusal(e):
+                            reason = (
+                                compact_validation_error(e)
+                                if isinstance(e, ValidationError)
+                                else str(e)
+                            )
+                            record_drop(where, reason)
                         continue
+                    incoming = _Declared(
+                        identity=MachineIdentity(ip=identity.ip, ref=resolved.ref),
+                        described=describe_identity(
+                            element.name, identity.board, identity.slot, identity.ip
+                        ),
+                    )
                     first = by_id.get(identity.id)
                     if first is not None:
                         # Every portion of an id joins with ``-``, so two
                         # records can compose one id (``a-b`` vs ``a`` + board
-                        # ``b``, or one element restated across labs). Same ip
-                        # = the same machine: its labs fold into the kept
-                        # summary. Different ip = a different machine that
-                        # would vanish from completion: dropped, naming both.
-                        if identity.ip == first.ip:
+                        # ``b``, or one element restated across labs). The same
+                        # machine: its labs fold into the kept summary. A
+                        # different machine would vanish from completion:
+                        # dropped, naming both.
+                        clash = _first_clash(incoming=incoming, seen=folded[identity.id])
+                        if clash is None:
+                            folded[identity.id].append(incoming)
                             first.labs.extend(n for n in labs if n not in first.labs)
                             first.lab_patterns.extend(
                                 p for p in element.labs if p not in first.lab_patterns
                             )
                         else:
-                            loser = describe_identity(
-                                element.name, identity.board, identity.slot, identity.ip
-                            )
                             record_drop(
-                                f"{doc.path}: element {element.name!r} hosts[{index}]",
-                                f"host id {identity.id!r}: {kept_as[identity.id]} collides "
-                                f"with {loser} — two declarations compose one id; rename one",
+                                where,
+                                _summary_collision(host_id=identity.id, kept=clash, lost=incoming),
                             )
                         continue
-                    kept_as[identity.id] = describe_identity(
-                        element.name, identity.board, identity.slot, identity.ip
-                    )
+                    folded[identity.id] = [incoming]
                     by_id[identity.id] = HostSummary(
                         id=identity.id,
                         labs=list(labs),
@@ -590,6 +645,7 @@ class _JsonFileLabRepository:
                         docker_priority=identity.docker_priority,
                         os_type=str(host_data.get("os_type", "unix")),
                         logins=logins_of_host_data(host_data),
+                        inventory_ref=resolved.ref,
                     )
 
         return sorted(by_id.values(), key=lambda s: s.id)
@@ -601,13 +657,44 @@ class _JsonFileLabRepository:
         a regex, not a name (one with a quantifier or a group names nothing),
         and an undeclared lab does not exist (spec §2.1). Returns an empty list
         when no lab file exists. A malformed lab.json is skipped rather than
-        raised, so listing stays best-effort.
+        raised, so listing stays best-effort. These are the names of
+        :meth:`list_lab_status`, read once by the same walk.
+        """
+        return [status.name for status in self._lab_statuses()]
+
+    def list_lab_status(self, *, view: "InventoryView") -> list[LabStatus]:
+        """Return every lab :meth:`list_labs` names, with whether it can be used now.
+
+        The :class:`~otto.labs.protocol.SupportsLabStatus` capability. A lab
+        whose ``labs`` entry sets ``unavailable`` carries that reason, where
+        ``<file>: lab '<name>'``; every other lab is available. It reads the
+        lab files exactly as :meth:`list_labs` does, and never *view*: a lab's
+        availability is what its file says.
+        """
+        del view  # availability is the lab file's statement alone
+        return self._lab_statuses()
+
+    def _lab_statuses(self) -> list[LabStatus]:
+        """Return the status of every declared lab, sorted by name: the one read of both listings.
+
+        A malformed or duplicating file is skipped (``_load_documents`` with
+        ``best_effort``).
         """
         try:
             docs = self._load_documents(best_effort=True)
         except FileNotFoundError:
             return []
-        return sorted({n for doc in docs for n in doc.entries})
+        statuses = [
+            LabStatus(
+                name=name,
+                unavailable=None
+                if entry.unavailable is None
+                else Diagnostic(where=f"{doc.path}: lab {name!r}", reason=entry.unavailable),
+            )
+            for doc in docs
+            for name, entry in doc.entries.items()
+        ]
+        return sorted(statuses, key=lambda status: status.name)
 
     def _load_documents(self, *, best_effort: bool = False) -> list[LabDocument]:
         """Parse every lab file: its path, labs table, elements and raw links.
@@ -742,6 +829,45 @@ def _json_lab_source(c: "Configured[JsonLabSourceConfig, LabSourceEnv]") -> _Jso
     return _JsonFileLabRepository(search_paths=list(c.config.paths), profiles=c.env.profiles)
 
 
+@dataclass(frozen=True, kw_only=True)
+class _Declared:
+    """One summarized record's machine identity, and its declaration as a message names it."""
+
+    identity: "MachineIdentity"
+    described: str
+
+
+def _first_clash(*, incoming: _Declared, seen: "list[_Declared]") -> "_Declared | None":
+    """Return the first of *seen* that is a different machine from *incoming*, or ``None``.
+
+    :func:`~otto.host.inventory_ref.first_conflict` decides it.
+    """
+    from ..host.inventory_ref import first_conflict
+
+    clash = first_conflict(incoming=incoming.identity, seen=[s.identity for s in seen])
+    return None if clash is None else next(s for s in seen if s.identity is clash)
+
+
+def _summary_collision(*, host_id: str, kept: _Declared, lost: _Declared) -> str:
+    """Return the drop text for *lost*, a different machine from *kept* under *host_id*.
+
+    Two addresses keep today's text. One address names both identities as
+    ``name/key``: two inventories, or two keys of one, reusing the address.
+    """
+    from ..host.inventory_ref import spell_ref
+
+    if kept.identity.ip != lost.identity.ip:
+        return (
+            f"host id {host_id!r}: {kept.described} collides with {lost.described} — two "
+            "declarations compose one id; rename one"
+        )
+    return (
+        f"host id {host_id!r}: {kept.described} as {spell_ref(ref=kept.identity.ref)} collides "
+        f"with {lost.described} as {spell_ref(ref=lost.identity.ref)} — two inventories, or "
+        "two keys of one, name two machines at one address; rename one"
+    )
+
+
 def _add_host(
     lab: "Lab",
     host_data: dict[str, Any],
@@ -749,7 +875,7 @@ def _add_host(
     idx: int,
     path: Path,
     preferences: dict[str, dict[str, Any]] | None,
-    inventory: "Inventory | None",
+    view: "InventoryView",
     profiles: ProfileContext,
 ) -> None:
     """Build one host entry of *element* and add it to *lab*.
@@ -760,9 +886,9 @@ def _add_host(
     the host entry that failed, not a running count across elements.
 
     THE join site (spec §6): every entry passes through
-    :func:`~otto.inventory.resolve_host_entry` here, so the factory only ever
+    :func:`~otto.inventory.resolve_view_entry` here, so the factory only ever
     sees a resolved dict (it REFUSES an unresolved one) and no other layer
-    has to know the inventory exists. *inventory* is REQUIRED, like its five
+    has to know the inventory exists. *view* is REQUIRED, like its five
     siblings — a default would let a future call site drop it silently, which
     is the exact mistake the conformance suite's signature rule exists to
     catch in third-party backends.
@@ -776,11 +902,11 @@ def _add_host(
     puts the file, the element and the index in front of "key not found".
     """
     from ..inventory.resolve import (
-        resolve_host_entry,  # lazy: see the note at the top of this module
+        resolve_view_entry,  # lazy: see the note at the top of this module
     )
 
     try:
-        entry = resolve_host_entry(host_data, inventory=inventory, element=element)
+        entry = resolve_view_entry(host_data, view=view, element=element)
         host = create_host_from_dict(
             entry.host_data,
             preferences=preferences,

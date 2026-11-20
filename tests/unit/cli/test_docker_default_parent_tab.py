@@ -22,7 +22,7 @@ def stored_names(tmp_path, monkeypatch):
     project.init = []
     project.libs = []
     project.tests = []
-    project.inventory_settings = {}
+    project.settings = {}
     cc.write_cache(
         [project],
         instructions=[],

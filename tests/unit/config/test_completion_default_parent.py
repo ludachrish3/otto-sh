@@ -145,7 +145,7 @@ def test_read_cache_rejects_a_malformed_default_parent_map(tmp_path, monkeypatch
     mock_project.init = []
     mock_project.libs = []
     mock_project.tests = []
-    mock_project.inventory_settings = {}
+    mock_project.settings = {}
     cc.write_cache([mock_project], instructions=[], hosts=[])
     data = json.loads(cc._cache_path().read_text())
     data["sections"]["names"]["payload"]["docker_default_parent_by_lab"] = ["not", "a", "dict"]

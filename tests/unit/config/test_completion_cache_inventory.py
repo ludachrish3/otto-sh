@@ -398,3 +398,563 @@ def test_a_tab_over_a_profile_holding_a_secret_never_makes_the_key(tmp_path, mon
     cc.project_host_summaries(project, resolved, profiles=profiles)  # the memo's hit
     assert len(cc._SUMMARY_MEMO) == 1
     assert not (otto_home() / DIGEST_SALT_FILENAME).exists()
+
+
+# ---------------------------------------------------------------------------
+# Named inventories (#1176): completion resolves every reference through the
+# process inventory view, and otherwise keeps today's design.
+# ---------------------------------------------------------------------------
+
+_CREDS = [{"login": "u", "password": "p"}]
+_QUALIFIED = {"inventory": {"name": "physical", "key": "k"}, "element": "dut", "creds": _CREDS}
+_BARE = {"inventory": "k", "element": "bare", "creds": _CREDS}
+_INLINE = {"ip": "10.0.0.9", "element": "inline", "creds": _CREDS}
+
+
+def _records_file(path: Path, records: dict) -> str:
+    """Write *records* to *path* (parents created) and return the path as a string."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(records))
+    return str(path)
+
+
+def _entry(name: str, path: Path, records: dict, **extra) -> dict:
+    """An ``[[inventories]]`` entry *name*: a json inventory over *records* written to *path*."""
+    return {"name": name, "backend": "json", "path": _records_file(path, records), **extra}
+
+
+def _named(tmp_path: Path, name: str, *, settings: dict, hosts=(), lab_sources=None):
+    """A Project stand-in at ``tmp_path/name``: one json lab of *hosts*, *settings* parsed."""
+    root = tmp_path / name
+    lab = root / "lab"
+    lab.mkdir(parents=True, exist_ok=True)
+    touch_settings(root)
+    write_lab_json(lab / "lab.json", list(hosts), declare_labs=True)
+    return fake_project(
+        root=root,
+        lab_sources=json_lab_sources(root, [lab]) if lab_sources is None else lab_sources,
+        settings=settings,
+    )
+
+
+def _resettled(project, settings: dict):
+    """The SAME project stand-in — same root, same files — carrying other *settings*."""
+    return fake_project(**{**vars(project), "settings": settings})
+
+
+def _summaries(project, projects) -> dict:
+    """*project*'s host summaries by id, resolved over the selection *projects*."""
+    resolution = cc.resolve_process_inventory(projects)
+    profiles = ProfileContext.from_projects(projects=projects)
+    return {s.id: s for s in cc.project_host_summaries(project, resolution, profiles=profiles)}
+
+
+def _example_source(root: Path, backend: str, labs: dict):
+    """The ``[[lab.sources]]`` entry for the example (legacy, ``SupportsHostSummaries``) backend."""
+    from otto.labs.sources import PendingLabSource
+    from otto.registry import FrozenMap
+
+    return [
+        PendingLabSource(
+            backend=backend,
+            label=f"example/{backend}#1",
+            raw=FrozenMap.freeze_json(value={"labs": labs}),
+            origin=str(root / ".otto" / "settings.toml"),
+            project_root=root,
+        )
+    ]
+
+
+@contextlib.contextmanager
+def _example_backend(name: str):
+    """Register the example lab-source backend as *name* for the block."""
+    from otto.examples.lab_repository import ExampleLabSourceConfig, example_lab_source
+    from otto.labs import register_lab_repository
+    from otto.labs.registry import LAB_REPOSITORIES
+
+    register_lab_repository(name, config=ExampleLabSourceConfig, factory=example_lab_source)
+    try:
+        yield
+    finally:
+        LAB_REPOSITORIES.unregister(name=name)
+
+
+def test_a_named_inventory_change_moves_the_digest_and_the_shim(tmp_path, monkeypatch):
+    """Review Focus 2: a NON-default inventory's file change invalidates completion.
+
+    ``virtual`` is rewritten with a different size (an mtime-only change can
+    land inside one timestamp tick). The digest moves, and the real shim's
+    inventory pass hands over on the block written before the change.
+    """
+    import pytest
+
+    from otto import _shim_complete as sc
+    from otto.config.completion_tree import inventory_block
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    virtual = tmp_path / "sut" / "virtual.json"
+    project = _named(
+        tmp_path,
+        "sut",
+        settings={
+            "inventory": _json_inventory(tmp_path, _RECORD),
+            "inventories": [_entry("virtual", virtual, {"k": {"ip": "10.0.2.1"}})],
+        },
+    )
+    before = _digest([project])
+    block = inventory_block([project])
+    assert block["kind"] == "stat"
+    sc._inventory_pass(block)  # nothing changed yet: the shim answers
+
+    virtual.write_text(json.dumps({"k": {"ip": "10.0.2.1"}, "k2": {"ip": "10.0.2.2"}}))
+
+    assert _digest([project]) != before
+    with pytest.raises(sc.Handover):
+        sc._inventory_pass(block)
+
+
+def test_a_default_only_workspace_keeps_its_block_and_digest(tmp_path, monkeypatch):
+    """A workspace without ``[[inventories]]`` keys completion exactly as before.
+
+    The view holding only ``default`` passes its values through: the digest's
+    inventory line is the json backend's own fingerprint, the shim block is
+    its one file, and ``otto cache info`` names its label.
+    """
+    from otto.config.completion_tree import inventory_block, stat_triple
+    from otto.inventory.json_backend import JsonInventory
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    project = _project(tmp_path, _json_inventory(tmp_path, _RECORD))
+    alone = JsonInventory(path=(tmp_path / "sut" / "inventory.json").resolve())
+
+    assert cc.inventory_digest_text([project]) == alone.fingerprint()
+    assert inventory_block([project]) == {"kind": "stat", "files": [stat_triple(alone.path)]}
+    assert cc.describe_inventory([project]) == cc.InventoryDescription(text=alone.label)
+
+
+def test_a_qualified_host_completes(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    physical = tmp_path / "sut" / "physical.json"
+    project = _named(
+        tmp_path,
+        "sut",
+        settings={"inventories": [_entry("physical", physical, {"k": {"ip": "10.0.1.1"}})]},
+        hosts=[_QUALIFIED],
+    )
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    assert "dut" in cc.collect_host_ids([project])
+    assert _summaries(project, [project])["dut"].ip == "10.0.1.1"
+
+
+def _d1_drops(project) -> list:
+    resolution = cc.resolve_process_inventory([project])
+    drops = cc.project_host_drops(project, resolution, profiles=ProfileContext.empty())
+    return [d for d in drops if "bare inventory reference 'k' is refused" in d.reason]
+
+
+def test_a_d1_refusal_is_a_completion_drop(tmp_path, monkeypatch):
+    """D1 on both summaries routes: the json backend's and the legacy fast branch.
+
+    The project declares ``[[inventories]]`` without binding ``default``, so
+    its bare reference is refused: one drop holding the D1 text, never two,
+    and the inline sibling still completes.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    settings = {
+        "inventories": [_entry("physical", tmp_path / "phys.json", {"k": {"ip": "10.0.1.1"}})]
+    }
+    json_project = _named(tmp_path, "json", settings=settings, hosts=[_BARE, _INLINE])
+
+    root = tmp_path / "legacy"
+    labs = {
+        "east": [
+            {"name": "bare", "hosts": [{"inventory": "k", "creds": _CREDS}]},
+            {"name": "inline", "hosts": [{"ip": "10.0.0.9", "creds": _CREDS}]},
+        ]
+    }
+    with _example_backend("example-d1"):
+        legacy = _named(
+            tmp_path,
+            "legacy",
+            settings=settings,
+            lab_sources=_example_source(root, "example-d1", labs),
+        )
+        for project in (json_project, legacy):
+            monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+            assert len(_d1_drops(project)) == 1, project.root
+            summaries = _summaries(project, [project])
+            assert "inline" in summaries, project.root
+            assert "bare" not in summaries, project.root
+
+
+def test_summaries_carry_the_qualified_ref(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    physical = tmp_path / "sut" / "physical.json"
+    project = _named(
+        tmp_path,
+        "sut",
+        settings={"inventories": [_entry("physical", physical, {"k": {"ip": "10.0.1.1"}})]},
+        hosts=[_QUALIFIED],
+    )
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    ref = _summaries(project, [project])["dut"].inventory_ref
+    assert (ref.name, ref.key, ref.qualified) == ("physical", "k", True)
+
+
+def test_two_selections_never_share_a_memo_entry(tmp_path, monkeypatch):
+    """P references ``physical/k``; two selections bind ``physical`` to two files.
+
+    No memo clear between them: each selection gets its own address.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    p = _named(tmp_path, "p", settings={}, hosts=[_QUALIFIED])
+    a = _named(
+        tmp_path,
+        "sel",
+        settings={
+            "inventories": [_entry("physical", tmp_path / "a.json", {"k": {"ip": "10.1.0.1"}})]
+        },
+    )
+    b = _resettled(
+        a, {"inventories": [_entry("physical", tmp_path / "b.json", {"k": {"ip": "10.1.0.2"}})]}
+    )
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    assert _summaries(p, [p, a])["dut"].ip == "10.1.0.1"
+    assert _summaries(p, [p, b])["dut"].ip == "10.1.0.2"
+
+
+class _SameLabelConfig(OttoModel, frozen=True):
+    records: dict[str, dict]
+
+
+def test_same_label_bindings_never_share_a_memo_entry(tmp_path, monkeypatch):
+    """Two bindings of one label differ in configuration: the memo keys on the binding.
+
+    The fake backend's label is the constant ``fake:same``; its records come
+    from its configuration. Project P and the refusing roots stay fixed (the
+    selecting project keeps its root), so only the binding tells the two
+    selections apart.
+    """
+    from tests.unit.inventory.test_resolve import FakeInventory
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    register_inventory_backend(
+        "fake:same",
+        config=_SameLabelConfig,
+        factory=lambda c: FakeInventory(c.config.records, label="fake:same"),
+        snapshot_cache=False,
+    )
+
+    def selecting(ip: str) -> dict:
+        entry = {"name": "physical", "backend": "fake:same", "records": {"k": {"ip": ip}}}
+        return {"inventories": [entry]}
+
+    p = _named(tmp_path, "p", settings={}, hosts=[_QUALIFIED])
+    x = _named(tmp_path, "sel", settings=selecting("10.2.0.1"))
+    y = _resettled(x, selecting("10.2.0.2"))
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    assert _summaries(p, [p, x])["dut"].ip == "10.2.0.1"
+    assert _summaries(p, [p, y])["dut"].ip == "10.2.0.2"
+
+
+def test_a_switched_symlink_never_reuses_the_memo(tmp_path, monkeypatch):
+    """``default`` names ``current.json``; repointing the link changes what was constructed."""
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    root = tmp_path / "sut"
+    a = Path(_records_file(root / "a.json", {"dut-1": {"ip": "10.3.0.1"}}))
+    b = Path(_records_file(root / "b.json", {"dut-1": {"ip": "10.3.0.2"}}))
+    current = root / "current.json"
+    current.symlink_to(a)
+    table = {"backend": "json", "path": "current.json", "supplies": ["ip"]}
+    project = _project(tmp_path, table, hosts=[_REFERENCED])
+
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    assert _summaries(project, [project])["dut"].ip == "10.3.0.1"
+    current.unlink()
+    current.symlink_to(b)
+    assert _summaries(project, [project])["dut"].ip == "10.3.0.2"
+
+
+def test_a_switched_creds_symlink_never_reuses_the_memo(tmp_path, monkeypatch):
+    """``physical``'s creds store is a link; repointing it offers the new login on ``--user``."""
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    root = tmp_path / "sut"
+    alice = Path(_records_file(root / "alice.json", {"k": [{"login": "alice", "password": "p"}]}))
+    bob = Path(_records_file(root / "bob.json", {"k": [{"login": "bob", "password": "p"}]}))
+    current = root / "current.json"
+    current.symlink_to(alice)
+    entry = _entry(
+        "physical",
+        root / "physical.json",
+        {"k": {"ip": "10.4.0.1"}},
+        creds={"backend": "json", "path": str(current)},
+    )
+    host = {"inventory": {"name": "physical", "key": "k"}, "element": "dut"}
+    project = _named(tmp_path, "sut", settings={"inventories": [entry]}, hosts=[host])
+
+    def logins() -> list[str]:
+        return [e["login"] for e in cc.collect_logins_by_host([project]).get("dut", [])]
+
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    assert logins() == ["alice"]
+    current.unlink()
+    current.symlink_to(bob)
+    assert logins() == ["bob"]
+
+
+class _StatusRaises:
+    """A lab source whose status report must never be asked for a name-only request."""
+
+    def list_labs(self) -> list[str]:
+        return ["east"]
+
+    def load_lab(self, name, **_):
+        from otto.labs import LabNotFoundError
+
+        raise LabNotFoundError(name)
+
+    def list_lab_status(self, *, view):
+        raise AssertionError("a name-only request asked for lab status")
+
+
+def test_a_name_only_request_never_calls_status(tmp_path, monkeypatch):
+    from otto.labs import register_lab_repository
+    from otto.labs.sources import PendingLabSource
+    from otto.registry import FrozenMap
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    register_lab_repository("status-raises", config=_NoConfig, factory=lambda c: _StatusRaises())
+    root = tmp_path / "sut"
+    source = PendingLabSource(
+        backend="status-raises",
+        label="sut/status-raises#1",
+        raw=FrozenMap.freeze_json(value={}),
+        origin=str(root / ".otto" / "settings.toml"),
+        project_root=root,
+    )
+    project = _named(tmp_path, "sut", settings={}, lab_sources=[source])
+    assert cc.collect_lab_names([project]) == ["east"]
+
+
+def test_an_opaque_named_inventory_makes_the_block_opaque(tmp_path, monkeypatch):
+    """A named inventory that names no freshness files makes the whole block opaque."""
+    from otto.config.completion_tree import inventory_block
+    from tests._fixtures.named_inventory import register_lookup_counting
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    register_lookup_counting(monkeypatch, records={"k": {"ip": "10.5.0.1"}}, name="fake:opaque")
+    project = _named(
+        tmp_path,
+        "sut",
+        settings={
+            "inventory": _json_inventory(tmp_path, _RECORD),
+            "inventories": [{"name": "lab2", "backend": "fake:opaque"}],
+        },
+    )
+    assert inventory_block([project]) == {"kind": "opaque"}
+
+
+def test_a_broken_named_inventory_empties_completion_and_warns_once(tmp_path, monkeypatch, caplog):
+    """A named entry that cannot be built empties completion, as a broken ``[inventory]`` does."""
+    from otto.host.builtin_hosts import builtin_host_ids
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    broken = _named(
+        tmp_path,
+        "broken",
+        settings={"inventories": [{"name": "physical", "backend": "json"}]},  # json needs a path
+    )
+    inline = _named(tmp_path, "inline", settings={}, hosts=[_INLINE])
+
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    with caplog.at_level(logging.WARNING, logger="otto.config.completion_cache"):
+        ids = cc.collect_host_ids([broken, inline])
+
+    assert ids == sorted(builtin_host_ids()), ids
+    said = [r.message for r in caplog.records if "could not be resolved" in r.message]
+    assert len(said) == 1, caplog.text
+    assert "parse failed: path: Field required" in said[0]
+
+
+def test_a_default_that_cannot_be_built_is_a_drop_never_a_raise(tmp_path, monkeypatch):
+    """The legacy fast branch reads ``bare_inventory``; a ``default`` that raises is a drop.
+
+    A deferred view over an unreadable user file cannot build ``default``;
+    completion's enumeration records that source's failure and raises nothing.
+    """
+    from otto.inventory import deferred_inventory_view
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    user_file = tmp_path / "user-settings.toml"
+    user_file.write_text("[inventory\n")  # a broken user file, not a project
+    root = tmp_path / "legacy"
+    labs = {"east": [{"name": "bare", "hosts": [{"inventory": "k", "creds": _CREDS}]}]}
+    with _example_backend("example-broken-default"):
+        project = _named(
+            tmp_path,
+            "legacy",
+            settings={},
+            lab_sources=_example_source(root, "example-broken-default", labs),
+        )
+        view = deferred_inventory_view(projects=[project], user_settings_path=user_file)
+        enumeration = cc._enumerate_host_summaries(project, view, ProfileContext.empty())
+    assert enumeration.summaries == []
+    assert any(str(user_file) in d.reason for d in enumeration.drops), enumeration.drops
+
+
+def test_the_empty_view_shapes_never_share_a_memo_key():
+    """A legacy ``inventory=None`` view and an empty catalog refuse qualified names differently."""
+    from otto.inventory import InventoryView
+
+    legacy = cc.InventoryResolution(view=InventoryView.of_default(inventory=None))
+    empty = cc.InventoryResolution(view=InventoryView(inventories={}))
+    assert legacy.memo_key != empty.memo_key
+    assert cc.InventoryResolution().memo_key == "none"
+    assert cc.InventoryResolution(error="E: x").memo_key == "error:E: x"
+
+
+def test_the_names_payload_carries_every_declared_inventory_name(tmp_path, monkeypatch):
+    """``--inventory`` is answered from the cache: names from settings, no backend built."""
+    from otto.inventory import config
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    project = _named(
+        tmp_path,
+        "sut",
+        settings={
+            "inventory": _json_inventory(tmp_path, _RECORD),
+            "inventories": [_entry("physical", tmp_path / "p.json", {"k": {"ip": "10.0.1.1"}})],
+        },
+    )
+
+    def _never(**_kwargs):
+        raise AssertionError("collecting inventory names constructed an inventory")
+
+    with monkeypatch.context() as m:
+        for builder in ("construct_inventory", "build_binding_from_declarations"):
+            m.setattr(config, builder, _never)
+        names = cc.collect_inventory_names([project])
+    assert names == ["default", "physical"]
+
+    cc.write_cache([project], [], ["local"], inventory_names=names)
+    assert cc.read_cache([project])["inventory_names"] == ["default", "physical"]
+
+
+def test_the_shim_answers_the_inventory_option_from_the_cache(tmp_path, monkeypatch):
+    """A warm ``otto inventory list --inventory <TAB>`` never starts Python."""
+    import os
+
+    import otto.config.project as config_project
+    from otto import _shim_complete as sc
+    from otto import bootstrap
+    from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
+    from otto.config.completion_tree import build_shim_payload
+    from tests._fixtures.project_scaffold import make_project
+
+    data = tmp_path / "data"
+    default = _records_file(data / "default.json", {"k": {"ip": "10.0.0.1"}})
+    physical = _records_file(data / "physical.json", {"k": {"ip": "10.0.1.1"}})
+    extra = (
+        f'[inventory]\nbackend = "json"\npath = "{default}"\n\n'
+        f'[[inventories]]\nname = "physical"\nbackend = "json"\npath = "{physical}"\n'
+    )
+    root = make_project(tmp_path / "proj", extra=extra)
+    monkeypatch.setenv("OTTOPATH", str(root))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    bootstrap.invalidate()
+    try:
+        projects = config_project.discover().projects
+        cc.write_cache(
+            projects,
+            [],
+            ["local"],
+            inventory_names=cc.collect_inventory_names(projects),
+            shim=build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
+        )
+        environ = {
+            **os.environ,
+            "_OTTO_COMPLETE": "complete_bash",
+            "COMP_WORDS": "otto inventory list --inventory ",
+            "COMP_CWORD": "4",
+        }
+        out = sc.answer_or_reason(environ)
+    finally:
+        bootstrap.invalidate()
+    assert out.items == ["default", "physical"], out.reason
+
+
+class _PrivateStore:
+    """A third-party backend's own ``store``: otto must never read it."""
+
+    def __init__(self, label: object, *, broken: bool = False) -> None:
+        self._label = label
+        self._broken = broken
+
+    @property
+    def label(self) -> object:
+        if self._broken:
+            raise RuntimeError("the private store is offline")
+        return self._label
+
+
+class _WithPrivateStore(OttoModel, frozen=True):
+    pass
+
+
+def _register_private_store(name: str, *, store: object, label: object = None) -> None:
+    from tests.unit.inventory.test_resolve import FakeInventory
+
+    class _Backend(FakeInventory):
+        @property
+        def store(self) -> object:
+            if store is None:
+                raise RuntimeError("store is unavailable offline")
+            return store
+
+    def build(configured: object) -> FakeInventory:
+        inventory = _Backend({"k": {"ip": "10.3.0.1"}}, label=name)
+        if label is not None:
+            inventory.label = label  # type: ignore[assignment]
+        return inventory
+
+    register_inventory_backend(name, config=_WithPrivateStore, factory=build, snapshot_cache=False)
+
+
+def test_a_backends_own_store_is_never_read_for_its_binding(tmp_path, monkeypatch):
+    """Only otto's credentials overlay has a store label; a backend's ``store`` is its own."""
+    from otto.inventory.config import build_inventory_view
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    for name, store in (
+        ("fake:raises", None),
+        ("fake:listlabel", _PrivateStore(["not", "hashable"])),
+        ("fake:broken", _PrivateStore("x", broken=True)),
+    ):
+        _register_private_store(name, store=store)
+        p = _named(
+            tmp_path,
+            name.replace(":", "-"),
+            settings={"inventories": [{"name": "physical", "backend": name}]},
+            hosts=[_QUALIFIED],
+        )
+        view = build_inventory_view(projects=[p])
+        assert view.keys["physical"].creds_label is None
+        monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+        assert _summaries(p, [p])["dut"].ip == "10.3.0.1"
+
+
+def test_an_unhashable_memo_key_is_the_resolutions_error(tmp_path, monkeypatch):
+    """A key that cannot be hashed fails inside completion's boundary, never on the TAB."""
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    _register_private_store("fake:listed", store=_PrivateStore("s"), label=["a", "list"])
+    p = _named(
+        tmp_path,
+        "p",
+        settings={"inventories": [{"name": "physical", "backend": "fake:listed"}]},
+        hosts=[_QUALIFIED],
+    )
+    resolution = cc.resolve_process_inventory([p])
+    assert resolution.error is not None
+    assert "unhashable" in resolution.error
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    assert _summaries(p, [p]) == {}

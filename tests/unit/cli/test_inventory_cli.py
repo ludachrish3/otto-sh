@@ -63,8 +63,9 @@ def _scaffold(tmp_path, monkeypatch, *, inventory_toml=""):
     return root
 
 
-def _netbox_toml(stub, ttl, *, creds=None):
-    toml = f'[inventory]\nbackend = "netbox"\nurl = "{stub.base}"\ncache_ttl = "{ttl}"\n'
+def _netbox_toml(stub, ttl, *, creds=None, table="[inventory]"):
+    """A NetBox table over *stub*; *table* is its header (an ``[[inventories]]`` entry's, say)."""
+    toml = f'{table}\nbackend = "netbox"\nurl = "{stub.base}"\ncache_ttl = "{ttl}"\n'
     if creds is not None:
         toml += f'\n[creds]\nbackend = "json"\npath = "{creds}"\n'
     return toml
@@ -365,6 +366,97 @@ def test_diff_of_a_non_utf8_file_exits_2_naming_it(project, tmp_path):
     assert result.exit_code == 2
     assert f"{binary}:" in result.output
     assert "codec can't decode byte 0xff" in result.output
+
+
+_V2_RECORDS = {"edge-17": {"ip": "10.0.0.17"}, "ixia-9": {"ip": "10.0.0.9"}}
+
+
+def _v2(path, roles):
+    """A v2 document at *path*: two records and one instance ``rig-7`` playing *roles*."""
+    path.write_text(
+        json.dumps(
+            {
+                "$format": "otto.inventory.v2",
+                "records": _V2_RECORDS,
+                "instances": {"rig-7": {"roles": roles}},
+            }
+        )
+    )
+    return path
+
+
+def test_diff_reports_a_role_swap_and_exits_1(project, tmp_path):
+    a = _v2(tmp_path / "a.json", {"dut": ["edge-17"], "tgen": ["ixia-9"]})
+    b = _v2(tmp_path / "b.json", {"dut": ["ixia-9"], "tgen": ["edge-17"]})
+    result = _run(["diff", str(a), str(b)])
+    assert result.exit_code == 1, result.output
+    flat = " ".join(result.output.split())
+    # The records agree, so the only table is the instance table.
+    assert "(whole record)" not in flat
+    assert "│ instance │ field │" in flat, result.output
+    assert '│ rig-7 │ roles │ {"dut": ["edge-17"], "tgen": ["ixia-9"]} │' in flat, result.output
+    assert '{"dut": ["ixia-9"], "tgen": ["edge-17"]}' in flat
+
+
+def test_diff_of_a_flat_file_against_a_v2_file_reports_the_instances_row(project, tmp_path):
+    flat_doc = tmp_path / "flat.json"
+    flat_doc.write_text(json.dumps(_V2_RECORDS))
+    v2 = _v2(tmp_path / "v2.json", {"dut": ["edge-17"]})
+    result = _run(["diff", str(flat_doc), str(v2)])
+    assert result.exit_code == 1, result.output
+    flat = " ".join(result.output.split())
+    assert "│ (instances) │ (whole map) │ absent │ present │" in flat, result.output
+
+
+def test_a_record_keyed_like_the_instances_row_is_a_whole_record_row(project, tmp_path):
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.write_text(json.dumps({"k": {"ip": "10.0.0.1"}, "(instances)": {"ip": "10.0.0.2"}}))
+    b.write_text(json.dumps({"k": {"ip": "10.0.0.1"}}))
+    result = _run(["diff", str(a), str(b)])
+    assert result.exit_code == 1, result.output
+    flat = " ".join(result.output.split())
+    assert "│ (instances) │ (whole record) │ present │ absent │" in flat, result.output
+    assert "(whole map)" not in flat
+
+
+def test_an_instance_named_like_the_instances_row_is_a_per_instance_row(project, tmp_path):
+    def doc(path, instances):
+        path.write_text(
+            json.dumps(
+                {"$format": "otto.inventory.v2", "records": _V2_RECORDS, "instances": instances}
+            )
+        )
+        return path
+
+    a = doc(tmp_path / "a.json", {"(instances)": {}})
+    b = doc(tmp_path / "b.json", {})
+    result = _run(["diff", str(a), str(b)])
+    assert result.exit_code == 1, result.output
+    flat = " ".join(result.output.split())
+    assert "│ (instances) │ (whole instance) │ present │ absent │" in flat, result.output
+    assert "(whole map)" not in flat
+
+
+def test_export_writes_v2_only_when_instances_are_declared(project, tmp_path):
+    flat_out = tmp_path / "flat.json"
+    assert _run(["export", str(flat_out)]).exit_code == 0
+    assert "$format" not in json.loads(flat_out.read_text())
+
+    _v2(tmp_path / "inventory.json", {"dut": ["edge-17"], "tgen": ["ixia-9"]})  # the project's
+    v2_out = tmp_path / "v2.json"
+    result = _run(["export", str(v2_out)])
+    assert result.exit_code == 0, result.output
+    assert "2 record(s) and 1 instance(s)" in result.output
+    doc = json.loads(v2_out.read_text())
+    assert doc == {
+        "$format": "otto.inventory.v2",
+        "records": _V2_RECORDS,
+        "instances": {"rig-7": {"members": [], "roles": {"dut": ["edge-17"], "tgen": ["ixia-9"]}}},
+    }
+    same = _run(["diff", str(v2_out)])
+    assert same.exit_code == 0, same.output
+    assert "no differences between" in same.output
 
 
 # ── refresh ──────────────────────────────────────────────────────────────────
@@ -743,3 +835,213 @@ def test_a_detail_row_prints_hostile_text_literally(monkeypatch, capsys):
     monkeypatch.setenv("COLUMNS", "40")
     inventory._row(HOSTILE)
     assert_one_verbatim_line(capsys.readouterr().out, HOSTILE)
+
+
+# ── --inventory NAME: one named inventory per invocation ─────────────────────
+
+
+def _named_entry(name):
+    return f'[[inventories]]\nname = "{name}"'
+
+
+def _json_file(tmp_path, stem, records):
+    path = tmp_path / f"{stem}.json"
+    path.write_text(json.dumps(records))
+    return path
+
+
+_DEFAULT_IP = "10.0.0.1"
+_PHYSICAL_IP = "10.0.1.1"
+_VIRTUAL_IP = "10.0.2.1"
+_SPARE_IP = "10.0.3.1"
+
+
+@pytest.fixture
+def project_with_named(tmp_path, monkeypatch):
+    """``default``, ``physical`` (json), ``virtual`` and ``spare`` (cached NetBox), key ``k`` each.
+
+    Each holds ``k`` at its own address, so an answer names the inventory it
+    came from. Two cached inventories, so a refresh of one can be seen to
+    leave the other's snapshot alone. Yields ``virtual``'s stub; both stubs
+    stay up for the test.
+    """
+    default = _json_file(tmp_path, "default", {"k": {"ip": _DEFAULT_IP}})
+    physical = _json_file(tmp_path, "physical", {"k": {"ip": _PHYSICAL_IP}})
+    with (
+        NetBoxStub([device(1, "k", ip=f"{_VIRTUAL_IP}/24")]) as stub,
+        NetBoxStub([device(1, "k", ip=f"{_SPARE_IP}/24")]) as spare,
+    ):
+        monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
+        toml = (
+            f'[inventory]\nbackend = "json"\npath = "{default}"\n\n'
+            f'{_named_entry("physical")}\nbackend = "json"\npath = "{physical}"\n\n'
+            + _netbox_toml(stub, "24h", table=_named_entry("virtual"))
+            + "\n"
+            + _netbox_toml(spare, "24h", table=_named_entry("spare"))
+        )
+        _scaffold(tmp_path, monkeypatch, inventory_toml=toml)
+        yield stub
+
+
+def _snapshot_metas(tmp_path):
+    return sorted((tmp_path / "home" / "inventory-cache").glob("*.meta.json"))
+
+
+def _snapshot_of(meta):
+    """The snapshot document beside *meta*: ``<slug>.json`` for ``<slug>.meta.json``."""
+    return meta.with_name(meta.name.removesuffix(".meta.json") + ".json")
+
+
+@pytest.mark.parametrize("verb", ["lookup k", "list", "export {out}", "diff {file}", "refresh"])
+def test_each_verb_reads_the_named_inventory(project_with_named, tmp_path, verb):
+    out = tmp_path / "out.json"
+    side = tmp_path / "side.json"
+    if verb.startswith("diff"):
+        # Virtual's own export, so only reading virtual answers "no differences".
+        assert _run(["export", str(side), "--inventory", "virtual"]).exit_code == 0
+    if verb == "refresh":
+        # Cache spare first: refreshing virtual must leave its snapshot untouched.
+        assert _run(["list", "--inventory", "spare"]).exit_code == 0
+        [spare_meta] = _snapshot_metas(tmp_path)
+        spare_snapshot = _snapshot_of(spare_meta)
+        spare_before = {
+            p: (p.read_bytes(), p.stat().st_mtime_ns) for p in (spare_meta, spare_snapshot)
+        }
+    args = [*verb.format(out=out, file=side).split(), "--inventory", "virtual"]
+    result = _run(args)
+    assert result.exit_code == 0, result.output
+    assert f"netbox:{project_with_named.base}" in result.output  # virtual's label
+    assert _DEFAULT_IP not in result.output
+    assert _PHYSICAL_IP not in result.output
+    assert _SPARE_IP not in result.output
+    if verb.startswith(("lookup", "list")):
+        assert _VIRTUAL_IP in result.output
+    if verb.startswith("export"):
+        assert json.loads(out.read_text())["k"]["ip"] == _VIRTUAL_IP
+    if verb.startswith("diff"):
+        assert "no differences between netbox:" in result.output
+    if verb == "refresh":
+        # Virtual's snapshot is the one written; spare's is byte- and mtime-identical.
+        [virtual_meta] = [m for m in _snapshot_metas(tmp_path) if m not in spare_before]
+        snapshot = _snapshot_of(virtual_meta)
+        assert f"snapshot: {snapshot}" in " ".join(result.output.split())
+        assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in spare_before} == spare_before
+
+
+def test_diff_exit_codes_are_0_1_2_for_a_named_side(project_with_named, tmp_path):
+    same = _json_file(tmp_path, "same", {"k": {"ip": _PHYSICAL_IP}})
+    other = _json_file(tmp_path, "other", {"k": {"ip": _DEFAULT_IP}})
+    flag = ["--inventory", "physical"]
+    assert _run(["diff", str(same), *flag]).exit_code == 0
+    differs = _run(["diff", str(other), *flag])
+    assert differs.exit_code == 1, differs.output
+    assert _PHYSICAL_IP in differs.output  # the left side is physical, never default's twin
+    assert _run(["diff", str(tmp_path / "missing.json"), *flag]).exit_code == 2
+    unknown = _run(["diff", str(same), "--inventory", "nope"])
+    assert unknown.exit_code == 2, unknown.output
+    assert "no inventory named 'nope' is configured" in unknown.output
+
+
+def test_two_file_diff_builds_nothing_even_with_an_unknown_name(
+    project_with_named, tmp_path, monkeypatch
+):
+    from otto.inventory import config
+
+    def _never(**_kwargs):
+        raise AssertionError("a two-file diff built an inventory")
+
+    for builder in ("build_inventory_view", "deferred_inventory_view", "build_inventory"):
+        monkeypatch.setattr(config, builder, _never)
+    a = _json_file(tmp_path, "a", {"k": {"ip": "10.9.0.1"}})
+    b = _json_file(tmp_path, "b", {"k": {"ip": "10.9.0.2"}})
+    result = _run(["diff", str(a), str(b), "--inventory", "nope"])
+    assert result.exit_code == 1, result.output
+    assert f"left:  {a}" in result.output
+    assert "no inventory named" not in result.output
+
+
+@pytest.mark.parametrize(("verb", "code"), [("list", 1), ("lookup k", 1), ("refresh", 1)])
+def test_an_unknown_name_exits_1_listing_the_declared(project_with_named, verb, code):
+    result = _run([*verb.split(), "--inventory", "nope"])
+    assert result.exit_code == code, result.output
+    assert (
+        "no inventory named 'nope' is configured; declared inventories: "
+        "'default', 'physical', 'spare', 'virtual'"
+    ) in " ".join(result.output.split())
+
+
+def test_no_flag_reads_default_exactly_as_before(project):
+    for args in (["list"], ["lookup", "test1"]):
+        bare = _run(args)
+        assert bare.exit_code == 0, bare.output
+        assert _run([*args, "--inventory", "default"]).output == bare.output
+    assert "2 record(s) in json:" in _run(["list"]).output
+
+
+def test_no_flag_reads_default_beside_named_inventories(project_with_named):
+    result = _run(["lookup", "k"])
+    assert result.exit_code == 0, result.output
+    assert _DEFAULT_IP in result.output
+    assert _VIRTUAL_IP not in result.output
+
+
+def test_default_absent_keeps_the_no_inventory_message(tmp_path, monkeypatch):
+    """A project naming only ``physical``: ``default`` is absent, and says so as before."""
+    physical = _json_file(tmp_path, "physical", {"k": {"ip": _PHYSICAL_IP}})
+    toml = f'{_named_entry("physical")}\nbackend = "json"\npath = "{physical}"\n'
+    _scaffold(tmp_path, monkeypatch, inventory_toml=toml)
+    result = _run(["list"])
+    assert result.exit_code == 1, result.output
+    assert "no inventory is configured" in result.output
+    assert str(tmp_path / "home" / "settings.toml") in result.output
+    named = _run(["list", "--inventory", "physical"])
+    assert named.exit_code == 0, named.output
+    assert _PHYSICAL_IP in named.output
+
+
+def test_the_inventory_option_completes_declared_names(project_with_named, monkeypatch):
+    from otto.cli import inventory
+    from otto.inventory import config
+
+    def _never(**_kwargs):
+        raise AssertionError("completion constructed an inventory")
+
+    for builder in ("construct_inventory", "build_binding_from_declarations"):
+        monkeypatch.setattr(config, builder, _never)
+    complete = inventory._inventory_name_completer
+    assert complete(None, "") == ["default", "physical", "spare", "virtual"]
+    assert complete(None, "p") == ["physical"]
+    assert project_with_named.queries == []  # NetBox was never asked
+
+
+def test_a_named_netbox_entry_s_skip_rows_name_its_own_kind_and_ip_source(tmp_path, monkeypatch):
+    default = _json_file(tmp_path, "default", {"k": {"ip": _DEFAULT_IP}})
+    devices = [device(1, "nb1", oob_ip="10.9.9.1/32"), device(4, "nb-noaddr")]
+    vms = [virtual_machine(7, "vm1"), virtual_machine(8, "vm-noaddr", ip=None)]
+    with NetBoxStub(devices, virtual_machines=vms) as stub:
+        monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
+        toml = (
+            f'[inventory]\nbackend = "json"\npath = "{default}"\n\n'
+            + _netbox_toml(stub, "24h", table=_named_entry("virtual"))
+            + 'ip_source = "oob_ip"\nvirtual_machines = true\n'
+        )
+        _scaffold(tmp_path, monkeypatch, inventory_toml=toml)
+        named = _run(["list", "--inventory", "virtual"])
+        bare = _run(["list"])
+    assert named.exit_code == 0, named.output
+    output = " ".join(named.output.split())
+    assert "skipped 1 device(s) with no address at ip_source 'oob_ip': nb-noaddr" in output
+    assert (
+        "skipped 1 virtual machine(s) with no address at vm_ip_source 'primary_ip4': vm-noaddr"
+        in output
+    )
+    assert bare.exit_code == 0, bare.output
+    assert "skipped" not in bare.output  # default is the json file, which skips nothing
+
+
+def test_the_inventory_option_help_names_the_inventories_table_literally(project):
+    """Rich reads ``[...]`` as markup; the help must still say ``[[inventories]]``."""
+    for verb in ("lookup", "list", "export", "diff", "refresh"):
+        result = _run([verb, "--help"])
+        assert result.exit_code == 0, result.output
+        assert "`[[inventories]]` entry's name" in result.output, verb

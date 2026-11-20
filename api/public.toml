@@ -2673,6 +2673,10 @@ subclass = false
 [symbols."otto.init:InitConfig.for_project"]
 positional = ["root"]
 
+[symbols."otto.init:InventoryLabel"]
+construct = false
+subclass = false
+
 [symbols."otto.init:InitInputError"]
 positional = ["message"]
 
@@ -2720,8 +2724,24 @@ subclass = false
 construct = false
 subclass = false
 
+[symbols."otto.inventory:InventoryView"]
+subclass = false
+
+[symbols."otto.inventory:RefusedDefault"]
+subclass = false
+
+[symbols."otto.inventory:RefusedDefault.lookup"]
+positional = ["key"]
+why = "implementer-facing"
+
 [symbols."otto.inventory:InventoryKeyError"]
 positional = ["key"]
+
+[symbols."otto.inventory:InventoryUnreachableError"]
+positional = ["message"]
+
+[symbols."otto.inventory:Discovery"]
+subclass = false
 
 [symbols."otto.inventory:InventoryMetadata"]
 construct = false
@@ -2772,6 +2792,9 @@ positional = ["name"]
 [symbols."otto.inventory:resolve_host_entry"]
 positional = ["host_data"]
 
+[symbols."otto.inventory:resolve_view_entry"]
+positional = ["host_data"]
+
 [symbols."otto.lab:EmptySelectionError"]
 positional = ["pattern"]
 
@@ -2805,6 +2828,10 @@ subclass = false
 positional = ["name"]
 why = "implementer-facing"
 
+[symbols."otto.labs:CompositeLabRepository.load_lab_reported"]
+positional = ["name"]
+why = "implementer-facing"
+
 [symbols."otto.labs:HostSummary"]
 subclass = false
 
@@ -2817,6 +2844,25 @@ construct = false
 subclass = false
 
 [symbols."otto.labs:LabSourceEnv"]
+subclass = false
+
+[symbols."otto.labs:SourceRef"]
+subclass = false
+
+[symbols."otto.labs:SupportsInventoryView.load_lab_in_view"]
+positional = ["name"]
+why = "implementer-facing"
+
+[symbols."otto.labs:LabScope"]
+subclass = false
+
+[symbols."otto.labs:LabStatus"]
+subclass = false
+
+[symbols."otto.labs:LabStatusReport"]
+subclass = false
+
+[symbols."otto.labs:SourceUnavailable"]
 subclass = false
 
 [symbols."otto.labs:LoginSummary"]
@@ -2980,6 +3026,9 @@ subclass = false
 
 [symbols."otto.models:HostSnapshot"]
 construct = false
+subclass = false
+
+[symbols."otto.models:InventoryInstance"]
 subclass = false
 
 [symbols."otto.models:InventoryRecord"]

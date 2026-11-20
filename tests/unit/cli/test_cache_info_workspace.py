@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 import otto.config.completion_cache as cc
 import otto.config.project as config_project
+from otto.inventory.config import BuiltBinding
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.project_scaffold import make_project
 
@@ -220,7 +221,10 @@ def test_info_with_an_unfingerprinted_inventory_promises_no_write(tmp_path, monk
     _workspace(tmp_path, monkeypatch, references=["dut-1"])
     unfingerprinted = SimpleNamespace(label="probe:live", fingerprint=lambda: None)
     monkeypatch.setattr(
-        "otto.inventory.config.build_inventory", lambda *, projects: unfingerprinted
+        "otto.inventory.config.build_binding_from_declarations",
+        lambda *, declarations, user_settings, user_settings_file=None: BuiltBinding(
+            compiled=None, creds=None, inventory=unfingerprinted
+        ),
     )
 
     result = runner.invoke(cache_app, ["info"])

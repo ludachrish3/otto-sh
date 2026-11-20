@@ -57,6 +57,14 @@ class LabEntrySpec(OttoModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     """Opaque lab-level user data; otto never reads it."""
 
+    unavailable: str | None = None
+    """Why the lab cannot be used now, or ``None`` when it can.
+
+    A lab under maintenance, say. The source still declares the lab, and its
+    status (:meth:`~otto.labs.protocol.SupportsLabStatus.list_lab_status`)
+    carries the reason. The reason must be non-empty after stripping.
+    """
+
     @model_validator(mode="before")
     @classmethod
     def _strip(cls, data: object) -> object:
@@ -66,6 +74,14 @@ class LabEntrySpec(OttoModel):
     @classmethod
     def _resources(cls, v: set[str]) -> set[str]:
         return resources_nonempty(v)
+
+    @field_validator("unavailable")
+    @classmethod
+    def _reason_stated(cls, v: str | None) -> str | None:
+        """Refuse an empty or blank reason: an unavailable lab says why."""
+        if v is not None and not v.strip():
+            raise ValueError("'unavailable' must state a reason (a non-empty string)")
+        return v
 
 
 class ElementSpec(OttoModel):
