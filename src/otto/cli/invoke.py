@@ -673,7 +673,7 @@ def report_lab_context_error(err: "LabBuildError | ReservationBackendError") -> 
     Formatted from the error's fields: a missing lab is click's own plain
     usage line on stderr (exit 2); a bad source or a broken inventory is the
     bold-red frame (exit 1); an unreachable reservation backend names the
-    ``-R`` break-glass (exit 1). An unknown lab is re-raised: the boundary
+    ``-R`` break-glass (exit 1). An unknown or unavailable lab is re-raised: the boundary
     frame in ``otto.cli.main`` has always printed it (``error: ...``, exit 1).
     No project at all prints as :func:`fail_without_projects` prints it for a
     listing (``error: ...``, unfolded, exit 1).
@@ -697,7 +697,7 @@ def report_lab_context_error(err: "LabBuildError | ReservationBackendError") -> 
                 err=True,
             )
             raise typer.Exit(code=2)
-        if kind == "unknown_lab":
+        if kind in ("unknown_lab", "unavailable_lab"):
             raise err
         if kind == "no_project":
             # As the root listings print it, unfolded: it may end in an

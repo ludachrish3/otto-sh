@@ -68,7 +68,10 @@ first — elements alone never conjure one.
 
 The host **id** used by `get_host()`, `--list-hosts`, and the rest of the CLI
 is composed from the element's name and the host's `board` and `slot` —
-{ref}`host-identity` gives the rules and a worked example.
+{ref}`host-identity` gives the rules and a worked example.  `--list-hosts`
+also prints `local`, the built-in host every lab holds, and `--show-lab`
+shows each host's address
+([Inspecting what a lab holds](../../cli/index.md#inspecting-what-a-lab-holds)).
 
 ### Splitting a lab across files
 
@@ -87,6 +90,7 @@ a whole.
 |-------|------|-------------|
 | `resources` | array of strings | Reservation identifiers shared by the lab as a whole — a switch, a PDU, a bed.  Matched byte-for-byte by the reservation backend.  Elements and hosts may declare their own alongside; see {doc}`../../cli/reservation/index`.  Defaults to empty — a lab that reserves nothing is a perfectly good declaration. |
 | `metadata` | object | Opaque lab-level user data; otto never reads it.  Surfaces as `lab.metadata["<lab name>"]`, and on every host of the lab as `host.lab_info.metadata`. |
+| `unavailable` | string | Why the lab cannot be used now, for example `"rack B is being recabled"`.  The lab stays declared, and its status carries this reason, naming the file and the lab.  The reason must not be empty or blank.  Absent (the default), the lab is available.  `otto --list-labs` lists the lab with its reason, and `--lab` refuses to load it with that reason ({ref}`listing-labs`).  Tab completion still offers the lab's hosts. |
 
 **A lab exists if and only if some source declares it here.**  `otto
 --list-labs` reads the declared names, and loading a name nothing declares

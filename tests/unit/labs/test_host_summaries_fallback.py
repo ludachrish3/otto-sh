@@ -119,3 +119,60 @@ def test_a_failing_lab_is_skipped_not_raised():
     ids = [s.id for s in host_summaries(repository=repository)]
     assert "fine" in ids
     assert "never" not in ids
+
+
+def _refuse_through(inventory: Any, *, wrapping: str) -> None:
+    """Look up ``sw-1`` in *inventory* (which refuses it), raising as *wrapping* says."""
+    if wrapping == "direct":
+        inventory.lookup("sw-1")
+    try:
+        inventory.lookup("sw-1")
+    except Exception as e:
+        if wrapping == "explicit":
+            raise RuntimeError("backend could not resolve sw-1") from e
+        raise RuntimeError("backend could not resolve sw-1")  # noqa: B904 — the implicit chain under test
+
+
+class _RefusingLoads:
+    """A legacy backend with no summaries route whose loads let the stand-in's refusal escape."""
+
+    def __init__(self, wrapping: str) -> None:
+        self.wrapping = wrapping
+
+    def list_labs(self) -> list[str]:
+        return ["bench"]
+
+    def load_lab(self, name, *, preferences=None, inventory=None) -> Lab:
+        _refuse_through(inventory, wrapping=self.wrapping)
+        raise AssertionError("unreachable")
+
+
+class _RefusingSummaries(_RefusingLoads):
+    """The same backend with a summaries route, which lets the refusal escape too."""
+
+    def list_host_summaries(self, *, inventory=None) -> list:
+        _refuse_through(inventory, wrapping=self.wrapping)
+        raise AssertionError("unreachable")
+
+
+@pytest.mark.parametrize("wrapping", ["direct", "explicit", "implicit"])
+@pytest.mark.parametrize("backend", [_RefusingSummaries, _RefusingLoads])
+def test_one_refusal_is_one_drop_however_a_backend_wraps_it(tmp_path, backend, wrapping):
+    """A D1 refusal records its one drop; no catch site records a second (Astra I9)."""
+    from otto.inventory import InventoryView
+    from otto.labs import CompositeLabRepository, LabSource
+    from otto.labs.drops import collecting_drops
+    from tests._fixtures.named_inventory import FakeInventory
+
+    repository = backend(wrapping)
+    root = tmp_path / "proj"
+    view = InventoryView(
+        inventories={"default": FakeInventory({"sw-1": {"ip": "10.0.0.1"}})},
+        bare_refused_by={root: str(root / ".otto" / "settings.toml")},
+    )
+    composite = CompositeLabRepository(
+        [LabSource(label="legacy", repository=repository, project_root=root)]
+    )
+    with collecting_drops() as drops:
+        assert composite.list_host_summaries_in_view(view=view) == []
+    assert [d.where for d in drops] == ["inventory reference 'sw-1'"]

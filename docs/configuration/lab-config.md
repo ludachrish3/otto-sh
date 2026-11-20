@@ -44,8 +44,10 @@ One lab, one element, one host:
 
 The `labs` table declares the lab `bench`; the element `devbox` joins it, and
 its one host takes the element's name as its id. `otto --lab bench
---list-hosts` lists `devbox`. Everything else is optional and documented on
-the pages below.
+--list-hosts` lists `devbox`, beside the built-in `local` host every lab
+holds, and `otto --lab bench --show-lab` shows each host's address
+([Inspecting what a lab holds](../cli/index.md#inspecting-what-a-lab-holds)).
+Everything else is optional and documented on the pages below.
 
 ```{important}
 **Probe `devbox`, then paste the pin it prints into its entry:**

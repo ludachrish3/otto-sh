@@ -753,8 +753,8 @@ class TestExpectedCapabilities:
         with pytest.raises(
             AssertionError,
             match=(
-                r"expect_host_summaries=True, but the repository does not implement "
-                r"list_host_summaries\(\)"
+                r"expect_host_summaries=True, but the repository implements neither "
+                r"list_host_summaries\(\) nor list_host_summaries_in_view\(\)"
             ),
         ):
             assert_lab_repository_conforms(repository, expect_host_summaries=True)

@@ -1,0 +1,15 @@
+{
+  "url": "http://netbox.invalid",
+  "inventory": {
+    "backend": "netbox",
+    "url": "http://netbox.invalid",
+    "cache_ttl": "24h"
+  },
+  "filenames": {
+    "snapshot": "59a04ecbbae751af.json",
+    "meta": "59a04ecbbae751af.meta.json"
+  },
+  "requests": [
+    "/api/dcim/devices/?limit=0"
+  ]
+}

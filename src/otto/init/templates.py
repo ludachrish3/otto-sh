@@ -124,6 +124,14 @@ paths = ["lab_data"]
 #   token_env = "NETBOX_TOKEN"
 #   filter = {{ site = "lab-a", status = "active" }}
 #   cache_ttl = "24h"
+# More inventories, by name: a lab.json host reads one only by naming it,
+# "inventory": {{"name": "virtual", "key": "<key>"}}. An entry's creds store is
+# its own [inventories.creds] sub-table. An entry named "default" stands in
+# for [inventory]; declare one or the other.
+#[[inventories]]
+#name = "virtual"
+#backend = "json"
+#path = "lab_data/virtual.json"
 
 # --- [coverage] — coverage tiers + remote gcov collection --------------------
 # Embedded build settings live in [coverage.embedded] (see the coverage docs).

@@ -6,7 +6,12 @@ trouble through these types so callers and the conformance suite can rely on a
 stable surface instead of backend-specific exceptions.
 """
 
+from typing import TYPE_CHECKING
+
 from ..errors import OttoError
+
+if TYPE_CHECKING:
+    from .drops import Diagnostic
 
 
 class LabRepositoryError(OttoError):
@@ -25,6 +30,33 @@ class LabNotFoundError(LabRepositoryError):
     ``KeyError`` / ``FileNotFoundError`` — so callers can distinguish "unknown
     lab" from "backend is broken".
     """
+
+
+class LabUnavailableError(LabRepositoryError):
+    """A lab is declared (or may be) but cannot be loaded now.
+
+    Two causes, told apart by :attr:`declared`. The lab's last declaring
+    source marks it unavailable (a ``labs`` entry's ``"unavailable"``
+    reason), or a source whose declared scope contains the name failed, so
+    whatever it would have contributed is unknown. It is not a
+    :class:`LabNotFoundError`: the name is not unknown, it is out of reach.
+    """
+
+    def __init__(self, *, name: str, diagnostic: "Diagnostic", declared: bool) -> None:
+        self.name = name
+        """The lab that cannot be loaded."""
+        self.diagnostic = diagnostic
+        """Where and why, as the declaration states it or as the failed source reported it."""
+        self.declared = declared
+        """``True`` when a declaration marks the lab unavailable, ``False`` when a source failed."""
+        if declared:
+            message = f"Lab {name!r} is unavailable: {diagnostic.reason} ({diagnostic.where})"
+        else:
+            message = (
+                f"Lab {name!r} is unavailable: source {diagnostic.where} failed: "
+                f"{diagnostic.reason}"
+            )
+        super().__init__(message)
 
 
 class LabSourceConstructionError(LabRepositoryError, ValueError):

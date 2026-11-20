@@ -76,10 +76,14 @@ class LabBuildError(FieldError):
     ``kind``: ``"no_labs"`` (nothing selected), ``"no_project"`` (no project
     was discovered at all, so nothing declares a lab; the message is
     :func:`~otto.config.project.no_project_found_message`), ``"unknown_lab"`` (the
-    message IS the source's own not-found text), ``"sources"`` (a bad
+    message IS the source's own not-found text), ``"unavailable_lab"`` (the lab
+    is declared but cannot be loaded now: its last declaration marks it
+    unavailable, or a source whose scope holds it failed; the message IS the
+    :class:`~otto.labs.LabUnavailableError` text), ``"sources"`` (a bad
     ``[[lab.sources]]`` entry or an unknown backend), ``"inventory"`` (a broken
-    ``[inventory]`` declaration). ``detail`` is the underlying error's text.
-    ``field`` is ``"labs"`` for the first two and ``None`` otherwise.
+    inventory declaration). ``detail`` is the underlying error's text.
+    ``field`` is ``"labs"`` for ``"no_labs"``, ``"unknown_lab"`` and
+    ``"unavailable_lab"``, and ``None`` otherwise.
     """
 
     def __init__(
@@ -87,7 +91,9 @@ class LabBuildError(FieldError):
         message: str,
         *,
         field: "str | None",
-        kind: 'Literal["no_labs", "no_project", "unknown_lab", "sources", "inventory"]',
+        kind: Literal[
+            "no_labs", "no_project", "unknown_lab", "unavailable_lab", "sources", "inventory"
+        ],
         detail: "str | None" = None,
     ) -> None:
         """Store the refusal's facts beside its message."""

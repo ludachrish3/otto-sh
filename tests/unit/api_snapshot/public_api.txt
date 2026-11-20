@@ -125,7 +125,7 @@ member	otto.config:Project.dependencies	field
 member	otto.config:Project.dependencies_summary	method	sync	-
 member	otto.config:Project.docker_settings	field
 member	otto.config:Project.get_instructions_panel	method	sync	-
-member	otto.config:Project.get_lab_panel	method	sync	-
+member	otto.config:Project.get_lab_panel	method	sync	KO:report:N KO:view:N
 member	otto.config:Project.get_markers_panel	method	sync	KO:markers:-
 member	otto.config:Project.get_otto_settings_path	method	sync	-
 member	otto.config:Project.host_preferences	field
@@ -433,6 +433,7 @@ call	otto.creds:CompiledCreds	sync	@manifest:construct=false
 member	otto.creds:CompiledCreds.__eq__	method	sync	PK:other:-
 member	otto.creds:CompiledCreds.__hash__	method	sync	-
 member	otto.creds:CompiledCreds.anchor_dir	field
+member	otto.creds:CompiledCreds.binding_identity	method	sync	-
 member	otto.creds:CompiledCreds.origin	field
 member	otto.creds:CompiledCreds.prepared	field
 member	otto.creds:CompiledCreds.same_as	method	sync	KO:other:-
@@ -3474,6 +3475,7 @@ call	otto.init:DoctorReport	sync	@manifest:construct=false
 member	otto.init:DoctorReport.__eq__	method	sync	PK:other:-
 member	otto.init:DoctorReport.__hash__	method	sync	-
 member	otto.init:DoctorReport.creds_label	field
+member	otto.init:DoctorReport.inventories	field
 member	otto.init:DoctorReport.inventory_label	field
 member	otto.init:DoctorReport.ok	property:g--
 member	otto.init:DoctorReport.verdict	method	sync	KO:name:-
@@ -3509,6 +3511,15 @@ name	otto.init:InitInputError	class
 mro	otto.init:InitInputError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.init:InitInputError	sync	PK:message:- KO:field:-
 abstract	otto.init:InitInputError	-
+name	otto.init:InventoryLabel	class
+mro	otto.init:InventoryLabel	-
+call	otto.init:InventoryLabel	sync	@manifest:construct=false
+member	otto.init:InventoryLabel.__eq__	method	sync	PK:other:-
+member	otto.init:InventoryLabel.__hash__	method	sync	-
+member	otto.init:InventoryLabel.creds_label	field
+member	otto.init:InventoryLabel.label	field
+member	otto.init:InventoryLabel.name	field
+abstract	otto.init:InventoryLabel	@final @manifest:subclass=false
 name	otto.init:ScaffoldReport	class
 mro	otto.init:ScaffoldReport	-
 call	otto.init:ScaffoldReport	sync	@manifest:construct=false
@@ -3520,7 +3531,7 @@ member	otto.init:ScaffoldReport.prerequisites	field
 member	otto.init:ScaffoldReport.writes	field
 abstract	otto.init:ScaffoldReport	@final @manifest:subclass=false
 name	otto.init:check_project	function
-call	otto.init:check_project	sync	PK:root:-
+call	otto.init:check_project	sync	PK:root:- KO:catalog:N
 name	otto.init:detect_areas	function
 call	otto.init:detect_areas	sync	KO:root:-
 name	otto.init:scaffold	function
@@ -3533,14 +3544,20 @@ name	otto.instructions:instruction	function
 call	otto.instructions:instruction	sync	VP:args:- KO:options:N KO:walk:N KO:continue_on_failure:N KO:require_dependencies:N KO:dry_run_preview:N KO:combine_results:N KO:render:N KO:name:N KO:help:N KO:overwrite:B:false
 name	otto.instructions:run_instruction	function
 call	otto.instructions:run_instruction	coroutine	PK:ctx:- KO:name:- KO:opts:N
+name	otto.inventory:BareReferenceRefused	class
+mro	otto.inventory:BareReferenceRefused	{otto.inventory:InventoryError} {otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.inventory:BareReferenceRefused	sync	@builtin:builtins.Exception
+abstract	otto.inventory:BareReferenceRefused	-
 name	otto.inventory:CompiledInventory	class
 mro	otto.inventory:CompiledInventory	-
 call	otto.inventory:CompiledInventory	sync	@manifest:construct=false
 member	otto.inventory:CompiledInventory.__eq__	method	sync	PK:other:-
 member	otto.inventory:CompiledInventory.__hash__	method	sync	-
 member	otto.inventory:CompiledInventory.anchor_dir	field
+member	otto.inventory:CompiledInventory.binding_identity	method	sync	-
 member	otto.inventory:CompiledInventory.cache_ttl	field
 member	otto.inventory:CompiledInventory.creds	field
+member	otto.inventory:CompiledInventory.name	field
 member	otto.inventory:CompiledInventory.origin	field
 member	otto.inventory:CompiledInventory.prepared	field
 member	otto.inventory:CompiledInventory.same_as	method	sync	KO:other:-
@@ -3549,12 +3566,20 @@ name	otto.inventory:CredsOverlay	class
 mro	otto.inventory:CredsOverlay	-
 call	otto.inventory:CredsOverlay	sync	@manifest:construct=false
 member	otto.inventory:CredsOverlay.fingerprint	method	sync	-
+member	otto.inventory:CredsOverlay.inventory_discovery	method	sync	-
 member	otto.inventory:CredsOverlay.label	property:g--
 member	otto.inventory:CredsOverlay.list_keys	method	sync	-
 member	otto.inventory:CredsOverlay.lookup	method	sync	PK:key:-
 member	otto.inventory:CredsOverlay.stat_paths	method	sync	-
 member	otto.inventory:CredsOverlay.supplies	property:g--
 abstract	otto.inventory:CredsOverlay	@final @manifest:subclass=false
+name	otto.inventory:Discovery	class
+mro	otto.inventory:Discovery	-
+call	otto.inventory:Discovery	sync	KO:records:- KO:instances:N
+member	otto.inventory:Discovery.__eq__	method	sync	PK:other:-
+member	otto.inventory:Discovery.instances	field
+member	otto.inventory:Discovery.records	field
+abstract	otto.inventory:Discovery	@final @manifest:subclass=false
 name	otto.inventory:Inventory	protocol
 mro	otto.inventory:Inventory	-
 member	otto.inventory:Inventory.fingerprint	method	sync	-
@@ -3567,6 +3592,10 @@ name	otto.inventory:InventoryConstructionError	class
 mro	otto.inventory:InventoryConstructionError	{otto.inventory:InventoryError} {otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.inventory:InventoryConstructionError	sync	@builtin:builtins.ValueError
 abstract	otto.inventory:InventoryConstructionError	-
+name	otto.inventory:InventoryDataError	class
+mro	otto.inventory:InventoryDataError	{otto.inventory:InventoryError} {otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.inventory:InventoryDataError	sync	@builtin:builtins.Exception
+abstract	otto.inventory:InventoryDataError	-
 name	otto.inventory:InventoryDeclaration	class
 mro	otto.inventory:InventoryDeclaration	-
 call	otto.inventory:InventoryDeclaration	sync	@manifest:construct=false
@@ -3574,6 +3603,7 @@ member	otto.inventory:InventoryDeclaration.__eq__	method	sync	PK:other:-
 member	otto.inventory:InventoryDeclaration.__hash__	method	sync	-
 member	otto.inventory:InventoryDeclaration.anchor_dir	field
 member	otto.inventory:InventoryDeclaration.creds_table	field
+member	otto.inventory:InventoryDeclaration.inventories	field
 member	otto.inventory:InventoryDeclaration.origin	field
 member	otto.inventory:InventoryDeclaration.table	field
 abstract	otto.inventory:InventoryDeclaration	@final @manifest:subclass=false
@@ -3600,10 +3630,36 @@ member	otto.inventory:InventoryMetadata.__eq__	method	sync	PK:other:-
 member	otto.inventory:InventoryMetadata.__hash__	method	sync	-
 member	otto.inventory:InventoryMetadata.snapshot_cache	field
 abstract	otto.inventory:InventoryMetadata	@final @manifest:subclass=false
+name	otto.inventory:InventoryUnreachableError	class
+mro	otto.inventory:InventoryUnreachableError	{otto.inventory:InventoryError} {otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.inventory:InventoryUnreachableError	sync	PK:message:- KO:max_stale:N
+abstract	otto.inventory:InventoryUnreachableError	-
+name	otto.inventory:InventoryView	class
+mro	otto.inventory:InventoryView	-
+call	otto.inventory:InventoryView	sync	KO:inventories:- KO:bare_refused_by:O KO:project_root:N KO:on_refusal:N KO:keys:O KO:default_only:B:false
+member	otto.inventory:InventoryView.bare_inventory	property:g--
+member	otto.inventory:InventoryView.bare_refused_by	field
+member	otto.inventory:InventoryView.default_only	field
+member	otto.inventory:InventoryView.fingerprint	method	sync	-
+member	otto.inventory:InventoryView.for_project	method	sync	KO:root:-
+member	otto.inventory:InventoryView.inventories	field
+member	otto.inventory:InventoryView.keys	field
+member	otto.inventory:InventoryView.memo_identity	method	sync	-
+member	otto.inventory:InventoryView.names	method	sync	-
+member	otto.inventory:InventoryView.of_default	classmethod	sync	KO:inventory:-
+member	otto.inventory:InventoryView.on_refusal	field
+member	otto.inventory:InventoryView.project_root	field
+member	otto.inventory:InventoryView.select	method	sync	KO:reference:-
+member	otto.inventory:InventoryView.select_name	method	sync	KO:name:-
+member	otto.inventory:InventoryView.selected_name	method	sync	KO:reference:-
+member	otto.inventory:InventoryView.stat_paths	method	sync	-
+member	otto.inventory:InventoryView.with_refusal_hook	method	sync	KO:hook:-
+abstract	otto.inventory:InventoryView	@final @manifest:subclass=false
 name	otto.inventory:JsonInventory	class
 mro	otto.inventory:JsonInventory	-
 call	otto.inventory:JsonInventory	sync	PK:path:- KO:supplies:N
 member	otto.inventory:JsonInventory.fingerprint	method	sync	-
+member	otto.inventory:JsonInventory.inventory_discovery	method	sync	-
 member	otto.inventory:JsonInventory.list_keys	method	sync	-
 member	otto.inventory:JsonInventory.lookup	method	sync	PK:key:-
 member	otto.inventory:JsonInventory.read_document	method	sync	KO:refuse:-
@@ -3642,6 +3698,7 @@ member	otto.inventory:RecordDifference.field	field
 member	otto.inventory:RecordDifference.key	field
 member	otto.inventory:RecordDifference.left	field
 member	otto.inventory:RecordDifference.right	field
+member	otto.inventory:RecordDifference.whole_map	field
 abstract	otto.inventory:RecordDifference	@final @manifest:subclass=false
 name	otto.inventory:RefreshResult	class
 mro	otto.inventory:RefreshResult	-
@@ -3651,6 +3708,21 @@ member	otto.inventory:RefreshResult.__hash__	method	sync	-
 member	otto.inventory:RefreshResult.count	field
 member	otto.inventory:RefreshResult.previous_age	field
 abstract	otto.inventory:RefreshResult	@final @manifest:subclass=false
+name	otto.inventory:RefusedDefault	class
+mro	otto.inventory:RefusedDefault	-
+call	otto.inventory:RefusedDefault	sync	KO:origin:- KO:declared:- KO:inventories:O KO:on_refusal:N
+member	otto.inventory:RefusedDefault.declared	field
+member	otto.inventory:RefusedDefault.default	property:g--
+member	otto.inventory:RefusedDefault.fingerprint	method	sync	-
+member	otto.inventory:RefusedDefault.inventories	field
+member	otto.inventory:RefusedDefault.label	property:g--
+member	otto.inventory:RefusedDefault.list_keys	method	sync	-
+member	otto.inventory:RefusedDefault.lookup	method	sync	PK:key:-
+member	otto.inventory:RefusedDefault.on_refusal	field
+member	otto.inventory:RefusedDefault.origin	field
+member	otto.inventory:RefusedDefault.refuse	method	sync	KO:key:-
+member	otto.inventory:RefusedDefault.supplies	property:g--
+abstract	otto.inventory:RefusedDefault	@final @manifest:subclass=false
 name	otto.inventory:ResolvedEntry	class
 mro	otto.inventory:ResolvedEntry	-
 call	otto.inventory:ResolvedEntry	sync	@manifest:construct=false
@@ -3663,38 +3735,73 @@ name	otto.inventory:SnapshotCache	class
 mro	otto.inventory:SnapshotCache	-
 call	otto.inventory:SnapshotCache	sync	@manifest:construct=false
 member	otto.inventory:SnapshotCache.fingerprint	method	sync	-
+member	otto.inventory:SnapshotCache.inventory_discovery	method	sync	-
 member	otto.inventory:SnapshotCache.list_keys	method	sync	-
 member	otto.inventory:SnapshotCache.lookup	method	sync	PK:key:-
 member	otto.inventory:SnapshotCache.refresh	method	sync	-
 abstract	otto.inventory:SnapshotCache	@final @manifest:subclass=false
+name	otto.inventory:SupportsDiscovery	protocol
+mro	otto.inventory:SupportsDiscovery	-
+member	otto.inventory:SupportsDiscovery.inventory_discovery	method	sync	-
+requires	otto.inventory:SupportsDiscovery	inventory_discovery
 name	otto.inventory:SupportsStatPaths	protocol
 mro	otto.inventory:SupportsStatPaths	-
 member	otto.inventory:SupportsStatPaths.stat_paths	method	sync	-
 requires	otto.inventory:SupportsStatPaths	stat_paths
+name	otto.inventory:bare_refusal_message	function
+call	otto.inventory:bare_refusal_message	sync	KO:origin:- KO:key:- KO:declared:-
+name	otto.inventory:below_creds_overlay	function
+call	otto.inventory:below_creds_overlay	sync	KO:inventory:-
 name	otto.inventory:build_inventory	function
 call	otto.inventory:build_inventory	sync	KO:projects:- KO:user_settings_path:N
 name	otto.inventory:build_inventory_from_declarations	function
 call	otto.inventory:build_inventory_from_declarations	sync	KO:declarations:- KO:user_settings:- KO:user_settings_file:N
+name	otto.inventory:build_inventory_view	function
+call	otto.inventory:build_inventory_view	sync	KO:projects:- KO:user_settings_path:N
+name	otto.inventory:build_inventory_view_from_declarations	function
+call	otto.inventory:build_inventory_view_from_declarations	sync	KO:declarations:- KO:user_settings:- KO:user_settings_file:N
 name	otto.inventory:check_supplies	function
 call	otto.inventory:check_supplies	sync	PK:supplies:-
 name	otto.inventory:compile_inventory	function
 call	otto.inventory:compile_inventory	sync	KO:cfg:- KO:anchor_dir:- KO:origin:-
 name	otto.inventory:construct_inventory	function
 call	otto.inventory:construct_inventory	sync	KO:compiled:-
+name	otto.inventory:deferred_inventory_view	function
+call	otto.inventory:deferred_inventory_view	sync	KO:projects:- KO:user_settings_path:N
+name	otto.inventory:diff_instances	function
+call	otto.inventory:diff_instances	sync	KO:left:- KO:right:-
 name	otto.inventory:diff_records	function
 call	otto.inventory:diff_records	sync	KO:left:- KO:right:-
+name	otto.inventory:discover_inventory	function
+call	otto.inventory:discover_inventory	sync	KO:inventory:-
+name	otto.inventory:discovery_to_document	function
+call	otto.inventory:discovery_to_document	sync	KO:discovery:-
+name	otto.inventory:document_to_discovery	function
+call	otto.inventory:document_to_discovery	sync	KO:data:- KO:source:- KO:supplies:-
 name	otto.inventory:document_to_records	function
 call	otto.inventory:document_to_records	sync	KO:data:- KO:source:- KO:supplies:-
+name	otto.inventory:inventory_declaration	function
+call	otto.inventory:inventory_declaration	sync	KO:data:- KO:root:- KO:origin:-
 name	otto.inventory:merge_creds	function
 call	otto.inventory:merge_creds	sync	KO:lower:- KO:higher:- KO:key:N KO:lower_name:S:"lower" KO:higher_name:S:"higher"
+name	otto.inventory:no_default_message	function
+call	otto.inventory:no_default_message	sync	KO:key:-
+name	otto.inventory:parse_discovery_document	function
+call	otto.inventory:parse_discovery_document	sync	KO:data:- KO:source:- KO:supplies:-
 name	otto.inventory:parse_inventory_document	function
 call	otto.inventory:parse_inventory_document	sync	KO:data:- KO:source:- KO:supplies:-
+name	otto.inventory:parse_max_stale	function
+call	otto.inventory:parse_max_stale	sync	KO:text:-
 name	otto.inventory:records_to_document	function
 call	otto.inventory:records_to_document	sync	KO:records:-
+name	otto.inventory:refuses_bare	function
+call	otto.inventory:refuses_bare	sync	KO:inventory:- KO:inventories:-
 name	otto.inventory:register_inventory_backend	function
 call	otto.inventory:register_inventory_backend	sync	PK:name:- KO:config:- KO:factory:- KO:snapshot_cache:B:true KO:overwrite:B:false
 name	otto.inventory:resolve_host_entry	function
 call	otto.inventory:resolve_host_entry	sync	PK:host_data:- KO:inventory:- KO:element:-
+name	otto.inventory:resolve_view_entry	function
+call	otto.inventory:resolve_view_entry	sync	PK:host_data:- KO:view:- KO:element:-
 name	otto.inventory:snapshot_cache_of	function
 call	otto.inventory:snapshot_cache_of	sync	KO:inventory:-
 name	otto.lab:EmptySelectionError	class
@@ -3726,24 +3833,38 @@ call	otto.lab:get_host	sync	PK:host_id:- VK:overrides:-
 name	otto.lab:get_lab	function
 call	otto.lab:get_lab	sync	-
 name	otto.lab:load_lab	function
-call	otto.lab:load_lab	sync	PK:labnames:- KO:search_paths:N KO:preferences:N KO:repository:N KO:inventory:N
+call	otto.lab:load_lab	sync	PK:labnames:- KO:search_paths:N KO:preferences:N KO:repository:N KO:inventory:N KO:view:N
 name	otto.lab:run_on_all_hosts	function
 call	otto.lab:run_on_all_hosts	coroutine	PK:cmds:- KO:pattern:N KO:concurrent:B:true KO:timeout:F:0x1.e000000000000p+4 KO:include_containers:B:false VK:overrides:-
 name	otto.labs:CompositeLabRepository	class
 mro	otto.labs:CompositeLabRepository	-
 call	otto.labs:CompositeLabRepository	sync	@manifest:construct=false
+member	otto.labs:CompositeLabRepository.lab_status_report	method	sync	KO:view:-
 member	otto.labs:CompositeLabRepository.list_host_summaries	method	sync	KO:inventory:N
+member	otto.labs:CompositeLabRepository.list_host_summaries_in_view	method	sync	KO:view:-
+member	otto.labs:CompositeLabRepository.list_lab_status	method	sync	KO:view:-
 member	otto.labs:CompositeLabRepository.list_labs	method	sync	-
 member	otto.labs:CompositeLabRepository.load_lab	method	sync	PK:name:- KO:preferences:N KO:inventory:N
+member	otto.labs:CompositeLabRepository.load_lab_in_view	method	sync	PK:name:- KO:preferences:N KO:view:-
+member	otto.labs:CompositeLabRepository.load_lab_reported	method	sync	PK:name:- KO:preferences:N KO:view:- KO:report:-
 abstract	otto.labs:CompositeLabRepository	@final @manifest:subclass=false
+name	otto.labs:Diagnostic	class
+mro	otto.labs:Diagnostic	-
+call	otto.labs:Diagnostic	sync	KO:where:- KO:reason:-
+member	otto.labs:Diagnostic.__eq__	method	sync	PK:other:-
+member	otto.labs:Diagnostic.__hash__	method	sync	-
+member	otto.labs:Diagnostic.reason	field
+member	otto.labs:Diagnostic.where	field
+abstract	otto.labs:Diagnostic	-
 name	otto.labs:HostSummary	class
 mro	otto.labs:HostSummary	-
-call	otto.labs:HostSummary	sync	KO:id:- KO:labs:O KO:lab_patterns:O KO:ip:S:"" KO:docker_capable:B:false KO:docker_priority:I:0 KO:os_type:N KO:logins:O
+call	otto.labs:HostSummary	sync	KO:id:- KO:labs:O KO:lab_patterns:O KO:ip:S:"" KO:docker_capable:B:false KO:docker_priority:I:0 KO:os_type:N KO:logins:O KO:inventory_ref:O
 member	otto.labs:HostSummary.__eq__	method	sync	PK:other:-
 member	otto.labs:HostSummary.__hash__	method	sync	-
 member	otto.labs:HostSummary.docker_capable	field
 member	otto.labs:HostSummary.docker_priority	field
 member	otto.labs:HostSummary.id	field
+member	otto.labs:HostSummary.inventory_ref	field
 member	otto.labs:HostSummary.ip	field
 member	otto.labs:HostSummary.lab_patterns	field
 member	otto.labs:HostSummary.labs	field
@@ -3763,11 +3884,21 @@ name	otto.labs:LabRepositoryError	class
 mro	otto.labs:LabRepositoryError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.labs:LabRepositoryError	sync	@builtin:builtins.Exception
 abstract	otto.labs:LabRepositoryError	-
+name	otto.labs:LabScope	class
+mro	otto.labs:LabScope	-
+call	otto.labs:LabScope	sync	KO:names:Z:[] KO:prefixes:Z:[]
+member	otto.labs:LabScope.__eq__	method	sync	PK:other:-
+member	otto.labs:LabScope.__hash__	method	sync	-
+member	otto.labs:LabScope.contains	method	sync	KO:name:-
+member	otto.labs:LabScope.names	field
+member	otto.labs:LabScope.prefixes	field
+abstract	otto.labs:LabScope	@final @manifest:subclass=false
 name	otto.labs:LabSource	class
 mro	otto.labs:LabSource	-
 call	otto.labs:LabSource	sync	@manifest:construct=false
 member	otto.labs:LabSource.__eq__	method	sync	PK:other:-
 member	otto.labs:LabSource.label	field
+member	otto.labs:LabSource.project_root	field
 member	otto.labs:LabSource.repository	field
 abstract	otto.labs:LabSource	@final @manifest:subclass=false
 name	otto.labs:LabSourceConstructionError	class
@@ -3784,6 +3915,31 @@ member	otto.labs:LabSourceEnv.origin	field
 member	otto.labs:LabSourceEnv.profiles	field
 member	otto.labs:LabSourceEnv.project_root	field
 abstract	otto.labs:LabSourceEnv	@final @manifest:subclass=false
+name	otto.labs:LabStatus	class
+mro	otto.labs:LabStatus	-
+call	otto.labs:LabStatus	sync	KO:name:- KO:unavailable:N
+member	otto.labs:LabStatus.__eq__	method	sync	PK:other:-
+member	otto.labs:LabStatus.__hash__	method	sync	-
+member	otto.labs:LabStatus.available	property:g--
+member	otto.labs:LabStatus.name	field
+member	otto.labs:LabStatus.unavailable	field
+abstract	otto.labs:LabStatus	@final @manifest:subclass=false
+name	otto.labs:LabStatusReport	class
+mro	otto.labs:LabStatusReport	-
+call	otto.labs:LabStatusReport	sync	KO:labs:- KO:declared_by:- KO:unavailable_sources:-
+member	otto.labs:LabStatusReport.__eq__	method	sync	PK:other:-
+member	otto.labs:LabStatusReport.declared_by	field
+member	otto.labs:LabStatusReport.labs	field
+member	otto.labs:LabStatusReport.labs_declared_in	method	sync	KO:project_root:-
+member	otto.labs:LabStatusReport.refusal	method	sync	KO:name:-
+member	otto.labs:LabStatusReport.status	method	sync	KO:name:-
+member	otto.labs:LabStatusReport.statuses_declared_in	method	sync	KO:project_root:-
+member	otto.labs:LabStatusReport.unavailable_sources	field
+abstract	otto.labs:LabStatusReport	@final @manifest:subclass=false
+name	otto.labs:LabUnavailableError	class
+mro	otto.labs:LabUnavailableError	{otto.labs:LabRepositoryError} {otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.labs:LabUnavailableError	sync	KO:name:- KO:diagnostic:- KO:declared:-
+abstract	otto.labs:LabUnavailableError	-
 name	otto.labs:LoginSummary	class
 mro	otto.labs:LoginSummary	-
 call	otto.labs:LoginSummary	sync	@manifest:construct=false
@@ -3793,16 +3949,59 @@ member	otto.labs:LoginSummary.login	field
 member	otto.labs:LoginSummary.protocols	field
 member	otto.labs:LoginSummary.proxy	field
 abstract	otto.labs:LoginSummary	@final @manifest:subclass=false
+name	otto.labs:SourceRef	class
+mro	otto.labs:SourceRef	-
+call	otto.labs:SourceRef	sync	KO:label:- KO:project_root:-
+member	otto.labs:SourceRef.__eq__	method	sync	PK:other:-
+member	otto.labs:SourceRef.__hash__	method	sync	-
+member	otto.labs:SourceRef.label	field
+member	otto.labs:SourceRef.project_root	field
+abstract	otto.labs:SourceRef	@final @manifest:subclass=false
+name	otto.labs:SourceUnavailable	class
+mro	otto.labs:SourceUnavailable	-
+call	otto.labs:SourceUnavailable	sync	KO:source:- KO:scope:- KO:diagnostic:-
+member	otto.labs:SourceUnavailable.__eq__	method	sync	PK:other:-
+member	otto.labs:SourceUnavailable.__hash__	method	sync	-
+member	otto.labs:SourceUnavailable.diagnostic	field
+member	otto.labs:SourceUnavailable.scope	field
+member	otto.labs:SourceUnavailable.source	field
+abstract	otto.labs:SourceUnavailable	@final @manifest:subclass=false
 name	otto.labs:SupportsHostSummaries	protocol
 mro	otto.labs:SupportsHostSummaries	-
 member	otto.labs:SupportsHostSummaries.list_host_summaries	method	sync	KO:inventory:N
 requires	otto.labs:SupportsHostSummaries	list_host_summaries
+name	otto.labs:SupportsHostSummariesInView	protocol
+mro	otto.labs:SupportsHostSummariesInView	-
+member	otto.labs:SupportsHostSummariesInView.list_host_summaries_in_view	method	sync	KO:view:-
+requires	otto.labs:SupportsHostSummariesInView	list_host_summaries_in_view
+name	otto.labs:SupportsInventoryView	protocol
+mro	otto.labs:SupportsInventoryView	-
+member	otto.labs:SupportsInventoryView.load_lab_in_view	method	sync	PK:name:- KO:preferences:N KO:view:-
+requires	otto.labs:SupportsInventoryView	load_lab_in_view
+name	otto.labs:SupportsLabScope	protocol
+mro	otto.labs:SupportsLabScope	-
+member	otto.labs:SupportsLabScope.lab_scope	method	sync	-
+requires	otto.labs:SupportsLabScope	lab_scope
+name	otto.labs:SupportsLabStatus	protocol
+mro	otto.labs:SupportsLabStatus	-
+member	otto.labs:SupportsLabStatus.list_lab_status	method	sync	KO:view:-
+requires	otto.labs:SupportsLabStatus	list_lab_status
 name	otto.labs:build_lab_sources	function
 call	otto.labs:build_lab_sources	sync	KO:projects:- KO:profiles:N
 name	otto.labs:host_summaries	function
 call	otto.labs:host_summaries	sync	KO:repository:- KO:inventory:N
+name	otto.labs:host_summaries_in_view	function
+call	otto.labs:host_summaries_in_view	sync	KO:repository:- KO:view:-
+name	otto.labs:lab_scope_of	function
+call	otto.labs:lab_scope_of	sync	KO:repository:-
+name	otto.labs:lab_statuses	function
+call	otto.labs:lab_statuses	sync	KO:repository:- KO:view:-
+name	otto.labs:labs_view	function
+call	otto.labs:labs_view	sync	KO:view:-
 name	otto.labs:list_host_ids	function
 call	otto.labs:list_host_ids	sync	KO:repository:-
+name	otto.labs:load_lab_through	function
+call	otto.labs:load_lab_through	sync	KO:repository:- KO:name:- KO:preferences:N KO:view:-
 name	otto.labs:logins_of_creds	function
 call	otto.labs:logins_of_creds	sync	KO:creds:-
 name	otto.labs:logins_of_host_data	function
@@ -4208,6 +4407,15 @@ member	otto.models:HostSnapshot.os_version	field
 member	otto.models:HostSnapshot.slot	field
 abstract	otto.models:HostSnapshot	@final @manifest:subclass=false
 name	otto.models:INVENTORY_KEY_FIELDS	value
+name	otto.models:InventoryInstance	model
+mro	otto.models:InventoryInstance	{otto.models:OttoModel}
+input	otto.models:InventoryInstance	S:"members"	optional	O	S:"members"
+input	otto.models:InventoryInstance	S:"roles"	optional	O	S:"roles"
+member	otto.models:InventoryInstance.all_members	method	sync	-
+member	otto.models:InventoryInstance.members	field
+member	otto.models:InventoryInstance.model_config	attribute
+member	otto.models:InventoryInstance.roles	field
+abstract	otto.models:InventoryInstance	@final @manifest:subclass=false
 name	otto.models:InventoryRecord	model
 mro	otto.models:InventoryRecord	{otto.models:OttoModel}
 input	otto.models:InventoryRecord	@manifest:construct=false	-	-	-
@@ -4215,10 +4423,12 @@ member	otto.models:InventoryRecord.board	field
 member	otto.models:InventoryRecord.creds	field
 member	otto.models:InventoryRecord.element_id	field
 member	otto.models:InventoryRecord.extra	field
+member	otto.models:InventoryRecord.groups	field
 member	otto.models:InventoryRecord.hw_version	field
 member	otto.models:InventoryRecord.interfaces	field
 member	otto.models:InventoryRecord.ip	field
 member	otto.models:InventoryRecord.is_virtual	field
+member	otto.models:InventoryRecord.labels	field
 member	otto.models:InventoryRecord.model_config	attribute
 member	otto.models:InventoryRecord.os_name	field
 member	otto.models:InventoryRecord.os_version	field
@@ -4420,6 +4630,7 @@ member	otto.models:SettingsModel.dev_tools	field
 member	otto.models:SettingsModel.docker	field
 member	otto.models:SettingsModel.host_preferences	field
 member	otto.models:SettingsModel.init	field
+member	otto.models:SettingsModel.inventories	field
 member	otto.models:SettingsModel.inventory	field
 member	otto.models:SettingsModel.lab	field
 member	otto.models:SettingsModel.libs	field
@@ -5586,7 +5797,7 @@ call	otto.testing:assert_host_registrable	sync	PK:cls:- KO:spec:N
 name	otto.testing:assert_inventory_conforms	function
 call	otto.testing:assert_inventory_conforms	sync	PK:inventory:- KO:expected_keys:N KO:repository:N KO:lab:N
 name	otto.testing:assert_lab_repository_conforms	function
-call	otto.testing:assert_lab_repository_conforms	sync	PK:repository:- KO:expected_labs:N KO:expect_host_summaries:B:false
+call	otto.testing:assert_lab_repository_conforms	sync	PK:repository:- KO:expected_labs:N KO:expect_host_summaries:B:false KO:inventory:N KO:view:N KO:expected_ips:N
 name	otto.testing:assert_reservation_backend_conforms	function
 call	otto.testing:assert_reservation_backend_conforms	sync	PK:backend:- KO:known_user:N KO:known_resources:N KO:expect_holders:B:false
 name	otto.testing:assert_transfer_backend_conforms	function
@@ -5982,7 +6193,7 @@ call	otto:get_host	sync	PK:host_id:- VK:overrides:-
 name	otto:get_lab	function
 call	otto:get_lab	sync	-
 name	otto:load_lab	function
-call	otto:load_lab	sync	PK:labnames:- KO:search_paths:N KO:preferences:N KO:repository:N KO:inventory:N
+call	otto:load_lab	sync	PK:labnames:- KO:search_paths:N KO:preferences:N KO:repository:N KO:inventory:N KO:view:N
 name	otto:open_context	function
 call	otto:open_context	asyncgen	KO:lab:- KO:include_projects:N KO:exclude_projects:N KO:variant:N KO:dry_run:B:false KO:log_command_output:B:true KO:holder:N KO:skip_reservation_check:B:false
 name	otto:options	function

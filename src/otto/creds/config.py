@@ -29,7 +29,7 @@ from .registry import CREDS_BACKENDS, CredsEnv
 
 if TYPE_CHECKING:
     from ..models.settings import CredsConfigSpec
-    from ..registry import Prepared
+    from ..registry import FrozenMap, Prepared
 
 
 @final
@@ -58,6 +58,21 @@ class JsonCredsConfig(OttoModel):
 
 
 @final
+@dataclass(frozen=True, kw_only=True)
+class CredsIdentity:
+    """What makes two ``[creds]`` tables one store: the backend and its normalized configuration.
+
+    Hashable and compared by value, so a filter of ``1`` equals one of
+    ``1.0``, as the parsed configurations do.
+    """
+
+    backend: str
+    """The registered store name."""
+    normalized: "FrozenMap[str, object]"
+    """The store's parsed configuration, normalized (paths anchored)."""
+
+
+@final
 @dataclass(frozen=True)
 class CompiledCreds:
     """A ``[creds]`` table, prepared by its store's configuration model."""
@@ -69,6 +84,10 @@ class CompiledCreds:
     origin: str
     """The settings file that declared the table — for error text."""
 
+    def binding_identity(self) -> CredsIdentity:
+        """Return the store's identity: backend and normalized configuration, origin excluded."""
+        return CredsIdentity(backend=self.prepared.backend, normalized=self.prepared.normalized)
+
     def same_as(self, *, other: "CompiledCreds") -> bool:
         """Return whether this names the same store as *other* — origin and anchor excluded.
 
@@ -76,11 +95,9 @@ class CompiledCreds:
         not a conflict; two projects whose parsed configurations differ are. The
         configurations are compared in their normalized form, so one file
         named relatively from one project and absolutely from another is one store.
+        Equality of :meth:`binding_identity`, the one definition.
         """
-        return (self.prepared.backend, self.prepared.normalized) == (
-            other.prepared.backend,
-            other.prepared.normalized,
-        )
+        return self.binding_identity() == other.binding_identity()
 
 
 def compile_creds(*, cfg: "CredsConfigSpec", anchor_dir: Path, origin: str) -> CompiledCreds:

@@ -16,6 +16,7 @@ under ``TYPE_CHECKING`` for annotations only.
 import json
 import posixpath
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -430,13 +431,12 @@ class ReservationConfigSpec(OttoModel):
     url: str | None = None
 
 
-class InventoryConfigSpec(OttoModel):
-    """The otto-owned ``[inventory]`` envelope (spec 2026-08-28 host-inventory §8).
+class _InventoryEnvelope(OttoModel):
+    """The keys otto owns in an inventory table: ``backend`` and ``cache_ttl``.
 
-    ``backend`` selects a registered inventory backend; ``cache_ttl`` is core,
-    backend-independent (§9.5); credentials moved to the ``[creds]`` table
-    (spec 2026-09-06 creds-store §4.4). ``extra='allow'`` keeps the backend's
-    own kwargs (``path``, ``url``, ``filter``…) open here —
+    Shared by ``[inventory]`` and each ``[[inventories]]`` entry, so the two
+    forms parse their common keys in one place. ``extra='allow'`` keeps the
+    backend's own kwargs (``path``, ``url``, ``filter``…) open here —
     :func:`otto.inventory.compile_inventory` validates them knowing the backend.
     """
 
@@ -450,6 +450,16 @@ class InventoryConfigSpec(OttoModel):
     def _cache_ttl_grammar(cls, v: str) -> str:
         parse_cache_ttl(v)  # raises ValueError with the grammar
         return v
+
+
+class InventoryConfigSpec(_InventoryEnvelope):
+    """The otto-owned ``[inventory]`` envelope (spec 2026-08-28 host-inventory §8).
+
+    ``backend`` selects a registered inventory backend; ``cache_ttl`` is core,
+    backend-independent (§9.5); credentials moved to the ``[creds]`` table
+    (spec 2026-09-06 creds-store §4.4). Every other key, ``name`` and
+    ``creds`` included, belongs to the backend.
+    """
 
     @model_validator(mode="before")
     @classmethod
@@ -478,6 +488,125 @@ class CredsConfigSpec(OttoModel):
     model_config = ConfigDict(extra="allow")
 
     backend: str
+
+
+class NamedInventorySpec(_InventoryEnvelope):
+    """One ``[[inventories]]`` entry: a named inventory (#1176).
+
+    The envelope reserves exactly ``name``, ``backend``, ``cache_ttl`` and
+    ``creds``; every other key, ``creds_file`` included, belongs to the
+    backend, so there is no ``creds_file`` guard here (the one on
+    :class:`InventoryConfigSpec` is a migration pointer for the legacy table).
+    """
+
+    name: Annotated[str, Field(min_length=1)]
+    """The inventory's process-wide name; ``"default"`` binds the bare-reference inventory."""
+    creds: CredsConfigSpec | None = None
+    """This entry's own creds store (``[inventories.creds]``); it binds to this entry only."""
+
+
+def entry_name(entry: "NamedInventorySpec | Mapping[str, Any]") -> object:
+    """Return an ``[[inventories]]`` entry's ``name``, whether it is parsed or still a raw table.
+
+    The one reading of an entry's name: :func:`binds_default`,
+    :func:`check_inventory_declarations` and the catalog walk in
+    :mod:`otto.inventory.config` all call it. A raw table's value is returned
+    as written, so it may not be a string.
+    """
+    return entry.name if isinstance(entry, NamedInventorySpec) else entry.get("name")
+
+
+def _entry_has_creds(entry: "NamedInventorySpec | Mapping[str, Any]") -> bool:
+    """Return whether an entry, parsed or raw, declares a ``creds`` sub-table."""
+    creds = entry.creds if isinstance(entry, NamedInventorySpec) else entry.get("creds")
+    return bool(creds)
+
+
+def bound_table(raw: "Mapping[str, Any] | None") -> "Mapping[str, Any] | None":
+    """Return *raw*, or ``None`` when the table is absent or empty.
+
+    Raw tables (``InventoryDeclaration.table`` and ``creds_table``, as
+    :func:`~otto.inventory.config.inventory_declaration` reads them) spell an
+    absent table as ``{}``. :func:`binds_default` takes a table or
+    ``None``, so every raw caller normalizes through here first: an empty
+    table never binds ``default``.
+    """
+    return raw or None
+
+
+def binds_default(
+    *,
+    inventory: object | None,
+    inventories: "Sequence[NamedInventorySpec | Mapping[str, Any]]",
+) -> bool:
+    """Return whether one settings file binds the ``default`` inventory itself.
+
+    It does when it declares ``[inventory]`` (*inventory* is not ``None``) or
+    an ``[[inventories]]`` entry named ``default``. The one predicate the D6
+    ``[creds]`` refusal, the bootstrap refusal and the bare-reference refusal
+    (D1) all call. Entries may be parsed specs or raw tables.
+    """
+    # lazy: bootstrap loads this module, and the reference vocabulary is not
+    # otherwise on its path (the import-budget guard's run_bootstrapped surface)
+    from ..host.inventory_ref import DEFAULT_INVENTORY
+
+    return inventory is not None or any(entry_name(e) == DEFAULT_INVENTORY for e in inventories)
+
+
+def check_inventory_declarations(
+    *,
+    inventory: object | None,
+    creds: object | None,
+    inventories: "Sequence[NamedInventorySpec | Mapping[str, Any]]",
+    project: bool,
+) -> None:
+    """Refuse a settings file whose inventory tables contradict each other.
+
+    The one validator behind both settings models. It refuses a duplicate
+    ``[[inventories]]`` name, ``[inventory]`` beside an entry named
+    ``default``, and a ``default`` entry's ``creds`` sub-table beside
+    ``[creds]``. With *project* set it also refuses (D6) a project that
+    declares ``[[inventories]]`` and ``[creds]`` without binding ``default``
+    itself: that ``[creds]`` would bind to the process ``default``, possibly
+    the user's own inventory, instead of the entry the project meant.
+
+    Raises:
+        ValueError: The tables contradict each other; the message names the fix.
+    """
+    from ..host.inventory_ref import DEFAULT_INVENTORY  # lazy: see binds_default
+
+    seen: set[object] = set()
+    for entry in inventories:
+        name = entry_name(entry)
+        if name in seen:
+            raise ValueError(
+                f"[[inventories]] declares the name {name!r} more than once; "
+                "each entry needs its own name"
+            )
+        seen.add(name)
+    default_entries = [e for e in inventories if entry_name(e) == DEFAULT_INVENTORY]
+    if inventory is not None and default_entries:
+        raise ValueError(
+            f"[inventory] and an [[inventories]] entry named {DEFAULT_INVENTORY!r} both bind "
+            f"{DEFAULT_INVENTORY!r}; declare it once, in one form"
+        )
+    if creds is not None and any(_entry_has_creds(e) for e in default_entries):
+        raise ValueError(
+            f"[creds] and the {DEFAULT_INVENTORY!r} entry's `creds` sub-table both bind "
+            f"{DEFAULT_INVENTORY!r}'s credentials; declare them once, in one place"
+        )
+    if (
+        project
+        and inventories
+        and creds is not None
+        and not binds_default(inventory=inventory, inventories=inventories)
+    ):
+        raise ValueError(
+            "[creds] is refused: this project declares [[inventories]] without binding "
+            f"{DEFAULT_INVENTORY!r}, so [creds] would bind to the process default; move it "
+            "into the owning entry as its `creds` sub-table ([inventories.creds]), or bind "
+            "default with [inventory]"
+        )
 
 
 #: Level names ``[logging.levels]`` accepts: the five stdlib names, plus otto's
@@ -1146,6 +1275,10 @@ class SettingsModel(OttoModel):
     """Per-project creds-store override (spec 2026-09-06 creds-store §4.2). Same
     two homes and the same override rule as ``inventory``; resolved
     independently of it."""
+    inventories: list[NamedInventorySpec] = Field(default_factory=list)
+    """``[[inventories]]`` — named inventories (#1176). An entry named
+    ``default`` binds ``default`` as ``[inventory]`` would; see
+    :func:`check_inventory_declarations` for what one file may not combine."""
     dependencies: DependenciesSpec = DependenciesSpec()
     project: ProjectScopeSpec | None = None
     products: list[DeclaredEntrySpec] = Field(default_factory=list)
@@ -1251,6 +1384,14 @@ class SettingsModel(OttoModel):
             raise ValueError(f"project {self.name!r} cannot depend on itself")
         return self
 
+    @model_validator(mode="after")
+    def _check_inventory_declarations(self) -> "SettingsModel":
+        """Refuse contradictory inventory tables, D6 included (a project file)."""
+        check_inventory_declarations(
+            inventory=self.inventory, creds=self.creds, inventories=self.inventories, project=True
+        )
+        return self
+
 
 class CacheSettingsSpec(OttoModel):
     """The ``[cache]`` table of the user settings file: whether otto may use its caches.
@@ -1274,7 +1415,17 @@ class UserSettingsModel(OttoModel):
 
     inventory: InventoryConfigSpec | None = None
     creds: CredsConfigSpec | None = None
+    inventories: list[NamedInventorySpec] = Field(default_factory=list)
+    """``[[inventories]]`` — the user's named inventories (#1176)."""
     cache: CacheSettingsSpec | None = None
+
+    @model_validator(mode="after")
+    def _check_inventory_declarations(self) -> "UserSettingsModel":
+        """Refuse contradictory inventory tables; D6 is a project rule, so it is skipped."""
+        check_inventory_declarations(
+            inventory=self.inventory, creds=self.creds, inventories=self.inventories, project=False
+        )
+        return self
 
 
 # ---------------------------------------------------------------------------

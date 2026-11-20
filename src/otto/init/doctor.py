@@ -9,12 +9,12 @@ what a project holds: ``otto init`` renders the report.
 
 import dataclasses
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from typing_extensions import final
+from typing_extensions import final, override
 
 from .area_dirs import DEFAULT_EMBEDDED_GCOV_DIR
 from .areas import (
@@ -35,8 +35,12 @@ if TYPE_CHECKING:
     # real use below is a function-local import.
     from ..config.project import Project
     from ..host.element import Element
+    from ..host.inventory_ref import InventoryReference
     from ..host.os_profile import ProfileContext
+    from ..inventory.config import InventoryDeclaration
     from ..inventory.protocol import Inventory
+    from ..inventory.resolve import ResolvedEntry
+    from ..inventory.view import InventoryView
     from ..labs.json_repository import LabDocument
     from ..vendoring import CheckResult
 
@@ -70,14 +74,33 @@ class AreaVerdict:
 
 
 @final
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class InventoryLabel:
+    """One inventory the doctor resolved: its name, its label and its credentials store's."""
+
+    name: str
+    """The inventory's name, ``default`` or an ``[[inventories]]`` entry's."""
+    label: str
+    """The inventory's own ``label``, naming what answered."""
+    creds_label: str | None
+    """The credentials store's ``label``, or ``None`` when the inventory has none."""
+
+
+@final
 @dataclasses.dataclass(frozen=True)
 class DoctorReport:
-    """Everything :func:`check_project` found. Warnings and labels never fail it."""
+    """Everything :func:`check_project` found. Warnings and labels never fail it.
+
+    :attr:`inventory_label` and :attr:`creds_label` are ``default``'s, as
+    before named inventories; :attr:`inventories` holds every inventory the
+    doctor checked and resolved, ``default`` included, sorted by name.
+    """
 
     verdicts: list[AreaVerdict]
     warnings: list[str]
     inventory_label: str | None
     creds_label: str | None
+    inventories: list[InventoryLabel] = dataclasses.field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -89,8 +112,22 @@ class DoctorReport:
         return next(verdict for verdict in self.verdicts if verdict.name == name)
 
 
-def check_project(root: Path) -> DoctorReport:
+def check_project(root: Path, *, catalog: "InventoryView | None" = None) -> DoctorReport:
     """Check every area of the project at *root*; never prints, never raises for its content.
+
+    Inventories: ``default`` is the project's own tables, else the user
+    file's, as before named inventories (the doctor-versus-dispatch
+    difference this keeps is tracked in #1186). Each name the project's own
+    file declares is built from that file alone, so ``otto init`` checks
+    what it just wrote. Any other name a lab file references comes from
+    *catalog*, the active projects' view
+    (:func:`~otto.inventory.deferred_inventory_view`), one name at a time;
+    without one, from the user file's ``[[inventories]]``. A name that fails
+    to build, a catalog conflict included, is one problem: in the lab
+    verdict, or, when there is no lab to validate, in the settings verdict
+    for each name the project's own file declares. Every finding is
+    attributed to its inventory's name once more than ``default`` is
+    checked.
 
     settings: the loader's own compile (:func:`otto.config.project.validate_settings`),
     then the check the loader runs on each ``[os_profiles]`` table after init
@@ -114,13 +151,15 @@ def check_project(root: Path) -> DoctorReport:
         InitInputError: *root* is not a directory (``field="root"``).
     """
     from ..config.project import validate_settings
+    from ..host.inventory_ref import DEFAULT_INVENTORY
     from ..models.jsonschema import schema_drift
 
     if not root.is_dir():
         raise InitInputError(f"{root} is not a directory", field="root")
     # One inventory per call, not per asker: the lab check, the warnings and
-    # the labels each ask _inventory_for the same question. Owned here, never
-    # a module global.
+    # the labels each ask the same view, whose default is _inventory_for's
+    # answer from this cache and whose named members it keeps beside it.
+    # Owned here, never a module global.
     cache: "dict[Path, Inventory | Exception | None]" = {}
     present = set(detect_areas(root=root))
     settings_problems = validate_settings(root) if "settings" in present else []
@@ -135,10 +174,26 @@ def check_project(root: Path) -> DoctorReport:
     lab_blocked = bool(settings_problems)
     lab_unprepared = [] if lab_blocked else _lab_preparation_problems(root)
     deferred = "" if lab_blocked or lab_unprepared else _deferred_detail(root)
+    parsed = _ParsedLab() if lab_blocked or lab_unprepared else _parse_lab_documents(root)
+    doctor = _view_for(root, cache, catalog=catalog, references=parsed.references())
+    # The lab verdict reports every checked inventory that fails to build
+    # (_validate_lab). Without a lab to validate, the project's own
+    # declarations are still checked, once, as settings problems: a project
+    # that only supplies inventories to its siblings must not pass broken.
+    lab_validated = not lab_blocked and not lab_unprepared and "lab" in present
+    unbuilt = (
+        []
+        if lab_validated or lab_blocked
+        else list(_build_failures(doctor, names=_own_names(doctor)).values())
+    )
     verdicts: list[AreaVerdict] = []
     for name in AREA_NAMES:
         if name == "settings":
-            verdict = _checked(name, settings_problems) if name in present else None
+            verdict = (
+                _checked(name, [*settings_problems, *unbuilt])
+                if name in present or unbuilt
+                else None
+            )
         elif name == "lab" and lab_blocked:
             verdict = AreaVerdict(name, "blocked", detail=_BLOCKED)
         elif name == "instructions":
@@ -150,7 +205,7 @@ def check_project(root: Path) -> DoctorReport:
         elif name == "lab" and lab_unprepared:
             verdict = _checked(name, lab_unprepared)
         elif name == "lab":
-            verdict = _checked(name, _validate_lab(root, cache, profiles), detail=deferred)
+            verdict = _checked(name, _validate_lab(doctor, parsed, profiles), detail=deferred)
         elif name == "tests":
             verdict = _checked(name, _validate_tests(root))
         else:
@@ -158,11 +213,18 @@ def check_project(root: Path) -> DoctorReport:
         if verdict is None and name == "lab" and deferred:
             verdict = AreaVerdict(name, "absent", detail=f"{_ABSENT[name]}; {deferred}")
         verdicts.append(verdict or AreaVerdict(name, "absent", detail=_ABSENT[name]))
-    warnings = [] if lab_blocked or lab_unprepared else _lab_warnings(root, cache)
+    warnings = [] if lab_blocked or lab_unprepared else _lab_warnings(doctor, parsed)
     warnings.extend(_kmodcov_warnings(root))
     warnings.extend(_embedded_gcov_warnings(root))
-    inventory_label, creds_label = _labels(root, cache)
-    return DoctorReport(verdicts, warnings, inventory_label, creds_label)
+    inventories = _labels(doctor)
+    default = next((each for each in inventories if each.name == DEFAULT_INVENTORY), None)
+    return DoctorReport(
+        verdicts,
+        warnings,
+        None if default is None else default.label,
+        None if default is None else default.creds_label,
+        inventories,
+    )
 
 
 def _checked(name: str, problems: list[str], *, detail: str = "") -> AreaVerdict:
@@ -260,27 +322,14 @@ def _inventory_for(
         return cached
 
     from ..config.user_settings import load_user_settings
-    from ..inventory.config import InventoryDeclaration, build_inventory_from_declarations
+    from ..inventory.config import build_inventory_from_declarations
     from ..inventory.errors import InventoryError
 
-    data = settings_data(root) or {}
-    table = data.get("inventory") or {}
-    creds_table = data.get("creds") or {}
-    declarations = (
-        [
-            InventoryDeclaration(
-                origin=str(settings_path(root)),
-                anchor_dir=root,
-                table=dict(table) if isinstance(table, dict) else {},
-                creds_table=dict(creds_table) if isinstance(creds_table, dict) else {},
-            )
-        ]
-        if (isinstance(table, dict) and table) or (isinstance(creds_table, dict) and creds_table)
-        else []
-    )
     try:
+        declaration = _declaration_of(root)
         result = build_inventory_from_declarations(
-            declarations=declarations, user_settings=load_user_settings()
+            declarations=[] if declaration is None else [declaration],
+            user_settings=load_user_settings(),
         )
     except (InventoryError, ValueError) as e:
         if cache is not None:
@@ -291,28 +340,260 @@ def _inventory_for(
     return result
 
 
-def _labels(root: Path, cache: "dict[Path, Inventory | Exception | None]") -> list[str | None]:
-    """``[inventory label, creds-store label]`` when an inventory resolves, else ``[None, None]``.
+def _declaration_of(root: Path) -> "InventoryDeclaration | None":
+    """Return the inventory tables *root*'s own settings file declares, or ``None``.
 
-    A broken declaration yields no labels — it is already a problem in the
-    lab verdict via :func:`_validate_lab`, and repeating it would be noise.
-    The creds label names the store when one resolves (spec 2026-09-06 §7.1).
+    The one declaration reader bootstrap uses too
+    (:func:`~otto.inventory.config.inventory_declaration`).
+
+    Raises:
+        ValueError: A malformed table, naming the file and key; the doctor
+            reports it as a problem.
     """
-    from ..inventory.creds import CredsOverlay
+    from ..inventory.config import inventory_declaration
+
+    return inventory_declaration(
+        data=settings_data(root) or {}, root=root, origin=str(settings_path(root))
+    )
+
+
+@final
+class _DoctorInventories(Mapping[str, "Inventory"]):
+    """The inventories one :func:`check_project` checks, by name, each built once on first use.
+
+    ``default`` is :func:`_inventory_for`'s answer. A name the project's own
+    file declares is built from that file alone. Any other name comes from
+    the *catalog* view when there is one, else from the user file's
+    ``[[inventories]]``. A build's result, ``None`` (not declared) or error
+    is kept, so every asker sees one answer and a broken name never fails
+    another. Iteration lists ``default`` and the project's own names, plus
+    each other name a lab file references, when they are declared: the
+    names the doctor checks. Membership answers for any name.
+    """
+
+    def __init__(
+        self,
+        *,
+        root: Path,
+        cache: "dict[Path, Inventory | Exception | None]",
+        declaration: "InventoryDeclaration | None",
+        catalog: "InventoryView | None",
+        referenced: "list[str]",
+    ) -> None:
+        from ..host.inventory_ref import DEFAULT_INVENTORY
+        from ..models.settings import entry_name
+
+        self._root = root
+        self._cache = cache
+        self.declaration = declaration
+        """The project's own inventory tables, or ``None`` when it declares none."""
+        self._catalog = catalog
+        entries = [] if declaration is None else declaration.inventories
+        self.own = sorted(
+            {n for e in entries if isinstance(n := entry_name(e), str)} - {DEFAULT_INVENTORY}
+        )
+        """The names other than ``default`` the project's own file declares."""
+        self._referenced = referenced
+        self._members: "dict[str, Inventory | Exception | None]" = {}
+
+    def _build(self, name: str) -> "Inventory | None":
+        """Build *name* on its route; raise what that route raises.
+
+        ``default``, an own name and a user-file name are otto's own builds,
+        and raise ``InventoryError``/``ValueError`` for what a project holds,
+        as :func:`_inventory_for` always has. The catalog is any view, whose
+        per-name build may raise anything (a third-party backend's
+        construction): that one route catches every error, so a catalog
+        failure is a problem row and never escapes :func:`check_project`.
+        """
+        from ..config.user_settings import load_user_settings
+        from ..host.inventory_ref import DEFAULT_INVENTORY
+        from ..inventory.config import build_named_inventory_from_declarations
+
+        if name == DEFAULT_INVENTORY:
+            return _inventory_for(self._root, self._cache)
+        if name in self.own and self.declaration is not None:
+            return build_named_inventory_from_declarations(
+                name=name, declarations=[self.declaration], user_settings=None
+            )
+        if self._catalog is not None:
+            return _catalog_member(self._catalog, name)
+        try:
+            user = load_user_settings()
+        except ValueError:
+            return None  # the problem _inventory_for reports, naming the file
+        return build_named_inventory_from_declarations(
+            name=name, declarations=[], user_settings=user
+        )
+
+    def member(self, name: str) -> "Inventory | Exception | None":
+        """Return *name*'s inventory, ``None`` when undeclared, or why it failed to build."""
+        from ..inventory.errors import InventoryError
+
+        if name not in self._members:
+            try:
+                self._members[name] = self._build(name)
+            except (InventoryError, ValueError) as e:
+                self._members[name] = e
+        return self._members[name]
+
+    def failure(self, name: str) -> "Exception | None":
+        """Return why *name* failed to build, or ``None``."""
+        member = self.member(name)
+        return member if isinstance(member, Exception) else None
+
+    @property
+    def declared(self) -> list[str]:
+        """Return ``default`` and the project's own names, when declared: whose orphans count."""
+        from ..host.inventory_ref import DEFAULT_INVENTORY
+
+        return [name for name in self if name == DEFAULT_INVENTORY or name in self.own]
+
+    @override
+    def __getitem__(self, name: str) -> "Inventory":
+        member = self.member(name)
+        if isinstance(member, Exception):
+            raise member
+        if member is None:
+            raise KeyError(name)
+        return member
+
+    @override
+    def __contains__(self, name: object) -> bool:
+        return isinstance(name, str) and self.member(name) is not None
+
+    @override
+    def __iter__(self) -> Iterator[str]:
+        from ..host.inventory_ref import DEFAULT_INVENTORY
+
+        names = {DEFAULT_INVENTORY, *self.own, *self._referenced}
+        return iter(sorted(name for name in names if name in self))
+
+    @override
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+def _catalog_member(catalog: "InventoryView", name: str) -> "Inventory | None":
+    """Return *catalog*'s inventory named *name*, or ``None`` when it has none.
+
+    The doctor's one catch of every error: a catalog is any view, and its
+    per-name build may raise whatever a third-party backend raises. Such an
+    error is re-raised as an ``InventoryError`` naming its type, so it is one
+    problem row like any other build failure.
+
+    Raises:
+        otto.inventory.errors.InventoryError: The name failed to build.
+    """
     from ..inventory.errors import InventoryError
 
     try:
-        inventory = _inventory_for(root, cache)
-    except (InventoryError, ValueError):
-        return [None, None]
-    if inventory is None:
-        return [None, None]
-    creds = inventory.store.label if isinstance(inventory, CredsOverlay) else None
-    return [inventory.label, creds]
+        return catalog.inventories.get(name)
+    except InventoryError:
+        raise
+    except Exception as e:  # any backend's error is a problem row, never a traceback
+        raise InventoryError(f"{type(e).__name__}: {e}") from e
 
 
-def _parse_lab_documents(root: Path) -> "tuple[list[str], list[LabDocument]]":
-    """Parse every lab file the settings name: ``(problems, parsed documents)``.
+@final
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _DoctorView:
+    """The doctor's inventory view of one project, and the inventories behind it."""
+
+    view: "InventoryView"
+    """The view, as the project sees it (bare references refused under D1)."""
+    inventories: _DoctorInventories
+    """The view's inventories, for each name's build failure and the declared names."""
+
+
+def _view_for(
+    root: Path,
+    cache: "dict[Path, Inventory | Exception | None]",
+    *,
+    catalog: "InventoryView | None" = None,
+    references: "list[InventoryReference] | None" = None,
+) -> _DoctorView:
+    """Return the inventory view the doctor checks *root* with; builds and reads nothing yet.
+
+    ``default`` comes from :func:`_inventory_for` over *cache*, unchanged; the
+    other names are described under :class:`_DoctorInventories`. *references*
+    are the lab files' well-formed references: each qualified one names an
+    inventory to check. The project's own settings decide whether it refuses
+    bare references (:func:`~otto.inventory.refuses_bare`). A malformed
+    declaration reads as none here: :func:`_inventory_for` reports it, from
+    the same reader.
+    """
+    from ..host.inventory_ref import DEFAULT_INVENTORY
+    from ..inventory.view import InventoryView, refuses_bare
+
+    try:
+        declaration = _declaration_of(root)
+    except ValueError:
+        declaration = None
+    referenced = sorted(
+        {r.name for r in references or [] if r.qualified and r.name != DEFAULT_INVENTORY}
+    )
+    inventories = _DoctorInventories(
+        root=root, cache=cache, declaration=declaration, catalog=catalog, referenced=referenced
+    )
+    refusing: dict[Path, str] = {}
+    if declaration is not None and refuses_bare(
+        inventory=declaration.table, inventories=declaration.inventories
+    ):
+        refusing[root] = declaration.origin
+    view = InventoryView(inventories=inventories, bare_refused_by=refusing)
+    return _DoctorView(view=view.for_project(root=root), inventories=inventories)
+
+
+def _attributed(*, view: "InventoryView", name: str, text: str) -> str:
+    """Return *text* attributed to inventory *name*: ``<name>: <text>``, the one prefix.
+
+    A view that checks ``default`` alone (or nothing) leaves *text* as it
+    was before named inventories.
+    """
+    from ..host.inventory_ref import DEFAULT_INVENTORY
+
+    if set(view.names()) <= {DEFAULT_INVENTORY}:
+        return text
+    return f"{name}: {text}"
+
+
+def _labels(doctor: _DoctorView) -> list[InventoryLabel]:
+    """Return each checked inventory that resolves, with its label and creds-store label.
+
+    A name that fails to build has no label: it is already a problem
+    (:func:`_build_failures`), and repeating it would be noise.
+    The creds label names the store when one resolves (spec 2026-09-06 §7.1).
+    """
+    from ..inventory.creds import creds_store_label
+
+    labels: list[InventoryLabel] = []
+    for name in doctor.view.names():
+        if doctor.inventories.failure(name) is not None:
+            continue
+        inventory = doctor.inventories[name]
+        creds = creds_store_label(inventory=inventory)
+        labels.append(InventoryLabel(name=name, label=inventory.label, creds_label=creds))
+    return labels
+
+
+@final
+@dataclasses.dataclass(frozen=True)
+class _ParsedLab:
+    """The lab files :func:`_parse_lab_documents` read: their problems and parsed documents."""
+
+    problems: list[str] = dataclasses.field(default_factory=list)
+    documents: "list[LabDocument]" = dataclasses.field(default_factory=list)
+
+    def references(self) -> "list[InventoryReference]":
+        """Return every well-formed inventory reference the documents' host entries state."""
+        from ..inventory.doctor import referenced_references
+
+        return referenced_references(element_lists=(d.elements for d in self.documents))
+
+
+def _parse_lab_documents(root: Path) -> _ParsedLab:
+    """Parse every lab file the settings name: their problems and parsed documents.
 
     The section shape, the ``labs`` table, the ``elements`` entries and the
     in-source duplicate rules are all applied by the SAME code the runtime
@@ -363,7 +644,7 @@ def _parse_lab_documents(root: Path) -> "tuple[list[str], list[LabDocument]]":
                 problems.append(str(e))
                 continue
             documents.append(document)
-    return problems, documents
+    return _ParsedLab(problems, documents)
 
 
 def _item_problem(validate: Callable[[Any], object], item: Any, prefix: str) -> list[str]:
@@ -400,65 +681,59 @@ def _item_problem(validate: Callable[[Any], object], item: Any, prefix: str) -> 
 
 
 def _validate_lab(
-    root: Path,
-    cache: "dict[Path, Inventory | Exception | None] | None" = None,
-    profiles: "ProfileContext | None" = None,
+    doctor: _DoctorView, parsed: _ParsedLab, profiles: "ProfileContext | None" = None
 ) -> list[str]:
     """Validate every lab file the settings' ``[[lab.sources]]`` name, via the real specs.
 
     The file shape is :func:`_parse_lab_documents`' job; what is left is the
     two payloads the wrapper models hold opaquely. Each element's host
-    entries are resolved against this project's inventory the way the loader
-    resolves them (:func:`otto.inventory.resolve_host_entry`, spec §6, against
-    the element :meth:`otto.models.lab.ElementSpec.to_element` builds), and
-    handed to
+    entries are resolved through the doctor's view the way the loader
+    resolves them (:func:`otto.inventory.resolve_view_entry`, spec §6,
+    against the element :meth:`otto.models.lab.ElementSpec.to_element`
+    builds), and handed to
     :func:`otto.host.factory.validate_host_dict`, so a bad ``os_type`` or
-    field name, a dead inventory key, or an inventory-owned field declared
-    inline all surface the same error the loader would raise. Each ``links``
-    entry is validated structurally via :class:`~otto.models.link.LinkSpec`;
-    endpoint cross-references (host ids, interface keys) are resolved at load
-    time, not here.
+    field name, a dead inventory key, a bare reference the project refuses,
+    or an inventory-owned field declared inline all surface the same error
+    the loader would raise. A lookup failure in a named inventory is
+    attributed to its name (:func:`_attributed`). Each ``links`` entry is
+    validated structurally via :class:`~otto.models.link.LinkSpec`; endpoint
+    cross-references (host ids, interface keys) are resolved at load time,
+    not here.
 
-    A broken ``[inventory]`` declaration (or user settings file) is reported
-    ONCE, as its own problem, rather than once per referencing host entry —
-    those entries are skipped for this pass and resolve once the declaration
-    is fixed. "Those entries" means
-    :func:`~otto.inventory.doctor.references_inventory`: a ``None`` or
-    absent key references nothing and is validated as always regardless of
-    the broken declaration, and a malformed key (the empty string, a
-    non-string) is its own problem independent of the declaration — skipping
-    on mere key PRESENCE would swallow both.
+    An inventory that fails to build (a broken ``[inventory]`` declaration,
+    an unparseable user settings file, a catalog conflict) is reported ONCE,
+    as its own problem, rather than once per referencing host entry — the
+    entries whose reference selects it are skipped for this pass and
+    resolve once it is fixed. An entry that references nothing, or whose
+    reference is malformed or refused, selects no inventory
+    (:func:`~otto.inventory.doctor.selected_inventory`) and is validated
+    regardless: skipping on mere key PRESENCE would swallow its own problems.
     """
     from ..host.factory import validate_host_dict
-    from ..inventory.doctor import references_inventory
-    from ..inventory.errors import InventoryError
-    from ..inventory.resolve import resolve_host_entry
     from ..models.link import LinkSpec
 
-    problems, documents = _parse_lab_documents(root)
-    inventory: "Inventory | None" = None
-    inventory_broken = False
-    try:
-        inventory = _inventory_for(root, cache)
-    except (InventoryError, ValueError) as e:
-        problems.append(f"inventory: {e}")
-        inventory_broken = True
+    view = doctor.view
+    failures = _build_failures(doctor, names=view.names())
+    problems = [*parsed.problems, *failures.values()]
+    broken = set(failures)
 
     def _validate_entry(host_data: dict[str, Any], *, element: "Element") -> None:
         validate_host_dict(
-            host_data=resolve_host_entry(host_data, inventory=inventory, element=element).host_data,
+            host_data=_resolved(host_data, view=view, element=element).host_data,
             element=element,
             profiles=profiles,
         )
 
-    for document in documents:
+    from ..inventory.doctor import selected_inventory
+
+    for document in parsed.documents:
         lab_file, elements, links = str(document.path), document.elements, document.links
         for element in elements:
             # Bound rather than passed alongside: _item_problem calls its
             # validator with the item and nothing else.
             validate = partial(_validate_entry, element=element.to_element())
             for idx, host_data in enumerate(element.hosts):
-                if inventory_broken and references_inventory(host_data):
+                if selected_inventory(host_data, view=view) in broken:
                     continue  # reported once above; these resolve once it is fixed
                 prefix = f"{lab_file}: element {element.name!r} hosts[{idx}]"
                 problems.extend(_item_problem(validate, host_data, prefix))
@@ -469,9 +744,66 @@ def _validate_lab(
     return problems
 
 
-def _lab_warnings(
-    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
-) -> list[str]:
+def _build_failures(doctor: _DoctorView, *, names: "list[str]") -> dict[str, str]:
+    """Return the problem row of each of *names* that fails to build: the one wording.
+
+    ``inventory: <text>``, attributed to the name (:func:`_attributed`).
+    :func:`_validate_lab` reports every checked name's failure this way; a
+    project with no lab to validate reports its own declarations' failures
+    the same way under ``settings`` (:func:`_own_names`).
+    """
+    view = doctor.view
+    rows: dict[str, str] = {}
+    for name in names:
+        failure = doctor.inventories.failure(name)
+        if failure is not None:
+            rows[name] = f"inventory: {_attributed(view=view, name=name, text=str(failure))}"
+    return rows
+
+
+def _own_names(doctor: _DoctorView) -> list[str]:
+    """Return the inventory names the project's own settings file declares.
+
+    Its ``[[inventories]]`` names, and ``default`` when the file binds it
+    itself; a ``default`` that comes from the user file is not this
+    project's declaration.
+    """
+    from ..host.inventory_ref import DEFAULT_INVENTORY
+    from ..models.settings import binds_default, bound_table
+
+    inventories = doctor.inventories
+    declaration = inventories.declaration
+    own = list(inventories.own)
+    if declaration is not None and binds_default(
+        inventory=bound_table(declaration.table), inventories=declaration.inventories
+    ):
+        own.insert(0, DEFAULT_INVENTORY)
+    return own
+
+
+def _resolved(
+    host_data: dict[str, Any], *, view: "InventoryView", element: "Element"
+) -> "ResolvedEntry":
+    """Resolve *host_data* through *view*, a lookup failure attributed to the inventory's name.
+
+    A reference that selects no inventory (refused, or naming none
+    configured) fails with the view's own text, unattributed.
+    """
+    from ..inventory.doctor import selected_inventory
+    from ..inventory.errors import InventoryError
+    from ..inventory.resolve import resolve_view_entry
+
+    try:
+        return resolve_view_entry(host_data, view=view, element=element)
+    except InventoryError as e:
+        name = selected_inventory(host_data, view=view)
+        text = str(e) if name is None else _attributed(view=view, name=name, text=str(e))
+        if text == str(e):
+            raise
+        raise InventoryError(text) from e
+
+
+def _lab_warnings(doctor: _DoctorView, parsed: _ParsedLab) -> list[str]:
     """Advisory findings across every lab file — never failing.
 
     Spec §8.3, §9 and §11, plus the shared-element protection rule of spec
@@ -482,17 +814,19 @@ def _lab_warnings(
     Separate from :func:`_validate_lab` because the two answer different
     questions: a problem is "otto will not load this", a warning is "otto will
     load this and it is probably not what you meant". Only the first fails the
-    report. Parsing runs again here rather than being threaded through the
-    lab verdict, which carries problems and no warning channel.
+    report.
 
-    When an inventory resolves, its own advisory findings — a snapshot served
-    because the backend was unreachable, orphan records
-    (:func:`~otto.inventory.doctor.orphan_warning`), creds-store keys the
+    Then, for ``default`` and each inventory the project's own file
+    declares, when it resolves: a snapshot served because the backend was
+    unreachable, orphan records
+    (:func:`~otto.inventory.doctor.orphan_warning`, counting this project's
+    references that select that inventory,
+    :func:`~otto.inventory.doctor.referenced_by_name`), creds-store keys the
     inventory does not hold, and world-readable creds-store files
-    (:func:`~otto.inventory.doctor.creds_mode_warnings`) — are appended. A
-    broken inventory declaration contributes nothing here: it is already a
-    problem in the lab verdict via :func:`_validate_lab`, and repeating it
-    as a warning would be noise.
+    (:func:`~otto.inventory.doctor.creds_mode_warnings`), each attributed to
+    the inventory's name (:func:`_attributed`). An inventory that fails to
+    build contributes nothing here: it is already a problem
+    (:func:`_build_failures`), and repeating it as a warning would be noise.
 
     The stale-snapshot notice is REPORTED rather than left to the cache's own
     ``logger.warning``, which fires once per snapshot per process and may
@@ -502,41 +836,42 @@ def _lab_warnings(
     gate to run in CI, and a green report against a days-old snapshot is
     exactly what that gate must not give.
     """
-    from ..inventory.cache import snapshot_cache_of
-    from ..inventory.doctor import (
-        creds_mode_warnings,
-        orphan_creds_warning,
-        orphan_warning,
-        referenced_keys,
-    )
-    from ..inventory.errors import InventoryError
+    from ..inventory.doctor import referenced_by_name
     from ..labs.doctor import lab_warnings
 
-    _, documents = _parse_lab_documents(root)
+    documents = parsed.documents
     warnings = lab_warnings([(str(d.path), d.entries, d.elements) for d in documents])
-    try:
-        inventory = _inventory_for(root, cache)
-    except (InventoryError, ValueError):
-        return warnings  # the problem is already in the lab verdict
-    if inventory is not None:
-        try:
-            orphan = orphan_warning(
-                inventory, referenced=referenced_keys(d.elements for d in documents)
-            )
-            orphan_creds = orphan_creds_warning(inventory)
-        except InventoryError as e:
-            orphan = f"inventory '{inventory.label}': could not list records: {e}"
-            orphan_creds = None
-        # Read AFTER the orphan check, never before: the notice is set by the
-        # resolution that check performs, and construction touches nothing.
-        snapshot = snapshot_cache_of(inventory=inventory)
-        stale = snapshot.stale_notice if snapshot is not None else None
-        # Staleness first — it is the fact that qualifies every finding under
-        # it, orphan list included.
-        warnings.extend(
-            w for w in (stale, orphan, orphan_creds, *creds_mode_warnings(inventory)) if w
+    view = doctor.view
+    referenced = referenced_by_name(references=parsed.references(), view=view)
+    for name in doctor.inventories.declared:
+        if doctor.inventories.failure(name) is not None:
+            continue  # the problem is already in the lab verdict
+        findings = _inventory_findings(
+            doctor.inventories[name], referenced=referenced.get(name, set())
         )
+        warnings.extend(_attributed(view=view, name=name, text=w) for w in findings)
     return warnings
+
+
+def _inventory_findings(inventory: "Inventory", *, referenced: set[str]) -> list[str]:
+    """Return one inventory's findings: stale notice, orphans, orphan creds, creds modes."""
+    from ..inventory.cache import snapshot_cache_of
+    from ..inventory.doctor import creds_mode_warnings, orphan_creds_warning, orphan_warning
+    from ..inventory.errors import InventoryError
+
+    try:
+        orphan = orphan_warning(inventory, referenced=referenced)
+        orphan_creds = orphan_creds_warning(inventory)
+    except InventoryError as e:
+        orphan = f"inventory '{inventory.label}': could not list records: {e}"
+        orphan_creds = None
+    # Read AFTER the orphan check, never before: the notice is set by the
+    # resolution that check performs, and construction touches nothing.
+    snapshot = snapshot_cache_of(inventory=inventory)
+    stale = snapshot.stale_notice if snapshot is not None else None
+    # Staleness first — it is the fact that qualifies every finding under
+    # it, orphan list included.
+    return [w for w in (stale, orphan, orphan_creds, *creds_mode_warnings(inventory)) if w]
 
 
 def _validate_tests(root: Path) -> list[str]:

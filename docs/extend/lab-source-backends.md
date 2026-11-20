@@ -112,6 +112,70 @@ just make it a decision rather than an omission.
   "Freshness"). A source that is regularly slower than the default should have
   the timeout raised, not rely on the cache asking again every five minutes.
 
+### Named inventories: the view capabilities
+
+A process can hold several named inventories, and a host entry can reference
+one of them with a qualified `{"name": "<inventory>", "key": "<key>"}`
+reference ({doc}`../configuration/inventory`). Otto keeps them in an
+[`InventoryView`](../api/inventory.rst). A backend that wants qualified
+references to reach their inventory implements any of four further optional
+capabilities. Otto detects each one structurally, as it detects
+`list_host_summaries`:
+
+`load_lab_in_view(name, *, preferences=None, view) -> Lab` ([`SupportsInventoryView`](../api/labs.rst))
+: `load_lab`, with every entry resolved through the whole view by
+  `resolve_view_entry(record, view=view, element=element)` instead of
+  `resolve_host_entry`.
+
+`list_host_summaries_in_view(*, view) -> list[HostSummary]` ([`SupportsHostSummariesInView`](../api/labs.rst))
+: `list_host_summaries`, under the same contract and the same conformance
+  rules, resolved through the view. Fill each summary's `inventory_ref` from
+  the resolved entry's `ref`. That is the qualified identity it came from.
+
+`list_lab_status(*, view) -> list[LabStatus]` ([`SupportsLabStatus`](../api/labs.rst))
+: One [`LabStatus`](../api/labs.rst) per lab you declare. A lab that cannot
+  be loaded now carries a `Diagnostic(where=..., reason=...)` as
+  `unavailable`. Without this method, every `list_labs()` name is available.
+
+`lab_scope() -> LabScope | None` ([`SupportsLabScope`](../api/labs.rst))
+: The lab names you can declare at all: exact `names` and literal
+  `prefixes` (a prefix is plain text, not a pattern). `None` means unscoped.
+  Otto never loads a lab outside the scope from you, even when you are
+  healthy, so your elements reach only labs inside it. A status for a lab
+  outside it is refused as a broken backend. In return, when you fail, only
+  the labs inside your scope fail
+  ({ref}`source-failure-scope`).
+
+Otto reaches every source through
+[`load_lab_through`, `lab_statuses`, `lab_scope_of`](../api/labs.rst) and
+[`host_summaries_in_view`](../api/labs.rst), which choose the capability when
+it exists and today's call when it does not. **A backend with none of these
+keeps working unchanged.** Its `load_lab` and `list_host_summaries` receive,
+as `inventory`:
+
+- the process `default` inventory, exactly as before, in a project that has
+  no `[[inventories]]` or binds `default` itself;
+- `None` when no `default` is configured;
+- a refusing stand-in, {class}`~otto.inventory.RefusedDefault`, in a project
+  that declares `[[inventories]]` without binding `default`. Its `lookup`
+  refuses each bare reference with
+  {class}`~otto.inventory.BareReferenceRefused`, and the refusal is
+  recorded once as a completion drop, so a backend that swallows
+  `InventoryError` in its summaries still loses the entry visibly.
+
+```{note}
+The refusal holds for a backend that resolves references through
+`resolve_host_entry`, `resolve_view_entry` or `inventory.lookup`. A backend
+that reads references some other way (its own record store, or a field it
+interprets itself) is outside this guarantee: otto cannot refuse what it
+never sees.
+```
+
+Through `inventory=` alone a backend reaches `default` and nothing else:
+`resolve_host_entry` refuses a qualified reference to any other inventory,
+saying it needs a named-inventory view. Implement `load_lab_in_view` (and
+`list_host_summaries_in_view`) for those references to resolve.
+
 ## Writing a custom backend
 
 A backend is any class satisfying the two required methods (plus, optionally,
@@ -347,3 +411,61 @@ the method during a later cleanup leaves conformance green while completion
 quietly falls back to loading every lab. The kwarg turns that absence into a
 named failure, so the fast path you meant to keep is one you are told about
 losing.
+
+### Inventory references in your test data
+
+The helper loads every lab with `load_lab(name)` and no inventory by default,
+so a lab whose hosts reference an inventory (`"inventory": "dut1"`) fails to
+load. Pass the inventory your fixture's references resolve through as
+`inventory=`: every load, the repeated load, `expected_labs` and the summaries
+cross-check then bind it, exactly as otto binds the process `default`:
+
+```{doctest}
+>>> import json, tempfile
+>>> from pathlib import Path
+>>> from otto.examples.lab_repository import ExampleLabRepository
+>>> from otto.inventory import JsonInventory
+>>> from otto.testing import assert_lab_repository_conforms
+>>> creds = [{"login": "admin", "password": "admin"}]
+>>> repository = ExampleLabRepository(
+...     labs={"east": [{"name": "router1", "hosts": [{"inventory": "dut1", "creds": creds}]}]}
+... )
+>>> with tempfile.TemporaryDirectory() as tmp:
+...     path = Path(tmp) / "inventory.json"
+...     _ = path.write_text(json.dumps({"dut1": {"ip": "10.0.0.5"}}))
+...     assert_lab_repository_conforms(
+...         repository, inventory=JsonInventory(path), expected_ips={"router1": "10.0.0.5"}
+...     )
+```
+
+`expected_ips` maps a host id to the address it must load at, and to the
+address its summary must give when you offer summaries. It is the check a
+backend cannot pass by accident: one that resolves a reference somewhere else
+loads, but at the wrong address.
+
+If your data holds qualified references to named inventories, pass a `view=`
+instead: an [`InventoryView`](../api/inventory.rst) holding those inventories
+by name. Every probe then goes through
+[`load_lab_through` and `host_summaries_in_view`](../api/labs.rst), the
+adapters otto itself uses, so your backend is checked on the route it is
+reached by. Pass `expected_ips` for a host whose reference names an inventory
+other than `default`: it is what fails a backend that ignores the view.
+
+### What the helper checks for each capability
+
+Each optional capability is checked on its own, only when your backend
+implements it ([the view capabilities](#named-inventories-the-view-capabilities)):
+
+| Capability | The rule |
+| ---------- | -------- |
+| `list_lab_status` | The statuses name exactly the labs `list_labs()` returns, and every unavailable status states a reason. A lab reported unavailable is never loaded by any probe. |
+| `lab_scope` | It returns `None` or a `LabScope`, and every lab you report is inside it. |
+| `load_lab_in_view`, without `view=` | Under the view `inventory=` stands for (it reaches `default` only), each lab loads to the same hosts at the same addresses as `load_lab(name, inventory=inventory)`. |
+| `load_lab_in_view`, with `view=` | The two loads are never compared, because `load_lab` rightly refuses a qualified reference to a named inventory. `expected_ips` is checked on the loads through the view instead. |
+| `list_host_summaries` and `list_host_summaries_in_view` | The summaries and the loads agree id for id and field for field, under the same binding. |
+
+The unknown-name probe expects {class}`~otto.labs.LabNotFoundError`. A
+{class}`~otto.labs.LabUnavailableError` is accepted instead when it reports a
+failed source (`declared=False`), on the error's own word: the helper does not
+check the failed source's scope. One that reports a declaration
+(`declared=True`) fails, because nothing declares an unknown name.

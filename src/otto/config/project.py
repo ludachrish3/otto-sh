@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     import otto.config.version
 
     from ..declared import DeclaredEntry
+    from ..inventory.view import InventoryView
+    from ..labs.composite import LabStatusReport
     from ..labs.sources import PendingLabSource
     from ..models.dependencies import ParsedDependency
     from ..models.settings import OsProfileSpec, OttoEnvSettings
@@ -420,26 +422,50 @@ class Project:
         self.root = self.root.absolute()
         self.parse_settings()
 
-    def get_lab_panel(self) -> "Panel":
-        """Build a Rich panel listing all lab names available from this project's host source."""
+    def get_lab_panel(
+        self,
+        *,
+        report: "LabStatusReport | None" = None,
+        view: "InventoryView | None" = None,
+    ) -> "Panel":
+        """Build a Rich panel listing the labs this project's host sources declare.
+
+        With *report* (``otto --list-labs`` builds one over every project's
+        sources), the rows are the labs some source of this project declares,
+        as *report* decided them: ``• name`` for an available lab,
+        ``• name — unavailable: reason`` otherwise, then one
+        ``⚠ source X unavailable: reason`` row for each of this project's
+        sources that failed. Without one, the project's own sources are built
+        alone (:func:`~otto.labs.sources.build_lab_sources`) and asked for
+        their own report through *view* (by default a deferred view of this
+        project alone); a failure of either shows ``⚠ host source
+        unavailable: <error>`` in place of the labs. *view* is not used when
+        *report* is given. Listing promises a lab's status only: loading it
+        can still fail.
+        """
         from rich.panel import Panel
         from rich.text import Text
 
-        from ..labs.errors import LabRepositoryError
-        from ..labs.sources import build_lab_sources
-
         if not self.lab_sources:
             lab_name_text = Text("no [[lab.sources]] declared", style="dim")
+        elif report is not None:
+            lab_name_text = _lab_rows(report=report, project_root=self.root)
         else:
+            from ..inventory.config import deferred_inventory_view
+            from ..labs.sources import build_lab_sources
+            from ..labs.views import LISTING_ERRORS
+
             try:
                 repository = build_lab_sources(projects=[self])
-                lab_names = repository.list_labs()
-            except (ValueError, LabRepositoryError) as e:
+                own = repository.lab_status_report(
+                    view=view if view is not None else deferred_inventory_view(projects=[self])
+                )
+            except LISTING_ERRORS as e:
                 # Panel rendering must never crash on a misconfigured/unreachable
                 # host source; surface the reason in-panel instead of a traceback.
                 lab_name_text = Text(f"⚠ host source unavailable: {e}", style="red")
             else:
-                lab_name_text = Text("\n".join(f"• {lab_name}" for lab_name in lab_names))
+                lab_name_text = _lab_rows(report=own, project_root=self.root)
 
         return Panel(
             lab_name_text,
@@ -595,6 +621,11 @@ class Project:
         dict, so this module never has to import :mod:`otto.inventory` (which
         would invert the layering). The backend's configuration model parses
         and anchors the backend's keys in :func:`otto.inventory.config.compile_inventory`.
+
+        A raw view only: bootstrap and the doctor read a project's inventory
+        tables through :func:`otto.inventory.config.inventory_declaration`,
+        which also reads ``[[inventories]]`` and refuses a table of the wrong
+        shape. This property skips those checks.
         """
         return self.settings.get("inventory", {}) or {}
 
@@ -606,6 +637,10 @@ class Project:
         TOML like ``inventory_settings``, so this module never imports
         :mod:`otto.creds`. The store's configuration model parses and anchors
         its keys in :func:`otto.creds.config.compile_creds`.
+
+        A raw view only, like ``inventory_settings``: bootstrap reads
+        ``[creds]`` through :func:`otto.inventory.config.inventory_declaration`,
+        whose shape checks this property skips.
         """
         return self.settings.get("creds", {}) or {}
 
@@ -799,3 +834,25 @@ def discovered_teardown_deadline() -> "float | None":
         return get_env().teardown_deadline
     except Exception:  # noqa: BLE001 — discovery unavailable (bare library use): the default stands
         return None
+
+
+def _lab_rows(*, report: "LabStatusReport", project_root: Path) -> "Text":
+    """Return the lab rows of the panel of the project at *project_root*, as *report* decided."""
+    from rich.text import Text
+
+    rows: list[str] = []
+    for status in report.statuses_declared_in(project_root=project_root):
+        if status.unavailable is None:
+            rows.append(f"• {status.name}")
+        else:
+            rows.append(f"• {status.name} — unavailable: {status.unavailable.reason}")
+    text = Text("\n".join(rows))
+    for outage in report.unavailable_sources:
+        if outage.source.project_root == project_root:
+            if text:
+                text.append("\n")
+            text.append(
+                f"⚠ source {outage.source.label} unavailable: {outage.diagnostic.reason}",
+                style="red",
+            )
+    return text

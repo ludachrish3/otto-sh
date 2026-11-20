@@ -43,7 +43,7 @@ their key sets. Each section carries its OWN stat-digest, the wall-clock time
 it was generated, and a taint flag::
 
     {
-        "schema": 28,
+        "schema": 31,
         "sections": {
             "names": {
                 "fingerprint": "<sha256 hex>",
@@ -69,7 +69,8 @@ it was generated, and a taint flag::
                         {"name": "flash", "help": "...", "lab_free": false},
                         ...
                     ],
-                    "labs": ["tech1", "tech2", ...]
+                    "labs": ["tech1", "tech2", ...],
+                    "inventory_names": ["default", "physical", ...]
                 }
             },
             "shim": {...}
@@ -144,11 +145,11 @@ from . import corpus_snapshot
 if TYPE_CHECKING:
     import subprocess
     import threading
-    from collections.abc import Callable, Collection, Sequence
+    from collections.abc import Callable, Collection, Hashable, Sequence
     from typing import TypeGuard
 
     from ..host.os_profile import ProfileContext
-    from ..inventory.protocol import Inventory
+    from ..inventory.view import InventoryView
     from ..labs.drops import HostDrop
     from ..labs.protocol import HostSummary
     from .cache_sections import Section
@@ -259,7 +260,13 @@ CACHE_FILENAME = "completion_cache.json"
 #      A v29 writer stored a host enumeration that missed its deadline, as
 #      ``hosts: ["local"]``, for the full TTL. The bump drops EVERY v29 entry,
 #      poisoned or not, so every workspace rebuilds once.
-SCHEMA_VERSION = 30
+# v31: the names payload gains "inventory_names" (the source for
+#      `otto inventory … --inventory <TAB>`), and every inventory term (the
+#      digest's line, the shim's inventory block, the host enumeration)
+#      reads the named-inventory view. The bump is REQUIRED, as v14's was: a
+#      surviving v30 entry would validate with no "inventory_names", and the
+#      shim would answer every `--inventory` TAB with nothing.
+SCHEMA_VERSION = 31
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.
@@ -651,12 +658,16 @@ class _InventoryDigest:
 
 
 def _inventory_fingerprint(projects: list["Project"]) -> "_InventoryDigest":
-    """Return the process inventory's freshness signal (spec 2026-08-28 host-inventory §11).
+    """Return the process inventory view's freshness signal (spec 2026-08-28 host-inventory §11).
 
-    ``none`` without an inventory; the backend's ``fingerprint()`` (file
-    path/mtime/size, or a snapshot hash) when it has one. A backend that
-    returns ``None`` is not cacheable: mix in the clock so the entry never
-    matches — completion stays correct, by loading (documented) — and report
+    ``none`` without an inventory; the view's ``fingerprint()`` otherwise
+    (:meth:`~otto.inventory.InventoryView.fingerprint`): every named
+    inventory's file path/mtime/size or snapshot hash, so a change to any of
+    them moves the digest. A view holding only ``default`` passes that
+    backend's own value through, so a workspace without ``[[inventories]]``
+    keeps its digest. A view that returns ``None`` is not cacheable: mix in
+    the clock so the entry never matches — completion stays correct, by
+    loading (documented) — and report
     ``cacheable=False`` so no writer stores an entry under it
     (:func:`_fingerprint_is_ephemeral`).
 
@@ -680,13 +691,13 @@ def _inventory_fingerprint(projects: list["Project"]) -> "_InventoryDigest":
     ordinary, and every one of them would append a dead entry per invocation,
     which is the growth :func:`_fingerprint_is_ephemeral` exists to stop.
     """
-    from ..inventory.config import build_inventory
+    from ..inventory.config import build_inventory_view
 
     try:
-        inventory = build_inventory(projects=projects)
-        if inventory is None:
+        view = build_inventory_view(projects=projects)
+        if not view.names():
             return _InventoryDigest(text="none", cacheable=True)
-        fp = inventory.fingerprint()
+        fp = view.fingerprint()
     except Exception as e:  # noqa: BLE001 — completion never crashes the shell
         return _InventoryDigest(text=f"error:{type(e).__name__}:{e}", cacheable=False)
     if fp is None:
@@ -1017,7 +1028,7 @@ def read_cache(
     ``docker_images``, ``docker_services_by_use_case``, ``active_projects``,
     ``term_backends``, ``transfer_backends``, ``usernames``, ``commands``,
     ``labs``, ``host_classes_by_id``, ``projects``, ``links``,
-    ``logins_by_host`` and ``docker_default_parent_by_lab`` keys.
+    ``logins_by_host``, ``docker_default_parent_by_lab`` and ``inventory_names`` keys.
     ``instructions`` and ``hosts`` are required; the rest default to empty
     when a payload omits them.
 
@@ -1050,6 +1061,7 @@ def read_cache(
     links = merged.get("links", [])
     logins_by_host = merged.get("logins_by_host", {})
     docker_default_parent_by_lab = merged.get("docker_default_parent_by_lab", {})
+    inventory_names = merged.get("inventory_names", [])
     if (
         not isinstance(instructions, list)
         or not isinstance(test_options, list)
@@ -1071,6 +1083,7 @@ def read_cache(
         or not isinstance(links, list)
         or not isinstance(logins_by_host, dict)
         or not isinstance(docker_default_parent_by_lab, dict)
+        or not isinstance(inventory_names, list)
     ):
         return None
     return {
@@ -1094,6 +1107,7 @@ def read_cache(
         "links": links,
         "logins_by_host": logins_by_host,
         "docker_default_parent_by_lab": docker_default_parent_by_lab,
+        "inventory_names": inventory_names,
     }
 
 
@@ -1172,6 +1186,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     links: list[dict[str, Any]] | None = None,
     logins_by_host: dict[str, list[dict[str, Any]]] | None = None,
     docker_default_parent_by_lab: dict[str, str] | None = None,
+    inventory_names: list[str] | None = None,
     shim: dict[str, Any] | None = None,
     digests: dict[str, str] | None = None,
     tainted: bool = False,
@@ -1234,6 +1249,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
             "links": links or [],
             "logins_by_host": logins_by_host or {},
             "docker_default_parent_by_lab": docker_default_parent_by_lab or {},
+            "inventory_names": inventory_names or [],
         },
     }
     if shim is not None:
@@ -1591,37 +1607,43 @@ def _bounded(
 
 @dataclass(frozen=True)
 class InventoryResolution:
-    """The process inventory as the host enumeration joins against it (spec 2026-08-28 §8).
+    """The process inventory view as the host enumeration joins against it (spec 2026-08-28 §8).
 
-    ``inventory`` is what ``build_inventory`` returned over EVERY active project
-    plus the user file — the resolution dispatch runs — or ``None`` when
-    nothing declares one. ``error`` is set instead when that resolution
-    RAISED (a broken declaration): every project then enumerates as empty,
+    ``view`` is what ``build_inventory_view`` returned over EVERY active
+    project plus the user file — every named inventory, resolved as dispatch
+    resolves them. ``error`` is set instead when that resolution RAISED (a
+    broken declaration of any name): every project then enumerates as empty,
     because a broken declaration fails every lab load at dispatch too, and
-    an id that cannot dispatch is worse offered than withheld.
+    an id that cannot dispatch is worse offered than withheld. Neither is
+    set for a resolution built by hand with no inventory at all.
     """
 
-    inventory: "Inventory | None" = None
+    view: "InventoryView | None" = None
     error: "str | None" = None
 
     @property
-    def label(self) -> str:
-        """Identity for memo keys: the backend's label, ``none``, or the error."""
+    def memo_key(self) -> "Hashable":
+        """Identity for memo keys: the view's ``memo_identity()``, ``none``, or the error.
+
+        The view's identity holds every name's binding (its configuration and
+        what it constructed) and the refusing roots, so two selections that
+        bind a name differently never share an enumeration, even under one
+        display label.
+        """
         if self.error is not None:
             return f"error:{self.error}"
-        if self.inventory is None:
+        if self.view is None:
             return "none"
-        # getattr, not the protocol attribute: this runs on the TAB path, and a
-        # third-party backend missing `label` must not crash the shell.
-        return getattr(self.inventory, "label", type(self.inventory).__name__)
+        return self.view.memo_identity()
 
 
 def resolve_process_inventory(projects: "Sequence[Project]") -> InventoryResolution:
-    """Resolve the ONE inventory every project's host enumeration joins against.
+    """Resolve the ONE inventory view every project's host enumeration joins against.
 
-    ``build_inventory(projects)`` over the whole active set — the same call, over
-    the same projects, that :func:`otto.context.open_context` and the invoke
-    preamble make for dispatch — never per project. Until 2026-09-03 each project
+    ``build_inventory_view(projects)`` over the whole active set — the same
+    resolution, over the same projects, that :func:`otto.context.open_context`
+    and the invoke preamble make for dispatch — never per project. It
+    constructs every named inventory and does no I/O. Until 2026-09-03 each project
     was enumerated against ``build_inventory([project])``: its OWN declaration,
     else the user file. A workspace whose ``[inventory]`` lives in one project
     and whose referencing hosts live in another therefore dispatched those
@@ -1631,18 +1653,25 @@ def resolve_process_inventory(projects: "Sequence[Project]") -> InventoryResolut
 
     Never raises: a broken declaration is logged ONCE here and recorded on the
     result, so :func:`project_host_summaries` answers empty for every project without
-    each of them repeating the warning.
+    each of them repeating the warning. The memo key is taken and hashed
+    here too, inside the same catch, so :attr:`InventoryResolution.memo_key`
+    cannot raise later on the TAB path (a third-party label that is not
+    hashable, say).
     """
-    from ..inventory.config import build_inventory
+    from ..inventory.config import build_inventory_view
 
     try:
-        return InventoryResolution(inventory=build_inventory(projects=list(projects)))
+        view = build_inventory_view(projects=list(projects))
+        # The key the memo actually hashes, so an unhashable binding is this
+        # resolution's error rather than a TypeError on the TAB path.
+        hash(InventoryResolution(view=view).memo_key)
     except Exception as e:  # noqa: BLE001 — completion never crashes the shell
         logging.getLogger(__name__).warning(
             f"[completion] the host inventory could not be resolved, so no host "
             f"completes until it is fixed: {e}"
         )
         return InventoryResolution(error=f"{type(e).__name__}: {e}")
+    return InventoryResolution(view=view)
 
 
 def project_host_summaries(
@@ -1707,12 +1736,12 @@ def _project_enumeration(
     # Keyed on the (hashable) profiles themselves, not their digest: the memo
     # is in-process only, and a digest of a profile holding a secret would
     # read, or create, the install's key on a TAB.
-    key = (str(getattr(project, "root", project)), resolution.label, profiles)
+    key = (str(getattr(project, "root", project)), resolution.memo_key, profiles)
     cached = _SUMMARY_MEMO.get(key)
     if cached is None:
         cached = _bounded(
             lambda abandoned: _enumerate_host_summaries(
-                project, resolution.inventory, profiles, abandoned
+                project, resolution.view, profiles, abandoned
             ),
             project,
         )
@@ -1720,38 +1749,51 @@ def _project_enumeration(
     return cached
 
 
-#: Per-process memo, keyed by project root, the inventory's label and the data
-#: profiles (another project selection may resolve a host differently). Three
+#: Per-process memo, keyed by project root, the inventory view's memo key and
+#: the data profiles (another project selection may resolve a host differently). Three
 #: collectors enumerate the same project on one cache-write pass; without this a
 #: stalled backend cost three deadlines and — worse — could time out for one
 #: collector and not another, writing a cache where `otto host <TAB>` is full
 #: and `otto docker --parent <TAB>` is empty. Process-lifetime only, like the cache
 #: itself; nothing invalidates it because nothing lives long enough to need to.
-_SUMMARY_MEMO: "dict[tuple[str, str, ProfileContext], ProjectEnumeration]" = {}
+_SUMMARY_MEMO: "dict[tuple[str, Hashable, ProfileContext], ProjectEnumeration]" = {}
 
 
 def _enumerate_host_summaries(
     project: "Project",
-    inventory: "Inventory | None",
+    view: "InventoryView | None",
     profiles: "ProfileContext",
     abandoned: "threading.Event | None" = None,
 ) -> ProjectEnumeration:
-    from ..labs.drops import HostDrop, collecting_drops
+    """Summarize *project*'s own sources through *view*; ``None`` is a process with no inventory.
+
+    Each source resolves its references through *view* as its project sees
+    it, so a qualified host resolves through its named inventory, a summary
+    carries its ``inventory_ref`` and a bare reference the project refuses
+    (D1) is one drop. Anything raised, a ``default`` that cannot be built
+    included, is a drop too: completion never raises.
+    """
+    from ..inventory.view import InventoryView
+    from ..labs.drops import HostDrop, collecting_drops, is_refusal
     from ..labs.sources import build_lab_sources
-    from ..labs.summaries import host_summaries
+    from ..labs.summaries import host_summaries_in_view
 
     # The sink is opened HERE, on the enumerating thread (`_bounded` runs this
     # on a worker), so every skip the backends record lands in this list.
     with collecting_drops() as drops:
         try:
             repository = build_lab_sources(projects=[project], profiles=profiles)
-            summaries = host_summaries(repository=repository, inventory=inventory)
+            summaries = host_summaries_in_view(
+                repository=repository,
+                view=InventoryView(inventories={}) if view is None else view,
+            )
         except Exception as e:  # noqa: BLE001 — completion never crashes the shell
             if abandoned is None or not abandoned.is_set():
                 logging.getLogger(__name__).warning(
                     f"[completion] could not enumerate hosts for {project.root}: {e}"
                 )
-            drops.append(HostDrop(where=str(project.root), reason=f"host source failed: {e}"))
+            if not is_refusal(e):  # a refusal recorded its own drop
+                drops.append(HostDrop(where=str(project.root), reason=f"host source failed: {e}"))
             summaries = []
     # One enumeration loads the documents more than once (labs, then
     # summaries), so a malformed file is recorded once per load; the outlet
@@ -1808,6 +1850,25 @@ def collect_docker_capable_host_ids(projects: list["Project"]) -> list[str]:
             if summary.docker_capable:
                 ids.add(summary.id)
     return sorted(ids)
+
+
+def collect_inventory_names(projects: "Sequence[Project]") -> list[str]:
+    """Every inventory name the settings declare: ``otto inventory … --inventory <TAB>``.
+
+    ``default`` when any file binds it, and every ``[[inventories]]`` name,
+    from the projects' settings and the user file alone: the deferred view's
+    catalog lists names without constructing any backend
+    (:func:`~otto.inventory.deferred_inventory_view`), so a TAB never builds
+    or fetches an inventory. A user file that cannot be read contributes no
+    names. Sorted. Never raises: any error yields ``[]``.
+    """
+    from ..inventory.config import deferred_inventory_view
+
+    try:
+        return sorted(deferred_inventory_view(projects=projects).inventories)
+    except Exception as e:  # noqa: BLE001 — completion never crashes the shell
+        logging.getLogger(__name__).debug(f"[completion] could not list inventory names: {e}")
+        return []
 
 
 def collect_docker_use_case_names(projects: list["Project"]) -> list[str]:
@@ -3017,17 +3078,29 @@ def describe_inventory(projects: list["Project"]) -> InventoryDescription:
 
     :func:`resolve_process_inventory` without the warning — this line IS the
     report — then classed the way the digest classes it: a broken declaration
-    and a backend that cannot report freshness are both named, because each
+    and a view that cannot report freshness are both named, because each
     is why nothing is ever written for the workspace and every TAB reloads.
+
+    A view holding only ``default`` is named by that inventory's label, as
+    before named inventories; otherwise each name with its label,
+    ``default: <label>, physical: <label>``.
     """
-    from ..inventory.config import build_inventory
+    from ..host.inventory_ref import DEFAULT_INVENTORY
+    from ..inventory.config import build_inventory_view
+    from ..inventory.view import inventory_label
 
     try:
-        inventory = build_inventory(projects=list(projects))
-        if inventory is None:
+        view = build_inventory_view(projects=list(projects))
+        names = view.names()
+        if not names:
             return InventoryDescription(text="none declared")
-        label = getattr(inventory, "label", type(inventory).__name__)
-        fingerprint = inventory.fingerprint()
+        labels = {name: inventory_label(inventory=view.inventories[name]) for name in names}
+        label = (
+            labels[DEFAULT_INVENTORY]
+            if names == [DEFAULT_INVENTORY]
+            else ", ".join(f"{name}: {text}" for name, text in labels.items())
+        )
+        fingerprint = view.fingerprint()
     except Exception as e:  # noqa: BLE001 — a broken declaration is the finding, not a crash
         return InventoryDescription(
             text=f"BROKEN — {type(e).__name__}: {e} (no host completes until it is fixed)",

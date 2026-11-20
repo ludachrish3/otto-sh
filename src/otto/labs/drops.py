@@ -30,16 +30,30 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
-class HostDrop:
-    """One entry, file, lab or source an enumeration left out."""
+@dataclass(frozen=True, kw_only=True)
+class Diagnostic:
+    """Where something was found wanting, and why: the shape every report here shares.
+
+    A host drop (``otto.labs.drops.HostDrop``) is one; so is the reason a lab
+    is unavailable (:attr:`otto.labs.LabStatus.unavailable`).
+    """
 
     where: str
-    """What was skipped: a file, ``<file>: element 'x' hosts[i]``, ``lab 'y'``,
-    ``source <label>`` — whatever the skip site could name."""
+    """What it concerns, as precisely as the reporting site could name it.
+
+    A file, ``<file>: element 'x' hosts[i]``, ``lab 'y'`` or ``source <label>``."""
 
     reason: str
-    """The error text the skip swallowed."""
+    """The error text, or the stated reason."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class HostDrop(Diagnostic):
+    """One entry, file, lab or source an enumeration left out.
+
+    :attr:`~Diagnostic.where` names what was skipped and
+    :attr:`~Diagnostic.reason` is the error text the skip swallowed.
+    """
 
     timed_out: bool = False
     """Whether this is the enumeration's own deadline, not a skip.
@@ -60,6 +74,30 @@ def record_drop(where: str, reason: str) -> None:
     sink = _SINK.get()
     if sink is not None:
         sink.append(HostDrop(where=where, reason=reason))
+
+
+def is_refusal(error: BaseException) -> bool:
+    """Return whether *error* is a bare-reference refusal, or was raised from or during one.
+
+    The one decision every skip site makes before recording a drop: a
+    refusal recorded its own (:meth:`~otto.inventory.RefusedDefault.refuse`),
+    so a site that catches it, however a backend wrapped it, records none.
+    Both chains are followed: ``__cause__`` (``raise ... from``) and
+    ``__context__`` (raised while handling it).
+    """
+    from ..inventory.errors import BareReferenceRefused  # deferred: completion path
+
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, BareReferenceRefused):
+            return True
+        pending.extend(e for e in (current.__cause__, current.__context__) if e is not None)
+    return False
 
 
 @contextmanager

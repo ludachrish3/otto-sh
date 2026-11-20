@@ -1069,6 +1069,7 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ),
     ("otto/host/__init__.py", "otto.result:CommandResult", FACADE_BINDING),
     ("otto/host/__init__.py", "otto.result:Results", FACADE_BINDING),
+    ("otto/inventory/__init__.py", "otto.utils:parse_max_stale", FACADE_BINDING),
     # The otto.lab facade, at entry.
     ("otto/lab/__init__.py", "otto.labs.loader:Lab", FACADE_BINDING),
     ("otto/lab/__init__.py", "otto.labs.loader:load_lab", FACADE_BINDING),

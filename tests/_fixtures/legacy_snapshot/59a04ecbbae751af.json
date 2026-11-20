@@ -1,0 +1,56 @@
+{
+  "nb1": {
+    "board": "cx-4",
+    "extra": {
+      "asset_tag": "A-1",
+      "id": 1,
+      "serial": "S1",
+      "status": "active",
+      "tags": [
+        "lab"
+      ]
+    },
+    "ip": "10.20.0.1",
+    "is_virtual": false,
+    "os_name": "Ubuntu",
+    "rack": 1,
+    "shelf": 3,
+    "site": "lab-a"
+  },
+  "nb2": {
+    "board": "cx-4",
+    "extra": {
+      "asset_tag": "A-2",
+      "id": 2,
+      "serial": "S2",
+      "status": "active",
+      "tags": [
+        "lab"
+      ]
+    },
+    "ip": "10.20.0.2",
+    "is_virtual": false,
+    "os_name": "Ubuntu",
+    "rack": 2,
+    "shelf": 7,
+    "site": "lab-a"
+  },
+  "nb3": {
+    "board": "cx-4",
+    "extra": {
+      "asset_tag": "A-3",
+      "id": 3,
+      "serial": "S3",
+      "status": "active",
+      "tags": [
+        "lab"
+      ]
+    },
+    "ip": "10.20.0.3",
+    "is_virtual": false,
+    "os_name": "Debian",
+    "rack": 1,
+    "shelf": 3,
+    "site": "lab-b"
+  }
+}

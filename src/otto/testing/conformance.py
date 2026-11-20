@@ -39,16 +39,33 @@ from typing import Any
 
 from ..creds.protocol import CredsStore
 from ..host.remote_host import RemoteHost
+from ..inventory.discovery import Discovery, SupportsDiscovery, discover_inventory
 from ..inventory.errors import InventoryKeyError
 from ..inventory.protocol import Inventory
-from ..labs.errors import LabNotFoundError
+from ..inventory.snapshot import stated_fields
+from ..inventory.view import InventoryView
+from ..labs.errors import LabNotFoundError, LabUnavailableError
 from ..labs.loader import Lab
-from ..labs.protocol import HostSummary, LabRepository, SupportsHostSummaries, logins_of_creds
+from ..labs.protocol import (
+    HostSummary,
+    LabRepository,
+    LabScope,
+    LabStatus,
+    SupportsHostSummaries,
+    SupportsHostSummariesInView,
+    SupportsInventoryView,
+    SupportsLabScope,
+    SupportsLabStatus,
+    logins_of_creds,
+)
+from ..labs.summaries import host_summaries_in_view
+from ..labs.views import lab_scope_of, lab_statuses, load_lab_through
 from ..models.base import CredSpec
 from ..models.inventory import (
     FILLABLE_INVENTORY_FIELDS,
     INVENTORY_KEY_FIELDS,
     SUPPLIES_EXEMPT_FIELDS,
+    InventoryInstance,
     InventoryRecord,
 )
 from ..reservations.check import ReservationBackendError
@@ -99,6 +116,9 @@ def assert_lab_repository_conforms(
     *,
     expected_labs: list[str] | None = None,
     expect_host_summaries: bool = False,
+    inventory: Inventory | None = None,
+    view: InventoryView | None = None,
+    expected_ips: dict[str, str] | None = None,
 ) -> None:
     """Assert *repository* satisfies the :class:`~otto.labs.protocol.LabRepository` contract.
 
@@ -113,6 +133,40 @@ def assert_lab_repository_conforms(
     referenced entry in its data would pass every behavioural rule while
     silently dropping the argument the moment one appears.
 
+    The probes run in one of two modes. By default (*view* absent) every load
+    is ``load_lab(name, inventory=inventory)``, the legacy call, and the
+    capabilities are checked under the view that argument stands for,
+    :meth:`InventoryView.of_default(inventory=inventory)
+    <otto.inventory.InventoryView.of_default>`, which reaches ``default``
+    only. With a named *view*, every load goes through
+    :func:`~otto.labs.load_lab_through` and every summary through
+    :func:`~otto.labs.host_summaries_in_view`, the adapters production uses,
+    so a qualified ``{"name": ..., "key": ...}`` reference reaches its named
+    inventory. A lab the source reports unavailable is never loaded, and an
+    unknown name may raise :class:`~otto.labs.LabUnavailableError` instead of
+    :class:`~otto.labs.LabNotFoundError` when a failed source's scope
+    contains it.
+
+    Each optional capability is checked on its own, only when the repository
+    implements it:
+
+    - :class:`~otto.labs.protocol.SupportsLabStatus`: the statuses name
+      exactly the labs ``list_labs()`` returns, and every unavailable status
+      states a reason.
+    - :class:`~otto.labs.protocol.SupportsLabScope`: ``lab_scope()`` is
+      ``None`` or a :class:`~otto.labs.LabScope`, and every lab the source
+      reports is inside it.
+    - :class:`~otto.labs.protocol.SupportsInventoryView`, by default: each
+      lab loads to the same hosts at the same addresses through the view as
+      through ``load_lab(inventory=inventory)``. With a named *view* the two
+      are never compared (the legacy call rightly refuses a qualified
+      reference to a named inventory); *expected_ips* is what tells a backend
+      that ignores the view apart.
+    - :class:`~otto.labs.protocol.SupportsHostSummaries` and
+      :class:`~otto.labs.protocol.SupportsHostSummariesInView`: the summaries
+      agree with the loads, id for id and field for field, under the same
+      binding.
+
     Parameters
     ----------
     repository : LabRepository
@@ -121,16 +175,37 @@ def assert_lab_repository_conforms(
         Optional lab names the caller knows the backend should provide.
     expect_host_summaries : bool
         When ``True``, the optional
-        :class:`~otto.labs.protocol.SupportsHostSummaries` capability is
-        required rather than merely honoured: a repository that does not
-        implement ``list_host_summaries`` FAILS instead of being skipped for
-        those rules. Defaults to ``False``, which keeps the skip-on-absent
+        :class:`~otto.labs.protocol.SupportsHostSummaries` capability (or its
+        in-view form) is required rather than merely honoured: a repository
+        that implements neither FAILS instead of being skipped for those
+        rules. Defaults to ``False``, which keeps the skip-on-absent
         behaviour the contract mandates — absence of the capability is legal.
         Pass ``True`` from your own suite when your repository is meant to
         have it, so a later refactor that drops the method reddens conformance
         instead of silently costing your users the fast completion path.
+    inventory : Inventory | None
+        The ``default`` inventory the probes bind, by default: pass the one
+        your test data's bare ``"inventory": "<key>"`` references resolve
+        through. Ignored when *view* is given. Defaults to ``None``, no
+        inventory, as before.
+    view : InventoryView | None
+        A view holding named inventories. When given, every probe resolves
+        through it (named mode). Defaults to ``None``.
+    expected_ips : dict[str, str] | None
+        Host id to the address each host must have when its lab loads, and in
+        the summaries when the repository offers them. Under a named *view*
+        this is the rule that fails a backend ignoring the view, so pass it
+        for a host whose reference names an inventory other than ``default``.
     """
     c = ExpectCollector()
+    named = view is not None
+    probe_view = view if view is not None else InventoryView.of_default(inventory=inventory)
+
+    def load(name: str) -> Lab:
+        """Load *name* the way this mode's probes do."""
+        if named:
+            return load_lab_through(repository=repository, name=name, view=probe_view)
+        return _legacy_load(repository, name, inventory=inventory)
 
     c.expect(
         isinstance(repository, LabRepository),
@@ -158,6 +233,12 @@ def assert_lab_repository_conforms(
         names_ok,
         msg=f"LabRepository: list_labs() must return a list, got {type(names).__name__}",
     )
+    statuses = _expect_lab_statuses_conform(
+        c, repository, names=names if names_ok else None, view=probe_view
+    )
+    unavailable = {s.name for s in statuses if not s.available}
+    available: list[str] = []
+    built: dict[str, Lab] = {}
     if names_ok:
         for n in names:
             c.expect(
@@ -167,52 +248,123 @@ def assert_lab_repository_conforms(
                     f"got {type(n).__name__} ({n!r})"
                 ),
             )
+        available = [n for n in names if isinstance(n, str) and n not in unavailable]
+        built = _expect_labs_load(c, names=available, load=load)
 
-        for n in names:
-            if not isinstance(n, str):
+    _expect_unknown_lab_refused(c, load=load)
+
+    if expected_labs is not None:
+        listed = set(names) if names_ok else set()
+        for n in expected_labs:
+            c.expect(n in listed, msg=f"LabRepository: expected lab {n!r} to appear in list_labs()")
+            if n in unavailable:
                 continue
             try:
-                lab = repository.load_lab(n)
+                load(n)
             except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
                 c.expect(
-                    False, msg=f"LabRepository: load_lab({n!r}) raised {type(e).__name__}: {e}"
+                    False,
+                    msg=f"LabRepository: expected lab {n!r} to load, got {type(e).__name__}: {e}",
                 )
-                continue
-            is_lab = isinstance(lab, Lab)
-            c.expect(
-                is_lab,
-                msg=f"LabRepository: load_lab({n!r}) must return a Lab, got {type(lab).__name__}",
-            )
-            if is_lab:
-                for host_id, host in lab.hosts.items():
-                    c.expect(
-                        isinstance(host, RemoteHost),
-                        msg=f"LabRepository: lab {n!r} host {host_id!r} must be a "
-                        f"RemoteHost, got {type(host).__name__}",
-                    )
-                    c.expect(
-                        host_id == getattr(host, "id", None),
-                        msg=f"LabRepository: lab {n!r} host key {host_id!r} must equal "
-                        f"host.id {getattr(host, 'id', None)!r}",
-                    )
-                try:
-                    lab2 = repository.load_lab(n)
-                except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
-                    c.expect(
-                        False,
-                        msg=f"LabRepository: load_lab({n!r}) idempotency re-call raised "
-                        f"{type(e).__name__}: {e}",
-                    )
-                else:
-                    c.expect(
-                        sorted(lab.hosts) == sorted(lab2.hosts) and lab.resources == lab2.resources,
-                        msg=f"LabRepository: load_lab({n!r}) must be idempotent "
-                        f"(two calls must yield equivalent labs)",
-                    )
 
-    # Unknown lab must raise LabNotFoundError (not return None / bare KeyError).
+    if isinstance(repository, SupportsLabScope):
+        _expect_lab_scope_conforms(c, repository, statuses=statuses)
+    if isinstance(repository, SupportsInventoryView) and not named:
+        _expect_view_load_matches_legacy(c, repository, built=built, view=probe_view)
+    summarized = _expect_summaries_capabilities(
+        c,
+        repository,
+        names=available if names_ok else None,
+        expect_host_summaries=expect_host_summaries,
+        inventory=inventory,
+        view=view,
+        probe_view=probe_view,
+        load=load,
+    )
+
+    if expected_ips is not None:
+        _expect_addresses(
+            c,
+            expected_ips=expected_ips,
+            built=built,
+            summaries=(
+                (lambda: host_summaries_in_view(repository=repository, view=probe_view))
+                if summarized
+                else None
+            ),
+            where="under the supplied view" if named else "under inventory=",
+        )
+    elif named:
+        _LOG.info(
+            "assert_lab_repository_conforms: no expected_ips, so nothing tells a backend "
+            "that ignores the view apart; pass expected_ips for a qualified reference"
+        )
+
+    c.raise_if_failures()
+
+
+def _expect_labs_load(
+    c: ExpectCollector, *, names: list[str], load: "Callable[[str], Lab]"
+) -> dict[str, Lab]:
+    """Check each lab of *names* loads to a valid, repeatable :class:`~otto.labs.loader.Lab`.
+
+    Returns the labs that loaded, by name.
+    """
+    built: dict[str, Lab] = {}
+    for n in names:
+        try:
+            lab = load(n)
+        except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
+            c.expect(False, msg=f"LabRepository: load_lab({n!r}) raised {type(e).__name__}: {e}")
+            continue
+        is_lab = isinstance(lab, Lab)
+        c.expect(
+            is_lab,
+            msg=f"LabRepository: load_lab({n!r}) must return a Lab, got {type(lab).__name__}",
+        )
+        if not is_lab:
+            continue
+        built[n] = lab
+        for host_id, host in lab.hosts.items():
+            c.expect(
+                isinstance(host, RemoteHost),
+                msg=f"LabRepository: lab {n!r} host {host_id!r} must be a "
+                f"RemoteHost, got {type(host).__name__}",
+            )
+            c.expect(
+                host_id == getattr(host, "id", None),
+                msg=f"LabRepository: lab {n!r} host key {host_id!r} must equal "
+                f"host.id {getattr(host, 'id', None)!r}",
+            )
+        try:
+            lab2 = load(n)
+        except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
+            c.expect(
+                False,
+                msg=f"LabRepository: load_lab({n!r}) idempotency re-call raised "
+                f"{type(e).__name__}: {e}",
+            )
+        else:
+            c.expect(
+                sorted(lab.hosts) == sorted(lab2.hosts) and lab.resources == lab2.resources,
+                msg=f"LabRepository: load_lab({n!r}) must be idempotent "
+                f"(two calls must yield equivalent labs)",
+            )
+    return built
+
+
+def _expect_unknown_lab_refused(c: ExpectCollector, *, load: "Callable[[str], Lab]") -> None:
+    """Check an unknown name raises :class:`~otto.labs.LabNotFoundError`.
+
+    Not ``None`` and not a bare ``KeyError``. A
+    :class:`~otto.labs.LabUnavailableError` reporting a failed source
+    (``declared=False``) is accepted on the error's own word: only the
+    repository knows which source failed and what its scope holds, so this
+    helper does not re-decide it. A declared one fails: a declaration cannot
+    mark a name nobody declares.
+    """
     try:
-        repository.load_lab(_NO_SUCH_LAB)
+        load(_NO_SUCH_LAB)
         c.expect(
             False,
             msg=f"LabRepository: load_lab({_NO_SUCH_LAB!r}) must raise LabNotFoundError "
@@ -220,6 +372,12 @@ def assert_lab_repository_conforms(
         )
     except LabNotFoundError:
         pass
+    except LabUnavailableError as e:
+        c.expect(
+            not e.declared,
+            msg=f"LabRepository: an unknown lab must raise LabNotFoundError, got a declared "
+            f"LabUnavailableError: {e}",
+        )
     except Exception as e:  # noqa: BLE001 — conformance check, distinguishes unexpected exception from LabNotFoundError
         c.expect(
             False,
@@ -227,41 +385,274 @@ def assert_lab_repository_conforms(
             f"{type(e).__name__}: {e}",
         )
 
-    if expected_labs is not None:
-        listed = set(names) if names_ok else set()
-        for n in expected_labs:
-            c.expect(n in listed, msg=f"LabRepository: expected lab {n!r} to appear in list_labs()")
-            try:
-                repository.load_lab(n)
-            except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
-                c.expect(
-                    False,
-                    msg=f"LabRepository: expected lab {n!r} to load, got {type(e).__name__}: {e}",
-                )
 
+def _expect_summaries_capabilities(
+    c: ExpectCollector,
+    repository: LabRepository,
+    *,
+    names: list[str] | None,
+    expect_host_summaries: bool,
+    inventory: Inventory | None,
+    view: InventoryView | None,
+    probe_view: InventoryView,
+    load: "Callable[[str], Lab]",
+) -> bool:
+    """Check whichever host-summaries capabilities *repository* implements.
+
+    By default (*view* ``None``) the legacy ``list_host_summaries`` is checked
+    against the legacy loads, and the in-view form against loads through
+    *probe_view*. Under a named *view* the summaries are read the way
+    production reads them, through :func:`~otto.labs.host_summaries_in_view`.
+    *names* are the labs to load, or ``None`` when ``list_labs()`` failed.
+    Returns whether the summaries can be read at all.
+    """
     # Optional capability: only checked when the backend advertises it (the
     # same shape as SupportsUsernameCompletion for reservation backends).
     # `expect_host_summaries=True` turns that skip into a failure, because
     # absence is legal for the contract but not necessarily for THIS caller.
-    if expect_host_summaries and not isinstance(repository, SupportsHostSummaries):
+    legacy = isinstance(repository, SupportsHostSummaries)
+    in_view = isinstance(repository, SupportsHostSummariesInView)
+    if expect_host_summaries and not (legacy or in_view):
         c.expect(
             False,
-            msg="SupportsHostSummaries: expect_host_summaries=True, but the repository does not "
-            "implement list_host_summaries() — completion would fall back to loading every "
-            "lab instead of the fast path this caller asserts it has",
+            msg="SupportsHostSummaries: expect_host_summaries=True, but the repository "
+            "implements neither list_host_summaries() nor list_host_summaries_in_view() — "
+            "completion would fall back to loading every lab instead of the fast path this "
+            "caller asserts it has",
         )
-    if isinstance(repository, SupportsHostSummaries) and names_ok:
-        _expect_host_summaries_conform(c, repository, names)
+    # A legacy method without the inventory= keyword fails on its signature
+    # alone: calling it any other way than production does certifies nothing.
+    signed = not legacy or _expect_summaries_signature(c, repository)
+    if not (legacy or in_view) or not signed:
+        return False
+    if names is None:
+        return True
+    if legacy and view is None:
+        _expect_host_summaries_conform(
+            c,
+            rule="SupportsHostSummaries",
+            method="list_host_summaries()",
+            summarize=lambda: repository.list_host_summaries(inventory=inventory),
+            load=load,
+            names=names,
+        )
+    if in_view or view is not None:
+        _expect_host_summaries_conform(
+            c,
+            rule="SupportsHostSummariesInView" if in_view else "SupportsHostSummaries",
+            method="list_host_summaries_in_view()" if in_view else "list_host_summaries()",
+            summarize=lambda: host_summaries_in_view(repository=repository, view=probe_view),
+            load=lambda name: load_lab_through(repository=repository, name=name, view=probe_view),
+            names=names,
+        )
+    return True
 
-    c.raise_if_failures()
+
+def _legacy_load(repository: LabRepository, name: str, *, inventory: Inventory | None) -> Lab:
+    """Call the legacy ``load_lab``: with *inventory* when one is bound, else exactly as before."""
+    if inventory is None:
+        return repository.load_lab(name)
+    return repository.load_lab(name, inventory=inventory)
+
+
+def _expect_lab_statuses_conform(
+    c: ExpectCollector,
+    repository: LabRepository,
+    *,
+    names: list[str] | None,
+    view: InventoryView,
+) -> list[LabStatus]:
+    """Return the statuses :func:`~otto.labs.lab_statuses` reports; check the capability's rules.
+
+    The rules run only for a repository implementing
+    :class:`~otto.labs.protocol.SupportsLabStatus`: the statuses name exactly
+    the labs ``list_labs()`` returns (*names*), and every unavailable status
+    states a reason. Any other repository reports every listed lab
+    available, so nothing here can fail for it.
+    """
+    advertised = isinstance(repository, SupportsLabStatus)
+    try:
+        statuses = lab_statuses(repository=repository, view=view)
+    except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
+        c.expect(
+            not advertised,
+            msg=f"SupportsLabStatus: list_lab_status() raised {type(e).__name__}: {e}",
+        )
+        return []
+    if not isinstance(statuses, list):
+        c.expect(
+            False,
+            msg=f"SupportsLabStatus: list_lab_status() must return a list, "
+            f"got {type(statuses).__name__}",
+        )
+        return []
+    valid = [s for s in statuses if isinstance(s, LabStatus)]
+    for s in statuses:
+        c.expect(
+            isinstance(s, LabStatus),
+            msg=f"SupportsLabStatus: entries must be LabStatus, got {type(s).__name__}",
+        )
+    if not advertised:
+        return valid
+    if names is not None:
+        reported = sorted(s.name for s in valid)
+        c.expect(
+            reported == sorted(n for n in names if isinstance(n, str)),
+            msg=f"SupportsLabStatus: list_lab_status() reports {reported} but list_labs() "
+            f"returns {sorted(names)} — the two must name the same labs",
+        )
+    for s in valid:
+        if s.unavailable is None:
+            continue
+        reason = getattr(s.unavailable, "reason", None)
+        c.expect(
+            isinstance(reason, str) and bool(reason.strip()),
+            msg=f"SupportsLabStatus: lab {s.name!r} is unavailable but states no reason "
+            f"({s.unavailable!r}) — `otto --list-labs` would show nothing to act on",
+        )
+    return valid
+
+
+def _expect_lab_scope_conforms(
+    c: ExpectCollector, repository: LabRepository, *, statuses: list[LabStatus]
+) -> None:
+    """Check the :class:`~otto.labs.protocol.SupportsLabScope` capability's rules.
+
+    ``lab_scope()`` is ``None`` or a :class:`~otto.labs.LabScope`, and every lab
+    the repository reports lies inside it: a scoped source's outage fails only
+    the labs in its scope, so a lab outside it would be spared wrongly.
+    """
+    try:
+        scope = lab_scope_of(repository=repository)
+    except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
+        c.expect(False, msg=f"SupportsLabScope: lab_scope() raised {type(e).__name__}: {e}")
+        return
+    if scope is None:
+        return
+    if not isinstance(scope, LabScope):
+        c.expect(
+            False,
+            msg=f"SupportsLabScope: lab_scope() must return None or a LabScope, "
+            f"got {type(scope).__name__}",
+        )
+        return
+    for s in statuses:
+        c.expect(
+            scope.contains(name=s.name),
+            msg=f"SupportsLabScope: the repository reports lab {s.name!r}, which is outside "
+            f"its lab_scope() {scope!r} — its outage would wrongly spare that lab",
+        )
+
+
+def _addresses(lab: Lab) -> dict[str, str]:
+    """Return each host of *lab* by id, with its address."""
+    return {host_id: getattr(host, "ip", "") or "" for host_id, host in lab.hosts.items()}
+
+
+def _expect_view_load_matches_legacy(
+    c: ExpectCollector,
+    repository: LabRepository,
+    *,
+    built: dict[str, Lab],
+    view: InventoryView,
+) -> None:
+    """Check :class:`~otto.labs.protocol.SupportsInventoryView` under the default-only *view*.
+
+    *view* reaches ``default`` alone, so loading through it must give the same
+    hosts at the same addresses as the legacy ``load_lab(inventory=inventory)``
+    did for every lab in *built* (the labs the default-mode probes loaded,
+    which is that legacy call).
+    """
+    for n, legacy in built.items():
+        try:
+            in_view = load_lab_through(repository=repository, name=n, view=view)
+        except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
+            c.expect(
+                False,
+                msg=f"SupportsInventoryView: load_lab_in_view({n!r}) under the default-only "
+                f"view raised {type(e).__name__}: {e}",
+            )
+            continue
+        c.expect(
+            _addresses(in_view) == _addresses(legacy),
+            msg=f"SupportsInventoryView: load_lab_in_view({n!r}) under the default-only view "
+            f"must give the same hosts as load_lab({n!r}, inventory=...): "
+            f"{_addresses(in_view)} vs {_addresses(legacy)}",
+        )
+
+
+def _expect_addresses(
+    c: ExpectCollector,
+    *,
+    expected_ips: dict[str, str],
+    built: dict[str, Lab],
+    summaries: "Callable[[], list[HostSummary]] | None",
+    where: str,
+) -> None:
+    """Check every host of *expected_ips* has its address in the loads and the summaries.
+
+    *built* holds the labs the probes loaded. *summaries*, when the repository
+    offers them, reads them under the same binding.
+    """
+    loaded: dict[str, str] = {}
+    for lab in built.values():
+        loaded.update(_addresses(lab))
+    for host_id, ip in expected_ips.items():
+        got = loaded.get(host_id)
+        c.expect(
+            got == ip,
+            msg=f"InventoryView: {where}, host {host_id!r} must load at {ip!r}, but the "
+            f"lab load gives {got!r} — the backend does not resolve its references "
+            "through the binding it was handed",
+        )
+    if summaries is None:
+        return
+    try:
+        offered = {s.id: s.ip for s in summaries() if isinstance(s, HostSummary)}
+    except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
+        c.expect(False, msg=f"InventoryView: {where}, the summaries raised {type(e).__name__}: {e}")
+        return
+    for host_id, ip in expected_ips.items():
+        got = offered.get(host_id)
+        c.expect(
+            got == ip,
+            msg=f"InventoryView: {where}, host {host_id!r} must be summarized at {ip!r}, but "
+            f"the summaries give {got!r}",
+        )
+
+
+def _expect_summaries_signature(c: ExpectCollector, repository: "SupportsHostSummaries") -> bool:
+    """Check ``list_host_summaries`` takes the ``inventory=`` keyword; return whether it does."""
+    # The call shape production uses (``otto.labs.list_host_summaries`` passes
+    # ``inventory=`` by keyword, spec 2026-08-28 host-inventory §6), checked on
+    # the SIGNATURE first for the same reason ``load_lab``'s is: a backend whose
+    # data holds no referenced entry passes every behavioural rule below with
+    # a no-argument method — and then TypeErrors in the shell the first time
+    # otto calls it for real. This asserter once called it with no arguments
+    # itself, certifying exactly that backend.
+    params = inspect.signature(repository.list_host_summaries).parameters
+    c.expect(
+        "inventory" in params,
+        msg="SupportsHostSummaries: list_host_summaries must accept an inventory= keyword "
+        "(spec 2026-08-28 host-inventory §6; production calls it that way)",
+    )
+    return "inventory" in params
 
 
 def _expect_host_summaries_conform(
     c: ExpectCollector,
-    repository: "SupportsHostSummaries",
+    *,
+    rule: str,
+    method: str,
+    summarize: "Callable[[], list[HostSummary]]",
+    load: "Callable[[str], Lab]",
     names: list[str],
 ) -> None:
-    """Check the optional ``SupportsHostSummaries`` capability's contract.
+    """Check a host-summaries capability's contract: *summarize* agrees with *load*.
+
+    *rule* names the capability in every message and *method* the call that
+    produced the summaries. *summarize* and *load* bind the same inventory, so
+    the two describe the same hosts. *names* are the labs to load.
 
     Three rules, in ascending order of what they cost a user to get wrong:
 
@@ -282,34 +673,16 @@ def _expect_host_summaries_conform(
     say) is reported by the caller's own rules; letting its hosts count here
     made the first rule report every one of them as undispatchable.
     """
-    # The call shape production uses (``otto.labs.list_host_summaries`` passes
-    # ``inventory=`` by keyword, spec 2026-08-28 host-inventory §6), checked on
-    # the SIGNATURE first for the same reason ``load_lab``'s is: a backend whose
-    # data holds no referenced entry passes every behavioural rule below with
-    # a no-argument method — and then TypeErrors in the shell the first time
-    # otto calls it for real. This asserter once called it with no arguments
-    # itself, certifying exactly that backend.
-    params = inspect.signature(repository.list_host_summaries).parameters
-    c.expect(
-        "inventory" in params,
-        msg="SupportsHostSummaries: list_host_summaries must accept an inventory= keyword "
-        "(spec 2026-08-28 host-inventory §6; production calls it that way)",
-    )
-    if "inventory" not in params:
-        return
     try:
-        summaries = repository.list_host_summaries(inventory=None)
+        summaries = summarize()
     except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
-        c.expect(
-            False,
-            msg=f"SupportsHostSummaries: list_host_summaries() raised {type(e).__name__}: {e}",
-        )
+        c.expect(False, msg=f"{rule}: {method} raised {type(e).__name__}: {e}")
         return
 
     if not isinstance(summaries, list):
         c.expect(
             False,
-            msg=f"SupportsHostSummaries: must return a list, got {type(summaries).__name__}",
+            msg=f"{rule}: must return a list, got {type(summaries).__name__}",
         )
         return
 
@@ -318,16 +691,16 @@ def _expect_host_summaries_conform(
         if not isinstance(s, HostSummary):
             c.expect(
                 False,
-                msg=f"SupportsHostSummaries: entries must be HostSummary, got {type(s).__name__}",
+                msg=f"{rule}: entries must be HostSummary, got {type(s).__name__}",
             )
             continue
         c.expect(
             bool(s.id) and isinstance(s.id, str),
-            msg=f"SupportsHostSummaries: every summary needs a non-empty str id, got {s.id!r}",
+            msg=f"{rule}: every summary needs a non-empty str id, got {s.id!r}",
         )
         c.expect(
             s.id not in seen,
-            msg=f"SupportsHostSummaries: duplicate id {s.id!r} — hosts in several labs "
+            msg=f"{rule}: duplicate id {s.id!r} — hosts in several labs "
             f"must merge into one summary with both labs",
         )
         seen.add(s.id)
@@ -336,10 +709,8 @@ def _expect_host_summaries_conform(
     labs_of: dict[str, set[str]] = {}
     loaded: set[str] = set()
     for n in names:
-        if not isinstance(n, str):
-            continue
         try:
-            hosts = repository.load_lab(n).hosts  # ty: ignore[missing-attribute]
+            hosts = load(n).hosts
         except Exception:  # noqa: BLE001, S112 — load failures are reported by the caller's own rules
             continue
         loaded.add(n)
@@ -357,7 +728,7 @@ def _expect_host_summaries_conform(
     undispatchable = sorted(comparable - set(constructed))
     c.expect(
         not undispatchable,
-        msg=f"SupportsHostSummaries: ids {undispatchable} are offered by list_host_summaries() "
+        msg=f"{rule}: ids {undispatchable} are offered by {method} "
         f"but no load_lab() produces them — completion would offer ids that cannot dispatch",
     )
 
@@ -370,8 +741,8 @@ def _expect_host_summaries_conform(
     unsummarized = sorted(set(constructed) - seen)
     c.expect(
         not unsummarized,
-        msg=f"SupportsHostSummaries: load_lab() produces {unsummarized} but "
-        f"list_host_summaries() omits them — completion would silently stop offering them",
+        msg=f"{rule}: load_lab() produces {unsummarized} but "
+        f"{method} omits them — completion would silently stop offering them",
     )
 
     for summary in summaries:
@@ -411,14 +782,14 @@ def _expect_host_summaries_conform(
             }.get(field, "")
             c.expect(
                 summarized == built,
-                msg=f"SupportsHostSummaries: {summary.id!r}.{field} is {summarized!r} in the "
+                msg=f"{rule}: {summary.id!r}.{field} is {summarized!r} in the "
                 f"summary but {built!r} on the constructed host" + hint,
             )
         produced_in = labs_of.get(summary.id, set())
         claimed = set(summary.labs)
         c.expect(
             claimed >= produced_in,
-            msg=f"SupportsHostSummaries: {summary.id!r}.labs is {sorted(claimed)} but "
+            msg=f"{rule}: {summary.id!r}.labs is {sorted(claimed)} but "
             f"load_lab() produced it for {sorted(produced_in)} — "
             f"--lab-scoped completion would drop it",
         )
@@ -430,7 +801,7 @@ def _expect_host_summaries_conform(
         overclaimed = sorted((claimed & loaded) - produced_in)
         c.expect(
             not overclaimed,
-            msg=f"SupportsHostSummaries: {summary.id!r}.labs claims {overclaimed} but "
+            msg=f"{rule}: {summary.id!r}.labs claims {overclaimed} but "
             f"load_lab() does not produce it there — `otto host -l <lab> <TAB>` would "
             f"offer an id that cannot dispatch",
         )
@@ -886,6 +1257,12 @@ def assert_inventory_conforms(
     without the inventory and LOAD with it, and at least one host must carry
     ``inventory_ref.referenced`` — a backend that ignores ``inventory=`` fails
     here.
+
+    An inventory implementing the optional
+    :class:`~otto.inventory.SupportsDiscovery` capability is also checked
+    against itself: discovery's record keys equal ``list_keys()``, each of its
+    records equals ``lookup`` of that key, and its instances are ``None`` or a
+    dict of :class:`~otto.models.inventory.InventoryInstance` by name.
     """
     c = ExpectCollector()
     c.expect(
@@ -973,6 +1350,8 @@ def assert_inventory_conforms(
         )
     except Exception as e:  # noqa: BLE001 — conformance check
         c.expect(False, msg=f"Inventory: fingerprint() raised {type(e).__name__}: {e}")
+    if isinstance(inventory, SupportsDiscovery):
+        _expect_discovery_conforms(c, inventory, keys=keys if keys_ok else None)
     if repository is not None and lab is not None:
         try:
             repository.load_lab(lab)
@@ -1002,6 +1381,77 @@ def assert_inventory_conforms(
                 f"{type(e).__name__}: {e}",
             )
     c.raise_if_failures()
+
+
+def _expect_discovery_conforms(
+    c: ExpectCollector, inventory: Inventory, *, keys: list[str] | None
+) -> None:
+    """Check the optional :class:`~otto.inventory.SupportsDiscovery` capability's rules.
+
+    Discovery (read through :func:`~otto.inventory.discover_inventory`, as
+    every reader does) is the same inventory read whole: its record keys are
+    exactly ``list_keys()`` (*keys*), each record equals ``lookup`` of its
+    key and states the same fields
+    (:func:`~otto.inventory.snapshot.stated_fields`), and its instances are
+    ``None`` (unsupported) or a dict of
+    :class:`~otto.models.inventory.InventoryInstance` by name.
+    """
+    try:
+        found = discover_inventory(inventory=inventory)
+    except Exception as e:  # noqa: BLE001 — conformance check
+        c.expect(
+            False, msg=f"SupportsDiscovery: inventory_discovery() raised {type(e).__name__}: {e}"
+        )
+        return
+    if not isinstance(found, Discovery):
+        c.expect(
+            False,
+            msg=f"SupportsDiscovery: inventory_discovery() must return a Discovery, "
+            f"got {type(found).__name__}",
+        )
+        return
+    if keys is not None:
+        c.expect(
+            sorted(found.records) == keys,
+            msg=f"SupportsDiscovery: inventory_discovery() record keys {sorted(found.records)} "
+            f"must equal list_keys() {keys}",
+        )
+    for key, record in found.records.items():
+        try:
+            looked_up = inventory.lookup(key)
+        except Exception as e:  # noqa: BLE001 — conformance check
+            c.expect(
+                False,
+                msg=f"SupportsDiscovery: inventory_discovery() holds record {key!r}, but "
+                f"lookup({key!r}) raised {type(e).__name__}: {e}",
+            )
+            continue
+        c.expect(
+            record == looked_up,
+            msg=f"SupportsDiscovery: inventory_discovery() record {key!r} must equal "
+            f"lookup({key!r}): {record!r} vs {looked_up!r}",
+        )
+        # Equal values can still differ in what they state (a field given at
+        # its default), which otto's join, export and diff all read.
+        stated, stated_by_lookup = stated_fields(record), stated_fields(looked_up)
+        c.expect(
+            record != looked_up or stated == stated_by_lookup,
+            msg=f"SupportsDiscovery: inventory_discovery() record {key!r} states "
+            f"{sorted(stated)} but lookup({key!r}) states {sorted(stated_by_lookup)}",
+        )
+    instances = found.instances
+    c.expect(
+        instances is None
+        or (
+            isinstance(instances, dict)
+            and all(
+                isinstance(name, str) and isinstance(instance, InventoryInstance)
+                for name, instance in instances.items()
+            )
+        ),
+        msg=f"SupportsDiscovery: instances must be None or a dict of InventoryInstance by "
+        f"name, got {instances!r}",
+    )
 
 
 def assert_creds_store_conforms(

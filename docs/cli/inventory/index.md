@@ -15,6 +15,16 @@ inventory — and none of them ever prints a password, whether the credentials
 came from a record or from the `[creds]` store; when a store is configured,
 `lookup` and `list` each print a `creds:` row naming it.
 
+Every verb reads one inventory: `default`, the one a bare `"inventory":
+"<key>"` reference resolves through, unless `--inventory NAME` names a
+[named inventory](../../configuration/inventory.md#named-inventories). Without
+the flag every verb behaves exactly as it did before named inventories
+existed. With it, only that name is built, so a broken `default` does not stop
+`otto inventory list --inventory physical`. A name no settings file declares
+fails with exit 1 (2 for `diff`), listing the declared names. `--inventory`
+completes those names from the settings files alone, without building any
+backend.
+
 ```{important}
 **A stale answer always says so.** When a cached remote inventory is
 unreachable, otto serves the snapshot rather than failing, and `lookup`,
@@ -31,11 +41,11 @@ against an old left side; both still answer, and both tell you.
 ## Synopsis
 
 ```text
-otto inventory lookup KEY
-otto inventory list
-otto inventory export PATH [--force]
-otto inventory diff PATH [OTHER]
-otto inventory refresh
+otto inventory lookup KEY [--inventory NAME]
+otto inventory list [--inventory NAME]
+otto inventory export PATH [--force] [--inventory NAME]
+otto inventory diff PATH [OTHER] [--inventory NAME]
+otto inventory refresh [--inventory NAME]
 ```
 
 ## Subcommands
@@ -44,8 +54,8 @@ otto inventory refresh
 | ---------- | ----------- |
 | `lookup KEY` | The resolved record as a table (creds as login names only), plus the key, the backend label and `supplies` |
 | `list` | Every key with its address, the count and the label, and what the backend skipped |
-| `export PATH` | Write the inventory as a stage-1 JSON file — sorted keys, no `creds`; refuses to overwrite without `--force` |
-| `diff PATH [OTHER]` | Compare the inventory with a stage-1 file, or two files with each other; exit 1 when anything differs |
+| `export PATH` | Write the inventory as a stage-1 JSON file (with its instances, when it declares any) — sorted keys, no `creds`; refuses to overwrite without `--force` |
+| `diff PATH [OTHER]` | Compare the inventory with a stage-1 file, or two files with each other, records and instances; exit 1 when anything differs |
 | `refresh` | Force a fetch of a cached remote inventory and rewrite the snapshot |
 
 ## Exit codes
@@ -53,15 +63,15 @@ otto inventory refresh
 | Outcome | Exit code |
 | --- | --- |
 | The verb answered | 0 |
-| No inventory is declared anywhere, the declaration is broken, the backend could not answer, the key does not exist, `export` refused to overwrite or could not write, `refresh` had nothing to refresh | 1 |
+| No inventory is declared anywhere, `--inventory` names an undeclared inventory, the declaration is broken, the backend could not answer, the key does not exist, `export` refused to overwrite or could not write, `refresh` had nothing to refresh | 1 |
 | `diff` found at least one difference | 1 |
 | `diff` could not compare at all | 2 |
 
 `diff` follows `diff(1)`, so a script can use it as a gate: "the two sides
 disagree" is distinguishable from "I never managed to look". A missing or
-unreadable file, a malformed document, no configured inventory, an inventory
-backend that is down — all of those exit **2**, and only a real difference
-exits 1.
+unreadable file, a malformed document, no configured inventory, an undeclared
+`--inventory` name, an inventory backend that is down — all of those exit
+**2**, and only a real difference exits 1.
 
 ## lookup
 
@@ -110,6 +120,12 @@ and an existing path is refused until you pass `--force`. This is the same
 document shape the `json` backend reads, so an export from NetBox is directly
 usable as a `json` inventory.
 
+An inventory that declares instances is exported as an
+[`otto.inventory.v2` document](../../configuration/inventory.md#declaring-instances-the-ottoinventoryv2-document): its records under `records` and every instance, with its `members` and
+`roles`, under `instances`. Any other inventory is exported as the flat
+document, exactly as before instances existed. The closing line counts both:
+`wrote 2 record(s) and 1 instance(s) from …`.
+
 ## diff
 
 ```bash
@@ -120,12 +136,20 @@ otto inventory diff yesterday.json
 Compares record by record and field by field, `creds` excluded, and exits 1
 when anything differs — or 2 when it could not compare at all (see
 [Exit codes](#exit-codes)). With a second path both sides are files, and the
-configured inventory is never read at all.
+configured inventory is never read at all, and `--inventory` is ignored.
 
 The table distinguishes two kinds of blank: `absent` means the key is not on
 that side at all, `not stated` means the record is there and says nothing
 about that field. A field neither side mentions is not a difference; a field
 one side states at its default and the other omits is.
+
+When either side declares instances, a second table, *instance / field / left
+/ right*, compares them by name, `members` and `roles`, and either table
+having a row exits 1. A role swap therefore shows as one `roles` row even
+though every record agrees. When one side declares instances (even none) and
+the other is a flat document, which cannot, the table holds a single
+`(instances)` row: "declares no instances" and "has no notion of instances"
+are different answers.
 
 ## refresh
 
@@ -133,11 +157,15 @@ one side states at its default and the other omits is.
 otto inventory refresh
 ```
 
-Fetches unconditionally and rewrites the snapshot, whatever the TTL says. Use
-it when you know better than `cache_ttl` — you just added a device, or the
-stale-snapshot warning told you the inventory had been unreachable. It reports
-the replaced snapshot's timestamp in your local time and its age, the number of
-records fetched, and where the snapshot lives.
+Fetches unconditionally and rewrites the snapshot, whatever the TTL says.
+With `--inventory NAME` it refreshes that inventory's snapshot alone; every
+other inventory's snapshot is left as it was. Use it when you know better
+than `cache_ttl` — you just added a device, or the stale-snapshot warning
+told you the inventory had been unreachable. It reports the replaced
+snapshot's timestamp in your local time and its age, the number of records
+fetched, and where the snapshot lives. A backend that declares
+instances keeps them in the snapshot, so a cached inventory answers with the
+same instances its backend does.
 
 An inventory with no snapshot cache exits 1 saying so: a `json` inventory is
 read from its file on every command, and a remote one is cached only when

@@ -23,6 +23,7 @@ from types import SimpleNamespace
 import pytest
 
 import otto.config.completion_cache as cc
+from otto.inventory.config import BuiltBinding
 from otto.labs.drops import HostDrop, collecting_drops, record_drop
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
@@ -492,7 +493,10 @@ def test_describe_inventory_says_when_completion_can_never_cache(tmp_path, monke
     project = _project(tmp_path, {}, hosts=[])
     unfingerprinted = SimpleNamespace(label="probe:live", fingerprint=lambda: None)
     monkeypatch.setattr(
-        "otto.inventory.config.build_inventory", lambda *, projects: unfingerprinted
+        "otto.inventory.config.build_binding_from_declarations",
+        lambda *, declarations, user_settings, user_settings_file=None: BuiltBinding(
+            compiled=None, creds=None, inventory=unfingerprinted
+        ),
     )
 
     described = cc.describe_inventory([project])

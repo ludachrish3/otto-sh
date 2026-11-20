@@ -13,6 +13,12 @@ Configuration
 .. automodule:: otto.inventory.config
    :ignore-module-all:
 
+The inventory view
+------------------
+
+.. automodule:: otto.inventory.view
+   :ignore-module-all:
+
 The backend contract
 --------------------
 

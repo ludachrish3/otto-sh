@@ -75,9 +75,10 @@ Combine lab names with `+` to merge them:
 otto --lab lab_a+lab_b test TestDevice
 ```
 
-Hosts from all labs are merged into a single lab named `lab_a+lab_b`.  If two
-labs define the same host ID, the later lab's definition wins.  `+` is the same
-operator the `Lab` objects themselves use to merge.
+Hosts from all labs are merged into a single lab named `lab_a+lab_b`.  [If two
+labs define the same host ID, the later lab's definition
+wins](../configuration/lab/inventory-references.md#when-two-declarations-are-one-machine).
+`+` is the same operator the `Lab` objects themselves use to merge.
 
 ### Inspecting what a lab holds
 
@@ -110,6 +111,46 @@ no host:
 Every lab also holds `local`, the built-in host for the machine otto runs on;
 commands address it by its ID, `local`. A hop host is reached first, on the way to the
 host behind it.
+
+(listing-labs)=
+
+### What `--list-labs` shows
+
+`--list-labs` prints one panel per project, listing the labs that project's
+sources declare.  otto asks every source, once, whether each lab can be
+loaded now: the same question `--lab` asks before it loads, so the listing and
+a load agree on which labs are unavailable.  A panel's rows are:
+
+- `• bench`: the lab is declared and available.
+- `• bench — unavailable: rack B is being recabled`: the lab cannot be loaded
+  now.  Its last declaration marks it unavailable
+  ({doc}`../configuration/lab/files-and-membership`), or a source whose scope
+  holds it failed.  `--lab bench` fails with the same reason
+  ({ref}`source-failure-scope`).
+- `⚠ source my_project/cmdb unavailable: connection refused`: one of this
+  project's scoped sources failed when asked.  The labs in its scope show as
+  unavailable.
+
+A lab declared by two projects shows in both panels, with the status of its
+last declaration.
+
+When the listing cannot ask every source together (a source cannot be built,
+or a source without a scope fails), each project is listed on its own
+instead.  A project whose own sources fail shows `⚠ host source unavailable:`
+and the error in place of its labs, and the other panels still list theirs.
+
+Listing builds an inventory only when a source needs one to answer.  The
+built-in `json` source never does, so a broken inventory declaration does not
+change its rows; `--lab` reports it.
+
+A listing promises a lab's status, not a successful load.  A lab listed as
+available can still fail to load: a referenced inventory may be down, or its
+data may not validate.
+
+Each project's sources are listed with that project's own OS profiles, as if
+it were the only project.  `--lab` builds every source with the profiles of
+every selected project.  A custom backend whose labs depend on the profiles
+can therefore load a lab with `--lab` that its project's panel does not list.
 
 (list-products-flag)=
 

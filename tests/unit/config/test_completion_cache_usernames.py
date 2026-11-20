@@ -9,7 +9,7 @@ def test_usernames_round_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(cc, "_cache_path", lambda: cache_file)
     # The section digests enumerate real project attributes (root, init,
     # libs, tests, lab_sources), and `_fingerprint_is_ephemeral` reads
-    # `inventory_settings` — absent, that raises, the digest is treated as
+    # `settings` — absent, that raises, the digest is treated as
     # ephemeral, and the write silently stands down. A real Project has them all.
     projects = [fake_project(root=tmp_path / "sut")]
 

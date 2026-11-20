@@ -31,6 +31,8 @@ from ..version import get_version
 from .completers import completion_source
 
 if TYPE_CHECKING:
+    from rich.panel import Panel
+
     from ..config.cache_sections import CliCollectors
     from ..config.project import Project
     from ..declared import BootstrapResult
@@ -106,8 +108,7 @@ def list_labs_callback(value: bool) -> None:
 
         projects = get_projects()
         fail_without_projects(projects)
-        # Extract lab search paths from all projects
-        panels: list[Panel] = [project.get_lab_panel() for project in projects]
+        panels: list[Panel] = _lab_panels(projects)
 
         table = Table(
             show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1)
@@ -118,6 +119,33 @@ def list_labs_callback(value: bool) -> None:
         rprint(table)
 
         raise typer.Exit
+
+
+def _lab_panels(projects: "list[Project]") -> "list[Panel]":
+    """Each project's lab panel, from one status report over every project's sources.
+
+    The report is the one dispatch decides availability with, over a
+    deferred inventory view (nothing is built unless a source uses it), with
+    each source built in its own project's profiles
+    (:func:`~otto.labs.sources.listing_sources`). When the sources cannot be
+    built or a status call fails outside a source's declared scope, each
+    project falls back to its own panel, as before.
+    """
+    from logging import getLogger
+
+    from ..inventory.config import deferred_inventory_view
+    from ..labs.sources import listing_sources
+    from ..labs.views import LISTING_ERRORS
+
+    view = deferred_inventory_view(projects=projects)
+    try:
+        report = listing_sources(projects=projects).lab_status_report(view=view)
+    except LISTING_ERRORS as e:
+        getLogger(__name__).debug(
+            f"listing every project's labs failed, listing each on its own: {e}"
+        )
+        return [project.get_lab_panel(view=view) for project in projects]
+    return [project.get_lab_panel(report=report) for project in projects]
 
 
 def log_level_callback(value: str) -> str:
@@ -955,6 +983,7 @@ DELEGATED_NAMES_KEYS: frozenset[str] = frozenset(
         "links",
         "logins_by_host",
         "docker_default_parent_by_lab",
+        "inventory_names",
     }
 )
 """The remaining ``names`` payload keys. Each is consumed by a completer that
@@ -976,6 +1005,8 @@ verbs complete from (images, the services of a typed use-case, ``--project``).
 ``docker_default_parent_by_lab`` maps each lab to the parent the docker verbs
 default to by the one rule (a lab the rule refuses is absent); the docker
 completers read it to scope a container id to the default parent.
+``inventory_names`` is read by ``otto.cli.inventory``'s ``--inventory``
+completer, which falls back to the settings' declared names on a miss.
 Test names are in no section:
 they live in the per-file test tables (``otto.config.collected_tests``).
 
@@ -1270,6 +1301,7 @@ def entry(cache_stale: bool = False) -> None:
                             collect_host_drops,
                             collect_host_ids,
                             collect_host_ids_by_lab,
+                            collect_inventory_names,
                             collect_lab_names,
                             collect_links,
                             collect_logins_by_host,
@@ -1309,6 +1341,7 @@ def entry(cache_stale: bool = False) -> None:
                                 docker_default_parent_by_lab=collect_docker_default_parent_by_lab(
                                     result.projects
                                 ),
+                                inventory_names=collect_inventory_names(result.projects),
                                 # The shim section's collector, this write's parity
                                 # reference, reads the same _completion_collectors(), so
                                 # the tree has one source and the two cannot drift.

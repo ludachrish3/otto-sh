@@ -4,7 +4,8 @@ Among others: the :class:`Status` enum, the CLI overlays (:class:`Arg`,
 :class:`Opt`, ``Exclude``) and :func:`cli_exposed`, path anchoring
 (:func:`anchor_path`), path-list reading and
 ``OTTOPATH``'s kept spelling (:func:`ottopath_entries`), the
-``cache_ttl`` grammar (:func:`parse_cache_ttl`), the monitor
+``cache_ttl`` and ``max_stale`` grammar (:func:`parse_cache_ttl`,
+:func:`parse_max_stale`), the monitor
 collection-interval floor (:data:`MIN_INTERVAL_SECONDS`), list-option
 splitting and completion helpers, the dry-run headlines, deadline polling
 (:func:`wait_for`, :func:`wait_for_async`), write-then-rename
@@ -332,8 +333,11 @@ def point_at_devnull(fd: int) -> None:
         os.close(devnull)
 
 
-def parse_cache_ttl(text: str) -> timedelta:
+def parse_cache_ttl(text: str, *, setting: str = "cache_ttl") -> timedelta:
     """``"24h"`` → 24 hours; ``"0"`` → no caching (spec §9.5). Units: ``m``, ``h``, ``d``.
+
+    *setting* is the key being parsed, named in every error: the grammar is
+    shared with :func:`parse_max_stale`, whose errors must name ``max_stale``.
 
     Lives here, beside :func:`anchor_path` and for the same reason, rather than
     in the inventory package or beside the inventory record:
@@ -353,13 +357,29 @@ def parse_cache_ttl(text: str) -> timedelta:
     """
     m = _TTL.match(text)
     if m is None:
-        raise ValueError(f"cache_ttl must be '0' or <n>m / <n>h / <n>d, got {text!r}")
+        raise ValueError(f"{setting} must be '0' or <n>m / <n>h / <n>d, got {text!r}")
     if m.group(1) is None:
         return timedelta(0)
     try:
         return int(m.group(1)) * _TTL_UNIT[m.group(2)]
     except OverflowError as e:
-        raise ValueError(f"cache_ttl {text!r} is out of range: {e}") from e
+        raise ValueError(f"{setting} {text!r} is out of range: {e}") from e
+
+
+def parse_max_stale(*, text: str | None) -> timedelta | None:
+    """Parse a backend's ``max_stale`` setting; ``None`` (not set) means no stale data at all.
+
+    The same grammar as ``cache_ttl`` (:func:`parse_cache_ttl`), with the
+    errors naming ``max_stale``. A backend that raises
+    :class:`~otto.inventory.errors.InventoryUnreachableError` passes the result
+    as its ``max_stale``: the snapshot cache then serves an expired snapshot
+    during an outage only while its total age is at most this. Exported as
+    :func:`otto.inventory.parse_max_stale`, the spelling backend authors use.
+
+    Raises:
+        ValueError: *text* is not in the grammar, or is out of range.
+    """
+    return None if text is None else parse_cache_ttl(text, setting="max_stale")
 
 
 MIN_INTERVAL_SECONDS: float = 1.0

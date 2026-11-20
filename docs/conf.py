@@ -430,6 +430,9 @@ _EXTERNAL_DOC_LINKS = {
     # A ``Field(ge=0)`` inside a module-level ``Annotated`` alias (models/monitor.py's
     # WireCount) is stringified bare, as ``Ge``, on the fields that use the alias.
     "Ge": "https://github.com/annotated-types/annotated-types#gt-ge-lt-le",
+    # The same bare stringification for a ``Field(min_length=1)`` alias
+    # (models/inventory.py's InstanceKey, on InventoryInstance.members/.roles).
+    "MinLen": "https://github.com/annotated-types/annotated-types#minlen-maxlen-len",
 }
 
 

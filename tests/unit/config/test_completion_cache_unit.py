@@ -175,6 +175,8 @@ def _ttl_project(tmp_path: Path, backend: str | None = None) -> MagicMock:
         [] if backend is None else [_pending(f"ttl/{backend}#1", backend, project.root, **options)]
     )
     project.reservation_settings = {}
+    # No inventory tables: a MagicMock auto-attribute is not a settings table.
+    project.settings = {}
     return project
 
 
@@ -356,10 +358,9 @@ def test_read_cache_rejects_schema_mismatch(tmp_path: Path, monkeypatch) -> None
     fake_project.init = []
     fake_project.libs = []
     fake_project.tests = []
-    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
-    # as a present-but-empty [inventory] — a shape no real Project produces, and
-    # one `build_inventory` rejects, taking the cache write down with it.
-    fake_project.inventory_settings = {}
+    # A MagicMock auto-attribute is not a table: bootstrap reads the inventory
+    # tables from the raw settings and refuses one, taking the cache write down.
+    fake_project.settings = {}
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     cache_file = cc._cache_path()
@@ -503,10 +504,9 @@ def test_write_read_cache_round_trips_backend_names(tmp_path: Path, monkeypatch)
     fake_project.init = []
     fake_project.libs = []
     fake_project.tests = []
-    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
-    # as a present-but-empty [inventory] — a shape no real Project produces, and
-    # one `build_inventory` rejects, taking the cache write down with it.
-    fake_project.inventory_settings = {}
+    # A MagicMock auto-attribute is not a table: bootstrap reads the inventory
+    # tables from the raw settings and refuses one, taking the cache write down.
+    fake_project.settings = {}
 
     cc.write_cache(
         [fake_project],
@@ -772,10 +772,9 @@ def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> N
     fake_project.init = []
     fake_project.libs = []
     fake_project.tests = []
-    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
-    # as a present-but-empty [inventory] — a shape no real Project produces, and
-    # one `build_inventory` rejects, taking the cache write down with it.
-    fake_project.inventory_settings = {}
+    # A MagicMock auto-attribute is not a table: bootstrap reads the inventory
+    # tables from the raw settings and refuses one, taking the cache write down.
+    fake_project.settings = {}
 
     cc.write_cache(
         [fake_project],
@@ -798,10 +797,9 @@ def test_read_cache_defaults_commands_to_empty_list(tmp_path: Path, monkeypatch)
     fake_project.init = []
     fake_project.libs = []
     fake_project.tests = []
-    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
-    # as a present-but-empty [inventory] — a shape no real Project produces, and
-    # one `build_inventory` rejects, taking the cache write down with it.
-    fake_project.inventory_settings = {}
+    # A MagicMock auto-attribute is not a table: bootstrap reads the inventory
+    # tables from the raw settings and refuses one, taking the cache write down.
+    fake_project.settings = {}
 
     cc.write_cache([fake_project], instructions=[], hosts=[])
     out = cc.read_cache([fake_project])
@@ -819,10 +817,9 @@ def test_write_read_cache_round_trips_hosts_by_lab(tmp_path: Path, monkeypatch) 
     fake_project.init = []
     fake_project.libs = []
     fake_project.tests = []
-    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
-    # as a present-but-empty [inventory] — a shape no real Project produces, and
-    # one `build_inventory` rejects, taking the cache write down with it.
-    fake_project.inventory_settings = {}
+    # A MagicMock auto-attribute is not a table: bootstrap reads the inventory
+    # tables from the raw settings and refuses one, taking the cache write down.
+    fake_project.settings = {}
 
     cc.write_cache(
         [fake_project],
@@ -845,10 +842,9 @@ def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypa
     fake_project.init = []
     fake_project.libs = []
     fake_project.tests = []
-    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
-    # as a present-but-empty [inventory] — a shape no real Project produces, and
-    # one `build_inventory` rejects, taking the cache write down with it.
-    fake_project.inventory_settings = {}
+    # A MagicMock auto-attribute is not a table: bootstrap reads the inventory
+    # tables from the raw settings and refuses one, taking the cache write down.
+    fake_project.settings = {}
 
     cc.write_cache([fake_project], instructions=[], hosts=[])
     out = cc.read_cache([fake_project])
@@ -865,7 +861,7 @@ def test_write_read_cache_round_trips_the_class_map_projects_and_links(tmp_path,
     fake_project.init = []
     fake_project.libs = []
     fake_project.tests = []
-    fake_project.inventory_settings = {}
+    fake_project.settings = {}
     cc.write_cache(
         [fake_project],
         instructions=[],
@@ -891,7 +887,7 @@ def test_read_cache_rejects_a_malformed_class_map(tmp_path, monkeypatch):
     fake_project.init = []
     fake_project.libs = []
     fake_project.tests = []
-    fake_project.inventory_settings = {}
+    fake_project.settings = {}
     cc.write_cache([fake_project], instructions=[], hosts=[])
     data = json.loads(cc._cache_path().read_text())
     data["sections"]["names"]["payload"]["host_classes_by_id"] = ["not", "a", "dict"]
@@ -935,10 +931,10 @@ def _make_fake_project(tmp_path: Path) -> MagicMock:
     fake_project.libs = []
     fake_project.tests = []
     # Pinned rather than left to the auto-attribute: `build_inventory` reads
-    # it, and a MagicMock's is TRUTHY and converts to `{}`, which validates as
-    # a broken [inventory] table — that takes out both the host enumeration
-    # and (since a broken declaration is ephemeral) every cache WRITE.
-    fake_project.inventory_settings = {}
+    # the inventory tables from it, and a MagicMock's is not a table, which
+    # reads as a malformed settings file — that takes out both the host
+    # enumeration and (since a broken declaration is ephemeral) every cache WRITE.
+    fake_project.settings = {}
     # One json source over tmp_path/lab — the built-in backend, which is what
     # these tests exercise.
     fake_project.lab_sources = json_lab_sources(fake_project.root, [tmp_path / "lab"])
@@ -1014,10 +1010,9 @@ def _make_fingerprint_project(
     fake_project.init = init
     fake_project.libs = libs
     fake_project.tests = []
-    # A MagicMock auto-attribute is TRUTHY and `dict()`s to `{}`, which reads
-    # as a present-but-empty [inventory] — a shape no real Project produces, and
-    # one `build_inventory` rejects, taking the cache write down with it.
-    fake_project.inventory_settings = {}
+    # A MagicMock auto-attribute is not a table: bootstrap reads the inventory
+    # tables from the raw settings and refuses one, taking the cache write down.
+    fake_project.settings = {}
     fake_project.lab_sources = json_lab_sources(fake_project.root, labs) if labs else []
     return fake_project
 
@@ -1359,11 +1354,11 @@ def test_declining_loader_module_does_not_escape_collect_cli_commands(monkeypatc
 def _cache_project(tmp_path: Path, name: str = "sut") -> MagicMock:
     """A project double `write_cache`/`read_cache` will actually key on.
 
-    ``inventory_settings = {}`` is not decoration: a MagicMock auto-attribute
-    is TRUTHY and ``dict()``s to ``{}``, which reads as a present-but-empty
-    ``[inventory]`` — a shape no real ``Project`` produces and one
-    ``build_inventory_from_declarations`` SKIPS (no inventory is built), same
-    as if ``[inventory]`` were never declared at all.
+    ``settings = {}`` is not decoration: bootstrap reads a project's
+    inventory tables from its raw ``settings`` through
+    :func:`otto.inventory.config.inventory_declaration`, and a MagicMock
+    auto-attribute there is not a table, which that reader refuses as a
+    malformed settings file. An empty dict is a project that declares none.
     """
     project = MagicMock()
     project.root = tmp_path / name
@@ -1372,7 +1367,7 @@ def _cache_project(tmp_path: Path, name: str = "sut") -> MagicMock:
     project.init = []
     project.libs = []
     project.tests = []
-    project.inventory_settings = {}
+    project.settings = {}
     return project
 
 

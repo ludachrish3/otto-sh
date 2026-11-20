@@ -218,6 +218,7 @@ def _collect_names(projects: list[Project], cli: CliCollectors) -> dict[str, Any
         "links": _cc.collect_links(projects),
         "logins_by_host": _cc.collect_logins_by_host(projects),
         "docker_default_parent_by_lab": _cc.collect_docker_default_parent_by_lab(projects),
+        "inventory_names": _cc.collect_inventory_names(projects),
     }
 
 

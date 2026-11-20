@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from .config import InitConfig as InitConfig
     from .doctor import AreaVerdict as AreaVerdict
     from .doctor import DoctorReport as DoctorReport
+    from .doctor import InventoryLabel as InventoryLabel
     from .doctor import check_project as check_project
     from .errors import InitInputError as InitInputError
     from .scaffolder import ScaffoldReport as ScaffoldReport
@@ -47,6 +48,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "FileWrite": "otto.init.write_policy",
     "InitConfig": "otto.init.config",
     "InitInputError": "otto.init.errors",
+    "InventoryLabel": "otto.init.doctor",
     "ScaffoldReport": "otto.init.scaffolder",
     "check_project": "otto.init.doctor",
     "detect_areas": "otto.init.areas",
@@ -77,6 +79,7 @@ __all__ = [
     "FileWrite",
     "InitConfig",
     "InitInputError",
+    "InventoryLabel",
     "ScaffoldReport",
     "check_project",
     "detect_areas",

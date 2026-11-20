@@ -9,8 +9,9 @@ from otto.inventory.doctor import (
     creds_mode_warnings,
     orphan_creds_warning,
     orphan_warning,
-    referenced_keys,
-    references_inventory,
+    referenced_by_name,
+    referenced_references,
+    selected_inventory,
 )
 from otto.models.lab import ElementSpec
 
@@ -21,21 +22,23 @@ def _inv(tmp_path, keys):
     return JsonInventory(p, supplies=["ip"])
 
 
-def test_references_inventory_true_only_for_a_nonempty_string_key():
+def test_only_a_well_formed_reference_selects_an_inventory(tmp_path):
     """R7: missing/``None`` means "references nothing"; a malformed key is a problem, not a ref."""
-    assert references_inventory({"inventory": "k"}) is True
-    assert references_inventory({}) is False
-    assert references_inventory({"inventory": None}) is False
-    assert references_inventory({"inventory": ""}) is False
-    assert references_inventory({"inventory": 3}) is False
+    view = _view(tmp_path, refusing=False)
+    assert selected_inventory({"inventory": "k"}, view=view) == "default"
+    for host_data in ({}, {"inventory": None}, {"inventory": ""}, {"inventory": 3}):
+        assert selected_inventory(host_data, view=view) is None, host_data
 
 
-def test_referenced_keys_walks_every_flattened_entry():
+def test_references_count_across_every_flattened_entry(tmp_path):
     elements = [
         ElementSpec(name="a", labs=["l"], hosts=[{"inventory": "k1"}, {"ip": "10.0.0.9"}]),
         ElementSpec(name="b", labs=["l"], hosts=[{"inventory": "k2"}]),
     ]
-    assert referenced_keys([elements]) == {"k1", "k2"}
+    refs = referenced_references(element_lists=[elements])
+    assert referenced_by_name(references=refs, view=_view(tmp_path, refusing=False)) == {
+        "default": {"k1", "k2"}
+    }
 
 
 def test_orphans_are_named_bounded_and_labelled(tmp_path):
@@ -176,3 +179,71 @@ def test_orphan_creds_is_silent_over_an_unreadable_store(tmp_path):
         orphan_creds_warning(CredsOverlay(_inv(tmp_path, ["k"]), store=_JsonCredsStore(malformed)))
         is None
     )
+
+
+def _view(tmp_path, *, refusing: bool):
+    from otto.inventory import InventoryView
+
+    root = tmp_path / "project"
+    physical = tmp_path / "physical"
+    physical.mkdir()
+    return InventoryView(
+        inventories={"default": _inv(tmp_path, ["a", "b"]), "physical": _inv(physical, ["a"])},
+        bare_refused_by={root: "settings.toml"} if refusing else {},
+    ).for_project(root=root)
+
+
+_ELEMENTS = [
+    ElementSpec(
+        name="e",
+        labs=["l"],
+        hosts=[
+            {"inventory": "a"},
+            {"inventory": {"name": "physical", "key": "a"}},
+            {"inventory": {"name": "default", "key": "b"}},
+            {"inventory": {"name": "nowhere", "key": "z"}},
+            {"inventory": ""},
+            {"ip": "10.0.0.9"},
+        ],
+    )
+]
+
+
+def test_references_count_per_selected_name(tmp_path):
+    refs = referenced_references(element_lists=[_ELEMENTS])
+    assert referenced_by_name(references=refs, view=_view(tmp_path, refusing=False)) == {
+        "default": {"a", "b"},
+        "physical": {"a"},
+    }
+
+
+def test_a_refused_bare_reference_counts_against_no_inventory(tmp_path):
+    """D1: the bare ``a`` is a lab problem, never a reference to ``default``."""
+    refs = referenced_references(element_lists=[_ELEMENTS])
+    assert referenced_by_name(references=refs, view=_view(tmp_path, refusing=True)) == {
+        "default": {"b"},
+        "physical": {"a"},
+    }
+
+
+def test_selected_inventory_names_what_a_host_entry_selects(tmp_path):
+    view = _view(tmp_path, refusing=True)
+    hosts = _ELEMENTS[0].hosts
+    assert [selected_inventory(host, view=view) for host in hosts] == [
+        None,  # refused
+        "physical",
+        "default",
+        None,  # not configured
+        None,  # malformed
+        None,  # references nothing
+    ]
+
+
+def test_orphans_of_a_named_inventory_count_only_its_own_keys(tmp_path):
+    refs = referenced_references(element_lists=[_ELEMENTS])
+    view = _view(tmp_path, refusing=False)
+    by_name = referenced_by_name(references=refs, view=view)
+    physical = view.select_name(name="physical")
+    assert orphan_warning(physical, referenced=by_name["physical"]) is None
+    default = view.select_name(name="default")
+    assert orphan_warning(default, referenced=by_name.get("physical", set())) is not None

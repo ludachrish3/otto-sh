@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from ..init.config import InitConfig
     from ..init.doctor import DoctorReport
     from ..init.scaffolder import ScaffoldReport
+    from ..inventory.view import InventoryView
 
 _FLAGS = {
     "root": "--path",
@@ -171,7 +172,7 @@ async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init fla
             answers = await _ask(config, candidates, name_given=bool(name))
             config, candidates = answers.config, answers.areas
         report = scaffold(config, areas=candidates)
-        doctor = check_project(config.root)
+        doctor = check_project(config.root, catalog=_active_catalog(config.root))
     except InitInputError as e:
         raise usage_error_from(e, flags=_FLAGS) from e
     _print_report(report, config.root)
@@ -189,6 +190,26 @@ async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init fla
     console.print(steps.renderable, soft_wrap=steps.soft_wrap)
     if not doctor.ok:
         raise typer.Exit(code=1)
+
+
+def _active_catalog(root: Path) -> "InventoryView | None":
+    """Return the active projects' inventory view when *root* is one of them, else ``None``.
+
+    The doctor takes every name the project references but does not declare
+    from it (:func:`~otto.init.check_project`). It is deferred
+    (:func:`~otto.inventory.deferred_inventory_view`): building it reads and
+    constructs nothing, so whatever a name's build raises is the doctor's to
+    report.
+    """
+    from ..declared import get_projects
+    from ..inventory.config import deferred_inventory_view
+    from ..utils import root_key
+
+    projects = get_projects()
+    key = root_key(str(root))
+    if not any(root_key(str(project.root)) == key for project in projects):
+        return None
+    return deferred_inventory_view(projects=projects)
 
 
 def _config(path: Path, *, inline_hosts: bool, **kwargs: str) -> "InitConfig":
@@ -264,11 +285,19 @@ _STATUS = {
 
 
 def _print_doctor(doctor: "DoctorReport", root: Path, *, scaffolded: set[str]) -> None:
-    """Render the verdict table, the inventory and creds labels, and the warnings."""
+    """Render the verdict table, the inventory and creds labels, and the warnings.
+
+    ``default``'s labels print as ``inventory:`` and ``creds:``, as before
+    named inventories; each other inventory the doctor resolved gets its
+    own ``inventory <name>:`` row, and a ``creds <name>:`` row when it has a
+    store.
+    """
     from rich import print as rprint
     from rich.markup import escape
     from rich.table import Table
     from rich.text import Text
+
+    from ..host.inventory_ref import DEFAULT_INVENTORY
 
     table = Table(title=f"otto init — {root}", show_header=True)
     table.add_column("area")
@@ -289,6 +318,14 @@ def _print_doctor(doctor: "DoctorReport", root: Path, *, scaffolded: set[str]) -
         rprint(Text.assemble("inventory: ", doctor.inventory_label))
     if doctor.creds_label is not None:
         rprint(Text.assemble("creds:     ", doctor.creds_label))
+    for named in doctor.inventories:
+        if named.name == DEFAULT_INVENTORY:
+            continue  # the two rows above
+        heading = f"inventory {named.name}: "
+        rprint(Text.assemble(heading, named.label))
+        if named.creds_label is not None:
+            # Padded to the inventory row's width, as "creds:" is under "inventory:".
+            rprint(Text.assemble(f"creds {named.name}:".ljust(len(heading)), named.creds_label))
     if doctor.warnings:
         # Advisory only — printed after the verdict table, never folded into
         # it, and never part of the exit code.

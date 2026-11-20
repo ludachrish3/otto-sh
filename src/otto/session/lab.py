@@ -40,17 +40,22 @@ def build_lab(projects: "list[Project]", *, labs: list[str]) -> "Lab":
     into one composite: all declared sources are live, and a later source's
     host record overrides an earlier one's. The ``[host_preferences]`` merge
     (:func:`merge_host_preferences`) applies to every host. The process
-    inventory is built here, once, and handed to the load, so every source
-    sees the same one. Building it does no I/O, but a BROKEN ``[inventory]``
-    declaration refuses here rather than surfacing later as "no inventory is
-    configured". Last, each project's declared docker services become
-    placeholder hosts, so they list and complete before ``compose up``.
+    inventory view (:func:`~otto.inventory.build_inventory_view`, every
+    configured inventory by name) is built here, once, and handed to the
+    load, so every source sees the same one. Building it does no I/O, but a
+    BROKEN inventory declaration refuses here rather than surfacing later as
+    "no inventory is configured". The load decides every component's
+    availability once, in one status report over every source, the same
+    report ``otto --list-labs`` shows. Last, each project's declared docker
+    services become placeholder hosts, so they list and complete before
+    ``compose up``.
 
     Raises :class:`~otto.session.LabBuildError`: no labs, no projects (none
-    was discovered: :func:`~otto.config.project.no_project_found_message`), an unknown lab, a
-    bad source or unknown backend, a broken inventory declaration, or a call
-    made while an init import is running (lab sources are built only after
-    every project has registered its backends). A source
+    was discovered: :func:`~otto.config.project.no_project_found_message`), an unknown lab, an
+    unavailable lab (its last declaration says so, or a source whose scope
+    holds it failed), a bad source or unknown backend, a broken inventory
+    declaration, or a call made while an init import is running (lab sources
+    are built only after every project has registered its backends). A source
     that fails only at load time (malformed lab data, composite conflicts)
     propagates as :class:`otto.labs.LabRepositoryError
     <otto.labs.errors.LabRepositoryError>`, as it does on the CLI.
@@ -63,7 +68,7 @@ def build_lab(projects: "list[Project]", *, labs: list[str]) -> "Lab":
         from ..config.project import no_project_found_message
 
         raise LabBuildError(no_project_found_message(), field=None, kind="no_project")
-    from ..labs.errors import LabNotFoundError, LabRepositoryError
+    from ..labs.errors import LabNotFoundError, LabRepositoryError, LabUnavailableError
     from ..labs.loader import load_lab
     from ..labs.sources import build_lab_sources
 
@@ -76,11 +81,11 @@ def build_lab(projects: "list[Project]", *, labs: list[str]) -> "Lab":
 
     # Function-local: `otto.inventory` pulls ~77 otto modules onto every
     # caller, and a Lab-object open_context never builds a lab at all.
-    from ..inventory.config import build_inventory
+    from ..inventory.config import build_inventory_view
     from ..inventory.errors import InventoryError
 
     try:
-        inventory = build_inventory(projects=projects)
+        view = build_inventory_view(projects=projects)
     except InventoryError as e:
         raise LabBuildError(
             f"inventory unavailable: {e}", field=None, kind="inventory", detail=str(e)
@@ -91,10 +96,12 @@ def build_lab(projects: "list[Project]", *, labs: list[str]) -> "Lab":
             labs,
             preferences=merge_host_preferences(projects=projects),
             repository=repository,
-            inventory=inventory,
+            view=view,
         )
     except LabNotFoundError as e:
         raise LabBuildError(str(e), field="labs", kind="unknown_lab", detail=str(e)) from e
+    except LabUnavailableError as e:
+        raise LabBuildError(str(e), field="labs", kind="unavailable_lab", detail=str(e)) from e
 
     from ..docker.compose import register_declared_container_hosts
 

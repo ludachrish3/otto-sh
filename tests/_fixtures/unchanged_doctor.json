@@ -1,0 +1,114 @@
+{
+  "a-bare-references-without-inventory": {
+    "A": {
+      "creds_label": null,
+      "inventory_label": "json:<A>/inventory.json",
+      "ok": true,
+      "verdicts": {
+        "lab": {
+          "problems": [],
+          "state": "ok"
+        },
+        "settings": {
+          "problems": [],
+          "state": "ok"
+        }
+      },
+      "warnings": [
+        "inventory 'json:<A>/inventory.json': 1 record(s) referenced by no lab file here: k2 (expected during the bridge, where the inventory is wider than any project)"
+      ]
+    },
+    "B": {
+      "creds_label": null,
+      "inventory_label": null,
+      "ok": false,
+      "verdicts": {
+        "lab": {
+          "problems": [
+            "<B>/lab/lab.json: element 'k2' hosts[0] references inventory key 'k2' but no inventory is configured; declare [inventory] in ~/.otto/settings.toml or in the project's .otto/settings.toml"
+          ],
+          "state": "failed"
+        },
+        "settings": {
+          "problems": [],
+          "state": "ok"
+        }
+      },
+      "warnings": []
+    }
+  },
+  "a2-creds-without-inventory": {
+    "A": {
+      "creds_label": null,
+      "inventory_label": "json:<A>/inventory.json",
+      "ok": true,
+      "verdicts": {
+        "lab": {
+          "problems": [],
+          "state": "ok"
+        },
+        "settings": {
+          "problems": [],
+          "state": "ok"
+        }
+      },
+      "warnings": [
+        "inventory 'json:<A>/inventory.json': 1 record(s) referenced by no lab file here: k2 (expected during the bridge, where the inventory is wider than any project)"
+      ]
+    },
+    "B": {
+      "creds_label": null,
+      "inventory_label": null,
+      "ok": false,
+      "verdicts": {
+        "lab": {
+          "problems": [
+            "inventory: <B>/.otto/settings.toml: [creds] is keyed by inventory key and no [inventory] is declared in either settings file; declare one, or remove [creds]"
+          ],
+          "state": "failed"
+        },
+        "settings": {
+          "problems": [],
+          "state": "ok"
+        }
+      },
+      "warnings": []
+    }
+  },
+  "b-different-inventories": {
+    "A": {
+      "creds_label": null,
+      "inventory_label": "json:<A>/inventory.json",
+      "ok": true,
+      "verdicts": {
+        "lab": {
+          "problems": [],
+          "state": "ok"
+        },
+        "settings": {
+          "problems": [],
+          "state": "ok"
+        }
+      },
+      "warnings": [
+        "inventory 'json:<A>/inventory.json': 1 record(s) referenced by no lab file here: k2 (expected during the bridge, where the inventory is wider than any project)"
+      ]
+    },
+    "B": {
+      "creds_label": null,
+      "inventory_label": "json:<B>/inventory.json",
+      "ok": true,
+      "verdicts": {
+        "lab": {
+          "problems": [],
+          "state": "ok"
+        },
+        "settings": {
+          "problems": [],
+          "state": "ok"
+        }
+      },
+      "warnings": []
+    }
+  }
+}

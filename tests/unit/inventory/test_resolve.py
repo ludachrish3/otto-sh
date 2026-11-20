@@ -16,29 +16,11 @@ from otto.inventory import (
 from otto.models.inventory import (
     FILLABLE_INVENTORY_FIELDS,
     MERGED_INVENTORY_FIELDS,
-    InventoryRecord,
 )
+from tests._fixtures.named_inventory import FakeInventory
 
-
-class FakeInventory:
-    """The smallest Inventory: a dict of records and a declared supplies set."""
-
-    def __init__(self, records: dict[str, dict], supplies=None, label="fake:mem"):
-        self._records = {k: InventoryRecord.model_validate(v) for k, v in records.items()}
-        self.supplies = check_supplies(supplies)
-        self.label = label
-
-    def lookup(self, key):
-        try:
-            return self._records[key]
-        except KeyError:
-            raise InventoryKeyError(key, label=self.label) from None
-
-    def list_keys(self):
-        return sorted(self._records)
-
-    def fingerprint(self):
-        return "fake"
+# ``FakeInventory`` lives in ``tests._fixtures.named_inventory``; re-exported for older importers.
+__all__ = ["FakeInventory"]
 
 
 _DUT = Element(name="dut")
@@ -288,3 +270,26 @@ def test_the_composed_list_validates_as_a_unix_host():
         host_data=resolved, element=_DUT
     )  # no raise: via names a login the record supplied
     assert [c["login"] for c in resolved["creds"]] == ["u", "root"]
+
+
+@pytest.mark.parametrize(
+    ("value", "named", "resolver"),
+    [
+        ("k", "inventory key 'k'", "otto.inventory.resolve_host_entry(entry, inventory)"),
+        (
+            {"name": "physical", "key": "k"},
+            "inventory reference physical/k",
+            "otto.inventory.resolve_view_entry(entry, view=view, element=element)",
+        ),
+    ],
+)
+def test_an_unresolved_reference_names_it_and_its_resolver(value, named, resolver):
+    """A factory handed an unresolved entry names it as ``name/key`` and the resolver to call."""
+    from otto.host.factory import reject_unresolved_reference
+
+    with pytest.raises(ValueError, match="was not resolved") as info:
+        reject_unresolved_reference({"inventory": value, "ip": "10.0.0.1"})
+    message = str(info.value)
+    assert f"references {named} but" in message
+    assert resolver in message
+    assert "{'name'" not in message

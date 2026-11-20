@@ -7,7 +7,8 @@ any project's ``init`` module, so a source is prepared (its options parsed by
 its backend's config model) only once every project has registered:
 :func:`prepared_lab_sources` refuses while an init import is running.
 :func:`build_lab_sources` builds every project's prepared sources into the
-process's one host source.
+process's one host source, and :func:`listing_sources` the one
+``otto --list-labs`` lists, each source in its own project's profiles.
 
 Kept import-light: settings parsing reads this module, and the backends'
 modules are imported only when a source is prepared or built.
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from ..host.os_profile import ProfileContext
     from ..models.settings import LabConfigSpec, LabSourceSpec
     from ..registry import FrozenMap, Prepared
+    from .composite import CompositeLabRepository, LabSource
     from .protocol import LabRepository
 
 
@@ -270,7 +272,7 @@ def prepared_lab_sources(
 
 def build_lab_sources(
     *, projects: "Sequence[Project]", profiles: "ProfileContext | None" = None
-) -> "LabRepository":
+) -> "CompositeLabRepository":
     """Construct the process's host source from every project's sources.
 
     *profiles* are the project data profiles every source's hosts resolve their
@@ -281,7 +283,9 @@ def build_lab_sources(
     Concatenates per-project ``[[lab.sources]]`` lists in the given (OTTOPATH)
     order — later sources override earlier ones inside the composite. Each
     source is built by its backend's factory, through
-    :data:`~otto.labs.registry.LAB_REPOSITORIES`.
+    :data:`~otto.labs.registry.LAB_REPOSITORIES`, and carries its declaring
+    project's root (:attr:`~otto.labs.LabSource.project_root`), so the
+    composite calls it through the inventory view as that project sees it.
 
     ALWAYS a :class:`~otto.labs.composite.CompositeLabRepository`, whatever the
     source count: lab existence and the declared-but-memberless rule live in
@@ -301,30 +305,84 @@ def build_lab_sources(
     """
     _refuse_during_init_import("build_lab_sources")
     from ..host.os_profile import ProfileContext
-    from .composite import CompositeLabRepository, LabSource
-    from .registry import LAB_REPOSITORIES
+    from .composite import CompositeLabRepository
 
     if profiles is None:
         profiles = ProfileContext.from_projects(projects=projects)
-    entries: "list[LabSource]" = []
-    for project in projects:
-        for state in prepared_lab_sources(project, profiles=profiles):
-            source = state.pending
-            prepared = state.prepared
-            if prepared is None:
-                # One code path for the message: the registry's own lookup error.
-                prepared = LAB_REPOSITORIES.prepare(
-                    name=source.backend,
-                    raw=source.raw.thaw_json(),
-                    env=LabSourceEnv(
-                        project_root=source.project_root,
-                        label=source.label,
-                        origin=source.origin,
-                        profiles=profiles,
-                    ),
-                    source=source.origin,
-                )
-            entries.append(
-                LabSource(label=source.label, repository=LAB_REPOSITORIES.build(prepared=prepared))
+    return CompositeLabRepository(
+        [
+            entry
+            for project in projects
+            for entry in _project_sources(project=project, profiles=profiles)
+        ]
+    )
+
+
+def listing_sources(*, projects: "Sequence[Project]") -> "CompositeLabRepository":
+    """Construct the host source ``otto --list-labs`` lists, each source in its own profiles.
+
+    :func:`build_lab_sources`, except that each project's sources are built
+    with :meth:`~otto.host.os_profile.ProfileContext.from_projects` of that
+    project alone, exactly as each project's lab panel builds them on its
+    own, so the listing shows what each project declares by itself. Dispatch
+    (``--lab``) builds every source with the profiles of the whole selection
+    instead, so a profile-dependent backend may expose a lab to dispatch that
+    its project's panel omits.
+
+    Raises
+    ------
+    LabRepositoryError
+        If called during an init import.
+    LabSourceConstructionError
+        As :func:`build_lab_sources`.
+    """
+    _refuse_during_init_import("listing_sources")
+    from ..host.os_profile import ProfileContext
+    from .composite import CompositeLabRepository
+
+    return CompositeLabRepository(
+        [
+            entry
+            for project in projects
+            for entry in _project_sources(
+                project=project, profiles=ProfileContext.from_projects(projects=[project])
             )
-    return CompositeLabRepository(entries)
+        ]
+    )
+
+
+def _project_sources(*, project: "Project", profiles: "ProfileContext") -> "list[LabSource]":
+    """Build *project*'s prepared sources with *profiles*, in declaration order.
+
+    Each source is built by its backend's factory, through
+    :data:`~otto.labs.registry.LAB_REPOSITORIES`, and carries its declaring
+    project's root.
+    """
+    from .composite import LabSource
+    from .registry import LAB_REPOSITORIES
+
+    entries: "list[LabSource]" = []
+    for state in prepared_lab_sources(project, profiles=profiles):
+        source = state.pending
+        prepared = state.prepared
+        if prepared is None:
+            # One code path for the message: the registry's own lookup error.
+            prepared = LAB_REPOSITORIES.prepare(
+                name=source.backend,
+                raw=source.raw.thaw_json(),
+                env=LabSourceEnv(
+                    project_root=source.project_root,
+                    label=source.label,
+                    origin=source.origin,
+                    profiles=profiles,
+                ),
+                source=source.origin,
+            )
+        entries.append(
+            LabSource(
+                label=source.label,
+                repository=LAB_REPOSITORIES.build(prepared=prepared),
+                project_root=source.project_root,
+            )
+        )
+    return entries
