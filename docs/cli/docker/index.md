@@ -206,7 +206,8 @@ because otto never starts a container for you
 
 A container host has no connection of its own: each command and file transfer
 runs on its parent as `docker exec` or `docker cp`.
-{doc}`../../architecture/subsystems/docker-hosts` explains why.
+{doc}`../../architecture/subsystems/docker-hosts` explains why, and
+{ref}`docker-exec-logging` says which host's log a command's lines land in.
 
 Configuration lives with the rest of the project's settings: the per-project
 `[docker]` block in {doc}`../../configuration/settings`, and the per-lab
@@ -275,7 +276,8 @@ await api.run("echo $FOO")  # prints bar
 ```
 
 `exec()` is the stateless, concurrent-safe counterpart — each call
-spawns a fresh `docker exec` against the parent. Use `exec()` when
+spawns a fresh `docker exec` against the parent; its lines are logged on
+the container ({ref}`docker-exec-logging`). Use `exec()` when
 you want to fan out independent commands; use `run()` when you need
 stateful or interactive flows.
 

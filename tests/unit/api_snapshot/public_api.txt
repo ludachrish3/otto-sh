@@ -861,10 +861,11 @@ member	otto.host.command_frame:CommandFrame.streams_output_live	attribute
 abstract	otto.host.command_frame:CommandFrame	end_pattern extract_retcode frame handshake marks_begin parse_output recover
 name	otto.host.command_frame:ExecInput	class
 mro	otto.host.command_frame:ExecInput	-
-call	otto.host.command_frame:ExecInput	sync	KO:stdin_eof:- KO:restore:E:{otto.host.command_frame:ExecRestore}:BASELINE=S:"baseline" KO:credential:B:false KO:identity:N
+call	otto.host.command_frame:ExecInput	sync	KO:stdin_eof:- KO:restore:E:{otto.host.command_frame:ExecRestore}:BASELINE=S:"baseline" KO:credential:B:false KO:identity:N KO:exec_log:N
 member	otto.host.command_frame:ExecInput.__eq__	method	sync	PK:other:-
 member	otto.host.command_frame:ExecInput.__hash__	method	sync	-
 member	otto.host.command_frame:ExecInput.credential	field
+member	otto.host.command_frame:ExecInput.exec_log	field
 member	otto.host.command_frame:ExecInput.identity	field
 member	otto.host.command_frame:ExecInput.restore	field
 member	otto.host.command_frame:ExecInput.stdin_eof	field
@@ -2770,7 +2771,7 @@ member	otto.host:SessionManager.ambient_user	property:g--
 member	otto.host:SessionManager.can_ssh_as	method	sync	KO:user:-
 member	otto.host:SessionManager.close_all	method	coroutine	-
 member	otto.host:SessionManager.current_user	property:g--
-member	otto.host:SessionManager.exec_on	method	coroutine	KO:conn:- KO:cmd:- KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
+member	otto.host:SessionManager.exec_on	method	coroutine	KO:conn:- KO:cmd:- KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:exec_input:N
 member	otto.host:SessionManager.exec_on_route	method	coroutine	KO:route:- KO:cmd:- KO:timeout:- KO:log:- KO:expects:N KO:user:N KO:exec_input:N
 member	otto.host:SessionManager.exec_route	method	sync	KO:needs_shell:B:false
 member	otto.host:SessionManager.expect	method	coroutine	PK:pattern:- KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"

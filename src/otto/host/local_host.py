@@ -50,6 +50,7 @@ from .session import (
     Expect,
     LocalSession,
     SessionManager,
+    begin_exec_log,
     drain_and_wait,
     timed_out_result,
 )
@@ -307,7 +308,9 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         every family that plans one.
         """
         if plan.route is ExecRoute.LOCAL_SUBPROCESS:
-            return await self._exec_subprocess(cmd, timeout, log=self._effective_log(log))
+            return await self._exec_subprocess(
+                cmd, timeout, log=self._effective_log(log), exec_input=exec_input
+            )
         return await self._exec_on_manager_route(
             plan.route,
             cmd=cmd,
@@ -323,15 +326,18 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         cmd: str,
         timeout: float,
         log: LogMode = LogMode.NORMAL,
+        *,
+        exec_input: "ExecInput | None" = None,
     ) -> CommandResult:
-        """Fire-and-forget subprocess execution; every result it returns records its route."""
+        """Fire-and-forget subprocess execution; every result it returns records its route.
+
+        Logs the command and its output as ``resolve_exec_log`` answers for
+        *log* and *exec_input*: on this host, or on a delegating host.
+        """
         route = ExecRoute.LOCAL_SUBPROCESS.value
         status = Status.Error
         output = ExecOutput()
-        mode = log
-
-        if mode is not LogMode.NEVER:
-            self._log_command(cmd, mode)
+        xl = begin_exec_log(cmd, log, self._log_command, self._log_output, exec_input=exec_input)
 
         # Drive loop.subprocess_shell() directly rather than the higher-level
         # asyncio.create_subprocess_shell(), for the same reason
@@ -397,7 +403,11 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                 # running still times out (#1063).
                 returncode = await asyncio.wait_for(
                     drain_and_wait(
-                        _decoded_chunks(proc.stdout), output, proc.wait, self._log_output, mode
+                        _decoded_chunks(proc.stdout),
+                        output,
+                        proc.wait,
+                        xl.context.log_output,
+                        xl.context.mode,
                     ),
                     timeout=timeout,
                 )

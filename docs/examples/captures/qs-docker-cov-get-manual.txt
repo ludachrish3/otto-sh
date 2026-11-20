@@ -13,13 +13,13 @@ INFO     @docker-host   | docker ps -q --filter
          label=com.docker.compose.service=tools --filter label=com.docker.compose.oneoff=False
 INFO     @docker-host > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
 INFO     @docker-host > | <id>
-INFO     @docker-host   | docker exec -i <id> sh -c '{ __otto_d=/tmp/wordcount; while ! test
-         -e "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*};
-         __otto_d=${__otto_d:-/}; done; test "$__otto_d" != /tmp/wordcount && { ! test -d
-         "$__otto_d" || test -x "$__otto_d"; }; } && echo otto-no-cov-dir || (t=$(mktemp
-         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
-         /tmp/wordcount && tar -cf "$t" .)'
-INFO     @docker-host > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
+INFO     @docker-host:tools   | { __otto_d=/tmp/wordcount; while ! test -e "$__otto_d" && ! test -L
+         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/wordcount && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; } && echo
+         otto-no-cov-dir || (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo
+         "otto-archive:$t" && cd /tmp/wordcount && tar -cf "$t" .)
+INFO     @docker-host   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
+INFO     @docker-host:tools > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
 INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
          /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
          %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&
@@ -33,20 +33,17 @@ INFO     @docker-host   | mkdir -p
 INFO     @docker-host   | docker cp <id>:/tmp/otto-fetch-<id>.<tmp>
          /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>/otto-fetch
          -<id>.<tmp>
-INFO     @docker-host   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
 INFO     @docker-host   | rm -rf
          /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>
-INFO     @docker-host   | docker exec -i <id> sh -c 'rm -f
-         "${TMPDIR:-/tmp}"/otto-fetch-<id>.*'
+INFO     @docker-host:tools   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
 INFO     Archiving .gcda for shout on docker-host.quickstart.tools:/tmp/shout
-INFO     @docker-host   | docker exec -i <id> sh -c '{ __otto_d=/tmp/shout; while ! test -e
-         "$__otto_d" && ! test -L "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/};
-         done; test "$__otto_d" != /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; };
-         } && echo otto-no-cov-dir || (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX")
-         && echo "otto-archive:$t" && cd /tmp/shout && tar -cf "$t" .)'
-INFO     @docker-host > | otto-no-cov-dir
-INFO     @docker-host   | docker exec -i <id> sh -c 'rm -f
-         "${TMPDIR:-/tmp}"/otto-fetch-<id>.*'
+INFO     @docker-host:tools   | { __otto_d=/tmp/shout; while ! test -e "$__otto_d" && ! test -L
+         "$__otto_d"; do __otto_d=${__otto_d%/*}; __otto_d=${__otto_d:-/}; done; test "$__otto_d" !=
+         /tmp/shout && { ! test -d "$__otto_d" || test -x "$__otto_d"; }; } && echo otto-no-cov-dir
+         || (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t"
+         && cd /tmp/shout && tar -cf "$t" .)
+INFO     @docker-host:tools > | otto-no-cov-dir
+INFO     @docker-host:tools   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
 INFO     Coverage data collected to /tmp/otto-gs/xdir/cov/<run>_get/cov (1 product
          dir(s))
 INFO     === Capturing docker-host.quickstart.tools/wordcount ===

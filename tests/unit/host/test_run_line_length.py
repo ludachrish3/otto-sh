@@ -436,7 +436,7 @@ class TestTheRefusalIsScoped:
             command_frame=AshFrame(),
         )
 
-        async def _channel(*, conn, cmd, timeout, log):
+        async def _channel(*, conn, cmd, timeout, log, exec_input=None):
             seen.append(cmd)
             return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 

@@ -312,6 +312,9 @@ neither is the terminal's echo of it that the next `expect` reads. A named
 session composes it the same way, except a container's named session, which
 does not yet ({doc}`../../extend/sessions`).
 
+A container's `exec` is logged on the container, under the most restrictive
+mode of the container and its parent ({ref}`docker-exec-logging`).
+
 Scope is the important invariant: **LogMode gates command I/O only** —
 records tagged with the host that emitted them. Framework diagnostics,
 warnings, and errors are never suppressed by LogMode; a `NEVER` host still

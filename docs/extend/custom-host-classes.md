@@ -82,6 +82,19 @@ every field by keyword, `MyRtosHost(ip=..., element=...)`.  Without it your
 three overrides join a positional signature, taking `ip`, `os_type`,
 `os_name` and `command_frame` in order, which no otto host has.
 
+If a docker container can run on a host of your class, the container's
+`exec` reaches your class as one command to run, and the container expects
+that command's log lines on its own log, not on yours
+({ref}`docker-exec-logging`). Who the lines belong to travels with the call,
+in the `exec_input` argument your `_run_plan` receives. If your `_run_plan`
+passes `exec_input` on unchanged to the base class's `_run_plan` (or to
+`_exec_on_manager_route`), the lines reach the container and you have
+nothing to do. If it runs the command by its own means and logs it itself,
+the command and its output are logged as your host's. The same holds if
+your class overrides `exec` itself: your override is called with the
+`docker exec` line, as it would be for a command of your host's own, and
+logs it as your host's.
+
 Your class must also declare a `capabilities`
 ({class}`~otto.host.capability_grid.HostCapabilities`) saying what its verbs
 promise for `user=`, `sudo=`, `expects=`, progress and session identity —

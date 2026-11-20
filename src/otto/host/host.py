@@ -20,6 +20,7 @@ from dataclasses import (
     replace,
 )
 from logging import (
+    DEBUG,
     INFO,
     WARNING,
     Filter,
@@ -43,7 +44,7 @@ from pydantic import SecretStr
 from typing_extensions import Never, Self, final, override
 
 from .. import layout
-from ..logger.mode import LogMode, effective_mode
+from ..logger.mode import ExecLogContext, LogMode, effective_mode
 from ..result import CommandNotRunError, CommandResult, NotRunResult, Result, Results
 from ..utils import (
     Arg,
@@ -2570,6 +2571,33 @@ class BaseHost(ABC):
                 cmd, expects=expects, timeout=timeout, log=log, sudo=sudo, user=user
             )
 
+    async def _exec_delegated(
+        self,
+        cmd: str,
+        *,
+        exec_log: "ExecLogContext",
+        expects: "list[Expect] | None",
+        timeout: float,
+    ) -> CommandResult:
+        """Run *cmd* as :meth:`exec` does, its log lines going where *exec_log* says.
+
+        The entry for a host that runs its commands through this one (a
+        container through its parent). The same entry and turn as
+        :meth:`exec`, so nothing of it is restated; *exec_log* rides on the
+        call's ``ExecInput`` to whichever route the plan names, so a
+        ``_run_plan`` override with the usual signature forwards it unawares.
+        """
+        async with self._host_entry("exec"):
+            return await self._exec_in_turn(
+                cmd,
+                expects=expects,
+                timeout=timeout,
+                log=exec_log.mode,
+                sudo=False,
+                user=None,
+                exec_log=exec_log,
+            )
+
     async def _exec_in_turn(
         self,
         cmd: str | ShellCommand,
@@ -2579,6 +2607,7 @@ class BaseHost(ABC):
         log: LogMode,
         sudo: bool,
         user: str | None,
+        exec_log: "ExecLogContext | None" = None,
     ) -> CommandResult:
         """Run :meth:`exec`'s body, inside the turn :meth:`exec` took.
 
@@ -2600,7 +2629,9 @@ class BaseHost(ABC):
         # the elevation and the frame read this one object. The elevation
         # alone knows whether it reads a password off the credential
         # descriptor, so the frame's copy takes that fact from it, here.
-        exec_input = ExecInput(stdin_eof=exec_stdin_eof(_normalize_expects(sc.expects)))
+        exec_input = ExecInput(
+            stdin_eof=exec_stdin_eof(_normalize_expects(sc.expects)), exec_log=exec_log
+        )
         pc = self._apply_sudo(sc, user, exec_input=exec_input) if sudo else _prepared(sc)
         exec_input = replace(exec_input, credential=pc.reads_credential_fd)
         if is_dry_run():
@@ -2717,7 +2748,12 @@ class BaseHost(ABC):
             AssertionError: the primitive that ran is not the one the plan
                 names.
         """
+        from .session import delegated_exec_log  # beside the route that reads it
+
         plan = self._exec_plan(user=user, needs_shell=needs_shell)
+        if (delegated := delegated_exec_log(exec_input)) is not None:
+            # The line this host really runs, once per call, under the delegated mode.
+            self._log_command(cmd, delegated.mode, level=DEBUG)
         result = await self._run_plan(
             plan,
             cmd=cmd,
@@ -2780,8 +2816,11 @@ class BaseHost(ABC):
         """Run *cmd* on the route *plan* names. Families override.
 
         The only place a family calls its exec primitive; the route is
-        already decided, so this chooses nothing. A shell route forwards
-        *exec_input* to its session; a process route ignores it.
+        already decided, so this chooses nothing. Every route forwards
+        *exec_input* to its primitive: a shell route's session frames the
+        command by it, and every route logs by it (``resolve_exec_log``),
+        so a route that drops it logs a delegated call on this host
+        instead of on the host that delegated it.
         """
         raise NotImplementedError from None
 

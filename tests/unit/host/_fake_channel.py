@@ -26,18 +26,42 @@ class _FakeReader:
     Without *eof*, both block forever once the chunks are consumed, as a
     command that is still running and silent does; ``reading`` is set when
     they first block. ``fail_with``, when set, is raised by the next read, as
-    a channel that is lost mid-drain raises.
+    a channel that is lost mid-drain raises. With *hold_from*, the chunk
+    at that index and every later one are read only once ``release`` is set,
+    so a test sees what the drain delivered before them. With *then_raise*,
+    a read that would block once the chunks are consumed raises it instead:
+    ``asyncio.TimeoutError`` there is the drain's bound expiring, with no
+    real wait.
     """
 
-    def __init__(self, chunks: "list[str]", *, eof: bool) -> None:
+    def __init__(
+        self,
+        chunks: "list[str]",
+        *,
+        eof: bool,
+        hold_from: "int | None" = None,
+        then_raise: "BaseException | None" = None,
+    ) -> None:
         self._chunks = list(chunks)
         self._buffer = ""
         self._eof = eof
         self.reading = asyncio.Event()
         self.fail_with: "BaseException | None" = None
+        self.release = asyncio.Event()
+        self._hold_from = hold_from
+        self._taken = 0
+        self._then_raise = then_raise
+
+    async def _next_chunk(self) -> str:
+        if self._hold_from is not None and self._taken >= self._hold_from:
+            await self.release.wait()
+        self._taken += 1
+        return self._chunks.pop(0)
 
     async def _stall(self) -> None:
         self.reading.set()
+        if self._then_raise is not None:
+            raise self._then_raise
         await asyncio.Event().wait()
 
     def __aiter__(self) -> "_FakeReader":
@@ -50,7 +74,7 @@ class _FakeReader:
             self._chunks.pop(0)
             return ""
         while "\n" not in self._buffer and self._chunks:
-            self._buffer += self._chunks.pop(0)
+            self._buffer += await self._next_chunk()
         if "\n" in self._buffer:
             line, _, self._buffer = self._buffer.partition("\n")
             return line + "\n"
@@ -65,7 +89,7 @@ class _FakeReader:
         if self.fail_with is not None:
             raise self.fail_with
         if self._chunks:
-            return self._chunks.pop(0)
+            return await self._next_chunk()
         if not self._eof:
             await self._stall()
         return ""
@@ -79,7 +103,9 @@ class FakeChannelProcess:
     (the default), otherwise only after a signal in *obeys* was sent; with
     ``exits_on_eof`` false the command closes its output and keeps running.
     Every signal sent is recorded in ``signals``. ``reading`` is the reader's:
-    set when the drain first blocks on a silent command.
+    set when the drain first blocks on a silent command. *hold_from* and
+    ``release`` are the reader's: chunks from that index wait for the event;
+    *then_raise* is the reader's too (see ``_FakeReader``).
     """
 
     def __init__(
@@ -90,8 +116,11 @@ class FakeChannelProcess:
         exit_status: "int | None" = 0,
         eof: bool = True,
         obeys: "frozenset[str]" = frozenset({"TERM", "HUP", "KILL"}),
+        hold_from: "int | None" = None,
+        then_raise: "BaseException | None" = None,
     ) -> None:
-        self.stdout = _FakeReader(chunks, eof=eof)
+        self.stdout = _FakeReader(chunks, eof=eof, hold_from=hold_from, then_raise=then_raise)
+        self.release = self.stdout.release
         self.returncode = returncode
         self.exit_status = exit_status
         self.obeys = obeys
