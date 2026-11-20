@@ -169,10 +169,17 @@ jobs:
       - name: Install gcc-11, clang and llvm-cov (the kmodcov reader tests)
         run: command -v gcc-11 && command -v clang && command -v llvm-cov || { sudo apt-get update && sudo apt-get install -y gcc-11 clang llvm; }
 
+      # `--no-cov` on every leg. Only the 3.10 sessions measure coverage (it is
+      # the primary interpreter), nothing in this workflow reads that data, and
+      # with it on the repeat lost its runner two nights running (#1193,
+      # #1174: "The hosted runner lost communication with the server" about
+      # 100 minutes into `tests_hostless_unit-3.10`, with no test failing,
+      # while the 3.11 leg ran the same items with coverage off and passed).
+      # Per-push ci.yml still measures the primary's coverage once.
       - name: Run nox unit tests ${{ inputs.nox_count || '5' }}x
         run: >-
           uv run nox -s ${{ matrix.sessions }} --
-          --count=${{ inputs.nox_count || '5' }} --repeat-scope=session
+          --count=${{ inputs.nox_count || '5' }} --repeat-scope=session --no-cov
 
   # The test-isolation guard: tests/unit twice in ONE process (the
   # tests_unit_repeat session, see noxfile.py), so a test that leaves
