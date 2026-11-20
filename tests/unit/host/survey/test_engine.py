@@ -214,9 +214,10 @@ async def test_a_console_own_terms_row_never_becomes_a_supported_port_or_a_pin(s
     host = _unix(
         term="console",
         valid_terms=["console"],
-        # sftp needs ssh regardless of term, so it never becomes "supported"
-        # under a console term -- leaving it in valid_transfers would fire a
-        # genuine (unrelated) drift pin and mask the one this test is for.
+        # sftp needs ssh regardless of term, so under a console term its row
+        # reads `no-session`. That is an unknown and pins nothing; it is left
+        # out of valid_transfers only to keep this menu to what the survey
+        # can confirm.
         valid_transfers=["scp", "ftp", "nc", "shell"],
         console_options=ConsoleOptions(server="test1", port=4001),
     )

@@ -132,9 +132,30 @@ valid_terms = ["ssh"]
 "ssh_options": {"port": 2222}
 ```
 
-Menus list supported protocols only; a `*_options` fragment appears only
-for a protocol whose working port differs from the declared one (`"snmp":
-{"port": N}` for the monitoring block). Two or more supported ports that
+A pinned menu is the host's own menu, in the host's own order, with only
+the changes the survey has evidence for:
+
+- an entry the drift table reports as `declared-but-dead` is dropped, unless
+  the survey found it working on another port (then it stays, and a
+  `*_options` fragment moves the port when exactly one such port was found);
+- a protocol the survey found supported and the menu does not name is added
+  at the end.
+
+Everything else keeps its place: an entry whose state is an unknown, an
+entry the survey has no row for, and a term the survey cannot dial, such as
+`console`. A menu with nothing to change is not printed.
+
+The order is kept because it decides the default: otto uses the first entry
+of `valid_terms` and of `valid_transfers` unless the host's `term` or
+`transfer` field, or a
+{doc}`[host_preferences] <../../../configuration/lab/host-preferences>`
+selector, picks another. So pasting the pin changes the first entry only
+when the declared one is dead. To make a newly found protocol the first
+choice, move it to the front by hand.
+
+A `*_options` fragment appears only for a protocol whose working port
+differs from the declared one (`"snmp": {"port": N}` for the monitoring
+block). Two or more supported ports that
 are all undeclared produce no fragment at all — just a footnote naming the
 choice: `ssh: supported on 2222 and 2223; choose one in ssh_options.port`.
 Nothing is applied for you.

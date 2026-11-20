@@ -69,8 +69,11 @@ async def test_test1_reports_its_real_menu_and_only_shell_drifts(host1):
     assert s.working_ports == {}
     rows = drift_rows(host1.valid_terms, host1.valid_transfers, s)
     assert [(r.protocol, r.drift) for r in rows] == [("shell", "working-but-undeclared")], rows
+    # The pin keeps test1's own order, so its default transfer (the first
+    # entry) is still the default after the pin is pasted; shell goes last.
+    assert host1.valid_transfers == ["scp", "sftp", "ftp", "nc"]
     assert menu_pin(host1.valid_terms, host1.valid_transfers, s) == [
-        'valid_transfers = ["ftp", "nc", "scp", "sftp", "shell"]'
+        'valid_transfers = ["scp", "sftp", "ftp", "nc", "shell"]'
     ], s
     assert not any(f.startswith("inventory failed") for f in s.footnotes), s.footnotes
     assert not any(f.startswith("elevation refused") for f in s.footnotes), s.footnotes

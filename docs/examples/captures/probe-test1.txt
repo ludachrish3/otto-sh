@@ -106,4 +106,4 @@ terminal mapping (telnet): onlcr
 │ shell    │ transfer │ working-but-undeclared │ supported on 22 │
 ╰──────────┴──────────┴────────────────────────┴─────────────────╯
 
-valid_transfers = ["ftp", "nc", "scp", "sftp", "shell"]
+valid_transfers = ["scp", "sftp", "ftp", "nc", "shell"]

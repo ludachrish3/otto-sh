@@ -141,20 +141,42 @@ def drift_table(rows: list[DriftRow]) -> "Table | None":
     return table
 
 
+def _pinned_menu(declared: list[str], working: list[str], dead: set[str]) -> list[str]:
+    """Return the menu to pin: the host's own order, less what is dead, plus what is new.
+
+    The first entry of ``valid_terms`` and of ``valid_transfers`` is the
+    default when no ``term``/``transfer`` field and no ``[host_preferences]``
+    selector picks another, so a pin never moves an entry the host declared.
+    A ``declared`` entry leaves the menu only on evidence: it is ``dead`` (its
+    declared-port row answered dead) and the survey found it ``working``
+    nowhere else. An entry in an unknown state, or with no verdict at all,
+    stays in its place. A ``working`` entry the host did not declare is
+    appended after them.
+    """
+    kept = [n for n in declared if n in working or n not in dead]
+    return kept + [n for n in working if n not in declared]
+
+
+def _dead_names(menu: list[str], survey: "Survey") -> set[str]:
+    """Return the entries of ``menu`` the drift table reports as declared-but-dead."""
+    return {r.protocol for r in _declared_but_dead(set(menu), survey)}
+
+
 def menu_pin(host_terms: list[str], host_transfers: list[str], survey: "Survey") -> list[str]:
     """Build the plain-text pin lines: differing menu lists, then one options fragment per port.
 
-    Only the menu lines the host's menus actually differ from are emitted.
+    Only a menu the survey has evidence to change is emitted, and it keeps the
+    host's own order (:func:`_pinned_menu`).
     """
     supported = set(survey.supported)
     dialling = dialling_terms()
     terms = [n for n in dialling if n in supported]
     # A non-dialling term (e.g. console) never appears in `terms` -- it has
-    # no port on the host's own address to survey -- so it is compared and
-    # re-emitted separately from the dialling subset, never dropped from a
-    # pin just because the survey has no way to confirm it by dialling.
+    # no port on the host's own address to survey -- so it is never read as
+    # dead either: only the dialling subset of the host's menu is looked up
+    # in the drift rows, and a non-dialling term is never dropped from a pin
+    # just because the survey has no way to confirm it by dialling.
     host_dialling_terms = [n for n in host_terms if n in dialling]
-    host_nondialling_terms = [n for n in host_terms if n not in dialling]
     # Built from the supported verdict rows whose own `kind` is "transfer",
     # never from a name test over those rows: "console" is both a
     # non-dialling TERM (a unix console-term host carries a supported
@@ -167,11 +189,13 @@ def menu_pin(host_terms: list[str], host_transfers: list[str], survey: "Survey")
     transfers = sorted(
         {v.protocol for v in survey.verdicts if v.state == "supported" and v.kind == "transfer"}
     )
+    pinned_terms = _pinned_menu(host_terms, terms, _dead_names(host_dialling_terms, survey))
+    pinned_transfers = _pinned_menu(host_transfers, transfers, _dead_names(host_transfers, survey))
     lines: list[str] = []
-    if set(terms) != set(host_dialling_terms):
-        lines.append(f"valid_terms = {json.dumps(terms + host_nondialling_terms)}")
-    if set(transfers) != set(host_transfers):
-        lines.append(f"valid_transfers = {json.dumps(transfers)}")
+    if pinned_terms != host_terms:
+        lines.append(f"valid_terms = {json.dumps(pinned_terms)}")
+    if pinned_transfers != host_transfers:
+        lines.append(f"valid_transfers = {json.dumps(pinned_transfers)}")
     for proto in sorted(survey.working_ports):
         key = "snmp" if proto == "snmp" else f"{proto}_options"
         lines.append(f'"{key}": {json.dumps({"port": survey.working_ports[proto]})}')
