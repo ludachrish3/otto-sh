@@ -23,11 +23,12 @@ Example::
 
 import logging
 import math
-from collections.abc import Awaitable, Callable
+import types
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import MISSING, dataclass, field, fields
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Union, get_args, get_origin
 
-from pydantic import ConfigDict, SecretStr
+from pydantic import ConfigDict, SecretStr, ValidationInfo, field_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import final
 
@@ -58,6 +59,29 @@ if TYPE_CHECKING:
 _FORWARD_CONFIG = ConfigDict(extra="forbid")
 
 
+def _forward_port(value: object, info: ValidationInfo) -> object:
+    """Run :func:`refuse_non_number` on a forward's port before pydantic coerces it.
+
+    The forwards are pydantic dataclasses, so without this ``"1080"`` would
+    load as ``1080`` and ``True`` as ``1``, which every other numeric option
+    refuses. The ``TypeError`` becomes a ``ValueError`` so pydantic reports it
+    as a validation error, from lab data and from a direct call alike.
+    """
+    try:
+        return refuse_non_number(value, info.field_name or "port", int)
+    except TypeError as e:
+        raise ValueError(str(e)) from None
+
+
+def _forward_ports(*names: str) -> Any:
+    """Return a ``mode="before"`` validator running :func:`_forward_port` on fields *names*.
+
+    A validator on the class, not an ``Annotated`` field type: the fields stay
+    plain ``int`` in the signature and the reference docs.
+    """
+    return field_validator(*names, mode="before")(_forward_port)
+
+
 # ---------------------------------------------------------------------------
 # SSH
 # ---------------------------------------------------------------------------
@@ -73,6 +97,8 @@ class LocalPortForward:
     dest_host: str
     dest_port: int
 
+    _ports_are_numbers = _forward_ports("listen_port", "dest_port")
+
 
 @pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG)
 class RemotePortForward:
@@ -83,6 +109,8 @@ class RemotePortForward:
     dest_host: str
     dest_port: int
 
+    _ports_are_numbers = _forward_ports("listen_port", "dest_port")
+
 
 @pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG)
 class SocksForward:
@@ -90,6 +118,8 @@ class SocksForward:
 
     listen_host: str
     listen_port: int
+
+    _ports_are_numbers = _forward_ports("listen_port")
 
 
 _EXTRA_IDENTITY_OVERRIDE_KEYS = frozenset({"username", "tunnel"})
@@ -157,6 +187,78 @@ def refuse_null_known_hosts(value: object) -> object:
         )
         raise ValueError(msg)
     return value
+
+
+def _numeric_kind(annotation: object) -> "type | None":
+    """Return ``int`` or ``float`` for a field annotated as one, else ``None``.
+
+    ``| None`` is looked through: optionality is not the field's kind.
+    """
+    args = (
+        get_args(annotation)
+        if get_origin(annotation) in (Union, types.UnionType)
+        else (annotation,)
+    )
+    rest = [a for a in args if a is not type(None)]
+    if rest == [int]:
+        return int
+    if rest == [float]:
+        return float
+    return None
+
+
+def refuse_non_number(value: object, name: str, kind: type = float) -> "int | float":
+    """Return *value* for numeric field *name*, refusing it unless it is a real number of *kind*.
+
+    The one type rule for every numeric option field, applied BEFORE any
+    coercion: a ``bool`` (an ``int`` subclass, so ``False`` would read as
+    ``0``) and a string (``"5"``) are refused, never converted. A ``float``
+    field takes an ``int`` or a ``float``. An ``int`` field takes an ``int``
+    or a whole-number ``float`` (``2222.0``, as generated lab data often
+    spells it), returned as an ``int``; a fractional or non-finite ``float``
+    is refused. The runtime dataclasses run it in ``__post_init__`` and the
+    lab specs (:mod:`otto.host.option_specs`) run it on the raw table, so lab
+    data, ``[host_preferences]``, overrides and direct construction accept
+    and refuse the same inputs.
+
+    Raises:
+        TypeError: *value* is not a number of *kind*.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        noun = "an integer" if kind is int else "a number"
+        msg = f"{name} must be {noun}, got {type(value).__name__}: {value!r}"
+        raise TypeError(msg)
+    if kind is int and isinstance(value, float):
+        if not value.is_integer():
+            msg = f"{name} must be an integer, got float: {value!r}"
+            raise TypeError(msg)
+        return int(value)
+    return value
+
+
+def refuse_non_numbers(
+    cls: "type[DataclassInstance]", values: Mapping[str, object]
+) -> dict[str, "int | float"]:
+    """Run :func:`refuse_non_number` on every numeric field of options class *cls* in *values*.
+
+    Returns the checked fields' values as the rule normalises them (a
+    whole-number ``float`` in an ``int`` field becomes an ``int``). A ``None``
+    is skipped: whether a field may be unset is its own optionality.
+    """
+    out: dict[str, int | float] = {}
+    for f in fields(cls):
+        kind = _numeric_kind(f.type)
+        value = values.get(f.name)
+        if kind is not None and value is not None:
+            out[f.name] = refuse_non_number(value, f.name, kind)
+    return out
+
+
+def _refuse_non_numbers(opts: "DataclassInstance") -> None:
+    """Run :func:`refuse_non_numbers` on a built options instance, storing the normalised values."""
+    current = {f.name: getattr(opts, f.name) for f in fields(opts)}
+    for name, value in refuse_non_numbers(type(opts), current).items():
+        setattr(opts, name, value)
 
 
 def _refuse_shadowing(opts: "DataclassInstance") -> None:
@@ -283,6 +385,7 @@ class SshOptions:
     of those names replaces the login or the hop tunnel (with a warning)."""
 
     def __post_init__(self) -> None:
+        _refuse_non_numbers(self)
         _refuse_shadowing(self)
         refuse_null_known_hosts(self.known_hosts)
         self.passphrase = as_secret(self.passphrase)
@@ -463,6 +566,7 @@ class TelnetOptions:
     """Extra kwargs forwarded to ``telnetlib3.open_connection()``."""
 
     def __post_init__(self) -> None:
+        _refuse_non_numbers(self)
         _refuse_shadowing(self)
 
     def _open_kwargs(self) -> dict[str, Any]:
@@ -615,6 +719,7 @@ class ConsoleOptions:
     """Extra kwargs forwarded to ``telnetlib3.open_connection()``."""
 
     def __post_init__(self) -> None:
+        _refuse_non_numbers(self)
         _refuse_shadowing(self)
 
     declared_limitations: ClassVar[dict[str, Limitation]] = {"escapes_iac": UNESCAPED_IAC}
@@ -700,6 +805,7 @@ class SftpOptions:
     """Extra kwargs forwarded to ``SSHClientConnection.start_sftp_client()``."""
 
     def __post_init__(self) -> None:
+        _refuse_non_numbers(self)
         _refuse_shadowing(self)
 
     max_concurrent_transfers: int | None = None
@@ -758,6 +864,7 @@ class ScpOptions:
     """Extra kwargs forwarded to ``asyncssh.scp()``."""
 
     def __post_init__(self) -> None:
+        _refuse_non_numbers(self)
         _refuse_shadowing(self)
 
     max_concurrent_transfers: int | None = None
@@ -835,6 +942,7 @@ class FtpOptions:
     arbitrary ``siosocks_asyncio_kwargs`` which can be routed through here."""
 
     def __post_init__(self) -> None:
+        _refuse_non_numbers(self)
         _refuse_shadowing(self)
 
     def _client_kwargs(self) -> dict[str, Any]:
@@ -950,6 +1058,9 @@ class NcOptions:
     it loses files to ``open failed``. otto cannot read the server's setting, so
     the default is derived from the OpenSSH default."""
 
+    def __post_init__(self) -> None:
+        _refuse_non_numbers(self)
+
 
 # ---------------------------------------------------------------------------
 # TFTP
@@ -982,6 +1093,9 @@ class TftpOptions:
 
     timeout: float = 5.0
     """Per-block retransmit timeout, in seconds."""
+
+    def __post_init__(self) -> None:
+        _refuse_non_numbers(self)
 
 
 @final
@@ -1020,6 +1134,9 @@ class SnmpOptions:
     from the host's ``interfaces`` map (now ``Interface`` objects — see
     ``todo/multi_interface_hosts.md``), resolved via
     :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
+
+    def __post_init__(self) -> None:
+        _refuse_non_numbers(self)
 
 
 # ---------------------------------------------------------------------------
@@ -1197,8 +1314,7 @@ def _validate_timeout(timeout: float, name: str = "timeout") -> float:
     allowed — it is the supported spelling for an unbounded command. *name*
     is the field or argument the message blames.
     """
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
-        raise TypeError(f"{name} must be a number, got {type(timeout).__name__}: {timeout!r}")
+    refuse_non_number(timeout, name)
     if math.isnan(timeout):
         raise ValueError(f"{name} must not be NaN")
     if timeout < 0:
@@ -1228,6 +1344,7 @@ class RebootOptions:
     """Pause between probes, in seconds (``>= 0`` and finite)."""
 
     def __post_init__(self) -> None:
+        _refuse_non_numbers(self)
         for name in ("timeout", "down_timeout", "poll_interval"):
             value = _validate_timeout(getattr(self, name), name)
             if math.isinf(value):
