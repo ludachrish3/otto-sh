@@ -194,9 +194,8 @@ class ExecInput:
     """A delegating host's log context, or ``None`` for a call logged by the host it runs on.
 
     Set only by ``BaseHost._exec_delegated`` and read only through
-    ``delegated_exec_log``: by every route's log resolver, by the host that
-    logs the line it really runs at DEBUG, and by a container that is a hop
-    of another container's chain, which forwards it unchanged."""
+    ``delegated_exec_log``: by every route's log resolver and by the host that
+    logs the line it really runs at DEBUG."""
 
 
 @final

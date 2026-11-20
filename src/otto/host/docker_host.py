@@ -19,7 +19,8 @@ calls, matching :class:`~otto.host.local_host.LocalHost` and
 
 Persistent-shell support requires an SSH-based :class:`~otto.host.unix_host.UnixHost` parent.
 Local-host parents and telnet parents are rejected at session-open time —
-the per-call ``exec`` path still works against any parent.
+the per-call ``exec`` path still works against any parent that is not itself a
+container (a container is a leaf); ``get`` / ``put`` need a unix host parent.
 """
 
 import asyncio
@@ -34,7 +35,7 @@ from dataclasses import (
     replace,
 )
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypeGuard
 
 from typing_extensions import final, override
 
@@ -72,7 +73,6 @@ from .session import (
     SessionManager,
     ShellSession,
     _DockerSshSession,
-    delegated_exec_log,
     identity_fold,
 )
 from .shell_quote import path_operand, shell_operand
@@ -142,16 +142,15 @@ def _host_label(host: object) -> str:
     return str(getattr(host, "name", type(host).__name__))
 
 
-def _carries_exec_log(above: "list[Host]") -> bool:
-    """Whether every host in *above* can carry a delegated exec log context.
+def _carries_exec_log(parent: "Host") -> "TypeGuard[BaseHost]":
+    """Whether *parent* can carry a delegated exec log context.
 
-    Each must be an otto host whose public ``exec`` is otto's own: a
+    It must be an otto host whose public ``exec`` is otto's own: a
     structural stand-in has no delegated entry, and a project override of
     ``exec`` (one that refuses, audits or redirects commands) would be
-    bypassed by it. Either keeps the public ``exec`` at every hop.
+    bypassed by it. Either keeps the parent's public ``exec``.
     """
-    own = (BaseHost.exec, DockerContainerHost.exec)
-    return all(isinstance(h, BaseHost) and type(h).exec in own for h in above)
+    return isinstance(parent, BaseHost) and type(parent).exec is BaseHost.exec
 
 
 # The private docker staging root on a parent
@@ -526,8 +525,11 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     but ``run`` / ``open_session`` / ``send`` / ``expect`` / ``login``
     additionally require an SSH-based :class:`~otto.host.unix_host.UnixHost` at runtime —
     they open a persistent ``docker exec`` channel on the parent's
-    asyncssh connection. ``exec`` and file transfer work against any
-    parent."""
+    asyncssh connection. ``exec`` works against any parent that is not
+    itself a container: a container is a leaf, and one built on another
+    container is refused (``TypeError``), at construction and on any later
+    assignment. File transfer needs a unix
+    host parent, whose login names the staging root."""
 
     container_id: str
     """Docker container id or unique name. Resolved by
@@ -600,6 +602,28 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     _ensure_lock: asyncio.Lock = field(init=False, repr=False)
     """Serializes :meth:`_ensure_running` so concurrent accesses to a
     placeholder probe for it one at a time and resolve its id once."""
+
+    @override
+    def __setattr__(self, name: str, value: object) -> None:
+        """Refuse a parent that is itself a container: a container is a leaf.
+
+        The one place the rule is decided. ``parent`` is a plain field, so
+        the rule sits on its every write (construction's included) rather
+        than on each read: no call can then reach a container through
+        another, whatever it does first.
+
+        Raises:
+            TypeError: *value* is a :class:`DockerContainerHost` being set
+                as ``parent``.
+        """
+        if name == "parent" and isinstance(value, DockerContainerHost):
+            raise TypeError(
+                f"a container's parent must be the host that runs the docker daemon, "
+                f"never another container: {_host_label(value)} is itself a container"
+            )
+        # Not ``super()``: a slots dataclass is rebuilt, which strands the
+        # zero-argument form's class cell on Python before 3.14.
+        object.__setattr__(self, name, value)
 
     def __post_init__(self) -> None:
         parent_id = getattr(self.parent, "id", getattr(self.parent, "name", "localhost"))
@@ -1105,50 +1129,17 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         whether it needs a shell to honour *expects*. ``docker exec -i`` keeps stdin
         open, so the parent's pooled shell can answer a prompt across it.
         """
-        return await self._exec_via_parent(
-            cmd, timeout, log=log, user=user, expects=expects, exec_input=exec_input
-        )
+        return await self._exec_via_parent(cmd, timeout, log=log, user=user, expects=expects)
 
-    def _hosts_above(self) -> "list[Host]":
-        """Return the hosts above this container, nearest first, ending at its first non-container.
+    def _exec_log_mode(self, log: LogMode) -> LogMode:
+        """Return the most restrictive mode over this container and its parent.
 
-        The one walk of the parent chain: each container parent continues it
-        to its own parent, and the first host that is not a container ends
-        it (that host is included). A container's parent is a plain field, so
-        a chain can be made to loop back on itself; the walk is synchronous,
-        so it refuses a repeated host rather than spinning.
-
-        Raises:
-            ValueError: the chain reaches a host it has already passed,
-                which no container can run its commands through.
+        This container contributes its fold of *log*; an otto parent its own
+        standing fold (its ``log`` and any suppression of it).
         """
-        passed: "list[object]" = [self]
-        above: "list[Host]" = []
-        host = self.parent
-        while True:
-            if any(host is seen for seen in passed):
-                names = " -> ".join(_host_label(h) for h in [*passed, host])
-                raise ValueError(
-                    f"{self.name}: its parent chain loops back on itself ({names}); "
-                    f"a container's parents must end at a host that is not a container"
-                )
-            above.append(host)
-            if not isinstance(host, DockerContainerHost):
-                return above
-            passed.append(host)
-            host = host.parent
-
-    def _chain_log(self, log: LogMode, above: "list[Host] | None" = None) -> LogMode:
-        """Return the most restrictive mode over this container and every host above it.
-
-        This container contributes its fold of *log*; each otto host of the
-        chain (``_hosts_above``, walked here unless the caller already has
-        it as *above*) its own standing fold (its ``log`` and any
-        suppression of it).
-        """
-        chain = self._hosts_above() if above is None else above
         modes = [self._effective_log(log)]
-        modes += [h._effective_log(LogMode.NORMAL) for h in chain if isinstance(h, BaseHost)]  # noqa: SLF001 — each host's own fold
+        if isinstance(self.parent, BaseHost):
+            modes.append(self.parent._effective_log(LogMode.NORMAL))  # noqa: SLF001 — the parent's own fold
         return effective_mode(*modes)
 
     async def _exec_via_parent(
@@ -1158,8 +1149,6 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
         expects: "list[Expect | CredentialExpect] | None" = None,
-        *,
-        exec_input: "ExecInput | None" = None,
     ) -> CommandResult:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent.
 
@@ -1186,34 +1175,24 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         with ``docker exec -u root`` (see :meth:`exec`), so no elevation
         password answer exists on this route to forward.
 
-        When every host above this container (``_hosts_above``) is an otto
-        host whose public ``exec`` is otto's own, the parent runs the wrapper
-        through its private delegated entry with a log context: the command
-        as issued and each output line live are this container's records,
-        under the most restrictive mode over the whole chain (``_chain_log``),
-        and the parent logs only the wrapper, at DEBUG. A context that arrived
-        on *exec_input* (this container is itself a hop of another
-        container's chain, which that container already judged) is
-        forwarded unchanged, so the originating container keeps the lines.
-        Any other chain gets the parent's public ``exec``, as before: a
-        structural stand-in folds and logs as it always did, and a project
-        override of ``exec`` keeps seeing every command.
+        When the parent is an otto host whose public ``exec`` is otto's own,
+        it runs the wrapper through its private delegated entry with a log
+        context: the command as issued and each output line live are this
+        container's records, under the most restrictive mode of the two hosts
+        (``_exec_log_mode``), and the parent logs only the wrapper, at DEBUG.
+        Any other parent gets its public ``exec``, as before: a structural
+        stand-in folds and logs as it always did, and a project override of
+        ``exec`` keeps seeing every command.
 
-        Raises:
-            ValueError: the parent chain loops back on itself.
         """
         if is_dry_run():
             return self._dry_run_result(cmd, log)
-        incoming = delegated_exec_log(exec_input)
-        above = self._hosts_above() if incoming is None else None
         pairs = _caller_pairs(expects, self.name)
         wrapped = await self._docker_exec(cmd, user=self._effective_user(user))
-        if isinstance(self.parent, BaseHost) and (
-            incoming is not None or (above is not None and _carries_exec_log(above))
-        ):
-            exec_log = incoming or ExecLogContext(
+        if _carries_exec_log(self.parent):
+            exec_log = ExecLogContext(
                 command=cmd,
-                mode=self._chain_log(log, above),
+                mode=self._exec_log_mode(log),
                 log_command=self._log_command,
                 log_output=self._log_output,
             )

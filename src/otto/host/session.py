@@ -384,9 +384,8 @@ def delegated_exec_log(exec_input: "ExecInput | None") -> "ExecLogContext | None
     """Return the log context a delegating host handed this ``exec`` call, or ``None``.
 
     The one read of whether a call is delegated: the route's log resolver
-    (:func:`resolve_exec_log`), the host that logs the line it really runs
-    (``BaseHost._exec_one``) and a container that is a hop of another
-    container's chain all ask it.
+    (:func:`resolve_exec_log`) and the host that logs the line it really runs
+    (``BaseHost._exec_one``) both ask it.
     """
     return exec_input.exec_log if exec_input is not None else None
 

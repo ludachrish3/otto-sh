@@ -19,8 +19,10 @@ port to forward, no FTP, no NetCat). Container "transport" is just
 
 Instead, `DockerContainerHost` holds a reference to a *parent*
 `UnixHost` (SSH-based) and implements every method by delegating to
-that parent with a `docker exec` / `docker cp` wrapper. The parent
-owns:
+that parent with a `docker exec` / `docker cp` wrapper. A container is
+always a leaf: its parent is the host that runs the docker daemon, never
+another container, and one built on a container, or reassigned to one,
+is refused with a `TypeError`. The parent owns:
 
 - Authentication
 - The SSH connection (and asyncssh's channel multiplexing means many
@@ -79,8 +81,7 @@ commands printed. Selecting the parent shows the lookup and, at DEBUG, the
 
 **One log mode covers all of it.** The `exec`'s
 {ref}`log mode <log-mode-knob>` is the most restrictive of the container's
-and its parent's (and, for a container whose parent is itself a container,
-every host above it). It applies to the container's records and to the
+and its parent's. It applies to the container's records and to the
 parent's DEBUG line alike. So with either host at `NEVER`, nothing of the
 `exec` is logged anywhere: no command, no output, and no DEBUG line on the
 parent. With either at `QUIET`, the command and its output are kept off the
@@ -101,8 +102,7 @@ kinds of parent are called through their own public `exec` instead, and the
 command and its output are then logged as that parent's, with the
 `docker exec` line as the command: a parent object that only imitates a
 host (it has `exec` but is not derived from otto's host base class), and a
-derived class that overrides `exec`. For a container inside a container,
-one such host anywhere above it decides for the whole chain.
+derived class that overrides `exec`.
 {doc}`../../extend/custom-host-classes` says what a derived class must keep
 doing for the lines to reach the container.
 
@@ -407,8 +407,8 @@ parent's SSH connection is still alive.
 - Non-SSH parents for `run` / `open_session` / `send` / `expect` /
   `login` — rejected with a clear `NotImplementedError`. Local
   docker is expected to be managed via Kubernetes rather than as a
-  first-class otto host. `exec()` (and `get` / `put`) still work
-  against any parent.
+  first-class otto host. `exec()` still works against any parent that
+  is not itself a container; `get` / `put` need a unix host parent.
 
 ## Where the code lives
 
