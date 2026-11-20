@@ -430,8 +430,8 @@ that caused it. otto does not warn about a missing absolute bind source.
   SSH-based `UnixHost` parent — they open a persistent
   `docker exec -it` channel multiplexed on the parent's SSH
   connection. Telnet parents and `LocalHost` parents are rejected with
-  `NotImplementedError`. `exec()` (and `get` / `put`) still work
-  through any parent.
+  `NotImplementedError`. `exec()` still works through any parent that is
+  not itself a container; `get` / `put` need a unix host parent.
 - The container must provide `/bin/sh`. Distroless or minimal images
   without a shell will fail at session-open time.
 - `login()` requires `parent.term == 'ssh'`. Telnet parents are

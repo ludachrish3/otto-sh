@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shlex
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -2366,7 +2366,7 @@ async def test_a_put_and_a_get_leave_no_staging_directory_for_the_container(tmp_
 
 
 # ---------------------------------------------------------------------------
-# Where a container's exec is logged: on the container, under the chain's mode
+# Where a container's exec is logged: on the container, under the stricter of two modes
 # ---------------------------------------------------------------------------
 
 _CMD_TOK = "cmdtok-ctr"
@@ -2463,7 +2463,7 @@ def _mode_rows():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("ctr_log", "parent_log", "call_log", "suppress", "mode"), _mode_rows())
-async def test_a_container_exec_logs_on_the_container_under_the_chain_s_mode(
+async def test_a_container_exec_logs_on_the_container_under_the_stricter_mode(
     monkeypatch, ctr_log, parent_log, call_log, suppress, mode
 ):
     """The issued command and output are the container's; the parent keeps the DEBUG wrapper."""
@@ -2488,7 +2488,7 @@ async def test_a_container_exec_logs_on_the_container_under_the_chain_s_mode(
     finally:
         await parent.close()
     assert (result.retcode, result.value, result.command) == (0, _OUT_TOK, cmd)
-    assert [ctx.mode for ctx in delegated] == [mode], "the context carries the chain's mode"
+    assert [ctx.mode for ctx in delegated] == [mode], "the context carries the stricter mode"
     if mode is LogMode.NEVER:
         assert (cmd_seen, out_seen) == ([], [])
         return
@@ -2529,70 +2529,6 @@ async def test_a_shell_command_s_own_mode_decides_a_container_exec_s_log(monkeyp
         (logging.INFO, "cmd", cmd, LogMode.NORMAL),
         (logging.INFO, "out", _OUT_TOK, LogMode.NORMAL),
     ]
-
-
-def _chain_rows():
-    from otto.logger.mode import LogMode as M
-
-    return [
-        pytest.param(M.NORMAL, M.NORMAL, False, M.NORMAL, id="all-normal"),
-        pytest.param(M.NEVER, M.NORMAL, False, M.NEVER, id="terminal-never"),
-        pytest.param(M.NORMAL, M.NEVER, False, M.NEVER, id="middle-never"),
-        pytest.param(M.NORMAL, M.QUIET, False, M.QUIET, id="middle-quiet"),
-        pytest.param(M.NORMAL, M.NORMAL, True, M.QUIET, id="middle-suppressed"),
-    ]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("terminal_log", "middle_log", "middle_suppressed", "mode"), _chain_rows())
-async def test_a_container_of_a_container_logs_on_the_originating_container(
-    monkeypatch, terminal_log, middle_log, middle_suppressed, mode
-):
-    """Only the container the caller asked logs command and lines; each hop keeps its wrapper.
-
-    The mode is the most restrictive over the whole chain, whichever host
-    restricts it: the terminal parent, or the container in the middle by its
-    own mode or by a suppression of it.
-    """
-    from otto.host.host import SuppressCommandOutput
-    from otto.logger.mode import LogMode
-    from tests.conformance._log import records_containing
-
-    cmd = f"echo {_CMD_TOK}"
-    wire_a = f"docker exec -i aaa sh -c 'echo {_CMD_TOK}'"
-    wire_b = f"docker exec -i bbb sh -c {shlex.quote(wire_a)}"
-    parent, _ = await _scripted_parent({wire_b: (_OUT_TOK, 0)}, log=terminal_log)
-    middle = _make_container(parent, container_id="bbb")
-    middle.log = middle_log
-    container = _make_container(middle, container_id="aaa")
-    container.log = LogMode.NORMAL
-    _wrapped_as(monkeypatch, middle, wire_b)
-    _wrapped_as(monkeypatch, container, wire_a)
-    to_middle = _delegations(monkeypatch, middle)
-    to_parent = _delegations(monkeypatch, parent)
-    quieted = SuppressCommandOutput(host=middle) if middle_suppressed else nullcontext()
-    try:
-        with (
-            quieted,
-            all_records() as records,
-            records_containing(_CMD_TOK) as cmd_seen,
-            records_containing(_OUT_TOK) as out_seen,
-        ):
-            result = await container.exec(cmd)
-    finally:
-        await parent.close()
-    assert (result.retcode, result.value, result.command) == (0, _OUT_TOK, cmd)
-    assert [ctx.mode for ctx in to_middle] == [mode], "the context carries the chain's mode"
-    assert to_parent == to_middle, "the middle container forwards the context unchanged"
-    if mode is LogMode.NEVER:
-        assert (cmd_seen, out_seen) == ([], []), "a NEVER anywhere up the chain silences every host"
-        return
-    assert _container_trace(records, container) == [
-        (logging.INFO, "cmd", cmd, mode),
-        (logging.INFO, "out", _OUT_TOK, mode),
-    ]
-    assert _wire_on(records, middle, _CMD_TOK, _OUT_TOK) == [(logging.DEBUG, wire_a, mode)]
-    assert _wire_on(records, parent, _CMD_TOK, _OUT_TOK) == [(logging.DEBUG, wire_b, mode)]
 
 
 @pytest.mark.asyncio
@@ -2656,46 +2592,17 @@ async def test_a_structural_parent_keeps_today_s_public_exec():
     parent.exec = AsyncMock(return_value=_ok(out="hi"))
     container = _make_container(parent)
     container.log = LogMode.QUIET
-    with patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-s")):
-        result = await container.exec("echo hi", expects=[("p", "r")], timeout=7.0)
-    assert result.value == "hi"
-    parent.exec.assert_awaited_once_with(
-        "wire-s", timeout=7.0, log=container._effective_log(LogMode.NORMAL), expects=[("p", "r")]
-    )
-
-
-@pytest.mark.asyncio
-async def test_a_chain_ending_at_a_structural_parent_keeps_today_s_public_exec_at_every_hop(
-    monkeypatch,
-):
-    """No container of a chain that ends at a stand-in logs the command, at any level."""
-    from otto.logger.mode import LogMode
     from tests.conformance._log import records_containing
 
-    parent = MagicMock(spec=["exec", "id", "name", "term", "log"])
-    parent.id = parent.name = "test3"
-    parent.term = "ssh"
-    parent.exec = AsyncMock(return_value=_ok(out=_OUT_TOK))
-    middle = _make_container(parent, container_id="bbb")
-    middle.log = LogMode.NORMAL
-    container = _make_container(middle, container_id="aaa")
-    container.log = LogMode.QUIET
-    wire_a = f"docker exec -i aaa sh -c 'echo {_CMD_TOK}'"
-    wire_b = f"docker exec -i bbb sh -c {shlex.quote(wire_a)}"
-    _wrapped_as(monkeypatch, middle, wire_b)
-    _wrapped_as(monkeypatch, container, wire_a)
-    with (
-        records_containing(_CMD_TOK) as cmd_seen,
-        records_containing(_OUT_TOK) as out_seen,
-    ):
-        result = await container.exec(f"echo {_CMD_TOK}", timeout=7.0)
-    assert result.value == _OUT_TOK
-    assert (cmd_seen, out_seen) == ([], [])
+    wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-s"))
+    with wired, records_containing("echo hi") as cmd_seen, records_containing("hi") as out_seen:
+        result = await container.exec("echo hi", expects=[("p", "r")], timeout=7.0)
+    assert result.value == "hi"
+    assert (cmd_seen, out_seen) == ([], []), (
+        "the container logs nothing: the lines are the parent's"
+    )
     parent.exec.assert_awaited_once_with(
-        wire_b,
-        timeout=7.0,
-        log=middle._effective_log(container._effective_log(LogMode.NORMAL)),
-        expects=None,
+        "wire-s", timeout=7.0, log=container._effective_log(LogMode.NORMAL), expects=[("p", "r")]
     )
 
 
@@ -2763,20 +2670,23 @@ async def test_a_parent_s_exec_override_that_audits_sees_the_wrapper_and_logs_it
     ]
 
 
-@pytest.mark.asyncio
-async def test_a_container_chain_that_loops_back_refuses_the_exec():
-    """A self-parent and a two-container loop each refuse at once; nothing reaches a parent."""
+def test_a_container_whose_parent_is_a_container_is_refused_when_built():
+    """A container is a leaf: building one on another container raises, naming both."""
+    middle = _make_container(_mock_parent(), container_id="bbb")
+    with pytest.raises(TypeError, match=f"{middle.name} is itself a container"):
+        _make_container(middle, container_id="aaa")
+
+
+def test_a_container_cannot_be_reparented_onto_a_container():
+    """``parent`` is a plain field: assigning a container to it, itself included, raises."""
     parent = _mock_parent()
-    alone = _make_container(parent, container_id="sss")
-    alone.parent = alone
-    with pytest.raises(ValueError, match="loops back"):
-        await alone.exec("echo x")
     first = _make_container(parent, container_id="aaa")
     second = _make_container(parent, container_id="bbb")
-    first.parent, second.parent = second, first
-    with pytest.raises(ValueError, match=f"loops back.*{second.name}.*{first.name}"):
-        await first.exec("echo x")
-    parent.exec.assert_not_awaited()
+    with pytest.raises(TypeError, match="is itself a container"):
+        first.parent = first
+    with pytest.raises(TypeError, match=f"{second.name} is itself a container"):
+        first.parent = second
+    assert first.parent is parent, "a refused assignment leaves the parent as it was"
 
 
 @pytest.mark.asyncio
