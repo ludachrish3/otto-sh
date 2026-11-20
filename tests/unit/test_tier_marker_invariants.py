@@ -2365,6 +2365,8 @@ def test_the_release_trusts_the_coverage_stamp_and_runs_no_duplicate_stage():
     # variable): `[ $$? -eq 1 ]` is then false and the release stops at
     # once; 1 (no or a mismatched stamp) runs `make coverage` and re-checks,
     # so a run the stamp withheld ends the chain there instead of releasing.
+    # The group ends on the re-check's own status, never a bare `exit`: that
+    # would leave the shell before the recipe's `bed_fail` frees the lease (#1011).
     # #660: the check runs ONCE, first, and its status ($$stamp) is reused at
     # the coverage stage; the cheap stages in between rebuild the web assets
     # the stamp's digest covers, so a second first-check would never match.
@@ -2372,7 +2374,7 @@ def test_the_release_trusts_the_coverage_stamp_and_runs_no_duplicate_stage():
         r"\{ \$\(COVERAGE_STAMP\) check \$\(COVERAGE_STAMP_GATE\) \$\(COVERAGE_STAMP_OVERRIDES\) "
         r">/dev/null 2>&1; stamp=\$\$\?; \[ \$\$stamp -ne 1 \] \|\| echo \"[^\"]+\"; "
         r"\[ \$\$stamp -le 1 \] \|\| \$\(COVERAGE_STAMP\) check "
-        r"\$\(COVERAGE_STAMP_GATE\) \$\(COVERAGE_STAMP_OVERRIDES\) \|\| exit \$\$\?; \}"
+        r"\$\(COVERAGE_STAMP_GATE\) \$\(COVERAGE_STAMP_OVERRIDES\); \}"
     )
     assert re.search(first, release), (
         "the release must check the stamp first, keep its status, and stop on anything but 0/1"

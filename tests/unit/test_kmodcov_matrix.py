@@ -412,8 +412,9 @@ def test_the_release_stage_runs_the_kmodcov_lane_and_the_by_hand_fold_stays():
     stage = re.search(r"^release-kmodcov-matrix:.*?\n((?:\t.*\n)+)", makefile, re.MULTILINE)
     assert stage
     body = stage.group(1)
-    assert "$(MAKE) --no-print-directory kmodcov\n" in body
-    assert body.index("kmodcov\n") < body.index("cp $(KMODCOV_MATRIX_CANDIDATE)")
+    lane = "$(MAKE) --no-print-directory kmodcov $(call bed_fail)\n"
+    assert lane in body
+    assert body.index(lane) < body.index("cp $(KMODCOV_MATRIX_CANDIDATE)")
     assert "chore(matrix): re-measure the kmodcov matrix" in body
     assert "core.hooksPath=/dev/null" in body
     fold = re.search(r"^kmodcov-matrix:.*?\n((?:\t.*\n)+)", makefile, re.MULTILINE)

@@ -1387,10 +1387,22 @@ The lease belongs to the **run**: the `make` running the lane and every
 process group it starts. A lane that dies mid-run (SIGKILL, a lost VM, a
 closed terminal) keeps the bed only while something of it still runs; once
 its workers are gone the next acquirer takes the lease over, saying whose it
-was and that it was dead. A red lane ends the same way: `make` stops at the
-failing step, so the release never runs and the next lane on the cell prints
-`taken over from ... dead`, which is that red lane's lease being collected,
-not a second failure. A green lane's release first waits (`BED_LEASE_DRAIN`,
+was and that it was dead. A red lane does not wait for that: every step that
+can fail between a lane's acquire and its release ends in `$(call bed_fail)`, which
+captures the step's status, releases the lease and exits with that status, so
+a failing `make vm-health` or `make qemu-restart` does not strand the bed (no
+`make bed-release` after a red health check). That release is the ordinary
+one: it drains the run's own processes first and keeps the lease, naming
+them, if any are still running. A *reap* step is the exception: a failed
+reap leaves the bed's state unknown, so it keeps the lease. The reap notes its
+failure on the lease record and the release keeps a lease so noted, so this
+holds when the reap ran in a lane nested under another (`make release-matrix`
+running `make conformance-bed`); the release says so, and `make bed-reap`
+cleans the bed and frees it. A new bed target must end every other step that
+can fail with `bed_fail`, and must not `exit` from inside such a step (the
+shell would end before `bed_fail` runs: pass a status on with `( exit $$rc )`);
+`tests/unit/test_lane_invariants.py` fails the one that does not. A green
+lane's release first waits (`BED_LEASE_DRAIN`,
 default 30 s) for the run's own processes to exit, and keeps the lease if any
 remain, naming them: a lane cannot free a bed its own workers are still on.
 A lane that merely overran its budget
@@ -1462,8 +1474,9 @@ its hop and waits for the guest to boot first
 Every lane that runs a suite on the bed runs the quick reap right after it
 takes the lease and again before it releases it: whatever a predecessor left
 is gone before the suite starts, and a green lane leaves none of its own. A
-red lane stops at its failing step, and the next lane's first reap collects
-what it left. Every reap, the quick one included, brings each console that
+red lane stops at its failing step and frees the bed without its exit reap,
+so the next suite lane's start reap is what collects what it left
+(`vm-health`, `qemu-restart` and `console-logout` do not reap at their start). Every reap, the quick one included, brings each console that
 logs in (the Unix and BusyBox consoles; a Zephyr console has no login) back to
 its login prompt.
 

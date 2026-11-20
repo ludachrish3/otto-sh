@@ -91,7 +91,12 @@ def test_quick_runs_two_uninstrumented_legs_and_tolerates_one_empty_leg():
     assert "$(call junitxml,quick-serial)" in serial, serial
     for leg in legs:
         assert leg.startswith("@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest"), leg
-        assert "|| { [ $$? -eq 5 ] &&" in leg, f"exit 5 must be tolerated per leg: {leg}"
+        # Exit 5 (nothing collected) is recorded and tolerated; any other status
+        # is passed on as itself, from a subshell, so `bed_fail` sees it (#1011).
+        assert "|| { rc=$$?; if [ $$rc -eq 5 ]; then echo " in leg, (
+            f"exit 5 must be tolerated per leg: {leg}"
+        )
+        assert leg.endswith("else ( exit $$rc ); fi; } $(call bed_fail,$(QUICK_BED))"), leg
         assert "-p no:randomly" not in leg, "the spec keeps random ordering on"
     assert any("$(error" in line and "PATHS" in line for line in recipe), recipe
 

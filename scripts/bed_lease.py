@@ -112,6 +112,14 @@ class Record:
     expires: str
     purpose: str
     resources: list[str]
+    reap_failed: bool = False
+    """The run's last reap did not leave the bed clean (:func:`record_reap`).
+
+    While it is set the bed's state is unknown, so :func:`release` keeps the
+    lease. It is on the record, not in a recipe's exit status, because a reap
+    that fails inside a nested ``$(MAKE)`` lane reaches the outer lane only as
+    "the nested make failed". A record without the key reads as ``False``.
+    """
 
     @classmethod
     def from_json(cls, data: dict) -> "Record":
@@ -542,6 +550,19 @@ def same_run(a: "Record | None", b: "Record | None") -> bool:
     return a is not None and b is not None and (a.pid, a.pid_started) == (b.pid, b.pid_started)
 
 
+def record_reap(cell: Cell, *, clean: bool) -> None:
+    """Note on the held record whether the run's reap left the bed clean.
+
+    Called by the reap, which holds the lease. A reap that was not clean sets
+    ``reap_failed`` and the next clean one clears it; :func:`release` reads it.
+    """
+    with _lock(cell):
+        record = read_record(cell)
+        if record is not None and record.reap_failed == clean:
+            record.reap_failed = not clean
+            write_record(cell, record)
+
+
 def release(cell: Cell, pid: int, *, force: bool) -> int:
     """Release the lease *pid*'s run holds (after a drain), or anyone's with *force*.
 
@@ -579,6 +600,13 @@ def release(cell: Cell, pid: int, *, force: bool) -> int:
         if not same_run(record, current) or read_record(cell) != current:
             render(cell, current)
             print(f"bed-lease: {cell.name} is no longer pid {pid}'s during its drain; kept as is")
+            return 0
+        if current is not None and current.reap_failed:
+            render(cell, current)
+            print(
+                f"bed-lease: {cell.name} kept: this run's last reap failed, so the bed's state "
+                "is unknown; `make bed-reap` cleans it and releases"
+            )
             return 0
         if left:
             render(cell, current)

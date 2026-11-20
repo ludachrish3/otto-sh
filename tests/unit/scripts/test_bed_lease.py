@@ -646,6 +646,38 @@ def test_release_keeps_the_lease_while_the_run_has_survivors(root, capsys):
             signal_group(group["pgid"], signal.SIGKILL)
 
 
+def test_release_keeps_the_lease_after_a_failed_reap_until_a_clean_one(root, capsys):
+    """A failed reap is on the record, so the release reads it wherever the reap ran.
+
+    A reap that fails in a nested `$(MAKE)` lane reaches the outer lane only as
+    a failed step, whose `bed_fail` releases: the record is what stops it.
+    """
+    mark = "import sys; sys.path.insert(0, '.'); from scripts import bed_lease as b; "
+    mark += (
+        f"b.record_reap(b.load_cell(b.Path('{LAB}'), b.Path('{root}'), resources=False), clean=%s)"
+    )
+    done = _run_shell(
+        root,
+        f'{SCRIPT} acquire --pid $$ && {sys.executable} -c "{mark % False}" && '
+        f"{SCRIPT} release --pid $$ && echo KEPT && "
+        f'{sys.executable} -c "{mark % True}" && {SCRIPT} release --pid $$ && echo DONE',
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    kept, _, freed = done.stdout.partition("KEPT")
+    assert "kept: this run's last reap failed" in kept, done.stdout
+    assert "released by pid" not in kept, done.stdout
+    assert "released by pid" in freed, done.stdout
+    assert not (root / "tech1.json").exists()
+
+
+def test_a_record_written_before_the_reap_flag_reads_as_not_failed(root):
+    """Worktrees share the lease root, so an older branch's record must still load."""
+    _run(root, "acquire", "--pid", str(ME))
+    data = _record(root)
+    del data["reap_failed"]
+    assert bed_lease.Record.from_json(data).reap_failed is False
+
+
 def test_force_release_evicts_and_names_the_holder(root, holder, capsys):
     _run(root, "acquire", "--pid", str(holder.pid), "--purpose", "theirs")
     assert _run(root, "release", "--pid", str(ME), "--force") == 0

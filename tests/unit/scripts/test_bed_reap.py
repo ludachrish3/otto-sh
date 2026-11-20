@@ -382,6 +382,27 @@ def test_a_foreign_qdisc_is_kept_and_keeps_the_bed_dirty(cell, doubles, lab, cap
     assert "bed-reap: clean" not in out
 
 
+def test_a_dirty_reap_is_noted_on_the_lease_and_a_clean_one_clears_it(cell, doubles, lab, capsys):
+    """The release reads the note, so a reap that failed in a nested lane still keeps the lease."""
+    stuck = _snap(nc_listeners=frozenset({"300 nc -l 9000"}))
+    doubles.snapshots["test1"] = [stuck, stuck]
+    assert _reap(cell, capsys)[0] == bed_reap.EXIT_DIRTY
+    assert bed_lease.read_record(cell).reap_failed is True
+    doubles.snapshots["test1"] = [_snap(), _snap()]
+    assert _reap(cell, capsys)[0] == 0
+    assert bed_lease.read_record(cell).reap_failed is False
+
+
+def test_a_reap_that_raises_is_noted_as_failed(cell, doubles, lab, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("the reap itself broke")
+
+    monkeypatch.setattr(bed_reap, "_await_hopped_guests", boom)
+    with pytest.raises(RuntimeError):
+        _reap(cell, capsys)
+    assert bed_lease.read_record(cell).reap_failed is True
+
+
 def test_what_survives_its_removal_is_the_verdict(cell, doubles, lab, capsys):
     stuck = _snap(nc_listeners=frozenset({"300 nc -l 9000"}))
     doubles.snapshots["test1"] = [stuck, stuck]
