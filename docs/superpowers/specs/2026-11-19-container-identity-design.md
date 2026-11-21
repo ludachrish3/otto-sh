@@ -1,11 +1,11 @@
 # Identity and elevation on a container (#935) — design
 
-Status: **draft, not ready for review.** Split out of
-`2026-11-19-container-cells-design.md` by Chris's decision of 2026-11-19. The
-proposal below is that design's section 6 as it stood at revision 3, kept as
-the starting point. It was reviewed twice by Astra and Fable and once by
-Astra 6.2 (`.superpowers/sdd/pr4-design-review-*.md`); the Astra 6.2 findings
-listed under "Open" are not yet folded in.
+Status: **backlog** (Chris, 2026-11-20). Not being built: the calls it
+would change are refused or fail loudly today and no user has asked for
+them. It is reopened when a user needs `user=` or `sudo=` through `run` on a
+container. What follows is the draft as it stood on 2026-11-19, split out of
+`2026-11-19-container-cells-design.md`; its review findings are not folded
+in.
 
 ## Decided (Chris, 2026-11-19)
 
