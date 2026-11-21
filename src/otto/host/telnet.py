@@ -16,7 +16,7 @@ import re
 import signal
 import struct
 import sys
-from collections.abc import Awaitable, Generator
+from collections.abc import Awaitable, Callable, Generator
 from dataclasses import (
     dataclass,
     field,
@@ -82,7 +82,13 @@ class _OpenRecord:
     sock: Any = None
 
 
-def _owned_factory(factory: Any, *, single_client: bool, record: _OpenRecord) -> Any:
+def _owned_factory(
+    factory: Any,
+    *,
+    single_client: bool,
+    record: _OpenRecord,
+    on_answer: Callable[[], None] | None = None,
+) -> Any:
     """Wrap a telnetlib3 protocol factory so the opener can always release what it builds.
 
     The protocol is recorded as soon as it is built. Its ``connection_made``
@@ -91,11 +97,17 @@ def _owned_factory(factory: Any, *, single_client: bool, record: _OpenRecord) ->
     so the emergency sweep can abort it from the moment it exists. The
     registration happens even when that setup raises, since the transport is
     live either way.
+
+    With *on_answer*, the protocol's first ``data_received`` calls it before
+    handing the bytes on, then puts the protocol's own method back, so only
+    that one call is wrapped.
     """
 
     def build(*args: Any, **kwargs: Any) -> Any:
         protocol = factory(*args, **kwargs)
         record.protocol = protocol
+        if on_answer is not None:
+            _call_on_first_data(protocol, on_answer)
         setup = protocol.connection_made
 
         def connection_made(transport: Any) -> None:
@@ -111,6 +123,18 @@ def _owned_factory(factory: Any, *, single_client: bool, record: _OpenRecord) ->
         return protocol
 
     return build
+
+
+def _call_on_first_data(protocol: Any, on_answer: Callable[[], None]) -> None:
+    """Make *protocol*'s first ``data_received`` call *on_answer* first, then restore it."""
+    receive = protocol.data_received
+
+    def data_received(data: bytes) -> None:
+        protocol.data_received = receive
+        on_answer()
+        receive(data)
+
+    protocol.data_received = data_received
 
 
 async def _release_failed_open(record: _OpenRecord, *, single_client: bool) -> None:
@@ -161,7 +185,12 @@ def _stop_negotiation(protocol: Any) -> None:
         logger.debug(f"could not stop telnet negotiation timers (non-fatal): {exc!r}")
 
 
-async def open_telnet_connection(*args: Any, single_client: bool = False, **kwargs: Any) -> Any:
+async def open_telnet_connection(
+    *args: Any,
+    single_client: bool = False,
+    on_answer: Callable[[], None] | None = None,
+    **kwargs: Any,
+) -> Any:
     """Lazy, patchable wrapper around :func:`telnetlib3.open_connection`.
 
     Kept as a module-level seam (tests monkeypatch it) while deferring the
@@ -180,6 +209,10 @@ async def open_telnet_connection(*args: Any, single_client: bool = False, **kwar
     fails before telnetlib3 hands the stream back releases whatever it had
     built (see ``_release_failed_open``), then re-raises. *single_client*
     is otto's, never passed to telnetlib3.
+
+    *on_answer*, also otto's, is called once, when the first bytes arrive
+    from the far end, whether or not the open then succeeds: it is how
+    :class:`TelnetClient` knows the server answered (:attr:`TelnetClient.answered`).
 
     The library's opener runs as its own task, observed through
     ``_await_within``, so this is a real cancellation boundary: a
@@ -202,7 +235,9 @@ async def open_telnet_connection(*args: Any, single_client: bool = False, **kwar
         )
         factory = base
     record = _OpenRecord()
-    kwargs["client_factory"] = _owned_factory(factory, single_client=single_client, record=record)
+    kwargs["client_factory"] = _owned_factory(
+        factory, single_client=single_client, record=record, on_answer=on_answer
+    )
     try:
         opening = await _await_within(open_connection(*args, **kwargs), None)
         assert opening is not None  # noqa: S101 — internal invariant: with no timeout only the open ending returns
@@ -953,8 +988,21 @@ class TelnetClient(_StreamHolder):
     ``options.port`` is used. Keeps tunnel port-forwarding transparent
     to the TelnetOptions carried through the rest of the stack."""
 
+    answered: bool = field(init=False, default=False)
+    """Whether the far end has sent this client any byte, set by :meth:`connect`.
+
+    Set as the first bytes arrive, so it holds even when ``connect()`` then
+    fails or is cancelled (a login cut by a probe's bound). Through a hop's
+    forward the local connection is accepted before the channel to the
+    device opens, so only a byte proves the device's telnet server answered.
+    """
+
     def __post_init__(self) -> None:
         self.password = as_secret(self.password)
+
+    def _answer_heard(self) -> None:
+        """Record that the far end answered (the opener's ``on_answer``)."""
+        self.answered = True
 
     async def connect(self, interactive: bool = False) -> None:
         """Open the telnet connection, negotiate options, and log in.
@@ -985,6 +1033,7 @@ class TelnetClient(_StreamHolder):
         reader, writer = await open_telnet_connection(
             self.host,
             single_client=single_client("telnet", self.options),
+            on_answer=self._answer_heard,
             **open_kwargs,  # type: ignore[arg-type]
         )
         self._install(reader, writer)

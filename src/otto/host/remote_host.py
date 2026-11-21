@@ -393,22 +393,31 @@ class RemoteHost(BaseHost):
         except Exception as exc:  # noqa: BLE001 — reachability probe, any failure means unreachable
             return exc
 
-    async def _probe_fresh(self, timeout: float) -> Exception | None:
-        """Probe once through a throwaway manager, bounded by *timeout*: ``None``, or why not.
+    async def _probe_fresh(self, timeout: float) -> _ProbeAnswer:
+        """Probe once through a throwaway manager, bounded by *timeout*, and say what it found.
 
         The line is released first, and the throwaway is closed (bounded by
         ``_FRESH_CLOSE_S``, never raising) before returning; the live
         manager's caches are untouched. ``is_reachable(fresh=True)`` and
         ``reboot``'s down phase (:meth:`_probe_down`) both come here.
+
+        A failed probe *may be up* when the throwaway manager says so
+        (``ConnectionManager._may_be_up``, #1220): the host's server
+        answered, its connection was open when the bound cut the handshake,
+        or the probe failed at the jump before the host's own open began.
         """
         await self._release_probe_line()
         conns = self._build_connections()
         try:
             await asyncio.wait_for(self._probe_with(conns), timeout)
         except Exception as exc:  # noqa: BLE001 — reachability probe, any failure means unreachable
-            return exc
+            return _ProbeAnswer.of(
+                exc,
+                may_be_up=conns._may_be_up,  # noqa: SLF001 — intra-package access to ConnectionManager._may_be_up
+                at_jump=conns._failed_at_jump,  # noqa: SLF001 — intra-package access to ConnectionManager._failed_at_jump
+            )
         else:
-            return None
+            return _ProbeAnswer.of(None)
         finally:
             try:
                 await asyncio.wait_for(conns.close(), _FRESH_CLOSE_S)
@@ -421,7 +430,12 @@ class RemoteHost(BaseHost):
 
     @override
     async def _probe_down(self, timeout: float) -> _ProbeAnswer:
-        return _ProbeAnswer.of(await self._probe_fresh(timeout))
+        return await self._probe_fresh(timeout)
+
+    @override
+    def _probe_jump(self) -> str | None:
+        """Return this host's ``hop``: the jump its probes go through."""
+        return self.hop
 
     async def _release_probe_line(self) -> None:
         """Release a single-client line before a probe dials; default no-op.
@@ -540,10 +554,11 @@ class RemoteHost(BaseHost):
         transport cached by an early login cannot read a dead host as up (#435).
         Any failure is unreachable, a console line at a running shell
         included: on a console that keeps its link through a reboot, shutdown
-        and boot output look the same as a shell.
+        and boot output look the same as a shell, and so is a probe that
+        reached the host but did not finish inside *timeout*.
         """
         if fresh:
-            return await self._probe_fresh(timeout) is None
+            return (await self._probe_fresh(timeout)).reached
         return await self._probe_live(timeout) is None
 
     @override

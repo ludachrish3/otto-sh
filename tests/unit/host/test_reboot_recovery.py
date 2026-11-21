@@ -495,6 +495,7 @@ def test_a_console_term_releases_the_line_before_a_fresh_dial(monkeypatch):
         m.console = AsyncMock()
         m.close = AsyncMock()
         m.connect_allowance = MagicMock(return_value=0.0)
+        m._may_be_up = m._failed_at_jump = False  # a console never spares a failed probe
         return m
 
     monkeypatch.setattr(UnixHost, "close", close)
@@ -623,6 +624,7 @@ def _scripted_line(
         m.console = types.MethodType(console, m)
         m.close = AsyncMock()
         m.connect_allowance = MagicMock(return_value=0.0)
+        m._may_be_up = m._failed_at_jump = False  # a console never spares a failed probe
         return m
 
     async def close(self):
@@ -959,7 +961,7 @@ async def test_both_waits_bound_each_probe_by_the_hosts_probe_bound(monkeypatch)
 
     async def fresh(self, timeout):
         bounds.append((timeout, True))
-        return OSError("down")  # down at once
+        return _ProbeAnswer(reached=False)  # down at once
 
     async def live(self, timeout):
         bounds.append((timeout, False))

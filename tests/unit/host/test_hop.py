@@ -13,7 +13,7 @@ import pytest
 from asyncssh import SSHClientConnection
 from pydantic import SecretStr
 
-from otto.host.connections import ConnectionManager
+from otto.host.connections import ConnectionManager, _WatchedClientFactory
 from otto.host.element import Element
 from otto.host.host_key_client import HostKeyCheck
 from otto.host.login_proxy import Cred
@@ -34,6 +34,18 @@ def _check(alias: str, port: int) -> dict[str, Any]:
     connection sends, not a restatement of it.
     """
     return HostKeyCheck.for_options(SshOptions(port=port), alias).connect_kwargs()
+
+
+def _target_check(alias: str, port: int) -> dict[str, Any]:
+    """:func:`_check` as a host's own connect sends it: its client factory watched (#1220).
+
+    The watch compares by the factory it wraps, so the observer is a placeholder.
+    """
+    kwargs = _check(alias, port)
+    return {
+        **kwargs,
+        "client_factory": _WatchedClientFactory(kwargs["client_factory"], lambda _conn: None),
+    }
 
 
 def _cs(
@@ -162,7 +174,7 @@ class TestConnectionManagerTunnel:
                 password=SecretStr("pass"),
                 tunnel=mock_tunnel,
                 port=22,
-                **_check("test", 22),
+                **_target_check("test", 22),
             )
             assert result is mock_ssh
 
@@ -228,7 +240,7 @@ class TestConnectionManagerTunnel:
                 password=SecretStr("pass"),
                 tunnel=None,
                 port=22,
-                **_check("test", 22),
+                **_target_check("test", 22),
             )
 
     @pytest.mark.asyncio

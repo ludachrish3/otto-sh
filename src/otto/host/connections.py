@@ -449,6 +449,7 @@ async def connect_and_describe(
     password: SecretStr | None,
     alias: str,
     apply_post_connect: bool = True,
+    on_open: "Callable[[SSHClientConnection], None] | None" = None,
 ) -> "SSHClientConnection":
     """Open one SSH connection through the seam and say what happened.
 
@@ -478,9 +479,17 @@ async def connect_and_describe(
     a transport to the hop, not a session on it, so the hop host's structured
     forwards and ``post_connect`` hook belong to the hop's own session and
     must not run once per hopped target — see ``RemoteHost._build_hop_transport``.
+
+    *on_open*, when given, is called with the connection the moment its
+    transport to *host* is open (the TCP connect, or the hop's channel),
+    before the server has said anything, and whether or not the handshake
+    then finishes: :meth:`ConnectionManager.ssh` reads from it how far a
+    failed connect got (``_WatchedClientFactory``).
     """
     kwargs = {**kwargs, **options._kwargs(alias=alias)}  # noqa: SLF001 — intra-package access to SshOptions._kwargs
     logger.debug(describe_connect_kwargs(name, host, {**kwargs, "password": password}))
+    if on_open is not None:
+        kwargs["client_factory"] = _WatchedClientFactory(kwargs.get("client_factory"), on_open)
     # The check _kwargs built (None with checking off): the refusal is judged
     # against the same host, port and file the connection checked.
     check = kwargs["known_hosts"]
@@ -499,6 +508,124 @@ async def connect_and_describe(
         await options._apply_post_connect(conn)  # noqa: SLF001 — intra-package access to SshOptions._apply_post_connect
     logger.debug(describe_negotiated(name, conn))
     return conn
+
+
+@dataclass(frozen=True)
+class _WatchedClientFactory:
+    """asyncssh's ``client_factory``, wrapped so *on_open* sees each connection as it opens.
+
+    asyncssh builds the client object once the transport is open and calls
+    its ``connection_made`` with the connection, before any byte is read.
+    *factory* is otto's host-key client factory, or ``None`` with checking
+    off (asyncssh's plain ``SSHClient``); the client it builds is otherwise
+    untouched. A value, equal when the factories it wraps are equal: the
+    observer changes nothing about the client.
+    """
+
+    factory: "Callable[[], Any] | None"
+    on_open: "Callable[[SSHClientConnection], None]" = field(compare=False)
+
+    def __call__(self) -> Any:
+        """Build the connection's client object, its ``connection_made`` reporting to *on_open*."""
+        if self.factory is None:
+            from ._asyncssh import asyncssh  # loaded by now: this runs inside a connect
+
+            client = asyncssh.SSHClient()
+        else:
+            client = self.factory()
+        made = client.connection_made
+        on_open = self.on_open
+
+        def connection_made(conn: "SSHClientConnection") -> None:
+            on_open(conn)
+            made(conn)
+
+        client.connection_made = connection_made
+        return client
+
+
+@dataclass(frozen=True)
+class _OpenSeen:
+    """What one failed open of a host's own transport saw of the host, as two facts."""
+
+    opened: bool
+    """The transport to the host opened: a TCP connection to it, or an ssh
+    channel to it through a jump (confirmed only once the jump has reached
+    it). Never a proxy command's pipe, which opens before the proxy has
+    reached anything, nor a hop's local forward, which accepts before its
+    channel to the host exists."""
+
+    answered: bool
+    """The host's server spoke: its ssh version banner arrived, or its telnet
+    server sent a byte."""
+
+
+_NOTHING_SEEN = _OpenSeen(opened=False, answered=False)
+
+
+def _open_may_be_up(*, started: bool, seen: _OpenSeen, cut: bool) -> bool:
+    """Whether a failed open of a host's transport leaves the host possibly up (#1220).
+
+    The one rule ``reboot``'s down phase reads a failed probe by
+    (:attr:`ConnectionManager._may_be_up`); a failed open it does not spare
+    shows the host down. Spared:
+
+    - an open that failed before the host's own open *started*: the jump's
+      tunnel (its connect, its login, a forward through it) failed or was
+      cut, so the probe learned nothing about the host;
+    - an open the host's server *answered* (:attr:`_OpenSeen.answered`),
+      however it then failed: the host is running;
+    - an open whose transport to the host had *opened*
+      (:attr:`_OpenSeen.opened`) when a timeout *cut* it: the host accepted
+      the connection and is slow.
+
+    Down: the connect was refused or unreachable, the connect or the jump's
+    channel to the host timed out or was refused, or the connection was
+    reset or closed before the server said anything.
+    """
+    return not started or seen.answered or (seen.opened and cut)
+
+
+def _is_cut(exc: BaseException) -> bool:
+    """Whether *exc* is an open cut by a timeout: a probe's bound, or the library's own."""
+    return isinstance(exc, (asyncio.CancelledError, TimeoutError, asyncio.TimeoutError))
+
+
+@dataclass
+class _SshOpenWatch:
+    """One target ssh connect's connection, held from its transport opening to the connect's end.
+
+    The connection's options hold the raw password, so :meth:`seen` drops it
+    on every path out of the connect, success included, and nothing else
+    keeps it.
+    """
+
+    conn: "SSHClientConnection | None" = None
+    over_socket: bool = False
+    """Whether the transport that opened is a socket: a TCP connection, or a
+    jump's channel, which carries the jump's socket. A proxy command's pipe
+    is not. Read when the transport opens: asyncssh forgets the transport
+    once the connection is aborted."""
+
+    def opened(self, conn: "SSHClientConnection") -> None:
+        """Keep the connection to read once the connect ends (the connect's ``on_open``)."""
+        self.conn = conn
+        self.over_socket = conn.get_extra_info("socket") is not None
+
+    def seen(self) -> _OpenSeen:
+        """Return what the connect saw of the host, and drop the connection.
+
+        The server answered when its version banner arrived; asyncssh keeps
+        the banner in the connection's extra info after the connection is
+        aborted.
+        """
+        conn, self.conn = self.conn, None
+        if conn is None:
+            return _NOTHING_SEEN
+        return _OpenSeen(
+            opened=self.over_socket,
+            answered=conn.get_extra_info("server_version") is not None,
+        )
 
 
 def _seconds(value: Any) -> float:
@@ -581,6 +708,26 @@ class ConnectionManager:
     done: register ``ConnectionManager`` under the same name again, with the
     built-in's declarations and ``overwrite=True``. otto's own suite restores
     every registry after each test.
+    """
+
+    _may_be_up: bool = False
+    """Whether the opens on this manager leave the host possibly up (#1220).
+
+    Set by :meth:`ssh` and :meth:`telnet` when an open succeeds, or fails in
+    a way :func:`_open_may_be_up` spares, and never cleared. A fresh probe
+    reads it from its throwaway manager (``RemoteHost._probe_fresh``): a
+    probe that failed while this is ``False`` shows the host down. The
+    console term never sets it: a console server answers whatever the device
+    behind it is doing, and a console's up phase needs a login prompt, so an
+    old boot cannot pass it. A class default, so a test double that skips
+    ``__init__`` reads ``False``.
+    """
+
+    _failed_at_jump: bool = False
+    """Whether an open on this manager failed at the jump, before the host's own open began.
+
+    Set with :attr:`_may_be_up`, from the same facts (:meth:`_note_failed_open`).
+    ``reboot`` names the jump when every poll of its down phase failed there.
     """
 
     def __init__(  # noqa: PLR0913 — one options slot per transport plus the console endpoint seam; TermContext is the grouped form callers use via create()
@@ -848,6 +995,17 @@ class ConnectionManager:
         )
         return local_port
 
+    def _note_failed_open(self, *, started: bool, seen: _OpenSeen, cut: bool) -> None:
+        """Record what one failed open of the host's transport shows (#1220).
+
+        *started* is whether the host's own open began (the jump's tunnel was
+        up); *seen* and *cut* are what it saw and how it ended. Both flags
+        come from these facts, here only.
+        """
+        may_be_up = _open_may_be_up(started=started, seen=seen, cut=cut)
+        self._may_be_up = self._may_be_up or may_be_up
+        self._failed_at_jump = self._failed_at_jump or not started
+
     async def ssh(self) -> "SSHClientConnection":
         """Return the live SSH connection, opening it if needed."""
         if self._ssh_conn is not None:
@@ -857,18 +1015,28 @@ class ConnectionManager:
                 return self._ssh_conn
             cred = self.transport_cred_for(protocol="ssh") or LOGINLESS
             logger.debug(f"Connecting to {self._name} via SSH")
-            tunnel = None
-            if self._hop is not None:
-                tunnel = await self._ensure_tunnel()
-            kwargs: dict[str, Any] = {"username": cred.login, "tunnel": tunnel}
-            conn = await connect_and_describe(
-                self._name,
-                self._ip,
-                kwargs,
-                self._ssh_options,
-                password=cred.password,
-                alias=self._host_id,
-            )
+            watch = _SshOpenWatch()
+            started = False
+            try:
+                tunnel = None
+                if self._hop is not None:
+                    tunnel = await self._ensure_tunnel()
+                started = True
+                kwargs: dict[str, Any] = {"username": cred.login, "tunnel": tunnel}
+                conn = await connect_and_describe(
+                    self._name,
+                    self._ip,
+                    kwargs,
+                    self._ssh_options,
+                    password=cred.password,
+                    alias=self._host_id,
+                    on_open=watch.opened,
+                )
+            except BaseException as exc:
+                self._note_failed_open(started=started, seen=watch.seen(), cut=_is_cut(exc))
+                raise
+            watch.seen()  # drops the connection the watch held
+            self._may_be_up = True
             self._ssh_conn = conn
             logger.debug(f"Connected to {self._name} via SSH")
             return conn
@@ -1092,7 +1260,13 @@ class ConnectionManager:
                 return self._telnet_conn
 
             cred = self.transport_cred_for(protocol="telnet") or LOGINLESS
-            target = await self.telnet_target()
+            try:
+                target = await self.telnet_target()
+            except BaseException as exc:
+                # The jump's tunnel or its forward failed: the host's own open never
+                # started. Through the rule, never a bare True: it alone decides.
+                self._note_failed_open(started=False, seen=_NOTHING_SEEN, cut=_is_cut(exc))
+                raise
             logger.debug(f"Connecting to {self._name} via telnet")
             client = TelnetClient(
                 target.host,
@@ -1109,12 +1283,20 @@ class ConnectionManager:
             # reuse the half-built client and get the login banner echoed back
             # instead of a shell. Tear down on any exception (including
             # CancelledError) so the next call rebuilds cleanly.
+            # Only a byte proves the device's telnet server answered: through a
+            # hop the local forward accepts before its channel to the device
+            # opens, so an open transport says nothing here. A single-client
+            # console's bridge answers whatever the device behind it is doing.
+            answers_for_device = not single_client("telnet", self._telnet_options)
             try:
                 await client.connect()
-            except BaseException:
+            except BaseException as exc:
+                seen = _OpenSeen(opened=False, answered=answers_for_device and client.answered)
+                self._note_failed_open(started=True, seen=seen, cut=_is_cut(exc))
                 with contextlib.suppress(Exception):
                     await client.close()
                 raise
+            self._may_be_up = True
             self._telnet_conn = client
             logger.debug(f"Connected to {self._name} via telnet")
             return client

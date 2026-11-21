@@ -267,8 +267,14 @@ def test_reboot_wait_honours_the_declared_down_window(chaos_guest, tmp_path):
     after the reboot is issued. First leg (#979): ``--down-timeout 30`` must give
     up with "never went down" instead of waiting out the whole hold. Second leg:
     no flag, so the resolved default window applies and the same hold is waited
-    out; it passes only because the down probe is stateless (#435), where a
-    cached connection would keep answering through the hold.
+    out. Two rules make that work. The down probe is stateless (#435): every
+    poll dials fresh, where a cached connection would keep answering through
+    the hold. And a poll counts as down only when it never reached the guest's
+    own transport (#1220): during the hold sshd answers slowly, and a poll
+    whose handshake runs past its bound after the banner, or once the hop's
+    channel to the guest is open, shows the guest still up, as does a poll
+    that fails at the hop itself, so the down phase keeps polling instead of
+    handing the up phase the old boot.
     """
     old = chaos_guest_boot_id()
     first_xdir = tmp_path / "first"

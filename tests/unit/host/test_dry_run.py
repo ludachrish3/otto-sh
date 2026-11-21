@@ -24,7 +24,7 @@ from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost, ZephyrHost
 from otto.host.exec_route import ExecRoute
 from otto.host.file_ops import refuse_if_base64_is_absent
-from otto.host.host import ShellCommand, _HostFilter, is_dry_run
+from otto.host.host import ShellCommand, _HostFilter, _ProbeAnswer, is_dry_run
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.power import PowerController, PowerState
@@ -1939,10 +1939,13 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
             # Both phases' probes: the same spy, the same script.
             return None if await recording_is_reachable(timeout) else OSError("down")
 
+        async def recording_fresh_probe(timeout: float) -> _ProbeAnswer:
+            return _ProbeAnswer.of(await recording_probe(timeout))
+
         host._soft_reboot = recording_soft_reboot
         host.rebuild_connections = lambda: None
         host.is_reachable = recording_is_reachable
-        host._probe_fresh = recording_probe
+        host._probe_fresh = recording_fresh_probe
         host._probe_live = recording_probe
         host._confirm_recovered = AsyncMock(return_value=True)
 
