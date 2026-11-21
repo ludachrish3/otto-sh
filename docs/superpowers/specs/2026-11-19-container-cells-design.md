@@ -1,9 +1,22 @@
 # Container cells for the command contracts (#935, item 4) — design
 
-Status: revision 4. Reviewed twice each by Astra and Fable and once by
-Astra 6.2 (`.superpowers/sdd/pr4-design-review-*.md`); decided by Chris on
-2026-11-19 (see Decisions). Sections 7 and 8 state requirements; each gets its
-own plan.
+Status: **paused** (Chris, 2026-11-20), at revision 4. Of this design only
+section 8 (the log) has landed, as #1206. The rest waits:
+
+- The stop fix of section 7 is deferred: #1200 stays open, and the behaviour
+  is documented with a workaround (`docs/architecture/subsystems/docker-hosts.md`,
+  "A timed-out or cancelled exec leaves its command running").
+- The identity redesign of section 6 is in the backlog
+  (`2026-11-19-container-identity-design.md`).
+- The cells themselves wait for the design that makes `exec` a short-lived
+  `run` on every host family, and are then designed once against that model.
+  Sections 5, 6, 7 and 10 below describe the plan as it stood on 2026-11-19
+  and are superseded where they order a stop fix and an identity fix before
+  the cells. A container's parent is never a container, so the text about
+  nested containers no longer applies.
+
+Revision 4 was reviewed twice each by Astra and Fable and once by Astra 6.2,
+and decided by Chris on 2026-11-19 (see Decisions).
 Parent design: `2026-11-13-command-execution-conformance-design.md`, landing
 order item 4. Its rules 1 to 5 apply unchanged and are not restated here.
 
