@@ -415,6 +415,11 @@ not hold the stop. What else is left running depends on the route:
 | Signalled | the signal goes to the command's process group (it runs in a new session), so the command and its members all get it; `KILL` goes to the group too when the leader has not exited in the bound | the signal goes to the server, which decides whether it reaches the command's descendants; that is the server's, and otto does not measure it |
 | Left running | a member that outlives the leader is left alone: once the leader has exited nothing signals the group again, so a member that ignored the first signal keeps running; when the leader had already exited at the timeout (a member still holding its output), nothing is signalled at all | whatever the server did not signal |
 
+A docker container's `exec` is the exception to all of the above: the stop
+reaches the `docker exec` client on the parent and not the command inside
+the container, which keeps running ({ref}`docker-exec-stop` has the
+workaround).
+
 ## The convention, and its two gates
 
 Public otto API says what happened in exactly one of three ways:

@@ -106,6 +106,38 @@ derived class that overrides `exec`.
 {doc}`../../extend/custom-host-classes` says what a derived class must keep
 doing for the lines to reach the container.
 
+(docker-exec-stop)=
+
+### A timed-out or cancelled exec leaves its command running
+
+When a container's `exec` times out, or the task awaiting it is cancelled,
+otto stops the `docker exec` client on the parent. Docker does not pass that
+on to the process inside the container, so **the command keeps running in
+the container**. The call still returns its timed-out result, or raises its
+cancellation, as on any host, and the host answers the next command. The
+command stops when it ends by itself or when the container stops.
+
+otto could deliver the stop inside the container itself, and does not yet
+([#1200](https://github.com/ludachrish3/otto-sh/issues/1200)). Until it does:
+
+- For a time limit, let the container enforce it: run the command under
+  `timeout`, which both BusyBox and GNU images have, with a limit shorter
+  than the call's own:
+
+  ```python
+  await ctr.exec("timeout 30 make check", timeout=40)
+  ```
+
+  `timeout` ends the command inside the container, and the call returns an
+  ordinary result, not a timed-out one. Its exit status tells you the limit
+  was hit: 124 from GNU `timeout`, 143 from BusyBox's.
+- A cancelled call has no such guard. If the command must not outlive it,
+  stop it yourself with a second `exec` (`pkill`, or `kill` of a pid the
+  command wrote to a file).
+
+`run` on a container is different: its session holds a terminal, so the
+interrupt otto types on a timeout reaches the command.
+
 ## Why not docker -H ssh://
 
 Tempting, but `docker -H ssh://user@host` invokes the system `ssh`
