@@ -274,6 +274,58 @@ def test_failed_mapping_prints_per_entry_diagnostics(capsys):
     assert "b.bin: reset" in capsys.readouterr().out
 
 
+def test_a_failed_transfer_prints_each_files_error_once(capsys):
+    """#1219: the aggregate's msg joins the entries' messages, so printing both said it twice."""
+    from otto.host.transfer.base import aggregate_transfer
+
+    per_file = {
+        Path("a.bin"): Result(status=Status.Error, msg="a.bin: moving failed: Connection lost"),
+        Path("b.bin"): Result(status=Status.Error, msg="b.bin: checksum mismatch"),
+        Path("c.bin"): Result(status=Status.Success, value=Path("/dst/c.bin")),
+    }
+    with pytest.raises(typer.Exit) as excinfo:
+        render_leaf_value(aggregate_transfer(per_file=per_file))
+    assert excinfo.value.exit_code == 2
+    out = capsys.readouterr().out
+    assert out.count("a.bin: moving failed: Connection lost") == 1, out
+    assert out.count("b.bin: checksum mismatch") == 1, out
+    assert len(out.strip().splitlines()) == 2, out
+
+
+def test_an_entry_whose_message_ends_another_s_is_still_printed_once(capsys):
+    from otto.host.transfer.base import aggregate_transfer
+
+    per_file = {
+        Path("a.bin"): Result(status=Status.Error, msg="a.bin: reset"),
+        Path("ba.bin"): Result(status=Status.Error, msg="ba.bin: reset"),
+    }
+    with pytest.raises(typer.Exit) as excinfo:
+        render_leaf_value(aggregate_transfer(per_file=per_file))
+    assert excinfo.value.exit_code == 2
+    assert capsys.readouterr().out.strip().splitlines() == ["a.bin: reset", "ba.bin: reset"]
+
+
+def test_a_summary_that_says_more_than_its_entries_is_still_printed(capsys):
+    per_file = {Path("b.bin"): Result(status=Status.Error, msg="b.bin: reset")}
+    with pytest.raises(typer.Exit) as excinfo:
+        render_leaf_value(Result(status=Status.Error, value=per_file, msg="1 file failed"))
+    assert excinfo.value.exit_code == 2
+    out = capsys.readouterr().out
+    assert "1 file failed" in out
+    assert out.count("b.bin: reset") == 1, out
+
+
+def test_a_summary_that_only_contains_an_entrys_words_is_still_printed(capsys):
+    """An entry's message inside a longer summary does not make the summary a restatement."""
+    per_file = {Path("b.bin"): Result(status=Status.Error, msg="timeout")}
+    with pytest.raises(typer.Exit) as excinfo:
+        render_leaf_value(
+            Result(status=Status.Error, value=per_file, msg="transfer failed: timeout on 1 of 5")
+        )
+    assert excinfo.value.exit_code == 2
+    assert "transfer failed: timeout on 1 of 5" in capsys.readouterr().out
+
+
 def test_command_results_print_nothing_on_ok(capsys):
     render_leaf_value(Results.collect(items=[CommandResult(status=Status.Success, retcode=0)]))
     assert capsys.readouterr().out == ""
