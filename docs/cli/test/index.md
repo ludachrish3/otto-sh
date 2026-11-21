@@ -281,6 +281,25 @@ pass rate the repeated run must clear:
 otto --lab my_lab test TestDevice --iterations 50 --threshold 95
 ```
 
+In a repeated run the threshold decides the exit code: 0 when every test's
+pass rate is at or above it, 3 when one is below it. Failed iterations still
+show as failures in the report and the JUnit file, but they do not by
+themselves fail the run. Only an iteration that passes counts toward the pass
+rate: one that fails, is skipped or is an expected failure (`xfail`) counts
+against it. The default `--threshold` is 100, so a repeated run with the
+default exits 3 when any iteration of any test does not pass. A run is repeated
+as soon as `--iterations` or `--duration` is given, `--iterations 1` included.
+A repeated run that stops early (`-x`, `--maxfail`) was not completed, so the
+threshold does not judge it and it exits with pytest's code.
+
+Anything that is not a failed iteration exits with pytest's own code whatever
+the threshold: a setup or teardown error (1), a collection error, and a
+failing test in a run that is not repeated (1). With several projects in one
+run, the largest pytest code among them is the run's, and the threshold
+decides only when failed iterations are all that failed in every project.
+3 means an unstable run and nothing else; see
+[Exit codes](../index.md#exit-codes).
+
 Each iteration gets its own artifact directory, so one repeat's logs and
 files cannot overwrite the previous one's. The `test_dir` a test writes into
 gets one more level, `iteration_1/`, then `iteration_2/`, and so on, numbered

@@ -16,6 +16,7 @@ import pytest
 
 from otto import layout
 from otto.coverage.config import DestinationError
+from otto.result import Result
 from otto.suite.run import (
     NoTestsMatchedError,
     RunOptions,
@@ -23,6 +24,7 @@ from otto.suite.run import (
     _final_exit_code,
     run_tests,
 )
+from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, patch_bootstrap
 from tests._fixtures.gitrepo import TmpGitRepo
 from tests._fixtures.run_projects import DOUBLE_TEST_NAME as _ALPHA
@@ -88,16 +90,39 @@ def test_suite_run_result_failed_is_not_passed():
     assert not r.passed
 
 
-def test_final_exit_code_stability_failure():
-    # threshold violation on an otherwise-green run must fail the invocation
-    assert _final_exit_code(rc=0, unstable=True) == 1
-    assert _final_exit_code(rc=0, unstable=False) == 0
-    assert _final_exit_code(rc=5, unstable=False) == 5  # NO_TESTS_COLLECTED stays a failure
+_ERROR = Result(status=Status.Error, msg="").exit_code
+_UNSTABLE = Result(status=Status.Unstable, msg="").exit_code
 
 
-def test_final_exit_code_pytest_rc_wins_over_stability():
-    # A real pytest failure code is preserved even when also unstable.
-    assert _final_exit_code(rc=1, unstable=True) == 1
+@pytest.mark.parametrize(
+    ("rc", "unstable", "iteration_failures_only", "expected"),
+    [
+        # a run that is not repeated (or a repeated one with every iteration green)
+        (0, False, False, 0),
+        (1, False, False, 1),  # a failing test; also a setup/teardown error beside iterations
+        # a repeated run: the threshold decides; failed iterations alone are not a failure
+        (1, False, True, 0),  # failed iterations, every test at or above the threshold
+        (1, True, True, _UNSTABLE),  # failed iterations, a test below the threshold
+        (0, True, False, _UNSTABLE),  # nothing failed yet below it (iterations were skipped)
+        # a setup/teardown error or any other failure beside the iterations stays pytest's 1
+        (1, True, False, 1),
+        # codes that are not a verdict on the iterations keep their meaning
+        (2, False, False, 2),  # interrupted
+        (2, True, False, 2),
+        (4, False, False, 4),  # usage error
+        (5, False, False, 5),  # no tests collected
+        # pytest's internal error is 3 too; reported as an error, so 3 is unstable's alone
+        (pytest.ExitCode.INTERNAL_ERROR, False, False, _ERROR),
+        (pytest.ExitCode.INTERNAL_ERROR, True, False, _ERROR),
+        (pytest.ExitCode.INTERNAL_ERROR, True, True, _ERROR),
+    ],
+)
+def test_final_exit_code(rc, unstable, iteration_failures_only, expected):
+    """A repeated run's threshold decides its code (#1058); unstable is ``Status.Unstable``'s 3."""
+    assert (
+        _final_exit_code(rc=rc, unstable=unstable, iteration_failures_only=iteration_failures_only)
+        == expected
+    )
 
 
 def test_run_tests_without_output_dir_writes_under_the_default_xdir(tmp_path, monkeypatch):
@@ -227,7 +252,7 @@ def test_run_tests_monitor_output_override(tmp_path, monkeypatch):
     ("rc", "expected"),
     [
         (pytest.ExitCode.TESTS_FAILED, 1),
-        (pytest.ExitCode.INTERNAL_ERROR, 3),
+        (pytest.ExitCode.INTERNAL_ERROR, 2),  # never 3: that is an unstable run's code (#1058)
     ],
 )
 def test_run_tests_exit_code_maps_pytest_rc(tmp_path, monkeypatch, rc, expected):
@@ -238,6 +263,19 @@ def test_run_tests_exit_code_maps_pytest_rc(tmp_path, monkeypatch, rc, expected)
     result = run_tests(names=[_ALPHA], output_dir=tmp_path)
     assert result.exit_code == expected
     assert not result.passed
+
+
+def test_a_listing_maps_pytest_s_internal_error_like_a_run(tmp_path, monkeypatch):
+    """#1058: `--list-tests` and a dry run share the run's code mapping, so 3 stays unstable's."""
+    from otto.suite.run import selected_tests
+
+    _use_project(monkeypatch, _stub_project(tmp_path))
+    # A collection that never finished: nothing reports the plugins as collected.
+    monkeypatch.setattr(
+        "pytest.main", lambda args, plugins=(), **_kw: pytest.ExitCode.INTERNAL_ERROR
+    )
+
+    assert selected_tests([_ALPHA]).exit_code == 2
 
 
 def test_run_tests_a_session_with_nothing_to_run_is_no_match(tmp_path, monkeypatch):
@@ -1242,6 +1280,31 @@ def test_run_tests_multi_project_junit_fan_out(tmp_path, monkeypatch):
         [tmp_path / "projectA" / "tests", tmp_path / "projectA" / "more_tests"],
         [tmp_path / "projectB" / "tests", tmp_path / "projectB" / "more_tests"],
     ]
+
+
+def test_a_failure_in_one_project_is_not_hidden_by_another_projects_unstable_run(
+    tmp_path, monkeypatch
+):
+    """#1058: unstable is 3 and a failure is 1, so a max over per-project codes said "unstable"."""
+    projects = [
+        _stub_project(tmp_path, name=name, root=tmp_path / name, tests=[tmp_path / name / "tests"])
+        for name in ("projectA", "projectB")
+    ]
+    patch_bootstrap(monkeypatch, projects)
+    codes = iter([pytest.ExitCode.TESTS_FAILED, pytest.ExitCode.OK])
+    verdicts = iter([False, True])
+
+    def fake_main(args, plugins=(), **_kw):
+        collected(plugins)
+        return next(codes)
+
+    monkeypatch.setattr("pytest.main", fake_main)
+    monkeypatch.setattr("otto.suite.run._print_stability_report", lambda *a, **k: next(verdicts))
+
+    result = run_tests(run_options=RunOptions(markers="smoke", iterations=2), output_dir=tmp_path)
+
+    assert result.stability_unstable
+    assert result.exit_code == 1
 
 
 def test_run_tests_single_project_layout_keeps_the_plain_output_dir(tmp_path, monkeypatch):

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..errors import OttoError
+from ..utils import Status
 
 if TYPE_CHECKING:
     from ..config.collected_tests import Classification, FileRecord, ProjectTable
@@ -217,9 +218,10 @@ _DEFAULT_RUN_OPTIONS = RunOptions()
 class SuiteRunResult:
     """Outcome of a :func:`run_tests` invocation.
 
-    ``exit_code`` is the ssh-like final code (pytest rc, with a stability
-    threshold violation folded in). ``junit_paths`` are the JUnit XML files the
-    session wrote. ``stability_report`` is the ``stability_report.txt`` path when
+    ``exit_code`` is the ssh-like final code (pytest rc; in a repeated run the
+    stability threshold decides it, see ``_final_exit_code``).
+    ``junit_paths`` are the JUnit XML files the session wrote.
+    ``stability_report`` is the ``stability_report.txt`` path when
     a stability run produced one (else ``None``); ``stability_unstable`` is True
     when any test fell below its pass-rate threshold.
     """
@@ -276,6 +278,9 @@ class _SessionOutcome:
     rc: int
     unstable: bool
     report: Path | None
+    iteration_failures_only: bool = False
+    """pytest's failure code came only from failed iterations of a repeated run
+    (``OttoPlugin.iteration_failures_only``)."""
     table: "ProjectTable | None" = None
     """The table with what the session read merged in; ``None`` when its
     collection did not finish (it vouches for nothing)."""
@@ -326,9 +331,27 @@ Otto's own in-process test sessions import this list rather than restating it.
 """
 
 
-def _final_exit_code(rc: int, unstable: bool) -> int:
-    """Threshold violations fail an otherwise-green run; pytest rc wins otherwise."""
-    return 1 if (unstable and rc == 0) else int(rc)
+def _final_exit_code(rc: int, unstable: bool, iteration_failures_only: bool = False) -> int:
+    """Decide the exit code of a run: the one place that says what a result means.
+
+    In a repeated run (``--iterations``, ``--duration``) every iteration is a
+    pytest report, so pytest's ``TESTS_FAILED`` says only that some iteration
+    failed. When that is all that failed (*iteration_failures_only*), the
+    threshold decides: ``Status.Unstable`` when a test is below it, 0 when
+    none is. Any other failure (a setup or teardown error, a collection
+    error, a failure outside a repeated run) keeps pytest's own code, and so
+    does every other code, stable or not. Two are special. A green run
+    below its threshold (iterations were skipped) is unstable too. And
+    pytest's internal error is 3 as well, so it is reported as
+    ``Status.Error`` and 3 means an unstable run and nothing else.
+    """
+    import pytest  # deferred like every pytest import here: not paid for by `otto --help`
+
+    if rc == pytest.ExitCode.INTERNAL_ERROR:
+        return Status.Error.value
+    if rc == pytest.ExitCode.TESTS_FAILED and iteration_failures_only:
+        rc = pytest.ExitCode.OK
+    return Status.Unstable.value if (unstable and rc == 0) else int(rc)
 
 
 @contextlib.contextmanager
@@ -1248,11 +1271,19 @@ def _pytest_session(
             run.log_dir,
         )
         report = run.log_dir / "stability_report.txt"
+        if otto_plugin.iteration_failures_only and not unstable:
+            # pytest's summary above says "N failed"; say why the run still passes.
+            logger.info(
+                "The failed iterations above are within --threshold %.0f%%: "
+                "they do not fail this repeated run.",
+                opts.threshold,
+            )
 
     return _SessionOutcome(
         rc=int(rc),
         unstable=unstable,
         report=report,
+        iteration_failures_only=otto_plugin.iteration_failures_only,
         collection_finished=otto_plugin.collection_finished,
         unmatched_names=list(otto_plugin.unmatched_names),
         selected=list(otto_plugin.selected),
@@ -1907,7 +1938,17 @@ def run_tests(
     if any(run.broken and run.outcome is None for run in runs):
         failed.append(1)
     return SuiteRunResult(
-        exit_code=max([_final_exit_code(o.rc, o.unstable) for o in outcomes] + failed),
+        # One decision over the whole run, as for one project: the worst pytest
+        # code wins, and only a run with none is reported as unstable. A max
+        # over per-project codes would let one project's "unstable" (3) hide
+        # another's failure (1). A 1 is the threshold's to judge only when
+        # every 1 in the run came from failed iterations.
+        exit_code=_final_exit_code(
+            max([o.rc for o in outcomes] + failed, default=0),
+            any(o.unstable for o in outcomes),
+            iteration_failures_only=1 not in failed
+            and all(o.iteration_failures_only for o in outcomes if o.rc == 1),
+        ),
         junit_paths=[run.setup.results_path for run, _ in taking_part if run.setup is not None],
         stability_report=reports[-1] if reports else None,
         stability_unstable=any(o.unstable for o in outcomes),
@@ -2012,5 +2053,6 @@ def selected_tests(names: list[str], *, markers: str = "") -> Listing:
         raise SystemExit(128 + sessions.interrupted)
     return Listing(
         tests={run.project.name: run.outcome.selected for run in runs if run.outcome is not None},
-        exit_code=sessions.failed or 0,
+        # No stability verdict in a listing, but the same code mapping as a run.
+        exit_code=_final_exit_code(sessions.failed or 0, unstable=False),
     )

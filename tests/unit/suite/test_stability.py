@@ -13,6 +13,8 @@ Tests verify:
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from otto.suite.plugin import OttoPlugin, StabilityCollector
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -309,3 +311,183 @@ def test_a_library_stability_run_with_redirected_junit_writes_its_report(tmp_pat
     assert result.stability_report == result.output_dir / "stability_report.txt"
     assert result.stability_report.is_file()
     assert layout.is_run_dir(result.output_dir)
+
+
+# ── a repeated run's exit code: the threshold decides (#1058) ───────────────
+
+_ONE_ITERATION_IN_FOUR_FAILS = """
+CALLS = []
+
+
+def test_flaky():
+    CALLS.append(1)
+    assert len(CALLS) != 2
+"""
+
+_ONE_ITERATION_IN_FOUR_SKIPS = """
+import pytest
+
+CALLS = []
+
+
+def test_skips_once():
+    CALLS.append(1)
+    if len(CALLS) == 2:
+        pytest.skip("not this time")
+"""
+
+_SETUP_FIXTURE_RAISES = """
+import pytest
+
+
+@pytest.fixture
+def broken():
+    raise RuntimeError("setup is broken")
+
+
+def test_needs_broken(broken):
+    pass
+"""
+
+_TEARDOWN_FIXTURE_RAISES = """
+import pytest
+
+
+@pytest.fixture
+def broken():
+    yield
+    raise RuntimeError("teardown is broken")
+
+
+def test_needs_broken(broken):
+    pass
+"""
+
+_ALWAYS_PASSES = "def test_steady():\n    pass\n"
+
+
+def _repeated_run(one_project, tmp_path, source: str, *, threshold: float):
+    """Run *source* for four iterations through ``run_tests``, which ``otto test`` calls."""
+    import re
+
+    from otto.suite import RunOptions, run_tests
+
+    one_project(files={"tests/test_repeat.py": source})
+    return run_tests(
+        names=[re.search(r"def (test_\w+)", source)[1]],
+        run_options=RunOptions(iterations=4, threshold=threshold, random_order=False),
+        output_dir=tmp_path / "out",
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "threshold", "exit_code", "unstable"),
+    [
+        # 3 of 4 iterations pass: 75%
+        (_ONE_ITERATION_IN_FOUR_FAILS, 50.0, 0, False),
+        (_ONE_ITERATION_IN_FOUR_FAILS, 95.0, 3, True),
+        # the boundary: a rate equal to the threshold clears it
+        (_ONE_ITERATION_IN_FOUR_FAILS, 75.0, 0, False),
+        (_ONE_ITERATION_IN_FOUR_FAILS, 76.0, 3, True),
+        # a skipped iteration is not a pass: green for pytest, below the threshold
+        (_ONE_ITERATION_IN_FOUR_SKIPS, 100.0, 3, True),
+        (_ALWAYS_PASSES, 100.0, 0, False),
+        # not an iteration's pass/fail: still a failed run, whatever the threshold says
+        (_SETUP_FIXTURE_RAISES, 0.0, 1, False),
+        (_TEARDOWN_FIXTURE_RAISES, 0.0, 1, False),
+        (_TEARDOWN_FIXTURE_RAISES, 100.0, 1, False),
+    ],
+    ids=[
+        "flaky-above-threshold",
+        "flaky-below-threshold",
+        "flaky-at-threshold",
+        "flaky-just-below-threshold",
+        "skipped-iteration-below-threshold",
+        "always-passes",
+        "setup-error",
+        "teardown-error-lenient",
+        "teardown-error-strict",
+    ],
+)
+def test_a_repeated_runs_exit_code_follows_its_threshold(
+    one_project, tmp_path, source, threshold, exit_code, unstable
+):
+    """Failed iterations are judged by ``--threshold`` alone; any other failure exits 1."""
+    result = _repeated_run(one_project, tmp_path, source, threshold=threshold)
+
+    assert result.exit_code == exit_code
+    assert result.stability_unstable is unstable
+
+
+def test_a_repeated_run_cut_short_by_maxfail_is_not_judged_by_its_threshold(
+    one_project, tmp_path, monkeypatch
+):
+    """`-x` stops at the first failed iteration: the run is incomplete, so pytest's code stands."""
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-x")
+
+    result = _repeated_run(one_project, tmp_path, _ONE_ITERATION_IN_FOUR_FAILS, threshold=50.0)
+
+    assert result.exit_code == 1
+
+
+def test_a_failing_test_in_a_run_that_is_not_repeated_still_exits_one(one_project, tmp_path):
+    """No ``--iterations`` and no ``--duration``: the threshold has no say."""
+    from otto.suite import RunOptions, run_tests
+
+    one_project(files={"tests/test_plain.py": "def test_fails():\n    assert False\n"})
+    result = run_tests(
+        names=["test_fails"],
+        run_options=RunOptions(threshold=0.0, random_order=False),
+        output_dir=tmp_path / "out",
+    )
+
+    assert result.exit_code == 1
+    assert result.stability_unstable is False
+
+
+def test_a_repeated_run_says_why_failed_iterations_did_not_fail_it(one_project, tmp_path, caplog):
+    """pytest's summary says "1 failed" and the run exits 0, so a line explains it."""
+    with caplog.at_level("INFO"):
+        result = _repeated_run(one_project, tmp_path, _ONE_ITERATION_IN_FOUR_FAILS, threshold=50.0)
+
+    assert result.exit_code == 0
+    assert "within --threshold 50%" in caplog.text
+
+
+def test_a_failed_iteration_stays_a_failure_in_the_junit_file(one_project, tmp_path):
+    """Only the exit code changes: the report and the JUnit file still show the failed iteration."""
+    import xml.etree.ElementTree as ET
+
+    result = _repeated_run(one_project, tmp_path, _ONE_ITERATION_IN_FOUR_FAILS, threshold=50.0)
+
+    assert result.exit_code == 0
+    suite = ET.parse(result.junit_paths[0]).getroot().find("testsuite")  # noqa: S314 — this run's own JUnit file
+    assert suite is not None
+    assert suite.get("failures") == "1"
+
+
+@pytest.mark.parametrize(
+    ("b_source", "b_name", "exit_code"),
+    [
+        (_ONE_ITERATION_IN_FOUR_FAILS.replace("test_flaky", "test_flaky_b"), "test_flaky_b", 0),
+        (_SETUP_FIXTURE_RAISES, "test_needs_broken", 1),
+    ],
+    ids=["both-only-failed-iterations", "other-project-has-a-setup-error"],
+)
+def test_a_repeated_run_over_two_projects_is_decided_once(
+    two_projects, tmp_path, b_source, b_name, exit_code
+):
+    """One project's failed iterations are not a failure, and another project's setup error is."""
+    from otto.suite import RunOptions, run_tests
+
+    two_projects(
+        a={"tests/test_repeat_a.py": _ONE_ITERATION_IN_FOUR_FAILS},
+        b={"tests/test_repeat_b.py": b_source},
+    )
+    result = run_tests(
+        names=["test_flaky", b_name],
+        run_options=RunOptions(iterations=4, threshold=50.0, random_order=False),
+        output_dir=tmp_path / "out",
+    )
+
+    assert result.exit_code == exit_code
