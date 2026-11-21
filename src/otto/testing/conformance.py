@@ -44,22 +44,30 @@ from ..inventory.errors import InventoryKeyError
 from ..inventory.protocol import Inventory
 from ..inventory.snapshot import stated_fields
 from ..inventory.view import InventoryView
+from ..labs.composition import compose_links, contribution_part
 from ..labs.errors import LabNotFoundError, LabUnavailableError
 from ..labs.loader import Lab
 from ..labs.protocol import (
     HostSummary,
+    LabContribution,
     LabRepository,
     LabScope,
     LabStatus,
     SupportsHostSummaries,
     SupportsHostSummariesInView,
     SupportsInventoryView,
+    SupportsLabContribution,
     SupportsLabScope,
     SupportsLabStatus,
     logins_of_creds,
 )
 from ..labs.summaries import host_summaries_in_view
-from ..labs.views import lab_scope_of, lab_statuses, load_lab_through
+from ..labs.views import (
+    lab_scope_of,
+    lab_statuses,
+    load_contribution_through,
+    load_lab_through,
+)
 from ..models.base import CredSpec
 from ..models.inventory import (
     FILLABLE_INVENTORY_FIELDS,
@@ -162,6 +170,10 @@ def assert_lab_repository_conforms(
       are never compared (the legacy call rightly refuses a qualified
       reference to a named inventory); *expected_ips* is what tells a backend
       that ignores the view apart.
+    - :class:`~otto.labs.protocol.SupportsLabContribution`: each lab's
+      contribution, through the probes' view, holds the same hosts at the
+      same addresses as the lab's load, and its links, composed over it
+      alone, are the links the lab loads with through that view.
     - :class:`~otto.labs.protocol.SupportsHostSummaries` and
       :class:`~otto.labs.protocol.SupportsHostSummariesInView`: the summaries
       agree with the loads, id for id and field for field, under the same
@@ -271,6 +283,8 @@ def assert_lab_repository_conforms(
         _expect_lab_scope_conforms(c, repository, statuses=statuses)
     if isinstance(repository, SupportsInventoryView) and not named:
         _expect_view_load_matches_legacy(c, repository, built=built, view=probe_view)
+    if isinstance(repository, SupportsLabContribution):
+        _expect_contributions_match_loads(c, repository, built=built, view=probe_view)
     summarized = _expect_summaries_capabilities(
         c,
         repository,
@@ -579,6 +593,75 @@ def _expect_view_load_matches_legacy(
             f"must give the same hosts as load_lab({n!r}, inventory=...): "
             f"{_addresses(in_view)} vs {_addresses(legacy)}",
         )
+
+
+def _expect_contributions_match_loads(
+    c: ExpectCollector,
+    repository: LabRepository,
+    *,
+    built: dict[str, Lab],
+    view: InventoryView,
+) -> None:
+    """Check :class:`~otto.labs.protocol.SupportsLabContribution` against the probes' loads.
+
+    Each lab in *built* (the labs the probes loaded) must contribute, through
+    *view*, the same hosts at the same addresses, and its links, composed
+    over that contribution alone (:func:`~otto.labs.composition.compose_links`),
+    must be the links the lab loads with through *view*
+    (:func:`~otto.labs.load_lab_through`): the composite merges the
+    contribution, so a contribution that differs from the load is a lab that
+    loads one way directly and another way through ``[[lab.sources]]``.
+    """
+    for n, loaded in built.items():
+        try:
+            contribution = load_contribution_through(repository=repository, name=n, view=view)
+        except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
+            c.expect(
+                False,
+                msg=f"SupportsLabContribution: load_contribution({n!r}) raised "
+                f"{type(e).__name__}: {e}",
+            )
+            continue
+        lab = getattr(contribution, "lab", None)
+        got = _addresses(lab) if isinstance(lab, Lab) else None
+        c.expect(
+            got == _addresses(loaded),
+            msg=f"SupportsLabContribution: load_contribution({n!r}) must contribute the hosts "
+            f"the lab loads with: {got} vs {_addresses(loaded)}",
+        )
+        if isinstance(lab, Lab) and contribution is not None:
+            _expect_composed_links_match_load(
+                c, repository, lab=lab, contribution=contribution, view=view
+            )
+
+
+def _expect_composed_links_match_load(
+    c: ExpectCollector,
+    repository: LabRepository,
+    *,
+    lab: Lab,
+    contribution: LabContribution,
+    view: InventoryView,
+) -> None:
+    """Check *contribution*'s links, composed over its *lab* alone, are the links it loads with."""
+    name = lab.name
+    try:
+        part = contribution_part(label=type(repository).__name__, contribution=contribution)
+        composed = compose_links(lab=lab, contributions=[part])
+        in_view = load_lab_through(repository=repository, name=name, view=view).links
+    except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
+        c.expect(
+            False,
+            msg=f"SupportsLabContribution: composing load_contribution({name!r})'s links "
+            f"against the load raised {type(e).__name__}: {e}",
+        )
+        return
+    c.expect(
+        composed == in_view,
+        msg=f"SupportsLabContribution: load_contribution({name!r})'s links, composed alone, "
+        f"must be the links load_lab_in_view({name!r}) gives: "
+        f"{[link.id for link in composed]} vs {[link.id for link in in_view]}",
+    )
 
 
 def _expect_addresses(

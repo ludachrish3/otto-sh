@@ -7,7 +7,13 @@ labs internals
 .. automodule:: otto.labs.json_repository
    :ignore-module-all:
 
+.. automodule:: otto.labs.documents
+   :ignore-module-all:
+
 .. automodule:: otto.labs.composite
+   :ignore-module-all:
+
+.. automodule:: otto.labs.composition
    :ignore-module-all:
 
 .. automodule:: otto.labs.sources

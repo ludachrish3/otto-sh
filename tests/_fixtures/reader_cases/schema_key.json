@@ -1,0 +1,8 @@
+{
+  "$schema": "../../../schemas/lab.schema.json",
+  "_note": "comment space: ignored by every reader",
+  "labs": {"case": {}},
+  "elements": [
+    {"name": "alpha", "labs": ["case"], "hosts": [{"ip": "10.20.0.1", "creds": [{"login": "u", "password": "p"}]}]}
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "bom.json": {
+    "declares": false,
+    "doctor": "Lab file '<case>' contains malformed JSON: Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)",
+    "links": [],
+    "loader": "LabRepositoryError: Lab file '<case>' contains malformed JSON: Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)"
+  },
+  "latin1.json": {
+    "declares": false,
+    "doctor": "Lab file '<case>' could not be read: 'utf-8' codec can't decode byte 0xe9 in position 73: invalid continuation byte",
+    "links": [],
+    "loader": "LabRepositoryError: Lab file '<case>' could not be read: 'utf-8' codec can't decode byte 0xe9 in position 73: invalid continuation byte"
+  },
+  "links_not_list.json": {
+    "declares": false,
+    "doctor": "Lab file '<case>': section 'links' must be a JSON array, got dict",
+    "links": [],
+    "loader": "LabRepositoryError: Lab file '<case>': section 'links' must be a JSON array, got dict"
+  },
+  "malformed.json": {
+    "declares": false,
+    "doctor": "Lab file '<case>' contains malformed JSON: Expecting value: line 2 column 1 (char 37)",
+    "links": [],
+    "loader": "LabRepositoryError: Lab file '<case>' contains malformed JSON: Expecting value: line 2 column 1 (char 37)"
+  },
+  "not_object.json": {
+    "declares": false,
+    "doctor": "Lab file '<case>' must contain a JSON object with 'labs'/'elements'/'links' sections, got list",
+    "links": [],
+    "loader": "LabRepositoryError: Lab file '<case>' must contain a JSON object with 'labs'/'elements'/'links' sections, got list"
+  },
+  "schema_key.json": {
+    "declares": true,
+    "doctor": "ok: [{\"elements\": [\"alpha\"], \"labs\": [\"case\"], \"links\": [], \"path\": \"<case>\"}]",
+    "links": [],
+    "loader": "ok: {\"elements\": [{\"hosts\": [{\"creds\": [{\"login\": \"u\", \"password\": \"<secret>\"}], \"ip\": \"10.20.0.1\"}], \"labs\": [\"case\"], \"name\": \"alpha\"}], \"labs\": {\"case\": {}}, \"links\": []}"
+  },
+  "secret_inline.json": {
+    "declares": true,
+    "doctor": "ok: [{\"elements\": [\"alpha\", \"beta\"], \"labs\": [\"case\"], \"links\": [{\"_creds\": {\"password\": \"<secret>\"}, \"endpoints\": [{\"host\": \"alpha\"}, {\"host\": \"beta\"}]}], \"path\": \"<case>\"}]",
+    "links": [
+      {
+        "_creds": {
+          "password": "<secret>"
+        },
+        "endpoints": [
+          {
+            "host": "alpha"
+          },
+          {
+            "host": "beta"
+          }
+        ]
+      }
+    ],
+    "loader": "ok: {\"elements\": [{\"hosts\": [{\"creds\": [{\"login\": \"u\", \"password\": \"<secret>\"}], \"ip\": \"10.20.0.1\", \"ssh_options\": {\"passphrase\": \"<secret>\"}}], \"labs\": [\"case\"], \"name\": \"alpha\"}, {\"hosts\": [{\"creds\": [{\"login\": \"u\", \"password\": \"<secret>\"}], \"ip\": \"10.20.0.2\"}], \"labs\": [\"case\"], \"name\": \"beta\"}], \"labs\": {\"case\": {}}, \"links\": [{\"_creds\": {\"password\": \"<secret>\"}, \"endpoints\": [{\"host\": \"alpha\"}, {\"host\": \"beta\"}]}]}"
+  },
+  "unknown_section.json": {
+    "declares": false,
+    "doctor": "Lab file '<case>' has unknown section(s) ['routes']; known sections: ['elements', 'labs', 'links']",
+    "links": [],
+    "loader": "LabRepositoryError: Lab file '<case>' has unknown section(s) ['routes']; known sections: ['elements', 'labs', 'links']"
+  },
+  "v1_hosts.json": {
+    "declares": false,
+    "doctor": "Lab file '<case>': top-level 'hosts' has moved: hosts are grouped under 'elements' (each with 'name', optional 'id', 'labs' membership patterns, optional 'metadata', and 'hosts'), and per-host 'labs' moved to the element (a host's 'resources' may stay on the host — a slot — or move to the element or the 'labs' table). See https://otto-sh.readthedocs.io/en/stable/configuration/lab/migrating.html#migrating-from-the-hosts-array",
+    "links": [],
+    "loader": "LabRepositoryError: Lab file '<case>': top-level 'hosts' has moved: hosts are grouped under 'elements' (each with 'name', optional 'id', 'labs' membership patterns, optional 'metadata', and 'hosts'), and per-host 'labs' moved to the element (a host's 'resources' may stay on the host — a slot — or move to the element or the 'labs' table). See https://otto-sh.readthedocs.io/en/stable/configuration/lab/migrating.html#migrating-from-the-hosts-array"
+  },
+  "valid.json": {
+    "declares": true,
+    "doctor": "ok: [{\"elements\": [\"alpha\", \"beta\"], \"labs\": [\"case\"], \"links\": [{\"endpoints\": [{\"host\": \"alpha\"}, {\"host\": \"beta\"}]}], \"path\": \"<case>\"}]",
+    "links": [
+      {
+        "endpoints": [
+          {
+            "host": "alpha"
+          },
+          {
+            "host": "beta"
+          }
+        ]
+      }
+    ],
+    "loader": "ok: {\"elements\": [{\"hosts\": [{\"creds\": [{\"login\": \"u\", \"password\": \"<secret>\"}], \"ip\": \"10.20.0.1\", \"os_type\": \"unix\"}], \"labs\": [\"case\"], \"name\": \"alpha\"}, {\"hosts\": [{\"creds\": [{\"login\": \"u\", \"password\": \"<secret>\"}], \"ip\": \"10.20.0.2\", \"os_type\": \"unix\"}], \"labs\": [\"case\"], \"name\": \"beta\"}], \"labs\": {\"case\": {\"metadata\": {\"site\": \"here\"}, \"resources\": [\"bench-1\"]}}, \"links\": [{\"endpoints\": [{\"host\": \"alpha\"}, {\"host\": \"beta\"}]}]}"
+  }
+}

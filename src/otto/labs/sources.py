@@ -81,6 +81,57 @@ class PendingLabSource:
     """The root of the declaring project; the backend anchors relative paths here."""
 
 
+@final
+@dataclass(frozen=True, kw_only=True)
+class LabFileRule:
+    """How a file-backed source's ``paths`` entries name its lab files.
+
+    A directory entry contributes its :attr:`directory_file`; an entry ending
+    in :attr:`suffix` is the file; a glob expands to the sorted files it
+    matches that end in :attr:`suffix`
+    (:func:`otto.labs.documents.expand_lab_files` applies it).
+    """
+
+    suffix: str
+    """A lab file's suffix, dot included, as :attr:`pathlib.PurePath.suffix` reads it.
+
+    An entry with this suffix is the file itself.
+    """
+
+    directory_file: str
+    """The file a directory entry contributes."""
+
+
+JSON_FILE_RULE = LabFileRule(suffix=".json", directory_file="lab.json")
+"""The json backend's rule, and the rule of every source whose facts name none."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class LabSourceFacts:
+    """What otto learns about a source from its parsed configuration.
+
+    A backend's config model returns it from ``prepared_facts()``; otto reads
+    it to list the files the source reads, for the completion cache and the
+    ``otto init`` doctor, without building the source.
+    """
+
+    file_inputs: tuple[Path, ...]
+    """The anchored directory, file and glob entries the source reads."""
+
+    file_rule: LabFileRule = JSON_FILE_RULE
+    """How :attr:`file_inputs` name lab files; the json backend's rule by default."""
+
+    key_roots: tuple[Path, ...] = ()
+    """Directories whose whole tree is a key path of the source's labs; none by default.
+
+    Meant for a source whose labs read files beyond its lab files (files a
+    lab file imports, say), computed from its parsed configuration. Accepted,
+    and not yet read by otto's cache: today a source's key paths are its lab
+    files alone (:meth:`LabSourceState.key_paths`).
+    """
+
+
 @dataclass(frozen=True)
 class LabSourceState:
     """A pending source and, when its backend is registered, its preparation.
@@ -104,13 +155,22 @@ class LabSourceState:
         """Return whether the source reads lab files (False for an unknown source)."""
         return self._file_inputs() is not None
 
+    def file_rule(self) -> LabFileRule:
+        """Return the rule the source's entries name its lab files by.
+
+        Its facts' :attr:`~LabSourceFacts.file_rule`, or :data:`JSON_FILE_RULE`
+        when the facts carry none (a facts object that names only
+        ``file_inputs``) or the source is not prepared.
+        """
+        rule = getattr(self._facts(), "file_rule", None)
+        return JSON_FILE_RULE if rule is None else rule
+
     def lab_files(self, *, visited: "set[Path] | None" = None) -> list[Path]:
         """Return the lab files the source reads, ``[]`` when it is not file-backed.
 
-        The entry-to-files rule is the json backend's own
-        (:func:`~otto.labs.json_repository.expand_lab_paths`: a directory
-        contributes its ``lab.json``, a ``.json`` entry is the file, a glob
-        expands to the sorted ``.json`` files it matches), so the cache and
+        The entry-to-files rule is the backend's own (:meth:`file_rule`,
+        applied by :func:`~otto.labs.documents.expand_lab_files`, the
+        function the json backend reads its files through), so the cache and
         the doctor can never disagree with the backend about which files
         matter. Entries that resolve to no existing file contribute nothing,
         exactly as at load. *visited*, when given, collects every directory
@@ -129,13 +189,25 @@ class LabSourceState:
         inputs = self._file_inputs()
         if inputs is None:
             return []
-        from .json_repository import expand_lab_paths  # lazy: keep this module light
+        from .documents import expand_lab_files  # lazy: keep this module light
 
-        return expand_lab_paths(inputs, visited=visited)
+        return expand_lab_files(inputs, rule=self.file_rule(), visited=visited)
+
+    def key_paths(self, *, visited: "set[Path] | None" = None) -> list[Path]:
+        """Return every file whose change can change the source's labs: its lab files.
+
+        The completion cache's key set for the source (with *visited*, the
+        directories the enumeration entered). Raises what :meth:`lab_files`
+        raises.
+        """
+        return self.lab_files(visited=visited)
+
+    def _facts(self) -> object:
+        """Return the prepared facts, ``None`` when unprepared or when the config model has none."""
+        return self.prepared.facts if self.prepared is not None else None
 
     def _file_inputs(self) -> "tuple[Path, ...] | None":
-        facts = self.prepared.facts if self.prepared is not None else None
-        inputs = getattr(facts, "file_inputs", None)
+        inputs = getattr(self._facts(), "file_inputs", None)
         return tuple(inputs) if inputs is not None else None
 
 

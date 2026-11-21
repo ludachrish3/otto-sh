@@ -31,7 +31,12 @@ from otto.host.login_proxy import Cred
 from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
-from otto.link.derive import addressing_from_dict, raw_endpoint_host_ids, resolve_declared_links
+from otto.link.derive import (
+    DeclaredLinkEntry,
+    addressing_from_dict,
+    raw_endpoint_host_ids,
+    resolve_declared_links,
+)
 from otto.logger.mode import LogMode
 from otto.result import Result
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, Observation, parse_process_discovery
@@ -143,7 +148,8 @@ def declared_link_id(host_a: str, host_b: str) -> str:
     have silently handed one module the other's link. The endpoint pair is
     what every caller actually means.
     """
-    data = json.loads(lab_data_path().read_text())
+    path = lab_data_path()
+    data = json.loads(path.read_text())
     # Skip records this process cannot resolve, mirroring _JsonFileLabRepository:
     # addressing_from_dict validates through the profile/frame registries, and
     # tech1/lab.json's `zephyr27_fat` declares `command_frame: zephyr-inline`, which
@@ -159,7 +165,12 @@ def declared_link_id(host_a: str, host_b: str) -> str:
             continue
         hosts[host_id] = addressing
     loaded_ids = set(hosts)
-    links = resolve_declared_links(data["links"], hosts, source="lab.json", loaded_ids=loaded_ids)
+    entries = [
+        DeclaredLinkEntry(origin=path, index=index, entry=entry)
+        for index, entry in enumerate(data["links"])
+    ]
+    # Every record is loaded, and no lab is selected.
+    links = resolve_declared_links(entries, hosts, loaded_ids=loaded_ids, selection=None)
     want = {host_a, host_b}
     matches = [link for link in links if {link.a.host, link.b.host} == want]
     assert len(matches) == 1, (

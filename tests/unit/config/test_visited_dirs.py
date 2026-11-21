@@ -23,7 +23,7 @@ from tests._fixtures.project_scaffold import make_project
 _CREDS = [{"login": "u", "password": "p"}]
 
 # Three distinct lab-source shapes, each pinning a different `visited` sink in
-# `expand_lab_paths`: "lab" is a bare directory entry (adds itself); "solo/
+# `expand_lab_files`: "lab" is a bare directory entry (adds itself); "solo/
 # solo.json" is a `.json` entry (adds its OWN parent, "solo" — a directory no
 # other entry visits, so deleting that sink is the only way to lose it);
 # "extra/**/*.json" is a glob (adds its non-glob root "extra" AND, per match,
@@ -74,7 +74,7 @@ def _project(tmp_path: Path):
 
 
 def test_walkers_report_visited_directories(tmp_path):
-    """Every `expand_lab_paths` sink is exercised: directory, `.json`-entry
+    """Every `expand_lab_files` sink is exercised: directory, `.json`-entry
     parent, glob root, and glob-match parent — four distinct directories,
     four distinct code paths, none of them redundant with another.
     """

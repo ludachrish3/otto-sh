@@ -2832,7 +2832,16 @@ why = "implementer-facing"
 positional = ["name"]
 why = "implementer-facing"
 
+[symbols."otto.labs:DeclaredLinkInputs"]
+subclass = false
+
 [symbols."otto.labs:HostSummary"]
+subclass = false
+
+[symbols."otto.labs:LabContribution"]
+subclass = false
+
+[symbols."otto.labs:LabFileRule"]
 subclass = false
 
 [symbols."otto.labs:LabRepository.load_lab"]
@@ -2853,7 +2862,14 @@ subclass = false
 positional = ["name"]
 why = "implementer-facing"
 
+[symbols."otto.labs:SupportsLabContribution.load_contribution"]
+positional = ["name"]
+why = "implementer-facing"
+
 [symbols."otto.labs:LabScope"]
+subclass = false
+
+[symbols."otto.labs:LabSourceFacts"]
 subclass = false
 
 [symbols."otto.labs:LabStatus"]
@@ -2874,6 +2890,12 @@ positional = ["host_data"]
 
 [symbols."otto.labs:register_lab_repository"]
 positional = ["name"]
+
+[symbols."otto.link:DeclaredLinkEntry"]
+subclass = false
+
+[symbols."otto.link:HostAddressing"]
+subclass = false
 
 [symbols."otto.link:AppliedPlacement"]
 construct = false

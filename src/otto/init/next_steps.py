@@ -5,7 +5,6 @@ kmodcov library and embedded-gcov patch. The CLI draws the answer
 (:func:`otto.cli.init.next_steps_panel`).
 """
 
-import json
 from pathlib import Path
 
 from .areas import (
@@ -29,19 +28,28 @@ PROBE_STEP_LEAD = (
 def declares_lab(root: Path, name: str) -> bool:
     """Return whether a lab file of the project at *root* declares the lab *name*.
 
-    Read leniently: an unreadable or malformed lab file declares nothing here;
-    reporting it is the doctor's job.
+    Each file is read by the one lab-document reader
+    (:func:`otto.labs.documents.read_lab_document`), leniently: a file the
+    loader refuses declares nothing here; reporting it is the doctor's job.
+    A file otto does not decode itself
+    (:func:`otto.labs.documents.otto_decodes`) is skipped: its backend reads
+    it.
     """
+    from ..labs import documents
+    from ..labs.errors import LabRepositoryError
+
     try:
         files = lab_files(root)
     except ValueError:
         return False
     for lab_file in files:
-        try:
-            labs = json.loads(lab_file.read_text(encoding="utf-8")).get("labs", {})
-        except (OSError, ValueError, AttributeError):
+        if not documents.otto_decodes(lab_file):
             continue
-        if isinstance(labs, dict) and name in labs:
+        try:
+            labs = documents.read_lab_document(lab_file).sections["labs"]
+        except LabRepositoryError:
+            continue
+        if name in labs:
             return True
     return False
 

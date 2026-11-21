@@ -386,3 +386,34 @@ def test_a_composite_keeps_the_d1_refusal_on_every_entry_point(tmp_path, entry):
             cause = cause.__cause__
         assert isinstance(cause, BareReferenceRefused)
     assert personal.lookups == 0
+
+
+def test_summary_drops_keep_declaration_order(tmp_path: Path) -> None:
+    """A summary's drops come out in declaration order, a collision among the entry skips.
+
+    ``a`` + board ``b`` composes element ``a-b``'s id at another address, so it
+    is dropped as a collision; the element after it holds an entry that does
+    not validate. ``otto cache info`` prints the drops in this order.
+    """
+    source = _source(
+        tmp_path,
+        {
+            "labs": {"bench": {}},
+            "elements": [
+                {"name": "a-b", "labs": ["bench"], "hosts": [{"ip": "10.0.0.1", "creds": _CREDS}]},
+                {
+                    "name": "a",
+                    "labs": ["bench"],
+                    "hosts": [{"ip": "10.0.0.2", "board": "b", "creds": _CREDS}],
+                },
+                {"name": "c", "labs": ["bench"], "hosts": [{"creds": _CREDS}]},
+            ],
+        },
+    )
+    with collecting_drops() as drops:
+        summaries = source.list_host_summaries_in_view(view=_view())
+    assert [s.id for s in summaries] == ["a-b"]
+    assert [d.where for d in drops] == [
+        f"{tmp_path / 'lab.json'}: element 'a' hosts[0]",
+        f"{tmp_path / 'lab.json'}: element 'c' hosts[0]",
+    ]

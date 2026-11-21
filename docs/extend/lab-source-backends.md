@@ -176,6 +176,47 @@ Through `inventory=` alone a backend reaches `default` and nothing else:
 saying it needs a named-inventory view. Implement `load_lab_in_view` (and
 `list_host_summaries_in_view`) for those references to resolve.
 
+### Declared links: the contribution capability
+
+A backend that puts declared links on its `Lab.links` resolves them itself,
+against its own hosts, and otto keeps them as resolved when it merges the
+sources. That is the default, and **a backend without the capability below
+keeps resolving its own links, unchanged.** Its hosts in the merged lab are
+still link endpoints for the other sources: a json source's link may name a
+host your backend builds for that lab. Such a backend supplies no addressing
+for its other labs, so a host it holds only in another lab is not an
+endpoint.
+
+`load_contribution(name, *, preferences, view) -> LabContribution` ([`SupportsLabContribution`](../api/labs.rst))
+: Your hosts for the lab and your links **unresolved**, so otto resolves them
+  once, after the merge, and they can name a host another source declares
+  ({ref}`lab-links-across-sources`). Return a
+  [`LabContribution`](../api/labs.rst): `lab` is the lab `load_lab_in_view`
+  builds; its `links` are ignored, because otto replaces them with the links
+  it composes. `links` is a
+  [`DeclaredLinkInputs`](../api/labs.rst). Its `entries` hold one
+  [`DeclaredLinkEntry`](../api/link.rst) per raw `links` entry, with the file
+  and the index its errors name. Its `addressing` is a function returning
+  your hosts' [`HostAddressing`](../api/link.rst) (`ip` and `interfaces`) by
+  host id, every lab's hosts included, so a link to a host of another lab
+  still resolves. Otto calls it at most once per load, and only when an
+  attached link needs an endpoint that neither its own source nor the merged
+  lab addresses: one of your links, or another source's. A source that does not hold the lab returns
+  `lab=None` with the reason in `not_found`, and may still carry links. Otto
+  reaches it through [`load_contribution_through`](../api/labs.rst), and the
+  built-in `json` backend implements it.
+
+`declared_link_entries(*, view) -> list[DeclaredLinkEntry]` ([`SupportsDeclaredLinks`](../api/labs.rst))
+: Every raw `links` entry you hold, for all your labs, without building a host.
+  Otto accepts it and does not read it yet.
+
+Every name a contribution is built from is public:
+
+```python
+from otto.labs import DeclaredLinkInputs, LabContribution, SupportsLabContribution
+from otto.link import DeclaredLinkEntry, HostAddressing
+```
+
 ## Writing a custom backend
 
 A backend is any class satisfying the two required methods (plus, optionally,
@@ -340,6 +381,22 @@ files, or globs over `.json` files, by the json backend's rule. Otto
 fingerprints those files, and the directories they were found in, when it
 writes the cache.
 
+Return a [`LabSourceFacts`](../api/labs.rst) to say it in full: its
+`file_rule` is a [`LabFileRule`](../api/labs.rst) (the file `suffix`, and
+the `directory_file` a directory entry contributes), which otto lists your
+files by when it fingerprints them; omitted, it is `JSON_FILE_RULE`:
+
+```python
+from otto.labs import LabFileRule, LabSourceFacts
+
+
+def prepared_facts(self) -> LabSourceFacts:
+    return LabSourceFacts(
+        file_inputs=self.paths,
+        file_rule=LabFileRule(suffix=".yaml", directory_file="lab.yaml"),
+    )
+```
+
 A source whose config model defines no `prepared_facts()` is not file-backed:
 nothing it reads can invalidate the cache, so otto gives every entry written
 for the workspace the short TTL (five minutes). A source whose backend is not
@@ -462,6 +519,7 @@ implements it ([the view capabilities](#named-inventories-the-view-capabilities)
 | `lab_scope` | It returns `None` or a `LabScope`, and every lab you report is inside it. |
 | `load_lab_in_view`, without `view=` | Under the view `inventory=` stands for (it reaches `default` only), each lab loads to the same hosts at the same addresses as `load_lab(name, inventory=inventory)`. |
 | `load_lab_in_view`, with `view=` | The two loads are never compared, because `load_lab` rightly refuses a qualified reference to a named inventory. `expected_ips` is checked on the loads through the view instead. |
+| `load_contribution` | Each lab's contribution holds the same hosts, at the same addresses, as the lab's load. |
 | `list_host_summaries` and `list_host_summaries_in_view` | The summaries and the loads agree id for id and field for field, under the same binding. |
 
 The unknown-name probe expects {class}`~otto.labs.LabNotFoundError`. A

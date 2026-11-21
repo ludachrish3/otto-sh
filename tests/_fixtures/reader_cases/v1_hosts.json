@@ -1,0 +1,4 @@
+{
+  "labs": {"case": {}},
+  "hosts": [{"name": "alpha", "ip": "10.20.0.1", "creds": [{"login": "u", "password": "p"}]}]
+}

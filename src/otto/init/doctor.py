@@ -8,7 +8,6 @@ what a project holds: ``otto init`` renders the report.
 """
 
 import dataclasses
-import json
 from collections.abc import Callable, Iterator, Mapping
 from functools import partial
 from pathlib import Path
@@ -595,55 +594,35 @@ class _ParsedLab:
 def _parse_lab_documents(root: Path) -> _ParsedLab:
     """Parse every lab file the settings name: their problems and parsed documents.
 
-    The section shape, the ``labs`` table, the ``elements`` entries and the
-    in-source duplicate rules are all applied by the SAME code the runtime
-    loader uses (:func:`otto.labs.json_repository.parse_lab_sections` and
-    :func:`~otto.labs.json_repository.parse_lab_document`), so the
-    doctor cannot drift from what otto accepts: an unknown ``routes`` section,
-    a v1 top-level ``hosts`` array, a host entry carrying a hoisted key and a
-    lab declared twice within one source are all rejected here exactly as they
-    are at load. A file with a problem is reported and left out of the
-    documents the warnings pass sees — a half-parsed file would only produce
-    warnings about its own breakage.
+    Each source's files are read by the SAME source read the runtime loader
+    runs (:func:`otto.labs.documents.read_source`): the one lab-document
+    reader, the section shape, the ``labs`` table, the ``elements`` entries
+    and the in-source duplicate rules, so the doctor cannot drift from what
+    otto accepts: an undecodable file, an unknown ``routes`` section, a v1
+    top-level ``hosts`` array, a host entry carrying a hoisted key and a lab
+    declared twice within one source are all rejected here exactly as they
+    are at load, in the loader's words. A file with a problem is reported and
+    left out of the documents the warnings pass sees — a half-parsed file
+    would only produce warnings about its own breakage.
 
-    The duplicate state is threaded per SOURCE (:func:`lab_file_groups`), not
-    over the flat file list: two sources may each declare the same lab, which
-    is how ``[[lab.sources]]`` layering works, and rejecting that would fail
-    projects otto loads happily.
+    The source read runs per SOURCE (:func:`lab_file_groups`), not over the
+    flat file list: two sources may each declare the same lab, which is how
+    ``[[lab.sources]]`` layering works, and rejecting that would fail projects
+    otto loads happily.
+
+    Only a file otto itself decodes (:func:`otto.labs.documents.otto_decodes`)
+    is read: a backend whose file rule names another format reads its own
+    files, so a ``lab.yaml`` is never reported as malformed JSON.
     """
-    from ..labs.errors import LabRepositoryError
-    from ..labs.json_repository import SeenElement, parse_lab_document, parse_lab_sections
-    from ..models.base import wrap_secret_values
+    from ..labs import documents as lab_documents
 
     problems: list[str] = []
     documents: list[LabDocument] = []
     for group in lab_file_groups(root):
-        # Reset per source: the duplicate rules are in-source rules.
-        seen_labs: dict[str, Path] = {}
-        seen_elements: dict[str, SeenElement] = {}
-        for lab_file in group:
-            if not lab_file.is_file():
-                continue
-            try:
-                # Decoded as UTF-8 text, as the loader reads it: json.loads on
-                # raw bytes would accept a BOM or UTF-16 the loader refuses.
-                # ValueError covers malformed JSON and undecodable bytes.
-                data = json.loads(lab_file.read_bytes().decode())
-                wrap_secret_values(data)
-            except (OSError, ValueError) as e:
-                problems.append(f"{lab_file}: {e}")
-                continue
-            try:
-                document = parse_lab_document(
-                    parse_lab_sections(data, str(lab_file)),
-                    lab_file,
-                    seen_labs=seen_labs,
-                    seen_elements=seen_elements,
-                )
-            except LabRepositoryError as e:
-                problems.append(str(e))
-                continue
-            documents.append(document)
+        decoded = [f for f in group if f.is_file() and lab_documents.otto_decodes(f)]
+        read = lab_documents.read_source(decoded)
+        problems.extend(problem.reason for problem in read.problems)
+        documents.extend(read.documents)
     return _ParsedLab(problems, documents)
 
 

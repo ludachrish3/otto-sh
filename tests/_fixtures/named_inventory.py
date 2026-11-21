@@ -23,6 +23,10 @@ capability of :mod:`otto.labs.protocol` (view loads, summaries in view, status,
 scope) and counts its calls, so composite and dispatch tests can model a
 source's policy, scope and outage without lab files.
 
+:class:`LinkedViewSource` is a :class:`FakeViewSource` whose loads carry
+declared links already resolved, as a backend that resolves its own links
+hands them over.
+
 :func:`json_twin` writes a discovery to a file the ``json`` backend reads, and
 :func:`assert_same_discovery` asserts two inventories discover the same
 records and instances, so a test can show a backend and its file twin agree.
@@ -56,6 +60,7 @@ from otto.inventory import (
 )
 from otto.labs import HostSummary, LabNotFoundError, LabScope, LabStatus, logins_of_host_data
 from otto.labs.loader import Lab
+from otto.link.model import Link
 from otto.models.base import OttoModel
 from otto.models.inventory import InventoryInstance, InventoryRecord
 
@@ -339,6 +344,24 @@ class FakeViewSource:
     def lab_scope(self) -> "LabScope | None":
         self.calls["scope"] += 1
         return self.scope
+
+
+class LinkedViewSource(FakeViewSource):
+    """A view source that resolves its own declared links: every lab it loads carries *links*.
+
+    The shape of a backend without
+    :class:`~otto.labs.protocol.SupportsLabContribution`, which hands the
+    composite its links resolved.
+    """
+
+    def __init__(self, labs: dict[str, list[dict[str, Any]]], *, links: "list[Link]") -> None:
+        super().__init__(labs)
+        self._links = links
+
+    def load_lab_in_view(self, name, *, preferences=None, view: InventoryView) -> Lab:
+        lab = super().load_lab_in_view(name, preferences=preferences, view=view)
+        lab.links = list(self._links)
+        return lab
 
 
 def json_twin(*, tmp_path: Path, discovery: Discovery) -> JsonInventory:

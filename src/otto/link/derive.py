@@ -6,10 +6,13 @@ every rule here unit-testable without a lab.
 """
 
 import logging
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from difflib import get_close_matches
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from typing_extensions import final
 
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.element import Element
@@ -20,17 +23,34 @@ from .model import Link, LinkEndpoint, Provenance
 
 if TYPE_CHECKING:
     from ..host.os_profile import ProfileContext
+    from ..labs.protocol import LabScope
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@final
+@dataclass(frozen=True, kw_only=True)
 class HostAddressing:
     """The minimal addressing view of a host a link endpoint needs."""
 
     ip: str
     interfaces: dict[str, str] = field(default_factory=dict)
     """Interface name -> address (values already flattened to strings)."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class DeclaredLinkEntry:
+    """One raw ``links`` entry of a lab document, with where it was declared."""
+
+    origin: Path
+    """The document the entry was declared in, which its error names."""
+
+    index: int
+    """The entry's index in that document's ``links`` section."""
+
+    entry: object
+    """The entry as the document holds it, before validation."""
 
 
 # DEBT(no-tuple-return): resolved id plus its addressing.
@@ -66,6 +86,20 @@ def addressing_from_dict(
         if not name.startswith("_")
     }
     return host_id, HostAddressing(ip=host_data.get("ip", ""), interfaces=interfaces)
+
+
+def addressing_of_host(host: object) -> HostAddressing:
+    """Return a BUILT host's addressing, as :func:`addressing_from_dict` reads its record.
+
+    Duck-typed, as :func:`implicit_links` reads hosts: ``ip`` and each
+    ``interfaces`` value's ``ip``. A host of any backend is then a link
+    endpoint, whether or not a lab document declared it.
+    """
+    interfaces = {
+        name: str(getattr(entry, "ip", entry))
+        for name, entry in (getattr(host, "interfaces", None) or {}).items()
+    }
+    return HostAddressing(ip=getattr(host, "ip", "") or "", interfaces=interfaces)
 
 
 def _resolve_endpoint(
@@ -144,31 +178,67 @@ def raw_endpoint_host_ids(entry: object) -> list[str]:
     return ids
 
 
+def link_attaches(
+    *,
+    endpoint_ids: Collection[str],
+    selection: frozenset[str] | None,
+    loaded_ids: Collection[str] | None,
+    scope: "LabScope | None",
+) -> bool:
+    """Return whether a declared link with *endpoint_ids* belongs to the selected labs.
+
+    The one relevance decision. *loaded_ids* ``None`` attaches every link (a
+    caller that offers every link); otherwise a link attaches when at least
+    one of its endpoints is a loaded host, and, when *scope* and *selection*
+    are both set, some selected lab is inside *scope* (a scoped source's link
+    never joins a lab outside its scope). *selection* is the set of selected
+    lab names, ``None`` when no lab is selected.
+    """
+    if loaded_ids is None:
+        return True
+    if not any(host_id in loaded_ids for host_id in endpoint_ids):
+        return False
+    if scope is not None and selection is not None:
+        return any(scope.contains(name=name) for name in selection)
+    return True
+
+
 def resolve_declared_links(
-    link_data: list[dict[str, Any]],
+    entries: Sequence[DeclaredLinkEntry],
     hosts: Mapping[str, HostAddressing],
     *,
-    source: str,
     loaded_ids: Collection[str],
+    selection: frozenset[str] | None,
+    scope: "LabScope | None" = None,
 ) -> list[Link]:
     """Validate + resolve raw ``links`` entries into DECLARED ``Link`` objects.
 
-    *source* names the origin (a file path or "lab.json") for error messages.
-    *loaded_ids* is the id set of the requested lab's hosts; ``link_data`` spans
-    ALL lab files (so cross-lab dangling endpoints resolve), so an entry whose
-    **both** endpoints lie outside *loaded_ids* belongs to an unrelated lab and
-    is **skipped** — its errors (unknown host, bad interface, or even a
-    structurally malformed record) must not break this lab's load, symmetric
-    with the cross-lab host-record containment in ``_JsonFileLabRepository``. An
-    entry touching the lab (≥1 endpoint in *loaded_ids*) is resolved and fails
-    loud, naming the entry's original file *index* and *source*.
+    *loaded_ids* is the id set of the requested lab's hosts and *selection*
+    the selected lab names (``None``: none, as :func:`link_attaches` reads
+    it); *entries* may span other labs' links (so cross-lab dangling
+    endpoints resolve against *hosts*), and an entry that does not attach
+    (:func:`link_attaches`: neither endpoint in *loaded_ids*, or outside
+    *scope*) belongs to an unrelated lab and is **skipped** — its errors
+    (unknown host, bad interface, or even a structurally malformed record)
+    must not break this lab's load, symmetric with the cross-lab host-record
+    containment of the lab-file sources. An entry that attaches is resolved
+    and fails loud, naming its document and its index there.
     """
     links: list[Link] = []
-    for idx, entry in enumerate(link_data):
+    for declared in entries:
+        entry = declared.entry
         # Relevance is read from the raw entry BEFORE strict validation, so an
         # unrelated lab's malformed link is filtered out before it can raise.
-        if not any(host_id in loaded_ids for host_id in raw_endpoint_host_ids(entry)):
-            logger.debug(f"Skipping unrelated-lab link at index {idx} in {source}: {entry!r}")
+        if not link_attaches(
+            endpoint_ids=raw_endpoint_host_ids(entry),
+            selection=selection,
+            loaded_ids=loaded_ids,
+            scope=scope,
+        ):
+            logger.debug(
+                f"Skipping unrelated-lab link at index {declared.index} in "
+                f"{declared.origin}: {entry!r}"
+            )
             continue
         try:
             spec = LinkSpec.model_validate(entry)
@@ -176,7 +246,9 @@ def resolve_declared_links(
             b = _resolve_endpoint(spec.endpoints[1].host, spec.endpoints[1].interface, hosts)
             _validate_impair(spec.impair, a, b, hosts)
         except ValueError as e:
-            raise ValueError(f"Invalid link in {source} at index {idx}: {e}") from e
+            raise ValueError(
+                f"Invalid link in {declared.origin} at index {declared.index}: {e}"
+            ) from e
         links.append(
             Link(
                 a=a,

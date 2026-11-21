@@ -344,9 +344,9 @@ class Lab:
             else:
                 self._replace_host(host_id=host.id, other=other)
 
-        by_id = {link.id: link for link in self.links}
-        by_id.update({link.id: link for link in other.links})
-        self.links = list(by_id.values())
+        from .composition import merge_links_by_id  # lazy: keep this module light
+
+        self.links = merge_links_by_id(self.links, other.links)
 
         return self
 

@@ -6,6 +6,7 @@ backend keeps today's calls and receives ``default`` (or the D1 stand-in that
 refuses bare references), and the refusal is one drop on every route.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -22,12 +23,15 @@ from otto.inventory import (
     resolve_host_entry,
 )
 from otto.labs import (
+    DeclaredLinkInputs,
     Diagnostic,
+    LabContribution,
     LabScope,
     LabStatus,
     SupportsHostSummaries,
     SupportsHostSummariesInView,
     SupportsInventoryView,
+    SupportsLabContribution,
     SupportsLabScope,
     SupportsLabStatus,
     host_summaries,
@@ -35,10 +39,14 @@ from otto.labs import (
     lab_scope_of,
     lab_statuses,
     labs_view,
+    load_contribution_through,
     load_lab_through,
 )
 from otto.labs.drops import HostDrop, collecting_drops
 from otto.labs.loader import Lab
+from otto.link import DeclaredLinkEntry, HostAddressing
+from otto.testing import assert_lab_repository_conforms
+from tests._fixtures.labdata import built_json_source
 from tests._fixtures.named_inventory import FakeInventory, FakeViewSource, LookupCounting
 
 _ROOT = Path("/projects/bench")
@@ -302,3 +310,79 @@ def test_a_down_view_fake_fails_status_and_load():
     with pytest.raises(RuntimeError, match="down"):
         load_lab_through(repository=source, name="bench", preferences=None, view=view)
     assert source.list_labs() == ["bench"]
+
+
+class _Contributing(FakeViewSource):
+    """A view source with the contribution capability.
+
+    *drop* contributes one host fewer; *stray_link* contributes a link its
+    load never gives.
+    """
+
+    def __init__(self, labs, *, drop: bool = False, stray_link: bool = False) -> None:
+        super().__init__(labs)
+        self.drop = drop
+        self.stray_link = stray_link
+        self.contributions = 0
+
+    def load_contribution(self, name, *, preferences=None, view: InventoryView) -> LabContribution:
+        self.contributions += 1
+        lab = self.load_lab_in_view(name, preferences=preferences, view=view)
+        if self.drop:
+            lab.hosts.popitem()
+        entries = [
+            DeclaredLinkEntry(
+                origin=Path("stray.json"),
+                index=0,
+                entry={"endpoints": [{"host": "unix-host"}, {"host": "far"}]},
+            )
+        ]
+        return LabContribution(
+            lab=lab,
+            not_found=None,
+            links=DeclaredLinkInputs(
+                entries=entries if self.stray_link else [],
+                addressing=lambda: {"far": HostAddressing(ip="10.1.0.99")},
+            ),
+        )
+
+
+def test_conformance_checks_contributions_only_where_implemented(tmp_path):
+    """A contribution must hold the hosts its lab loads with; a source without one is not asked."""
+    plain = FakeViewSource({"bench": _UNIX})
+    assert not isinstance(plain, SupportsLabContribution)
+    assert (
+        load_contribution_through(
+            repository=plain, name="bench", view=InventoryView.of_default(inventory=None)
+        )
+        is None
+    )
+    assert_lab_repository_conforms(plain, expected_labs=["bench"])
+
+    agreeing = _Contributing({"bench": _UNIX})
+    assert isinstance(agreeing, SupportsLabContribution)
+    assert_lab_repository_conforms(agreeing, expected_labs=["bench"])
+    assert agreeing.contributions == 1
+
+    with pytest.raises(AssertionError, match=r"SupportsLabContribution: .*'bench'.*hosts"):
+        assert_lab_repository_conforms(_Contributing({"bench": _UNIX}, drop=True))
+    with pytest.raises(
+        AssertionError,
+        match=r"SupportsLabContribution: .*'bench'.*links.*\['far--unix-host'\] vs \[\]",
+    ):
+        assert_lab_repository_conforms(_Contributing({"bench": _UNIX}, stray_link=True))
+
+    creds = [{"login": "u", "password": "p"}]
+    document = {
+        "labs": {"bench": {}, "other": {}},
+        "elements": [
+            {"name": "dut", "labs": ["bench"], "hosts": [{"ip": "10.1.0.5", "creds": creds}]},
+            {"name": "peer", "labs": ["other"], "hosts": [{"ip": "10.1.0.6", "creds": creds}]},
+        ],
+        "links": [{"endpoints": [{"host": "dut"}, {"host": "peer"}]}],
+    }
+    (tmp_path / "lab.json").write_text(json.dumps(document))
+    json_source = built_json_source(tmp_path, "a", tmp_path / "lab.json").repository
+    assert isinstance(json_source, SupportsLabContribution)
+    assert [link.id for link in json_source.load_lab("bench").links] == ["dut--peer"]
+    assert_lab_repository_conforms(json_source, expected_labs=["bench"])
