@@ -20,14 +20,17 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import final
 
+from ..utils import TEMPLATE_SUFFIX
+
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from ..config.project import Project
     from ..host.os_profile import ProfileContext
+    from ..inventory.view import InventoryView
     from ..models.settings import LabConfigSpec, LabSourceSpec
     from ..registry import FrozenMap, Prepared
-    from .composite import CompositeLabRepository, LabSource
+    from .composite import CompositeLabRepository, LabSource, LabStatusReport
     from .protocol import LabRepository
 
 
@@ -60,6 +63,14 @@ class LabSourceEnv:
     ``element=`` as well), so a host's ``os_type``
     may name a table another selected project declares."""
 
+    project_name: "str | None" = None
+    """The declaring project's name (its settings' ``name``), or ``None`` when unknown.
+
+    otto sets it whenever it prepares a source from a project's settings; an
+    environment built by hand (a backend's own test, say) may leave it unset.
+    The ``jsonnet`` backend passes it to its templates as ``otto.project``,
+    and refuses to render without it."""
+
 
 @dataclass(frozen=True)
 class PendingLabSource:
@@ -79,6 +90,9 @@ class PendingLabSource:
 
     project_root: Path
     """The root of the declaring project; the backend anchors relative paths here."""
+
+    project_name: "str | None" = None
+    """The declaring project's name, carried into :attr:`LabSourceEnv.project_name`."""
 
 
 @final
@@ -105,6 +119,9 @@ class LabFileRule:
 JSON_FILE_RULE = LabFileRule(suffix=".json", directory_file="lab.json")
 """The json backend's rule, and the rule of every source whose facts name none."""
 
+JSONNET_FILE_RULE = LabFileRule(suffix=TEMPLATE_SUFFIX, directory_file=f"lab{TEMPLATE_SUFFIX}")
+"""The jsonnet backend's rule, reading ``.jsonnet`` entries and a directory's ``lab.jsonnet``."""
+
 
 @final
 @dataclass(frozen=True, kw_only=True)
@@ -122,13 +139,16 @@ class LabSourceFacts:
     file_rule: LabFileRule = JSON_FILE_RULE
     """How :attr:`file_inputs` name lab files; the json backend's rule by default."""
 
-    key_roots: tuple[Path, ...] = ()
-    """Directories whose whole tree is a key path of the source's labs; none by default.
+    key_roots: "tuple[Path, ...] | None" = None
+    """Directories whose whole tree is a key path of the source's labs; ``None`` by default.
 
-    Meant for a source whose labs read files beyond its lab files (files a
-    lab file imports, say), computed from its parsed configuration. Accepted,
-    and not yet read by otto's cache: today a source's key paths are its lab
-    files alone (:meth:`LabSourceState.key_paths`).
+    For a source whose lab files are rendered (a Jsonnet entry and the files
+    it imports, say), computed from its parsed configuration, ``()`` when it
+    has no import root: :meth:`LabSourceState.key_paths` adds each root and
+    every directory and file under it, and the packaged ``otto.libsonnet`` a
+    render may import, so a change anywhere a lab file could read moves the
+    completion cache's key without anything being evaluated. ``None`` for a
+    source whose lab files are read as written.
     """
 
 
@@ -194,13 +214,27 @@ class LabSourceState:
         return expand_lab_files(inputs, rule=self.file_rule(), visited=visited)
 
     def key_paths(self, *, visited: "set[Path] | None" = None) -> list[Path]:
-        """Return every file whose change can change the source's labs: its lab files.
+        """Return every path whose change can change the source's labs.
 
-        The completion cache's key set for the source (with *visited*, the
-        directories the enumeration entered). Raises what :meth:`lab_files`
-        raises.
+        The completion cache's key set for the source: its lab files (with
+        *visited*, the directories the enumeration entered), then, when its
+        facts name :attr:`~LabSourceFacts.key_roots` (its files are
+        rendered, under no root or several), every other file a render may
+        read (:func:`~otto.templating.freshness.rendering_dependencies`):
+        each root and every directory and file under it, walked once, and
+        the packaged ``otto.libsonnet``, sorted. Computed from the
+        configuration and the filesystem alone: no view, and nothing is
+        evaluated. Raises what :meth:`lab_files` raises.
         """
-        return self.lab_files(visited=visited)
+        files = self.lab_files(visited=visited)
+        roots = getattr(self._facts(), "key_roots", None)
+        if roots is None or not files:
+            return files
+        # Lazy, and only for a rendered source: the walk is the templating
+        # core's freshness rule, which no other source needs.
+        from ..templating.freshness import rendering_dependencies
+
+        return rendering_dependencies(entries=files, roots=tuple(roots))
 
     def _facts(self) -> object:
         """Return the prepared facts, ``None`` when unprepared or when the config model has none."""
@@ -234,6 +268,7 @@ def compile_lab_sources(
             raw=FrozenMap.freeze_json(value=dict(spec.model_extra or {})),
             origin=origin,
             project_root=root,
+            project_name=project_name,
         )
         for i, spec in enumerate(cfg.sources, start=1)
     ]
@@ -290,6 +325,7 @@ def prepare_lab_sources(
                 label=source.label,
                 origin=source.origin,
                 profiles=profiles,
+                project_name=source.project_name,
             ),
             source=source.origin,
         )
@@ -423,6 +459,98 @@ def listing_sources(*, projects: "Sequence[Project]") -> "CompositeLabRepository
     )
 
 
+@final
+@dataclass(frozen=True, kw_only=True)
+class LabListing:
+    """What listing every project's labs found: one report, or each project's own outcome."""
+
+    report: "LabStatusReport | None"
+    """The one status report over every project's sources, or ``None`` when it failed."""
+
+    per_project: "Mapping[Path, LabStatusReport | Exception]"
+    """Each project's own report, or the error it raised, by project root.
+
+    Filled only when :attr:`report` failed (with
+    ``otto.labs.views.LISTING_ERRORS``); empty otherwise."""
+
+    def outcome(self, *, root: Path) -> "LabStatusReport | Exception":
+        """Return the report the project at *root* is listed from, or why its own one failed.
+
+        :attr:`report` when it exists, else that project's entry of
+        :attr:`per_project`. *root* is the project's own root, as the
+        listing's projects carry it.
+        """
+        return self.report if self.report is not None else self.per_project[root]
+
+
+def project_lab_report(project: "Project", *, view: "InventoryView") -> "LabStatusReport":
+    """Return the status report of *project*'s sources built alone, through *view*.
+
+    The project's own sources (:func:`build_lab_sources` of *project* alone)
+    asked for their report: what a project's lab panel shows when the report
+    over every project's sources cannot be had.
+
+    Raises:
+        What :func:`build_lab_sources` and
+        :meth:`~otto.labs.composite.CompositeLabRepository.lab_status_report`
+        raise; ``otto.labs.views.LISTING_ERRORS`` for what a project holds.
+    """
+    return build_lab_sources(projects=[project]).lab_status_report(view=view)
+
+
+def lab_listing(*, projects: "Sequence[Project]", view: "InventoryView") -> LabListing:
+    """List every project's labs as ``otto --list-labs`` does: THE listing decision.
+
+    One status report over every project's sources (:func:`listing_sources`)
+    through *view*. When it fails with
+    ``otto.labs.views.LISTING_ERRORS`` (a source cannot be built, or an
+    unscoped source's status call failed), each project is listed on its own
+    instead (:func:`project_lab_outcome`, through the same *view*), and a
+    project whose own report fails keeps that error. ``otto --list-labs``
+    formats the result, and the ``otto init`` doctor reads its project's rows
+    from it, so the two never disagree.
+    """
+    from logging import getLogger
+    from types import MappingProxyType
+
+    from .views import LISTING_ERRORS
+
+    try:
+        report = listing_sources(projects=projects).lab_status_report(view=view)
+    except LISTING_ERRORS as e:
+        getLogger(__name__).debug(
+            f"listing every project's labs failed, listing each on its own: {e}"
+        )
+    else:
+        return LabListing(report=report, per_project=MappingProxyType({}))
+    per_project: "dict[Path, LabStatusReport | Exception]" = {}
+    for project in projects:
+        per_project[project.root] = project_lab_outcome(project, view=view)
+    return LabListing(report=None, per_project=MappingProxyType(per_project))
+
+
+def project_lab_outcome(
+    project: "Project", *, view: "InventoryView | None"
+) -> "LabStatusReport | Exception":
+    """Return :func:`project_lab_report` of *project*, or the listing error it raised.
+
+    *view* defaults to a deferred view of *project* alone
+    (:func:`~otto.inventory.deferred_inventory_view`), built inside the same
+    catch. The errors kept are ``otto.labs.views.LISTING_ERRORS``; any other
+    propagates.
+    """
+    from .views import LISTING_ERRORS
+
+    try:
+        if view is None:
+            from ..inventory.config import deferred_inventory_view
+
+            view = deferred_inventory_view(projects=[project])
+        return project_lab_report(project, view=view)
+    except LISTING_ERRORS as e:
+        return e
+
+
 def _project_sources(*, project: "Project", profiles: "ProfileContext") -> "list[LabSource]":
     """Build *project*'s prepared sources with *profiles*, in declaration order.
 
@@ -447,6 +575,7 @@ def _project_sources(*, project: "Project", profiles: "ProfileContext") -> "list
                     label=source.label,
                     origin=source.origin,
                     profiles=profiles,
+                    project_name=source.project_name,
                 ),
                 source=source.origin,
             )

@@ -138,7 +138,7 @@ import time
 import types
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, get_args, get_origin
 
 from . import corpus_snapshot
 
@@ -149,9 +149,13 @@ if TYPE_CHECKING:
     from typing import TypeGuard
 
     from ..host.os_profile import ProfileContext
+    from ..inventory.config import ProtectedPaths
     from ..inventory.view import InventoryView
+    from ..labs.composite import CompositeLabRepository
     from ..labs.drops import HostDrop
-    from ..labs.protocol import HostSummary
+    from ..labs.protocol import HostSummary, LabScope
+    from ..labs.sources import LabSourceState
+    from ..link.derive import DeclaredLinkEntry
     from .cache_sections import Section
     from .project import Project
 
@@ -266,7 +270,14 @@ CACHE_FILENAME = "completion_cache.json"
 #      reads the named-inventory view. The bump is REQUIRED, as v14's was: a
 #      surviving v30 entry would validate with no "inventory_names", and the
 #      shim would answer every `--inventory` TAB with nothing.
-SCHEMA_VERSION = 31
+# v32: each "links" row carries "scope" (a scoped jsonnet source's
+#      {"names", "prefixes"}, else null), and the readers offer a row only
+#      when `otto.link.derive.link_attaches` attaches it, so a scoped link
+#      never completes under a lab outside its scope. An id is one row per
+#      scope, not one per id. The "labs" names come from each source's status
+#      read through the completion view (a jsonnet source's rendered labs). A
+#      v31 entry has no scope to test and no templated labs, so it is dropped.
+SCHEMA_VERSION = 32
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.
@@ -579,9 +590,11 @@ def ancestor_conftests(test_dir: Path, root: Path) -> list[Path]:
     whether or not they exist: a watcher that stats a missing one sees it
     appear. A *test_dir* outside *root* has none.
     """
+    from ..utils import is_under  # function-local, like this module's other utils use
+
     found: list[Path] = []
     for ancestor in test_dir.parents:
-        if ancestor == root or root in ancestor.parents:
+        if is_under(ancestor, root):
             found.append(ancestor / CONFTEST_FILENAME)
         if ancestor == root:
             break
@@ -1543,38 +1556,71 @@ def _host_summary_deadline() -> float:
 
 
 @dataclass(frozen=True)
+class LinkInputsRow:
+    """One lab source's declared links, as the completion enumeration collected them."""
+
+    source: str
+    """The source's label."""
+
+    entries: list["DeclaredLinkEntry"]
+    """Every raw ``links`` entry the source declares, for all of its labs."""
+
+    scope: "LabScope | None"
+    """The source's lab scope (:func:`~otto.labs.lab_scope_of`), or ``None`` when it has none."""
+
+
+@dataclass(frozen=True)
 class ProjectEnumeration:
-    """What one project's host enumeration produced: the summaries, and what it left out.
+    """What one project's host enumeration produced, and what it left out.
 
     ``drops`` is the outlet (:mod:`otto.labs.drops`): every entry, file, lab
     or source the best-effort enumeration skipped, with the reason, plus the
     enumeration's own failure or deadline when it had one. Stored beside the
-    summaries in the per-process memo so the writer collects both from ONE
-    enumeration, and served by ``otto cache info`` from the ``names`` payload.
+    summaries in the per-process memo so the writer collects every one of
+    them from ONE enumeration, one view and so one render per entry, and
+    served by ``otto cache info`` from the ``names`` payload.
     """
 
     summaries: list["HostSummary"] = field(default_factory=list)
     drops: list["HostDrop"] = field(default_factory=list)
+    lab_names: list[str] = field(default_factory=list)
+    """Every lab the project's sources declare now, sorted (``--lab`` completion).
+
+    Set only by the names-only enumeration (:func:`_project_lab_names`),
+    which loads no lab and summarizes no host."""
+    link_inputs: list[LinkInputsRow] = field(default_factory=list)
+    """Each source's declared links, in source order (``otto link`` completion)."""
+    timed_out: bool = False
+    """Whether :func:`_bounded` gave up on the enumeration at its deadline."""
 
 
 def _bounded(
-    work: "Callable[[threading.Event], ProjectEnumeration]", project: "Project"
+    work: "Callable[[threading.Event], ProjectEnumeration]",
+    project: "Project",
+    *,
+    on_abandon: "Callable[[str], None] | None" = None,
 ) -> ProjectEnumeration:
     """Run *work*, giving up after :func:`_host_summary_deadline`.
 
     A daemon thread, so a backend still blocked at process exit cannot keep
     the completion process alive. Deliberately NOT ``signal.alarm``: that is
     main-thread-only and would trample whatever handler the caller installed.
+    The thread runs *work* in a fresh :class:`contextvars.Context`, so it
+    inherits none of its caller's context (a cancellation, a drop sink) on
+    any Python, including one whose threads inherit their creator's.
 
     *work* is handed an ``abandoned`` event, set when the deadline passes, so
     a probe that finishes LATE can keep quiet — otherwise its own warning
     lands in the middle of whatever command the main thread has moved on to.
+    *on_abandon*, when given, is called at that same moment with the
+    deadline drop's reason; it must not block, so the deadline holds.
 
     Catches ``BaseException``, not ``Exception``: the containment that keeps
     completion from crashing the shell lives in the callee, and an escape
     here would reach ``threading.excepthook`` and print a full traceback to
     the user's terminal mid-TAB.
     """
+    import contextvars
     import threading
 
     from ..labs.drops import HostDrop
@@ -1587,22 +1633,35 @@ def _bounded(
         with contextlib.suppress(BaseException):  # see the docstring
             box.append(work(abandoned))
 
-    thread = threading.Thread(target=_run, daemon=True)
+    thread = threading.Thread(target=lambda: contextvars.Context().run(_run), daemon=True)
     thread.start()
-    thread.join(deadline)
+    _await_worker(thread, deadline)
     if thread.is_alive():
         abandoned.set()
         reason = (
             f"host source did not answer within {deadline}s — offering no hosts for it. "
             f"Raise {HOST_SUMMARY_DEADLINE_ENV_VAR} if it is merely slow."
         )
+        if on_abandon is not None:
+            on_abandon(reason)
         logging.getLogger(__name__).warning(f"[completion] {project.root}: {reason}")
         return ProjectEnumeration(
-            drops=[HostDrop(where=str(project.root), reason=reason, timed_out=True)]
+            drops=[HostDrop(where=str(project.root), reason=reason, timed_out=True)],
+            timed_out=True,
         )
     # `or ProjectEnumeration()` rather than `box[0]`: a work() returning None
     # would otherwise hand every caller a None to read attributes off.
     return (box[0] if box else None) or ProjectEnumeration()
+
+
+def _await_worker(thread: "threading.Thread", deadline: float) -> None:
+    """Wait for *thread* to finish, for at most *deadline* seconds: when :func:`_bounded` gives up.
+
+    The one moment the deadline is decided, apart from the work it bounds,
+    so a test can fire it on an event (the worker reaching a gate) rather
+    than on how much work fits in a wall-clock window.
+    """
+    thread.join(deadline)
 
 
 @dataclass(frozen=True)
@@ -1620,6 +1679,28 @@ class InventoryResolution:
 
     view: "InventoryView | None" = None
     error: "str | None" = None
+    protected: "ProtectedPaths | None" = None
+    """A failed resolution's protected-file catalog, from the projects' tables.
+
+    Its lab names and links are still read, through :meth:`enumeration_view`,
+    whose renders run under this catalog. ``None`` when even it could not be
+    read: then nothing renders (:data:`~otto.inventory.config.NO_CATALOG`)."""
+
+    def enumeration_view(self) -> "InventoryView":
+        """Return the view the project enumeration reads through: THE fallback decision.
+
+        :attr:`view` when the resolution succeeded; otherwise an empty view
+        under :attr:`protected`, so a template renders under the catalog
+        dispatch would use, and a view with no catalog renders nothing.
+        """
+        from ..inventory.view import InventoryView
+
+        if self.view is not None:
+            return self.view
+        if self.protected is None:
+            return InventoryView(inventories={})
+        catalog = self.protected
+        return InventoryView(inventories={}, protected=lambda: catalog)
 
     @property
     def memo_key(self) -> "Hashable":
@@ -1670,8 +1751,28 @@ def resolve_process_inventory(projects: "Sequence[Project]") -> InventoryResolut
             f"[completion] the host inventory could not be resolved, so no host "
             f"completes until it is fixed: {e}"
         )
-        return InventoryResolution(error=f"{type(e).__name__}: {e}")
+        return InventoryResolution(
+            error=f"{type(e).__name__}: {e}", protected=_fallback_protection(projects)
+        )
     return InventoryResolution(view=view)
+
+
+def _fallback_protection(projects: "Sequence[Project]") -> "ProtectedPaths | None":
+    """Return the catalog a failed resolution's renders run under; ``None`` when it cannot be read.
+
+    The deferred view's catalog (:func:`~otto.inventory.config.deferred_inventory_view`),
+    the one dispatch's lazy path computes: it reads the projects' and the
+    user file's tables as written, so a declaration that fails to build
+    still protects every path it names, and a user file that cannot be read
+    gives a catalog under which nothing renders
+    (:func:`~otto.inventory.config.unreadable_user_catalog`).
+    """
+    from ..inventory.config import deferred_inventory_view
+
+    try:
+        return deferred_inventory_view(projects=list(projects)).protected()
+    except Exception:  # noqa: BLE001 - no catalog: nothing renders (NO_CATALOG)
+        return None
 
 
 def project_host_summaries(
@@ -1733,72 +1834,294 @@ def project_host_drops(
 def _project_enumeration(
     project: "Project", resolution: InventoryResolution, profiles: "ProfileContext"
 ) -> ProjectEnumeration:
-    # Keyed on the (hashable) profiles themselves, not their digest: the memo
-    # is in-process only, and a digest of a profile holding a secret would
-    # read, or create, the install's key on a TAB.
-    key = (str(getattr(project, "root", project)), resolution.memo_key, profiles)
+    """Return *project*'s one enumeration through *resolution*, bounded and memoized.
+
+    A failed resolution enumerates through an empty view under the
+    projects' protected-file catalog (:meth:`InventoryResolution.enumeration_view`):
+    its summaries and drops are never read (:func:`project_host_summaries`),
+    and its links are what a listing with no inventory gives. The project's
+    names (:func:`_project_lab_names`) are read first, through the same view,
+    so the two share each render. When the names were given up on at their
+    deadline, that give-up is this enumeration's too: the summaries would
+    repeat the status read that stalled, so a stalled backend costs one
+    deadline, never a second worker and a second wait. On the deadline, the
+    project's renders in the view's memo are cancelled
+    (:meth:`~otto.templating.memo.RenderMemo.cancel`), so the abandoned worker
+    starts no further render or discovery and publishes nothing.
+    """
+    key = _enumeration_key(project, resolution, profiles, kind="full")
     cached = _SUMMARY_MEMO.get(key)
     if cached is None:
+        view = resolution.enumeration_view()
+        # The names first, on this same view, so its renders are shared and a
+        # deadline in the summaries below never costs the names (``--lab``).
+        names = _names_enumeration(project, resolution, profiles, view=view)
+        if names.timed_out:
+            cached = names  # one stalled status read, one deadline (docstring)
+        else:
+            cached = _bounded(
+                lambda abandoned: _enumerate_host_summaries(project, view, profiles, abandoned),
+                project,
+                on_abandon=lambda reason: view.render_memo.cancel(
+                    scope=project.root, reason=reason
+                ),
+            )
+        _SUMMARY_MEMO[key] = cached
+    return cached
+
+
+def _project_lab_names(
+    project: "Project",
+    resolution: InventoryResolution,
+    profiles: "ProfileContext",
+    *,
+    view: "InventoryView | None" = None,
+) -> list[str]:
+    """Return the labs *project*'s sources declare now: the names-only enumeration, bounded.
+
+    Each source's status read alone
+    (:meth:`~otto.labs.CompositeLabRepository.declared_names_in_view`), so a
+    legacy backend's labs are never loaded and no host is summarized: the
+    names never wait on, nor time out with, the host summaries. Bounded by
+    the completion deadline on its own, through *view* (``None``: the
+    resolution's :meth:`~InventoryResolution.enumeration_view`), and
+    memoized beside the full enumeration; on its deadline the project's
+    renders in the view's memo are cancelled, as the full enumeration's are.
+    """
+    return _names_enumeration(project, resolution, profiles, view=view).lab_names
+
+
+def _names_enumeration(
+    project: "Project",
+    resolution: InventoryResolution,
+    profiles: "ProfileContext",
+    *,
+    view: "InventoryView | None",
+) -> ProjectEnumeration:
+    """Return :func:`_project_lab_names`'s whole enumeration, its deadline included; memoized."""
+    key = _enumeration_key(project, resolution, profiles, kind="names")
+    cached = _SUMMARY_MEMO.get(key)
+    if cached is None:
+        names_view = resolution.enumeration_view() if view is None else view
         cached = _bounded(
-            lambda abandoned: _enumerate_host_summaries(
-                project, resolution.view, profiles, abandoned
-            ),
+            lambda abandoned: _enumerate_lab_names(project, names_view, profiles, abandoned),
             project,
+            on_abandon=lambda reason: names_view.render_memo.cancel(
+                scope=project.root, reason=reason
+            ),
         )
         _SUMMARY_MEMO[key] = cached
     return cached
 
 
-#: Per-process memo, keyed by project root, the inventory view's memo key and
-#: the data profiles (another project selection may resolve a host differently). Three
-#: collectors enumerate the same project on one cache-write pass; without this a
-#: stalled backend cost three deadlines and — worse — could time out for one
-#: collector and not another, writing a cache where `otto host <TAB>` is full
-#: and `otto docker --parent <TAB>` is empty. Process-lifetime only, like the cache
+def _enumeration_key(
+    project: "Project",
+    resolution: InventoryResolution,
+    profiles: "ProfileContext",
+    *,
+    kind: Literal["full", "names"],
+) -> "tuple[str, Hashable, ProfileContext, str]":
+    """Return the memo key of *project*'s *kind* of enumeration through *resolution*.
+
+    Keyed on the (hashable) profiles themselves, not their digest: the memo
+    is in-process only, and a digest of a profile holding a secret would
+    read, or create, the install's key on a TAB.
+    """
+    return (str(getattr(project, "root", project)), resolution.memo_key, profiles, kind)
+
+
+#: Per-process memo, keyed by project root, the inventory view's memo key, the
+#: data profiles (another project selection may resolve a host differently) and
+#: the kind of enumeration (the full one, or the names alone). Three collectors
+#: enumerate the same project on one cache-write pass; without this a stalled
+#: backend cost three deadlines and — worse — could time out for one collector
+#: and not another, writing a cache where `otto host <TAB>` is full and
+#: `otto docker --parent <TAB>` is empty. Process-lifetime only, like the cache
 #: itself; nothing invalidates it because nothing lives long enough to need to.
-_SUMMARY_MEMO: "dict[tuple[str, Hashable, ProfileContext], ProjectEnumeration]" = {}
+_SUMMARY_MEMO: "dict[tuple[str, Hashable, ProfileContext, str], ProjectEnumeration]" = {}
+
+
+def _enumerate_lab_names(
+    project: "Project",
+    view: "InventoryView",
+    profiles: "ProfileContext",
+    abandoned: "threading.Event | None" = None,
+) -> ProjectEnumeration:
+    """Read the labs *project*'s own sources declare, through *view*, and nothing else.
+
+    The names half of :func:`_enumerate_host_summaries`, under the same
+    cancellation and drop sink, through the same composite method its host
+    listing matches summaries against, so there is one status reader. A
+    failure (a backend that raises, a source that fails to build) is
+    recorded as the host listing's would be, and declares no name.
+    """
+    from ..labs.drops import collecting_drops
+    from ..labs.sources import build_lab_sources
+    from ..labs.views import labs_view
+    from ..templating.memo import cancellation
+
+    names: list[str] = []
+    with collecting_drops() as drops, cancellation(view.render_memo.cancelled(project.root)):
+        try:
+            repository = build_lab_sources(projects=[project], profiles=profiles)
+            names = repository.declared_names_in_view(view=labs_view(view=view))
+        except Exception as e:  # noqa: BLE001 — completion never crashes the shell
+            _record_enumeration_failure(project, e, listing="hosts", abandoned=abandoned)
+    return ProjectEnumeration(drops=list(dict.fromkeys(drops)), lab_names=names)
 
 
 def _enumerate_host_summaries(
     project: "Project",
-    view: "InventoryView | None",
+    view: "InventoryView",
     profiles: "ProfileContext",
     abandoned: "threading.Event | None" = None,
 ) -> ProjectEnumeration:
-    """Summarize *project*'s own sources through *view*; ``None`` is a process with no inventory.
+    """Enumerate *project*'s own sources through *view*, the resolution's enumeration view.
 
-    Each source resolves its references through *view* as its project sees
-    it, so a qualified host resolves through its named inventory, a summary
-    carries its ``inventory_ref`` and a bare reference the project refuses
-    (D1) is one drop. Anything raised, a ``default`` that cannot be built
-    included, is a drop too: completion never raises.
+    One pass over one view, so each entry renders once: the composite's
+    host listing (:meth:`~otto.labs.CompositeLabRepository.host_listing_in_view`:
+    the summaries and every source's declared labs) and each source's
+    declared links (:func:`_link_inputs`). Each source resolves its
+    references through *view* as its project sees it, so a qualified host
+    resolves through its named inventory, a summary carries its
+    ``inventory_ref`` and a bare reference the project refuses (D1) is one
+    drop. Anything raised, a ``default`` that cannot be built included, is a
+    drop too: completion never raises.
+
+    Runs under the project's cancellation
+    (:meth:`~otto.templating.memo.RenderMemo.cancelled` of the view's memo):
+    once :func:`_bounded` gives up on it, no render or inventory discovery
+    starts, and what a cancelled call raised is reported as the deadline
+    (``otto.labs.drops.is_timeout``), never as the source's failure.
     """
-    from ..inventory.view import InventoryView
-    from ..labs.drops import HostDrop, collecting_drops, is_refusal
+    from ..labs.drops import collecting_drops
     from ..labs.sources import build_lab_sources
-    from ..labs.summaries import host_summaries_in_view
+    from ..labs.views import labs_view
+    from ..templating.memo import cancellation
 
+    listing_view = labs_view(view=view)
     # The sink is opened HERE, on the enumerating thread (`_bounded` runs this
     # on a worker), so every skip the backends record lands in this list.
-    with collecting_drops() as drops:
+    with collecting_drops() as drops, cancellation(view.render_memo.cancelled(project.root)):
+        repository: "CompositeLabRepository | None" = None
+        summaries: "list[HostSummary]" = []
+        link_inputs: list[LinkInputsRow] = []
         try:
             repository = build_lab_sources(projects=[project], profiles=profiles)
-            summaries = host_summaries_in_view(
-                repository=repository,
-                view=InventoryView(inventories={}) if view is None else view,
-            )
+            summaries = repository.host_listing_in_view(view=listing_view).summaries
         except Exception as e:  # noqa: BLE001 — completion never crashes the shell
-            if abandoned is None or not abandoned.is_set():
-                logging.getLogger(__name__).warning(
-                    f"[completion] could not enumerate hosts for {project.root}: {e}"
-                )
-            if not is_refusal(e):  # a refusal recorded its own drop
-                drops.append(HostDrop(where=str(project.root), reason=f"host source failed: {e}"))
-            summaries = []
+            _record_enumeration_failure(project, e, listing="hosts", abandoned=abandoned)
+        try:
+            link_inputs = _link_inputs(project, repository, view=listing_view, profiles=profiles)
+        except Exception as e:  # noqa: BLE001 — completion never crashes the shell
+            _record_enumeration_failure(project, e, listing="links", abandoned=abandoned)
     # One enumeration loads the documents more than once (labs, then
-    # summaries), so a malformed file is recorded once per load; the outlet
-    # reports each drop once. dict.fromkeys keeps first-seen order.
-    return ProjectEnumeration(summaries=summaries, drops=list(dict.fromkeys(drops)))
+    # summaries, then links), so a malformed file is recorded once per load;
+    # the outlet reports each drop once. dict.fromkeys keeps first-seen order.
+    return ProjectEnumeration(
+        summaries=summaries, drops=list(dict.fromkeys(drops)), link_inputs=link_inputs
+    )
+
+
+_FAILED_LISTING = {"hosts": "host source failed", "links": "could not list links"}
+"""The drop's reason prefix when an enumeration's listing of hosts, or of links, failed."""
+
+
+def _record_enumeration_failure(
+    project: "Project",
+    error: Exception,
+    *,
+    listing: Literal["hosts", "links"],
+    abandoned: "threading.Event | None",
+) -> None:
+    """Record why *project*'s *listing* (its hosts, or its links) failed: the deadline, or a fault.
+
+    Called inside the enumeration's drop sink. A cancelled operation
+    (``otto.labs.drops.is_timeout``) is the deadline the main thread already
+    reported: a ``timed_out`` drop, and no warning. Any other failure of an
+    enumeration nobody gave up on is warned about, then skipped by the skip
+    rule (``otto.labs.drops.skip_failure``): a refusal recorded its own drop.
+    """
+    from ..labs.drops import is_timeout, record_drop, skip_failure
+
+    where = str(project.root)
+    if is_timeout(error):
+        record_drop(where, str(error), timed_out=True)
+        return
+    if abandoned is None or not abandoned.is_set():
+        logging.getLogger(__name__).warning(
+            f"[completion] could not enumerate {listing} for {project.root}: {error}"
+        )
+    skip_failure(where=where, error=error, reason=f"{_FAILED_LISTING[listing]}: {error}")
+
+
+def _link_inputs(
+    project: "Project",
+    repository: "CompositeLabRepository | None",
+    *,
+    view: "InventoryView",
+    profiles: "ProfileContext",
+) -> list[LinkInputsRow]:
+    """Return each known source's declared links, in source order, best-effort.
+
+    The composite's own per-source listing
+    (:meth:`~otto.labs.CompositeLabRepository.declared_links_in_view`), each
+    row with its source's lab scope. A source whose links the composite
+    cannot read (it lacks :class:`~otto.labs.SupportsDeclaredLinks`) has the
+    links of the files it lists read raw, as before the capability existed;
+    so has every known source when *repository* could not be built, each
+    with no scope.
+    """
+    if repository is None:
+        return [
+            LinkInputsRow(source=state.pending.label, entries=_raw_link_entries(state), scope=None)
+            for state in _known_sources(project, profiles=profiles)
+        ]
+    listed = repository.declared_links_in_view(view=view)
+    raw = (
+        {}
+        if all(row.entries is not None for row in listed)
+        else {state.pending.label: state for state in _known_sources(project, profiles=profiles)}
+    )
+    return [
+        LinkInputsRow(
+            source=row.source.label,
+            entries=_raw_link_entries(raw[row.source.label])
+            if row.entries is None
+            else row.entries,
+            scope=row.scope,
+        )
+        for row in listed
+    ]
+
+
+def _known_sources(project: "Project", *, profiles: "ProfileContext") -> "list[LabSourceState]":
+    """Return *project*'s known sources as the enumeration's build prepared them; ``[]`` if none.
+
+    :func:`~otto.labs.sources.prepared_lab_sources` hands back the states the
+    build cached for these profiles, so nothing is prepared again. A project
+    whose sources do not prepare contributes no links (the host listing
+    reports it).
+    """
+    from ..labs.errors import LabRepositoryError
+    from ..labs.sources import prepared_lab_sources
+
+    try:
+        states = prepared_lab_sources(project, profiles=profiles)
+    except LabRepositoryError:
+        return []
+    return [state for state in states if state.is_known()]
+
+
+def _raw_link_entries(state: "LabSourceState") -> "list[DeclaredLinkEntry]":
+    """Return the ``links`` entries of every file *state* lists, read raw, best-effort."""
+    from ..link.derive import DeclaredLinkEntry
+
+    return [
+        DeclaredLinkEntry(origin=lab_file, index=index, entry=entry)
+        for lab_file in state.lab_files()
+        for index, entry in enumerate(_read_lab_links(lab_file))
+    ]
 
 
 def collect_host_drops(projects: list["Project"]) -> list[dict[str, Any]]:
@@ -2101,12 +2424,13 @@ def _read_lab_links(lab_file: Path) -> list[dict[str, Any]]:
     """Best-effort read of a lab.json's ``links`` array ([] on any problem).
 
     Completion must never crash on bad user data, so a file the loader refuses
-    is silently empty here. Links have no repository seam yet — hosts moved to
-    ``LabRepository`` enumeration, this stayed a direct read, through the one
-    lab-document reader (:func:`otto.labs.documents.read_lab_document`), which
-    wraps the passwords it parsed before anything else holds the document.
-    A file otto does not decode itself
-    (:func:`otto.labs.documents.otto_decodes`) holds no links here.
+    is silently empty here. Only for a source without the
+    :class:`~otto.labs.SupportsDeclaredLinks` capability (:func:`_link_inputs`):
+    a direct read through the one lab-document reader
+    (:func:`otto.labs.documents.read_lab_document`), which wraps the
+    passwords it parsed before anything else holds the document. A file otto
+    does not decode itself (:func:`otto.labs.documents.otto_decodes`) holds
+    no links here.
     """
     from ..labs import documents
     from ..labs.errors import LabRepositoryError
@@ -2120,7 +2444,10 @@ def _read_lab_links(lab_file: Path) -> list[dict[str, Any]]:
 
 
 def collect_link_ids(
-    projects: list["Project"], *, loaded_ids: "Collection[str] | None" = None
+    projects: list["Project"],
+    *,
+    loaded_ids: "Collection[str] | None" = None,
+    selection: "frozenset[str] | None" = None,
 ) -> list[str]:
     """Enumerate DECLARED static link ids/names for ``otto link`` completion.
 
@@ -2131,11 +2458,14 @@ def collect_link_ids(
     this is drift insurance, bought at the price of one import, in a module
     whose hand-derived host ids already drifted once (6576a6b4).
 
-    *loaded_ids*, when given, is the selected lab's host-id set, and an entry
-    is offered only if an endpoint is in it — the SAME rule, through the same
-    :func:`~otto.link.derive.raw_endpoint_host_ids` helper,
-    :func:`~otto.link.derive.resolve_declared_links` applies when deciding
-    which links a lab loads. Without it a project's every lab file contributes,
+    *loaded_ids*, when given, is the selected labs' host-id set and
+    *selection* their names; an entry is offered only when
+    :func:`~otto.link.derive.link_attaches` attaches it: an endpoint is in
+    *loaded_ids*, and a scoped source's link only under a selected lab inside
+    its scope. That is the SAME decision, through the same function and the
+    same :func:`~otto.link.derive.raw_endpoint_host_ids` reading of an entry,
+    :func:`~otto.link.derive.resolve_declared_links` makes when deciding which
+    links a lab loads. Without it a project's every lab source contributes,
     and under ``-l <lab>`` completion offers links ``find_link`` will refuse.
 
     IMPLICIT links are deliberately NOT offered, though ``find_link`` accepts
@@ -2147,99 +2477,127 @@ def collect_link_ids(
     ``repair_all`` skips them for the same reason, and ``otto link list``
     reports them ``impairable=False``.
 
-    Lab-data only — sync, no live scan, no host construction. Declared links
-    are read raw because links have no repository seam yet (hosts moved to
-    ``LabRepository`` enumeration; this stayed a direct read), so malformed
-    entries are silently skipped: completion must never crash on bad data.
+    Lab-data only — no live scan, no host construction: each source's
+    declared entries come from the project's bounded enumeration
+    (:func:`_link_inputs`), and a malformed entry is silently skipped:
+    completion must never crash on bad data.
     """
+    from ..link.derive import link_attaches
+
     return sorted(
-        link_id
-        for link_id, hosts in _declared_links(projects)
-        if loaded_ids is None or any(h in loaded_ids for h in hosts)
+        {
+            link.id
+            for link in _declared_links(projects)
+            if link_attaches(
+                endpoint_ids=link.hosts,
+                selection=selection,
+                loaded_ids=loaded_ids,
+                scope=link.scope,
+            )
+        }
     )
 
 
-def _declared_links(projects: list["Project"]) -> list[tuple[str, list[str]]]:
-    """``(link id, endpoint host ids)`` per declared static link, first-seen order.
+@dataclass(frozen=True)
+class _DeclaredLink:
+    """One completable link id: its endpoint hosts, under one source scope."""
 
-    One entry per id: an id declared twice (two sources, two entries) keeps the
-    endpoint hosts of EVERY declaration, so a reader's "any endpoint in the lab"
-    test equals the per-entry filter (an id passes if any declaration passes).
-    Reads the files of every prepared, known source; a project whose sources fail
-    to prepare contributes none (the host enumeration reports it).
+    id: str
+    hosts: list[str]
+    """The endpoint host ids of every declaration of :attr:`id` under :attr:`scope`."""
+    scope: "LabScope | None"
+
+
+def _declared_links(projects: list["Project"]) -> list[_DeclaredLink]:
+    """Each declared static link id per source scope, first-seen order.
+
+    One row per ``(id, scope)``: an id declared twice under one scope (two
+    unscoped sources, two entries) keeps the endpoint hosts of EVERY such
+    declaration, so a reader's "any endpoint in the lab" test equals the
+    per-entry filter (an id passes if any declaration passes). Declarations
+    of one id under different scopes stay apart, each attached under its own.
+    Reads each project's bounded enumeration (:func:`_link_inputs`).
     """
-    from ..labs.errors import LabRepositoryError
-    from ..labs.sources import prepared_lab_sources
     from ..link.derive import raw_endpoint_host_ids
     from ..link.model import LinkEndpoint, make_static_link_id
 
-    lab_files: list[Path] = []
+    resolution = resolve_process_inventory(projects)
     profiles = _profiles(projects)
+    out: dict[tuple[str, Hashable], _DeclaredLink] = {}
     for project in projects:
-        try:
-            states = prepared_lab_sources(project, profiles=profiles)
-        except LabRepositoryError:
-            continue
-        lab_files.extend(f for state in states if state.is_known() for f in state.lab_files())
-    out: dict[str, list[str]] = {}
-    for lab_file in lab_files:
-        for entry in _read_lab_links(lab_file):
-            if not isinstance(entry, dict):
-                continue
-            hosts = [h for h in raw_endpoint_host_ids(entry) if isinstance(h, str) and h]
-            name = entry.get("name")
-            if isinstance(name, str) and name:
-                link_id = name
-            else:
-                raw = raw_endpoint_host_ids(entry)
-                if len(raw) != 2 or not all(h for h in raw):  # noqa: PLR2004
+        for row in _project_enumeration(project, resolution, profiles).link_inputs:
+            for declared in row.entries:
+                entry = declared.entry
+                if not isinstance(entry, dict):
                     continue
-                a, b = (LinkEndpoint(host=h) for h in raw)
-                link_id = make_static_link_id(a=a, b=b, name=None)
-            bucket = out.setdefault(link_id, [])
-            bucket.extend(h for h in hosts if h not in bucket)
-    return list(out.items())
+                raw = raw_endpoint_host_ids(entry)
+                name = entry.get("name")
+                if isinstance(name, str) and name:
+                    link_id = name
+                elif len(raw) != 2 or not all(h for h in raw):  # noqa: PLR2004
+                    continue
+                else:
+                    a, b = (LinkEndpoint(host=h) for h in raw)
+                    link_id = make_static_link_id(a=a, b=b, name=None)
+                link = out.setdefault(
+                    (link_id, row.scope), _DeclaredLink(id=link_id, hosts=[], scope=row.scope)
+                )
+                link.hosts.extend(h for h in raw if h and h not in link.hosts)
+    return list(out.values())
+
+
+def _scope_payload(scope: "LabScope | None") -> "dict[str, list[str]] | None":
+    """Return *scope* as a ``links`` row stores it: sorted names and prefixes, or ``None``."""
+    if scope is None:
+        return None
+    return {"names": sorted(scope.names), "prefixes": sorted(scope.prefixes)}
 
 
 def collect_links(projects: list["Project"]) -> list[dict[str, Any]]:
-    """Return declared static links with their endpoint host ids, for lab-scoped cache completion.
+    """Return declared static links with their endpoint hosts and scope, for cached completion.
 
-    The same enumeration :func:`collect_link_ids` filters live; storing the
-    endpoints lets a reader apply that filter (offer a link when ANY endpoint
-    host is in the selected lab's host set) without reading a lab file.
+    ``[{"id", "hosts", "scope": {"names", "prefixes"} | None}, ...]``, sorted
+    by id: the same rows :func:`collect_link_ids` filters live. Storing the
+    endpoints and the scope lets a reader apply that filter
+    (``otto.link.derive.link_attaches``, which the shim mirrors) without
+    reading a lab file.
     """
-    # `_declared_links` merges the endpoints of an id declared twice, so the reader's
-    # "any endpoint in the selected lab" test equals collect_link_ids' per-entry filter.
-    return [{"id": link_id, "hosts": hosts} for link_id, hosts in sorted(_declared_links(projects))]
+    rows = sorted(
+        _declared_links(projects),
+        key=lambda link: (link.id, json.dumps(_scope_payload(link.scope))),
+    )
+    return [
+        {"id": link.id, "hosts": link.hosts, "scope": _scope_payload(link.scope)} for link in rows
+    ]
 
 
 def collect_lab_names(projects: list["Project"]) -> list[str]:
-    """Enumerate every lab name each project's host source can provide.
+    """Enumerate every lab name each project's host sources declare now.
 
     A lab is a *declared name* (a ``labs`` table entry, spec §2.1), not a
     directory and not a tag on hosts, so the names come from every project's
-    configured backend via the required
-    :meth:`~otto.labs.protocol.LabRepository.list_labs` — not from reading
-    ``lab.json``, which would leave a custom host source with no ``--lab``
-    completion and, worse, empty ``hosts_by_lab`` buckets on the warm path
-    while the cold path offered its hosts.
+    configured backends: each source's status read
+    (:func:`~otto.labs.lab_statuses`) through the completion view, in the
+    project's bounded names-only enumeration (:func:`_project_lab_names`) —
+    not from reading ``lab.json``, which would leave a custom host source
+    with no ``--lab`` completion and, worse, empty ``hosts_by_lab`` buckets on
+    the warm path while the cold path offered its hosts. A ``jsonnet``
+    source's names are the labs its current render declares, never a
+    recorded last-known list.
 
-    Data-only (no host construction, no user code), so it is safe in the
-    completion fast path as well as the cache writer. A backend that fails is
-    skipped; any unexpected error yields ``[]`` so completion never crashes.
+    Bounded by the completion deadline on its own, so it is safe in the
+    completion fast path as well as the cache writer, and a slow host
+    summary never costs it its names. It may run user code (a custom
+    backend's ``list_labs`` or ``list_lab_status``, a template), but never
+    loads a lab: only host completion does that, and only for a legacy
+    backend with no summaries capability. A source that fails declares
+    nothing, and costs no other source its names.
     """
-    from ..labs.sources import build_lab_sources
-
-    names: set[str] = set()
+    resolution = resolve_process_inventory(projects)
     profiles = _profiles(projects)
+    names: set[str] = set()
     for project in projects:
-        try:
-            repository = build_lab_sources(projects=[project], profiles=profiles)
-            names.update(repository.list_labs())
-        except Exception as e:  # noqa: BLE001, PERF203 — per-project resilience: one bad backend must not deny the rest
-            logging.getLogger(__name__).warning(
-                f"[completion] could not list labs for {project.root}: {e}"
-            )
+        names.update(_project_lab_names(project, resolution, profiles))
     return sorted(names)
 
 

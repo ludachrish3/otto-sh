@@ -7,11 +7,16 @@ from typing import TYPE_CHECKING, Any
 
 from ..layout import validate_product_name
 from ..registry import resolved
-from .capability import select_option_defaults, select_preferences
+from .capability import (
+    option_default_selectors,
+    preference_selectors,
+    select_option_defaults,
+    select_preferences,
+)
 from .construction import HostContext, HostSpecInContext, _effective_default
 from .dev_tool import apply_declared_dev_tools, apply_dev_tool_providers
 from .element import Element
-from .inventory_ref import InventoryRef
+from .inventory_ref import InventoryRef, recording_fields
 from .os_profile import (
     HOST_CLASSES,
     OsProfile,
@@ -30,6 +35,8 @@ from .product import (
 from .remote_host import RemoteHost, make_host_id
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .specs import HostSpec
 
 # Names of the option tables accepted on host dicts and in
@@ -61,20 +68,54 @@ OPTIONS_KEYS: frozenset[str] = frozenset(
 )
 
 
+_NO_TABLE: dict[str, Any] = {}
+"""An absent option table, as :func:`_merge_host_dict` overlays one (never written to)."""
+
+
+def _overlay(
+    tables: "Sequence[dict[str, Any]]",
+    *,
+    sources: "dict[str, int] | None",
+    prefix: "str | None" = None,
+) -> dict[str, Any]:
+    """Overlay *tables*, lowest first: each table's keys replace the earlier tables'.
+
+    The one precedence of :func:`_merge_host_dict`. With *sources*, also
+    record which table each surviving key came from, by its position in
+    *tables* (named ``<prefix>.<key>`` for an option table's key), which is
+    how a recorded build attributes the merge (:func:`otto.host.provenance.note_merge`).
+    """
+    merged: dict[str, Any] = {}
+    for rank, table in enumerate(tables):
+        merged.update(table)
+        if sources is not None:
+            for name in table:
+                sources[name if prefix is None else f"{prefix}.{name}"] = rank
+    return merged
+
+
 def _merge_host_dict(
     host_data: dict[str, Any],
     option_defaults: dict[str, dict[str, Any]] | None,
     profile: OsProfile,
     spec_cls: "type[HostSpec]",
+    *,
+    sources: "dict[str, int] | None" = None,
 ) -> dict[str, Any]:
     """Precedence-merge profile defaults, host fields, and product option defaults into one dict.
 
     Scalars: host > profile. ``*_options`` tables, per key, lowest→highest:
     profile default < host field < product ``[host_preferences]`` value. Only
     option keys the target spec declares are merged.
+
+    The layers are overlaid by :func:`_overlay`, in the order of
+    :data:`~otto.host.provenance.PROFILE_RANK`,
+    :data:`~otto.host.provenance.HOST_RANK` and
+    :data:`~otto.host.provenance.PREFERENCE_RANK`. *sources*, when given (a
+    recorded build), is filled with each merged value's layer.
     """
     defaults = profile.fields.defaults.thaw_json()
-    merged: dict[str, Any] = {**defaults, **host_data}
+    merged = _overlay((defaults, host_data), sources=sources)
 
     option_defaults = option_defaults or {}
     opt_keys = OPTIONS_KEYS & set(spec_cls.model_fields)
@@ -82,16 +123,57 @@ def _merge_host_dict(
         p = defaults.get(key)
         h = host_data.get(key)
         d = option_defaults.get(key)
-        table: dict[str, Any] = {
-            **(p if isinstance(p, dict) else {}),
-            **(h if isinstance(h, dict) else {}),
-            **(d if isinstance(d, dict) else {}),
-        }
+        if sources is not None:
+            sources.pop(key, None)  # a table is attributed per key, below
+        table = _overlay(
+            (
+                p if isinstance(p, dict) else _NO_TABLE,
+                h if isinstance(h, dict) else _NO_TABLE,
+                d if isinstance(d, dict) else _NO_TABLE,
+            ),
+            sources=sources,
+            prefix=key,
+        )
         if table:
             merged[key] = table
         else:
             merged.pop(key, None)
     return merged
+
+
+def _attributing() -> bool:
+    """Return whether this build records each value's layer (inside a recorded entry)."""
+    if not recording_fields():
+        return False
+    from . import provenance
+
+    return provenance.attributing()
+
+
+def _note_merge(
+    *,
+    sources: dict[str, int],
+    host_data: dict[str, Any],
+    profile: OsProfile,
+    preferences: "dict[str, dict[str, Any]]",
+    host_id: str,
+) -> None:
+    """Note the final merge's winners, and offer the capability lists' selectors.
+
+    The capability resolver runs after this, in contextual validation, and
+    notes a ``[host_preferences]`` list that wins over the pin noted here
+    (:func:`otto.host.provenance.preference_won`).
+    """
+    from . import provenance
+
+    provenance.note_merge(
+        sources=sources,
+        host_data=host_data,
+        defaults=profile.fields.defaults.thaw_json(),
+        profile=profile.name,
+        selectors=option_default_selectors(preferences, host_id),
+    )
+    provenance.preferences_offered(selectors=preference_selectors(preferences, host_id))
 
 
 def _data(profiles: ProfileContext | None) -> ProfileContext:
@@ -186,7 +268,10 @@ def _pipeline(
     profile = resolve_os_profile(name=selector, data=_data(profiles))
     entry = HOST_CLASSES.get(profile.base)
     spec_cls = resolved(entry.spec)
-    merged = _merge_host_dict(host_data, None, profile, spec_cls)
+    # A recorded build (`otto lab explain`) collects each value's layer from
+    # the merge that decides it, and notes the final merge's once, below.
+    sources: "dict[str, int] | None" = {} if _attributing() else None
+    merged = _merge_host_dict(host_data, None, profile, spec_cls, sources=sources)
     merged["os_type"] = selector
     spec = spec_cls.model_validate(merged)
     # The id composes from the VALIDATED spec: a profile may default board or
@@ -198,9 +283,20 @@ def _pipeline(
         flat = select_preferences(preferences, host_id)
         option_defaults = select_option_defaults(preferences, host_id)
         if option_defaults:
-            merged = _merge_host_dict(host_data, option_defaults, profile, spec_cls)
+            sources = None if sources is None else {}
+            merged = _merge_host_dict(
+                host_data, option_defaults, profile, spec_cls, sources=sources
+            )
             merged["os_type"] = selector
             spec = spec_cls.model_validate(merged)
+    if sources is not None:
+        _note_merge(
+            sources=sources,
+            host_data=host_data,
+            profile=profile,
+            preferences=preferences or {},
+            host_id=host_id,
+        )
     context = HostContext(
         element=element, entry=entry, profile=profile, host_id=host_id, preferences=flat
     )

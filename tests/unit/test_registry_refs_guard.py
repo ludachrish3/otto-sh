@@ -78,7 +78,7 @@ BUILTINS: list[Builtins] = [
     Builtins("otto.host.dev_tool", "DEV_TOOL_KINDS", {"shell", "kmod", "kmodcov"}),
     Builtins("otto.inventory.registry", "INVENTORY_BACKENDS", {"json", "netbox"}),
     Builtins("otto.creds.registry", "CREDS_BACKENDS", {"json"}),
-    Builtins("otto.labs.registry", "LAB_REPOSITORIES", {"json"}),
+    Builtins("otto.labs.registry", "LAB_REPOSITORIES", {"json", "jsonnet"}),
     Builtins("otto.reservations.registry", "RESERVATION_BACKENDS", {"none", "json"}),
     Builtins("otto.link.impairer", "IMPAIRERS", {"netem"}),
     Builtins("otto.tunnel.carrier", "CARRIERS", {"socat"}),

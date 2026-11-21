@@ -51,6 +51,8 @@ UNGATED: dict[tuple[str, ...], str] = {
     ("inventory", "lookup"): "reads configuration and its source; never a lab host",
     ("inventory", "refresh"): "refreshes the inventory from its source; never a lab host",
     ("schema", "export"): "exports JSON Schema; no lab, no host",
+    ("lab", "render"): "renders a lab source file in memory; no lab, no host",
+    ("lab", "explain"): "reads the -l lab's configuration and its layers; contacts no host",
     ("monitor",): (
         "review reads a local file; the live branch runs the shared live-lab opening itself"
     ),

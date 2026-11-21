@@ -122,30 +122,23 @@ def list_labs_callback(value: bool) -> None:
 
 
 def _lab_panels(projects: "list[Project]") -> "list[Panel]":
-    """Each project's lab panel, from one status report over every project's sources.
+    """Each project's lab panel, formatted from the one listing.
 
-    The report is the one dispatch decides availability with, over a
-    deferred inventory view (nothing is built unless a source uses it), with
-    each source built in its own project's profiles
-    (:func:`~otto.labs.sources.listing_sources`). When the sources cannot be
-    built or a status call fails outside a source's declared scope, each
-    project falls back to its own panel, as before.
+    The listing (:func:`~otto.labs.sources.lab_listing`) is ``otto
+    --list-labs``' and the ``otto init`` doctor's alike. Its report is the
+    one dispatch decides availability with, over a deferred inventory view
+    (nothing is built unless a source uses it), with each source built in
+    its own project's profiles. When the sources cannot be built or a status
+    call fails outside a source's declared scope, each project's panel shows
+    its own report, as before.
     """
-    from logging import getLogger
-
     from ..inventory.config import deferred_inventory_view
-    from ..labs.sources import listing_sources
-    from ..labs.views import LISTING_ERRORS
+    from ..labs.sources import lab_listing
 
-    view = deferred_inventory_view(projects=projects)
-    try:
-        report = listing_sources(projects=projects).lab_status_report(view=view)
-    except LISTING_ERRORS as e:
-        getLogger(__name__).debug(
-            f"listing every project's labs failed, listing each on its own: {e}"
-        )
-        return [project.get_lab_panel(view=view) for project in projects]
-    return [project.get_lab_panel(report=report) for project in projects]
+    listing = lab_listing(projects=projects, view=deferred_inventory_view(projects=projects))
+    return [
+        project.get_lab_panel(report=listing.outcome(root=project.root)) for project in projects
+    ]
 
 
 def log_level_callback(value: str) -> str:
@@ -200,12 +193,16 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
 
 @completion_source(kind="payload", key="labs", sort=True, sep="+")
 def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
-    """Completion source for ``--lab``: lab names referenced by the lab.json files.
+    """Completion source for ``--lab``: the lab names every configured lab source declares.
 
-    Prefers the completion-cache snapshot; falls back to a live, data-only scan
-    (:func:`~otto.config.completion_cache.collect_lab_names`, no user
-    code). ``--lab`` combines labs with ``+``, so only the in-progress segment
-    is completed and already-named labs are dropped.
+    Prefers the completion-cache snapshot; on a cold cache falls back to the
+    project's bounded names-only enumeration
+    (:func:`~otto.config.completion_cache.collect_lab_names`), which runs
+    user code: it renders templates and asks each backend for its labs, but
+    loads no lab and summarizes no host. It is bounded by the completion
+    deadline, so a slow source can leave a cold TAB with nothing to offer. ``--lab``
+    combines labs with ``+``, so only the in-progress segment is completed
+    and already-named labs are dropped.
     """
     # The composition root: importing it installs the initiator that composes
     # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).

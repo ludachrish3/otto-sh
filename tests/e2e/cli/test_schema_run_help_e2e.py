@@ -43,6 +43,7 @@ SUBCOMMAND_HELP = [
     ["cache", "info", "--help"],
     ["env", "create", "--help"],
     ["inventory", "lookup", "--help"],
+    ["lab", "render", "--help"],
     ["link", "impair", "--help"],
     ["schema", "export", "--help"],
     ["tunnel", "add", "--help"],

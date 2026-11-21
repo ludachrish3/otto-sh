@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..host.inventory_ref import InventoryRef
-from .drops import is_refusal, record_drop
+from .drops import skip_failure
 from .protocol import (
     HostSummary,
     LabRepository,
@@ -70,7 +70,8 @@ def host_summaries_in_view(
     drop and the others are summarized, because every caller is a completion
     or discovery path that must never crash the shell over one bad record. A
     lab refused for a bare reference records no second drop: the refusal
-    recorded its own.
+    recorded its own. A cancelled operation's error propagates
+    (``otto.labs.drops.skip_failure``).
     """
     view = labs_view(view=view)
     if isinstance(repository, SupportsHostSummariesInView):
@@ -89,8 +90,7 @@ def host_summaries_in_view(
             lab = load_lab_through(repository=repository, name=name, view=view)
         except Exception as e:  # noqa: BLE001 — enumeration is best-effort
             logger.debug(f"skipping lab {name!r} while summarizing hosts: {e}")
-            if not is_refusal(e):
-                record_drop(f"lab {name!r}", f"could not load: {e}")
+            skip_failure(where=f"lab {name!r}", error=e, reason=f"could not load: {e}")
             continue
         for host in lab.hosts.values():
             existing = by_id.get(host.id)

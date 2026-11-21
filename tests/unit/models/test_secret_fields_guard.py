@@ -42,6 +42,9 @@ NOT_SECRET: dict[str, str] = {
     "otto.host.os_profile.ProfileFields.password_prompt": (
         "the prompt pattern an OS profile's login waits for"
     ),
+    "otto.labs.inspect.RenderedEntry.secret_at": (
+        "the path naming where a rendered document's literal secret is, never the value"
+    ),
     "otto.inventory.config.NetBoxInventoryConfig.token_env": (
         "the name of the environment variable that holds the token, not the token"
     ),

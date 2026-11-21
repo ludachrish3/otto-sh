@@ -9,7 +9,7 @@ naming one imports nothing until it is selected.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,6 +28,7 @@ from .errors import InventoryConstructionError
 
 if TYPE_CHECKING:
     from ..registry import BackendEntry, Proposed
+    from .config import ProtectedPaths
     from .protocol import Inventory
 
 
@@ -46,6 +47,31 @@ class InventoryEnv:
 
     origin: str
     """The settings file that declared the table, for messages."""
+
+    protected: "Callable[[], ProtectedPaths] | None" = field(
+        default=None, compare=False, repr=False
+    )
+    """The process's catalog of files no template may read, when a view built this table.
+
+    ``None`` for a table compiled on its own
+    (:func:`~otto.inventory.config.compile_inventory`), whose protection is
+    :func:`~otto.inventory.config.standalone_protection`. Not compared: two
+    envs for one table are equal whichever view built them."""
+
+    own_table: tuple[str, ...] = field(default=(), compare=False, repr=False)
+    """Every string value of the declaring table, at any depth, as written.
+
+    What :func:`~otto.inventory.config.standalone_protection` anchors when
+    :attr:`protected` is ``None``. Derived from the table, so not compared;
+    left out of the repr, because a table string may be a token."""
+
+    settings_file: "Path | None" = field(default=None, compare=False)
+    """The settings file that declared the table, or ``None`` when no file is known.
+
+    :attr:`origin` is a label for messages (an ``[[inventories]]`` entry's
+    names the entry too); this is the file itself, which
+    :func:`~otto.inventory.config.standalone_protection` protects. Not
+    compared, like :attr:`protected`."""
 
 
 @final

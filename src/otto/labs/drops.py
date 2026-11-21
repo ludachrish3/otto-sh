@@ -69,11 +69,28 @@ _SINK: contextvars.ContextVar["list[HostDrop] | None"] = contextvars.ContextVar(
 )
 
 
-def record_drop(where: str, reason: str) -> None:
-    """Record that *where* was left out because of *reason* — if anyone is collecting."""
+def record_drop(where: str, reason: str, *, timed_out: bool = False) -> None:
+    """Record that *where* was left out because of *reason* — if anyone is collecting.
+
+    *timed_out* marks the enumeration's own deadline (:attr:`HostDrop.timed_out`).
+    """
     sink = _SINK.get()
     if sink is not None:
-        sink.append(HostDrop(where=where, reason=reason))
+        sink.append(HostDrop(where=where, reason=reason, timed_out=timed_out))
+
+
+def skip_failure(*, where: str, error: Exception, reason: "str | None" = None) -> None:
+    """Skip a best-effort call for *where* that raised *error*: the rule every skip site follows.
+
+    A cancelled operation's error (:func:`is_timeout`) is no failure of
+    *where*: it is re-raised, so the operation stops where it was given up
+    on. A refusal (:func:`is_refusal`) recorded its own drop. Anything else is
+    recorded (:func:`record_drop`) with *reason*, or the error's text.
+    """
+    if is_timeout(error):
+        raise error
+    if not is_refusal(error):
+        record_drop(where, str(error) if reason is None else reason)
 
 
 def is_refusal(error: BaseException) -> bool:
@@ -82,11 +99,35 @@ def is_refusal(error: BaseException) -> bool:
     The one decision every skip site makes before recording a drop: a
     refusal recorded its own (:meth:`~otto.inventory.RefusedDefault.refuse`),
     so a site that catches it, however a backend wrapped it, records none.
-    Both chains are followed: ``__cause__`` (``raise ... from``) and
-    ``__context__`` (raised while handling it).
+    Both chains are followed (:func:`_in_chain`).
     """
     from ..inventory.errors import BareReferenceRefused  # deferred: completion path
 
+    return _in_chain(error, BareReferenceRefused)
+
+
+def is_timeout(error: BaseException) -> bool:
+    """Return whether *error* is a cancelled render, or was raised from or during one.
+
+    The one decision of whether a failure is the operation's deadline rather
+    than a fault: a :class:`~otto.templating.errors.RenderCancelled`, however
+    a source wrapped it (a ``jsonnet`` source's timeout is a
+    :class:`~otto.labs.LabRepositoryError` raised from one). A best-effort
+    site lets it through rather than recording it as the source's failure,
+    and completion's enumeration reports it as its deadline. Both chains are
+    followed (:func:`_in_chain`).
+    """
+    from ..templating.errors import RenderCancelled  # deferred: completion path
+
+    return _in_chain(error, RenderCancelled)
+
+
+def _in_chain(error: BaseException, kind: type[BaseException]) -> bool:
+    """Return whether *error*, or any error in its chains, is a *kind*.
+
+    Both chains: ``__cause__`` (``raise ... from``) and ``__context__``
+    (raised while handling it), each error visited once.
+    """
     pending: list[BaseException] = [error]
     seen: set[int] = set()
     while pending:
@@ -94,7 +135,7 @@ def is_refusal(error: BaseException) -> bool:
         if id(current) in seen:
             continue
         seen.add(id(current))
-        if isinstance(current, BareReferenceRefused):
+        if isinstance(current, kind):
             return True
         pending.extend(e for e in (current.__cause__, current.__context__) if e is not None)
     return False

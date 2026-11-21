@@ -61,6 +61,7 @@ from ..utils import (
     anchor_path,
     as_utc,
     collapse_path_list,
+    is_under,
     kept_path_spelling,
     ottopath_entries,
     parse_cache_ttl,
@@ -933,7 +934,7 @@ class CoverageTierSpec(OttoModel):
         dirs = [(view, d, key(d)) for view, written in self.products.items() for d in written]
         for i, (vi, wi, ki) in enumerate(dirs):
             for vj, wj, kj in dirs[i + 1 :]:
-                if ki == kj or ki in kj.parents or kj in ki.parents:
+                if is_under(kj, ki) or is_under(ki, kj):
                     raise ValueError(
                         f"{_settings_where(info)}unit views {vi!r} ({wi}) and {vj!r} ({wj}): "
                         "one unit build directory equals or sits inside another, so its "

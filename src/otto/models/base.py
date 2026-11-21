@@ -5,7 +5,8 @@ the other for it: :class:`OttoModel`, the base of every otto pydantic boundary
 spec, with :func:`compact_validation_error`; the credential pair,
 :class:`CredSpec` (one ``creds`` entry as lab data spells it) and the runtime
 :class:`Cred` dataclass it builds, with :func:`cred_identity`, the key every
-duplicate check uses; and :func:`resources_nonempty`, the one rule for a usable
+duplicate check uses, and :func:`cred_layer_by_identity`, the one keying of a
+cred layer; and :func:`resources_nonempty`, the one rule for a usable
 reservation identifier. It imports no other otto module at import time (spec
 2026-10-11 placement-and-phases §3.3); :meth:`JsonFileSource.fingerprint`
 classifies a stat through ``otto.config.corpus_snapshot`` when called.
@@ -15,7 +16,7 @@ classifies a stat through ``otto.config.corpus_snapshot`` when called.
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -163,30 +164,127 @@ SECRET_DATA_KEYS = frozenset({"password", "passphrase"})
 Exactly the fields :func:`otto.params.sensitive_field_names` reports across
 otto's models (``CredSpec.password``, ``SshOptionsSpec.passphrase``); the
 secret-fields guard (``tests/unit/models/test_secret_fields_guard.py``) fails
-when the two disagree. :func:`wrap_secret_values` reads it."""
+when the two disagree. :func:`secret_locations` reads it."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True, eq=False)
+class SecretLocation:
+    """Where one secret value sits in a parsed document: what names it, never the value."""
+
+    path: str
+    """The value's place in the document, such as ``elements[0].creds[1].password``."""
+
+    parent: "dict[Any, Any]" = field(repr=False)
+    """The table that holds the value; left out of the repr, which would show the value."""
+
+    key: str
+    """The value's key in :attr:`parent`, one of :data:`SECRET_DATA_KEYS`."""
+
+
+def secret_locations(data: object) -> "Iterator[SecretLocation]":
+    """Yield each value under a :data:`SECRET_DATA_KEYS` key in *data* that is not ``None``.
+
+    In document order. *data* is a parsed JSON document (or record), walked
+    at every depth (``_secret_slots``, the one walk): a ``creds`` entry's
+    ``password`` and an ``ssh_options`` table's ``passphrase`` alike. Any
+    value under a secret key is yielded, a string or not (``1234``, a list, a
+    table), and a table under a secret key is then walked into as well.
+    """
+    for slot in _secret_slots(data):
+        yield SecretLocation(path=_path(slot), parent=slot.parent, key=slot.key)
+
+
+@final
+class _SecretSlot:
+    """The walk's one cursor: the secret it is at, and the containers that lead there.
+
+    :func:`_secret_slots` yields the same instance every time, moved, so the
+    walk allocates nothing per secret either; a reader takes what it needs
+    before asking for the next.
+    """
+
+    __slots__ = ("key", "parent", "parents")
+
+    def __init__(self, parents: "list[Any]") -> None:
+        self.parent: dict[Any, Any] = {}
+        """The table holding the value."""
+        self.key: str = ""
+        """The value's key in :attr:`parent`."""
+        self.parents = parents
+        """The open containers, from the document's root to :attr:`parent` (the walk's stack)."""
+
+
+def _secret_slots(data: object) -> "Iterator[_SecretSlot]":
+    """Walk *data* once, stopping at each non-``None`` value under a :data:`SECRET_DATA_KEYS` key.
+
+    THE one walk of a parsed document's secrets, which :func:`secret_locations`
+    and :func:`wrap_secret_values` both read. It keeps its own stack, so a
+    document deeper than the recursion limit is still walked, and it
+    allocates nothing per key or item: one cursor for the walk, and one
+    iterator per container. No path is built here; :func:`_path` builds one
+    from the cursor only for a location that is reported. A reader may
+    replace the value in the cursor's ``parent`` before asking for the next.
+    """
+    if not isinstance(data, (dict, list)):
+        return
+    parents: list[Any] = [data]
+    slot = _SecretSlot(parents)
+    walks: list[Iterator[tuple[Any, Any]]] = [
+        iter(data.items()) if isinstance(data, dict) else enumerate(data)
+    ]
+    while walks:
+        for key, value in walks[-1]:
+            if key in SECRET_DATA_KEYS and value is not None:  # never a list index
+                slot.parent, slot.key = parents[-1], key
+                yield slot
+            if isinstance(value, (dict, list)):
+                parents.append(value)
+                walks.append(iter(value.items()) if isinstance(value, dict) else enumerate(value))
+                break
+        else:
+            walks.pop()
+            parents.pop()
+
+
+def _path(slot: _SecretSlot) -> str:
+    """Return how a location names *slot*'s place: ``elements[0].creds[1].password``.
+
+    Each open container's key in its parent is found by identity, so the
+    walk itself never tracks keys.
+    """
+    from itertools import pairwise
+
+    keys: list[object] = []
+    for outer, inner in pairwise(slot.parents):
+        pairs = outer.items() if isinstance(outer, dict) else enumerate(outer)
+        keys.append(next(k for k, v in pairs if v is inner))
+    keys.append(slot.key)
+    parts: list[str] = []
+    for key in keys:
+        if isinstance(key, int):
+            parts.append(f"[{key}]")
+        else:
+            parts.append(f".{key}" if parts else str(key))
+    return "".join(parts)
 
 
 def wrap_secret_values(data: object) -> None:
     """Wrap, in place, each ``str`` under a :data:`SECRET_DATA_KEYS` key in *data* as ``SecretStr``.
 
-    *data* is a parsed JSON document (or record), walked at every depth: a
+    *data* is a parsed JSON document (or record), walked at every depth
+    (``_secret_slots``, the walk :func:`secret_locations` reads): a
     ``creds`` entry's ``password`` and an ``ssh_options`` table's
-    ``passphrase`` alike. Every loader of creds-bearing data calls this on
+    ``passphrase`` alike. A value that is not a string is left as it is, for
+    the models to refuse. Every loader of creds-bearing data calls this on
     what it parsed before any other otto frame holds it, so a traceback's
     locals (or in the log files) never show the plain value; the models then
     take the ``SecretStr`` as it is.
     """
-    pending = [data]
-    while pending:
-        node = pending.pop()
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key in SECRET_DATA_KEYS and isinstance(value, str):
-                    node[key] = SecretStr(value)
-                elif isinstance(value, (dict, list)):
-                    pending.append(value)
-        elif isinstance(node, list):
-            pending.extend(item for item in node if isinstance(item, (dict, list)))
+    for slot in _secret_slots(data):
+        value = slot.parent[slot.key]
+        if isinstance(value, str):
+            slot.parent[slot.key] = SecretStr(value)
 
 
 def load_toml_settings(text: str) -> dict[str, Any]:
@@ -263,6 +361,49 @@ def cred_identity(login: str, protocols: list[str]) -> str:
     return f"{login} [{', '.join(sorted(protocols))}]"
 
 
+def cred_layer_by_identity(
+    layer: list[dict[str, Any]], *, name: str, key: "str | None" = None
+) -> dict[str, dict[str, Any]]:
+    """Return each entry of the cred *layer* by identity: THE one keying of a cred layer.
+
+    The identity is ``login`` plus scope (:func:`cred_identity` over
+    ``protocols``, an absent or ``None`` one being ``[]``), and each entry is
+    kept as the fields it states (present and not ``None``).
+    :func:`otto.inventory.merge_creds` composes two layers keyed this way, and
+    :mod:`otto.host.provenance` attributes each merged field to the identity
+    it keys, so ``otto lab explain`` names exactly the identity the merge
+    formed. It lives here, below both, so neither imports the other for it.
+
+    Raises :class:`ValueError` for an entry with no non-empty string
+    ``login``, for a non-``list``-of-``str`` ``protocols``, and for an
+    identity repeated within the layer; the message names the layer (*name*)
+    and *key*, and lists an entry's field NAMES only (or the identity, for a
+    duplicate), because a value here may be a password. ``merge_creds``
+    raises it as an :class:`~otto.inventory.errors.InventoryError`.
+    """
+    where = f" (inventory key {key!r})" if key is not None else ""
+    out: dict[str, dict[str, Any]] = {}
+    for entry in layer:
+        login = entry.get("login") if isinstance(entry, dict) else None
+        if not isinstance(login, str) or not login:
+            fields = sorted(entry) if isinstance(entry, dict) else type(entry).__name__
+            raise ValueError(
+                f"cred entry without a 'login' string in the {name} layer{where}: {fields}"
+            )
+        protocols = entry.get("protocols")
+        if protocols is None:
+            protocols = []
+        if not isinstance(protocols, list) or not all(isinstance(p, str) for p in protocols):
+            raise ValueError(
+                f"cred {login!r}: 'protocols' must be a list of strings in the {name} layer{where}"
+            )
+        identity = cred_identity(login, protocols)
+        if identity in out:
+            raise ValueError(f"duplicate cred entry {identity!r} in the {name} layer{where}")
+        out[identity] = {k: v for k, v in entry.items() if v is not None}
+    return out
+
+
 @final
 class CredSpec(OttoModel):
     """One ``creds`` entry: a login plus (optionally) how to become it."""
@@ -302,6 +443,67 @@ class CredSpec(OttoModel):
         )
 
 
+def observed_fingerprint(path: Path) -> str:
+    """Return *path*, its mtime and its size; ``|missing`` when absent, ``|unreadable``.
+
+    The one freshness formatter for a file a source reads: every source that
+    fingerprints the files it depends on spells each one through here.
+
+    The three classes are ``otto.config.corpus_snapshot.classify``'s,
+    the one rule the console-script shim mirrors when it stats a source's
+    ``stat_paths``: whatever the shim sees change, this must change
+    with, or a TAB hands over while the cache digest never moves. Inside
+    a rebuild's ``corpus_snapshot()`` scope the stat is the memoized one
+    the shim's stored triple for the same path is taken from, so the two
+    are one observation; outside a scope it is a plain stat.
+    """
+    # Function scope: the leaf imports no otto module at import time.
+    from ..config.corpus_snapshot import Unreadable, observe
+
+    st = observe(path)
+    if st is None:
+        return f"{path}|missing"
+    if isinstance(st, Unreadable):
+        return f"{path}|unreadable"
+    return f"{path}|{st.st_mtime_ns}|{st.st_size}"
+
+
+@final
+class JsonFileError(Exception):
+    """A JSON file :func:`read_json_file` could not decode; ``__cause__`` is why.
+
+    The message is the underlying error's. :attr:`malformed` tells malformed
+    JSON from a file that could not be opened or whose bytes do not decode.
+    """
+
+    def __init__(self, cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.malformed = isinstance(cause, json.JSONDecodeError)
+        """Whether the text was read and is not JSON; false for an unreadable file."""
+
+
+def read_json_file(path: Path) -> Any:
+    """Return the JSON value of the file *path*: THE one decoding of a JSON file otto reads.
+
+    The lab reader (``otto.labs.documents.read_lab_document``) and
+    :class:`JsonFileSource` (the json inventory and the json creds store)
+    read through here. The text is decoded in the locale's default encoding
+    (``path.open()``), as otto has always read these files: a strict UTF-8
+    decode would refuse a locale-encoded file that loads today (on Windows,
+    say). Bytes the locale cannot decode make the file unreadable, never a
+    bare ``UnicodeDecodeError``.
+
+    Raises:
+        JsonFileError: The file cannot be opened, its bytes do not decode, or
+            its text is malformed JSON.
+    """
+    try:
+        with path.open() as f:
+            return json.load(f)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise JsonFileError(e) from e
+
+
 class JsonFileSource:
     """One JSON file a source reads once, on first use.
 
@@ -324,36 +526,19 @@ class JsonFileSource:
 
         ``<path>: …`` is the one prefix the source's errors use: a reader
         scanning a log for the file should not have to know which layer
-        refused it.
+        refused it. The file is decoded by :func:`read_json_file`, so bytes
+        that do not decode are refused like a file that cannot be opened.
         """
         try:
-            data = json.loads(self.path.read_text())
-        except (OSError, json.JSONDecodeError) as e:
-            raise refuse(f"{self.path}: {e}") from e
+            data = read_json_file(self.path)
+        except JsonFileError as e:
+            raise refuse(f"{self.path}: {e}") from e.__cause__
         wrap_secret_values(data)
         return data
 
     def fingerprint(self) -> "str | None":
-        """Return the file's path, mtime and size; ``|missing`` when absent, ``|unreadable``.
-
-        The three classes are ``otto.config.corpus_snapshot.classify``'s,
-        the one rule the console-script shim mirrors when it stats
-        :meth:`stat_paths`: whatever the shim sees change, this must change
-        with, or a TAB hands over while the cache digest never moves. Inside
-        a rebuild's ``corpus_snapshot()`` scope the stat is the memoized one
-        the shim's stored triple for the same path is taken from, so the two
-        are one observation; outside a scope it is a plain stat.
-        """
-        # Function scope: the leaf imports no otto module at import time, and
-        # only the completion cache, which has loaded it already, asks.
-        from ..config.corpus_snapshot import Unreadable, observe
-
-        st = observe(self.path)
-        if st is None:
-            return f"{self.path}|missing"
-        if isinstance(st, Unreadable):
-            return f"{self.path}|unreadable"
-        return f"{self.path}|{st.st_mtime_ns}|{st.st_size}"
+        """Return the file's :func:`observed_fingerprint`."""
+        return observed_fingerprint(self.path)
 
     def stat_paths(self) -> "list[Path] | None":
         """Return the one file the fingerprint is derived from."""

@@ -156,6 +156,13 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "session silently waits the 10 s default. Unit tests of the default "
         "remove it (tests/unit/host/conftest.py)"
     ),
+    "OTTO_TEST_JSONNET_BINDING": (
+        "the Jsonnet binding a templated run must have loaded, `jsonnet` or "
+        "`gojsonnet` (tests/unit/templating/conftest.py's session fixture "
+        "asserts load_binding() returned it); set by the `templating_go` nox "
+        "session and ci.yml's primary unit leg. Stripped, the fixture checks "
+        "nothing and a run under the wrong binding reports green"
+    ),
     "OTTO_TUNNEL_SOAK_CYCLES": (
         "internal soak depth per tunnel stability test "
         "(tests/e2e/tunnel_stability/_harness.py); set by `make "

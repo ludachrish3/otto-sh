@@ -66,6 +66,7 @@ lab/elements
 lab/host-fields
 lab/probing-hosts
 lab/inventory-references
+lab/templating
 lab/host-identity
 lab/network-interfaces
 lab/power
@@ -89,6 +90,8 @@ lab/migrating
   prints.
 - {doc}`lab/inventory-references`: pointing a host entry at an inventory
   record.
+- {doc}`lab/templating`: rendering labs from inventory records with a Jsonnet
+  template.
 - {doc}`lab/host-identity`: how a host's id is formed and kept unique.
 - {doc}`lab/network-interfaces`: a host's named interfaces.
 - {doc}`lab/power`: power control.

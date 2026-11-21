@@ -17,11 +17,13 @@ if TYPE_CHECKING:
     from ..utils import parse_max_stale as parse_max_stale
     from .cache import RefreshResult as RefreshResult
     from .cache import SnapshotCache as SnapshotCache
+    from .cache import SnapshotInfo as SnapshotInfo
     from .cache import snapshot_cache_of as snapshot_cache_of
     from .config import CompiledInventory as CompiledInventory
     from .config import InventoryDeclaration as InventoryDeclaration
     from .config import JsonInventoryConfig as JsonInventoryConfig
     from .config import NetBoxInventoryConfig as NetBoxInventoryConfig
+    from .config import ProtectedPaths as ProtectedPaths
     from .config import build_inventory as build_inventory
     from .config import build_inventory_from_declarations as build_inventory_from_declarations
     from .config import build_inventory_view as build_inventory_view
@@ -73,6 +75,7 @@ if TYPE_CHECKING:
 _LAZY_ATTRS: dict[str, str] = {
     "RefreshResult": "otto.inventory.cache",
     "SnapshotCache": "otto.inventory.cache",
+    "SnapshotInfo": "otto.inventory.cache",
     "snapshot_cache_of": "otto.inventory.cache",
     "CompiledInventory": "otto.inventory.config",
     "InventoryDeclaration": "otto.inventory.config",
@@ -123,6 +126,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "build_inventory_view_from_declarations": "otto.inventory.config",
     "deferred_inventory_view": "otto.inventory.config",
     "inventory_declaration": "otto.inventory.config",
+    "ProtectedPaths": "otto.inventory.config",
 }
 
 
@@ -158,11 +162,13 @@ __all__ = [
     "JsonInventory",
     "JsonInventoryConfig",
     "NetBoxInventoryConfig",
+    "ProtectedPaths",
     "RecordDifference",
     "RefreshResult",
     "RefusedDefault",
     "ResolvedEntry",
     "SnapshotCache",
+    "SnapshotInfo",
     "SupportsDiscovery",
     "SupportsStatPaths",
     "bare_refusal_message",

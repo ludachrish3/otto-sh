@@ -359,6 +359,25 @@ class SupportsLabScope(Protocol):
         ...
 
 
+@runtime_checkable
+class SupportsOverridePolicy(Protocol):
+    """Optional capability: replace another source's machines only where the backend says so.
+
+    When an element of such a backend replaces an element an earlier source
+    contributed to the lab, the composite compares the two elements'
+    machines as a whole (:func:`~otto.host.inventory_ref.same_machines`:
+    every machine of each is one of the other's). The same machines override as any
+    element does, with the override warning; different ones are refused,
+    naming both sources and both sets of machines, unless the element's slug
+    is in :meth:`declared_overrides`. A backend without it overrides by
+    today's rule, whatever it replaces.
+    """
+
+    def declared_overrides(self) -> frozenset[str]:
+        """Return the element slugs whose replacement of different machines is intended."""
+        ...
+
+
 @final
 @dataclass(frozen=True, kw_only=True)
 class DeclaredLinkInputs:
@@ -439,10 +458,15 @@ class SupportsLabContribution(Protocol):
 class SupportsDeclaredLinks(Protocol):
     """Optional capability: list a source's declared links without loading a lab.
 
-    Accepted, and not yet read by otto: completion still reads the links of
-    the files a source lists (:meth:`~otto.labs.sources.LabSourceState.lab_files`).
+    ``otto link`` completion reads it, through the operation's view, for
+    every link id it offers. A source without it has the links of the files
+    it lists read (:meth:`~otto.labs.sources.LabSourceState.lab_files`).
     """
 
     def declared_link_entries(self, *, view: "InventoryView") -> "list[DeclaredLinkEntry]":
-        """Return every raw ``links`` entry of the source, best-effort, building no host."""
+        """Return every raw ``links`` entry of the source, best-effort, building no host.
+
+        What the best-effort read left out is recorded as a drop
+        (``otto.labs.drops.record_drop``), as a best-effort listing records it.
+        """
         ...

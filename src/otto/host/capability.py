@@ -10,6 +10,8 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+from .inventory_ref import recording_fields
+
 
 class CapabilityResolver:
     """Resolve / validate the active selection for one menu-style capability."""
@@ -39,11 +41,18 @@ class CapabilityResolver:
         validated against the menu (fail-loud on malformed lab data) even when a
         preference overrides it. *menu* is assumed non-empty (the spec validator
         guarantees this).
+
+        This is the one decision of which input wins, so a recorded build
+        (``otto lab explain``) attributes a preference's win here
+        (:func:`otto.host.provenance.preference_won`); a pin's win keeps the
+        layer the pin's own merge recorded.
         """
         validated_pin = self.validate_choice(menu, pin) if pin is not None else None
         if preference:
             for choice in preference:
                 if choice in menu:
+                    if recording_fields():
+                        _preference_won(field=self.field)
                     return choice
         if validated_pin is not None:
             return validated_pin
@@ -94,12 +103,37 @@ def select_preferences(
     (option tables) are ignored here. Definition-order cascade: later matching
     selectors replace a capability's list. Lists are copied.
     """
+    return _selection_cascade(table, host_id, selectors=None)
+
+
+def preference_selectors(
+    table: dict[str, dict[str, list[str] | dict[str, Any]]], host_id: str
+) -> dict[str, str]:
+    """Return which selector supplied each of :func:`select_preferences`' lists.
+
+    The same cascade, keyed the same way (``{"term": "dut-.*"}``). For a
+    recorded build only: it names a ``[host_preferences]`` winner.
+    """
+    selectors: dict[str, str] = {}
+    _selection_cascade(table, host_id, selectors=selectors)
+    return selectors
+
+
+def _selection_cascade(
+    table: dict[str, dict[str, list[str] | dict[str, Any]]],
+    host_id: str,
+    *,
+    selectors: "dict[str, str] | None",
+) -> dict[str, list[str]]:
+    """Return *host_id*'s capability lists, filling *selectors* (when given) with each selector."""
     effective: dict[str, list[str]] = {}
     for selector, entries in table.items():
         if re.fullmatch(selector, host_id):
             for key, val in entries.items():
                 if isinstance(val, list):
                     effective[key] = list(val)
+                    if selectors is not None:
+                        selectors[key] = selector
     return effective
 
 
@@ -112,13 +146,46 @@ def select_option_defaults(
     ignored here. Definition-order cascade: later matching selectors merge
     **per key** into each option table. Tables are copied.
     """
+    return _option_cascade(table, host_id, selectors=None)
+
+
+def option_default_selectors(
+    table: dict[str, dict[str, Any]], host_id: str
+) -> dict[str, dict[str, str]]:
+    """Return which selector supplied each of :func:`select_option_defaults`' values.
+
+    The same cascade, keyed the same way (``{"ssh_options": {"port": ".*"}}``),
+    each value the selector whose table the default came from. For a
+    recorded build only: it is what names a ``[host_preferences]`` winner.
+    """
+    selectors: dict[str, dict[str, str]] = {}
+    _option_cascade(table, host_id, selectors=selectors)
+    return selectors
+
+
+def _option_cascade(
+    table: dict[str, dict[str, Any]],
+    host_id: str,
+    *,
+    selectors: "dict[str, dict[str, str]] | None",
+) -> dict[str, dict[str, Any]]:
+    """Return *host_id*'s option defaults, filling *selectors* (when given) with their selectors."""
     effective: dict[str, dict[str, Any]] = {}
     for selector, entries in table.items():
         if re.fullmatch(selector, host_id):
             for key, val in entries.items():
                 if isinstance(val, dict):
                     effective.setdefault(key, {}).update(val)
+                    if selectors is not None:
+                        selectors.setdefault(key, {}).update(dict.fromkeys(val, selector))
     return effective
+
+
+def _preference_won(*, field: str) -> None:
+    """Attribute capability *field* to its ``[host_preferences]`` list (recorded builds only)."""
+    from . import provenance
+
+    provenance.preference_won(field=field)
 
 
 def authenticating_protocols() -> list[str]:

@@ -191,9 +191,9 @@ def test_reader_applies_the_section_contract(tmp_path):
 
 
 def test_json_reader_opens_with_the_loaders_encoding_rule(monkeypatch, tmp_path):
-    # the narrow seam: read_lab_document opens .json through _open_lab_json(path), which
-    # calls path.open() with encoding left to the locale, as the old loader did; the spy
-    # asserts the arguments, never claiming to change the process locale
+    # the narrow seam: read_lab_document opens .json through otto.models.base.read_json_file,
+    # which calls path.open() with encoding left to the locale, as the old loader did; the
+    # spy asserts the arguments, never claiming to change the process locale
     path = write(tmp_path, VALID)
     calls = spy_open(monkeypatch)
     read_lab_document(path)

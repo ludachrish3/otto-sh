@@ -1,0 +1,1 @@
+error: Lab 'router-lab.west' is unavailable: tgen: expected 1, found 0 (none) (/home/me/routers/lab_data/layouts/router-lab.jsonnet: lab 'router-lab.west')

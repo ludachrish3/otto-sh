@@ -68,6 +68,10 @@ just make it a decision rather than an omission.
   [`SupportsHostSummaries`](../api/labs.rst) is purely an optimization —
   otto detects it structurally, and a backend that omits it still gets
   completion, because otto falls back to `list_labs()` + `load_lab()`.
+  That fallback is the one exception to "completion loads no lab", and it
+  serves host completion only: `--lab <TAB>` asks every backend for its
+  names alone (`list_labs()`, or `list_lab_status()` where a backend has
+  it) and never calls `load_lab()`.
 
   If you do implement it, a summary must agree with the host `load_lab()`
   builds — in three ways, all checked by `assert_lab_repository_conforms`:
@@ -136,6 +140,18 @@ capabilities. Otto detects each one structurally, as it detects
 : One [`LabStatus`](../api/labs.rst) per lab you declare. A lab that cannot
   be loaded now carries a `Diagnostic(where=..., reason=...)` as
   `unavailable`. Without this method, every `list_labs()` name is available.
+  `--lab` completion offers the names this returns, inside the completion
+  deadline. If it raises, completion offers none of your names, and
+  `otto cache info` shows why. Other sources keep theirs.
+
+  With this method, the labs you declare are the ones it returns, and
+  `list_labs()` becomes a diagnostic: otto calls it only when you declare a
+  scope and this method has failed, to show the names it returns inside your
+  scope as unavailable. otto's own `jsonnet` source works this way. Its labs
+  are known only from a render, which needs the operation's view, so its
+  `list_labs()` returns the names its last complete read declared when it is
+  scoped, and `[]` when it is not
+  ({ref}`Scope <lab-templating-scope>`).
 
 `lab_scope() -> LabScope | None` ([`SupportsLabScope`](../api/labs.rst))
 : The lab names you can declare at all: exact `names` and literal
@@ -145,6 +161,14 @@ capabilities. Otto detects each one structurally, as it detects
   outside it is refused as a broken backend. In return, when you fail, only
   the labs inside your scope fail
   ({ref}`source-failure-scope`).
+
+`declared_overrides() -> frozenset[str]` ([`SupportsOverridePolicy`](../api/labs.rst))
+: The slugs of your elements that may replace an earlier source's element
+  holding different machines. With it, otto refuses any other such
+  replacement, as it does for the built-in `jsonnet` source
+  ({ref}`Generated elements that replace others <lab-templating-overrides>`);
+  without it, your elements override by the plain rule
+  ([Ordering and overrides](../configuration/host-sources.md#ordering-and-overrides)).
 
 Otto reaches every source through
 [`load_lab_through`, `lab_statuses`, `lab_scope_of`](../api/labs.rst) and
@@ -208,7 +232,10 @@ endpoint.
 
 `declared_link_entries(*, view) -> list[DeclaredLinkEntry]` ([`SupportsDeclaredLinks`](../api/labs.rst))
 : Every raw `links` entry you hold, for all your labs, without building a host.
-  Otto accepts it and does not read it yet.
+  `otto link` completion offers the links it returns, each one only where
+  dispatch would attach it, and under your `lab_scope()` when you declare
+  one. Without it, completion reads the `links` of the files your
+  configuration lists.
 
 Every name a contribution is built from is public:
 
@@ -289,6 +316,14 @@ A `[[lab.sources]]` entry then selects it, and every key but `backend` and
 [[lab.sources]]
 backend = "example"
 ```
+
+A built-in name refuses a second registration unless you pass
+`overwrite=True`, with one exception: otto's own `jsonnet` backend *yields*
+its name. A backend you register as `jsonnet`, one written before otto shipped
+its own, replaces otto's without `overwrite=True`, and otto logs one warning
+naming both modules. otto's `jsonnet` source is then unavailable in that
+process, and every `backend = "jsonnet"` entry selects yours
+({doc}`extending-backends`).
 
 What otto does with it, and when:
 

@@ -66,3 +66,10 @@ against, in order:
 Only a host none of them holds is an unknown host. A source may hold links
 alone, with no elements and no `labs` table, and its links join every lab they
 touch. Two sources declaring the same link id keep the later source's link.
+
+A source with a **scope** (a `jsonnet` source's `scope`, or a custom
+backend's `lab_scope()`; {ref}`source-failure-scope`) contributes only to the
+labs inside it, and its links with it: otto admits its contribution, links
+included, only when it loads a lab inside the scope. A scoped source's links
+therefore never join a lab outside its scope, even when an endpoint is a host
+of that lab.

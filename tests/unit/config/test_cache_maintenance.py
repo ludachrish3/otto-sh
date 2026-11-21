@@ -537,3 +537,81 @@ def test_clear_workspace_never_reaches_the_home_level(tmp_path, monkeypatch):
     report = clear_workspace(workspace_home(roots))
     assert ws / "completion_cache.json" in report.files_removed
     assert log.read_text() == "kept\n"
+
+
+# ── the home-level records of scoped jsonnet sources' last known lab names ──
+
+
+def _lab_name_record(home, name, *, age):
+    """Write a last-known-lab-name record *name* under *home*, *age* seconds old."""
+    directory = home / "lab-names"
+    directory.mkdir(parents=True, exist_ok=True)
+    record = directory / name
+    record.write_text('{"names": ["router-lab.east"], "recorded_at": "2026-01-01T00:00:00+00:00"}')
+    past = time.time() - age
+    os.utime(record, (past, past))
+    return record
+
+
+def test_lab_names_dirname_matches_the_home_constant():
+    from otto.config.cache_maintenance import LAB_NAMES_DIRNAME
+    from otto.config.home import LAB_NAMES_CACHE_DIRNAME
+
+    assert LAB_NAMES_DIRNAME == LAB_NAMES_CACHE_DIRNAME
+
+
+def test_prune_takes_old_lab_name_records_and_keeps_young_ones(tmp_path):
+    from otto.config.cache_maintenance import prune
+
+    old = _lab_name_record(tmp_path, "old.json", age=OLD)
+    young = _lab_name_record(tmp_path, "young.json", age=YOUNG)
+    report = prune(tmp_path, max_age_days=60)
+    assert report.files_removed == [old]
+    assert report.bytes_freed > 0
+    assert not old.exists()
+    assert young.is_file()
+    assert young.parent.is_dir()  # the directory itself stays
+
+
+def test_prune_age_blind_takes_every_lab_name_record(tmp_path):
+    # `otto cache clear --all` is prune(age_blind=True).
+    from otto.config.cache_maintenance import prune
+
+    young = _lab_name_record(tmp_path, "young.json", age=YOUNG)
+    temporary = _lab_name_record(tmp_path, ".young.json.abc.tmp", age=YOUNG)
+    report = prune(tmp_path, age_blind=True)
+    assert sorted(report.files_removed) == sorted([young, temporary])
+    assert not young.exists()
+    assert not temporary.exists()
+
+
+def test_prune_dry_run_reports_lab_name_records_and_removes_nothing(tmp_path):
+    from otto.config.cache_maintenance import prune
+
+    old = _lab_name_record(tmp_path, "old.json", age=OLD)
+    report = prune(tmp_path, dry_run=True)
+    assert report.files_removed == [old]
+    assert old.is_file()
+
+
+def test_a_symlinked_lab_names_dir_is_never_entered(tmp_path):
+    from otto.config.cache_maintenance import prune
+
+    elsewhere = tmp_path / "elsewhere"
+    target = _lab_name_record(elsewhere, "keep.json", age=OLD)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "lab-names").symlink_to(target.parent, target_is_directory=True)
+    report = prune(home, age_blind=True)
+    assert report.files_removed == []
+    assert target.is_file()
+
+
+def test_clear_workspace_never_reaches_the_lab_name_records(tmp_path):
+    from otto.config.cache_maintenance import clear_workspace
+
+    record = _lab_name_record(tmp_path, "rec.json", age=OLD)
+    ws = _mk_workspace(tmp_path, workspace_key([tmp_path / "proj"]), cache_age=OLD)
+    report = clear_workspace(ws)
+    assert ws / "completion_cache.json" in report.files_removed
+    assert record.is_file()

@@ -40,6 +40,17 @@ dependencies = [
     "aiosqlite>=0.21.0",
     "asyncssh>=2.24.0",
     "fastapi>=0.135.1",
+    # Jsonnet lab and inventory templates (`otto.templating`), one binding per
+    # platform, imported only inside `otto.templating.binding.load_binding`.
+    # The C++ `jsonnet` ships abi3 wheels for Linux x86_64 (glibc >= 2.28 and
+    # musl), Windows AMD64 and Apple-silicon macOS, and no Linux aarch64 wheel;
+    # `gojsonnet` ships per-version manylinux2014 aarch64 wheels there. Every
+    # other platform gets no binding: otto installs, and a template fails with
+    # the one "no binding" error (docs/installation.md, "Known gaps").
+    # The `python_version < '3.15'` clause: gojsonnet 0.22.0 publishes no cp315
+    # wheel. Drop it once one ships (#1210).
+    "gojsonnet>=0.22.0; python_version < '3.15' and sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "jsonnet>=0.22.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64') or (sys_platform == 'darwin' and platform_machine == 'arm64')",
     # Requirement/marker/specifier evaluation for the dependency preflight
     # (`otto.env.preflight`). Already resolved transitively (pytest);
     # declared directly because we now import it directly.
@@ -228,8 +239,10 @@ max-line-length = 100
 # The docs example captures are real, committed command output (spec
 # 2026-08-27 §5) -- e.g. a Rich table's centered title pads with trailing
 # spaces. doc8's prose checks don't apply to a verbatim transcript; drift is
-# caught by scripts/refresh_docs_captures.py --check instead.
-ignore-path = ["docs/_build", "docs/examples/captures"]
+# caught by scripts/refresh_docs_captures.py --check instead. The templating
+# example's output files are the same kind of transcript, held to what otto
+# prints by tests/unit/docs/test_templating_example.py.
+ignore-path = ["docs/_build", "docs/examples/captures", "docs/examples/templating/output"]
 
 [tool.pyright]
 typeCheckingMode = "strict"

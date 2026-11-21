@@ -1,0 +1,4 @@
+{
+  "east-r1": [{"login": "admin", "password": "admin"}],
+  "west-r1": [{"login": "admin", "password": "admin"}]
+}

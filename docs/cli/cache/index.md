@@ -4,7 +4,10 @@
 under [the workspace home](../index.md#the-workspace-home) — the completion
 cache and its remote-path sidecar (with the shim's two marker files), and the
 two directories otto's pytest sessions write: `pycache/` (their bytecode) and
-`pytest-cache/` (pytest's cache). Nothing else is ever removed. It can also
+`pytest-cache/` (pytest's cache). One home-level directory is reached as well:
+`lab-names/`, where each scoped `jsonnet` lab source keeps the names of the
+labs it last declared, so that a source that is down can still show them as
+unavailable. Nothing else is ever removed. It can also
 switch the cache off and on again: see
 [Turning the cache off](#turning-the-cache-off).
 Everything it removes is rebuildable: deleting it changes nothing about what
@@ -31,8 +34,8 @@ otto cache prune [--age DAYS] [--dry-run]
 | `info` | List every workspace under the home, oldest cache first: key, cache size (the two session directories included), cache age, whether an `env/` virtualenv lives there, and any other entries |
 | `enable` | Turn the cache on: set `[cache] enabled = true` in the user settings file where a `[cache]` table exists, even an empty one; never creates the file |
 | `disable` | Turn the cache off: write `[cache] enabled = false`. See [Turning the cache off](#turning-the-cache-off) |
-| `clear` | Remove **this** workspace's cache files and session directories (the workspace `OTTOPATH` resolves to); never removes the workspace directory itself. `--all` clears every workspace regardless of age |
-| `prune` | Remove cache files older than `--age` days (default 60) across every workspace, and the session directories of each workspace left with no younger cache file; `--dry-run` reports what would be removed without touching anything |
+| `clear` | Remove **this** workspace's cache files and session directories (the workspace `OTTOPATH` resolves to); never removes the workspace directory itself. `--all` clears every workspace regardless of age, and every record in `lab-names/` |
+| `prune` | Remove cache files older than `--age` days (default 60) across every workspace, the session directories of each workspace left with no younger cache file, and each `lab-names/` record older than `--age` days; `--dry-run` reports what would be removed without touching anything |
 
 `otto cache` is **lab-free** — it needs no `--lab` — and every verb acts
 purely on the filesystem under `OTTO_HOME`.
@@ -46,7 +49,12 @@ the `inventory-cache/` directory can never match that shape, so they are never
 reached, and a symlinked entry is skipped rather than followed, so a candidate
 can never be used to reach files elsewhere on disk. The same holds for the
 current workspace that bare `clear` and every root help act on: if it is a
-symlink, nothing in it is touched. Inside a matched
+symlink, nothing in it is touched. The one exception is
+named, not matched: `prune` and `clear --all` also remove the files directly
+in `lab-names/` (never a directory inside it, and never through a symlinked
+`lab-names/`). Bare `clear` never leaves its workspace, so it leaves them.
+A removed record costs nothing but a diagnostic: the source writes it again
+on its next complete read. Inside a matched
 workspace, the only entries ever removed are the ones named above — nothing
 else there is touched, named or not. The two session directories are emptied
 from the bottom up: each file is unlinked, each directory removed with

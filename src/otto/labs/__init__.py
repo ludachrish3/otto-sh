@@ -12,8 +12,10 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .composite import CompositeLabRepository as CompositeLabRepository
+    from .composite import HostListing as HostListing
     from .composite import LabSource as LabSource
     from .composite import LabStatusReport as LabStatusReport
+    from .composite import SourceLinks as SourceLinks
     from .composite import SourceUnavailable as SourceUnavailable
     from .drops import Diagnostic as Diagnostic
     from .errors import LabNotFoundError as LabNotFoundError
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
     from .protocol import SupportsLabContribution as SupportsLabContribution
     from .protocol import SupportsLabScope as SupportsLabScope
     from .protocol import SupportsLabStatus as SupportsLabStatus
+    from .protocol import SupportsOverridePolicy as SupportsOverridePolicy
     from .protocol import logins_of_creds as logins_of_creds
     from .protocol import logins_of_host_data as logins_of_host_data
     from .registry import register_lab_repository as register_lab_repository
@@ -56,7 +59,9 @@ if TYPE_CHECKING:
 _LAZY_ATTRS: dict[str, str] = {
     "CompositeLabRepository": "otto.labs.composite",
     "LabSource": "otto.labs.composite",
+    "HostListing": "otto.labs.composite",
     "LabStatusReport": "otto.labs.composite",
+    "SourceLinks": "otto.labs.composite",
     "SourceUnavailable": "otto.labs.composite",
     "Diagnostic": "otto.labs.drops",
     "LabNotFoundError": "otto.labs.errors",
@@ -82,6 +87,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "SupportsLabContribution": "otto.labs.protocol",
     "SupportsLabScope": "otto.labs.protocol",
     "SupportsLabStatus": "otto.labs.protocol",
+    "SupportsOverridePolicy": "otto.labs.protocol",
     "logins_of_creds": "otto.labs.protocol",
     "logins_of_host_data": "otto.labs.protocol",
     "register_lab_repository": "otto.labs.registry",
@@ -116,6 +122,7 @@ __all__ = [
     "CompositeLabRepository",
     "DeclaredLinkInputs",
     "Diagnostic",
+    "HostListing",
     "HostSummary",
     "LabContribution",
     "LabFileRule",
@@ -131,6 +138,7 @@ __all__ = [
     "LabStatusReport",
     "LabUnavailableError",
     "LoginSummary",
+    "SourceLinks",
     "SourceRef",
     "SourceUnavailable",
     "SupportsDeclaredLinks",
@@ -140,6 +148,7 @@ __all__ = [
     "SupportsLabContribution",
     "SupportsLabScope",
     "SupportsLabStatus",
+    "SupportsOverridePolicy",
     "build_lab_sources",
     "host_summaries",
     "host_summaries_in_view",

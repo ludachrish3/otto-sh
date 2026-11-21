@@ -25,7 +25,9 @@ if TYPE_CHECKING:
     from .errors import LoggingLevelsConflictError as LoggingLevelsConflictError
     from .errors import ProjectLoadError as ProjectLoadError
     from .errors import ProjectSelectionError as ProjectSelectionError
+    from .lab import BuiltLab as BuiltLab
     from .lab import build_lab as build_lab
+    from .lab import build_lab_and_view as build_lab_and_view
     from .lab import merge_host_preferences as merge_host_preferences
     from .logs import install_logging as install_logging
     from .logs import merge_logging_levels as merge_logging_levels
@@ -49,7 +51,9 @@ _LAZY_ATTRS: dict[str, str] = {
     "ProjectCheck": "otto.session.projects",
     "ProjectLoadError": "otto.session.errors",
     "RequiredProject": "otto.session.projects",
+    "BuiltLab": "otto.session.lab",
     "build_lab": "otto.session.lab",
+    "build_lab_and_view": "otto.session.lab",
     "check_dependencies": "otto.session.dependencies",
     "check_instruction_active": "otto.session.activation",
     "check_project_overlap": "otto.session.projects",
@@ -76,6 +80,7 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "BuiltLab",
     "DemotedProject",
     "DependencyRefusedError",
     "InstructionInactiveError",
@@ -87,6 +92,7 @@ __all__ = [
     "ProjectSelectionError",
     "RequiredProject",
     "build_lab",
+    "build_lab_and_view",
     "check_dependencies",
     "check_instruction_active",
     "check_project_overlap",

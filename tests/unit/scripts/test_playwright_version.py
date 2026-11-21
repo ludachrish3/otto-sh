@@ -27,6 +27,20 @@ def test_reads_the_locked_version_from_this_lock() -> None:
     assert [p["version"] for p in packages if p["name"] == "playwright"] == [version]
 
 
+def test_reads_another_package_the_lock_holds() -> None:
+    # templating_go (noxfile.py) installs the locked gojsonnet through this reader.
+    lock = CHECKOUT_ROOT / "uv.lock"
+    packages = tomli.loads(lock.read_text())["package"]
+    assert [p["version"] for p in packages if p["name"] == "gojsonnet"] == [
+        pv.locked_version(lock, "gojsonnet")
+    ]
+
+
+def test_refuses_a_lock_without_the_package(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="no gojsonnet package"):
+        pv.locked_version(_lock(tmp_path), "gojsonnet")
+
+
 def test_refuses_a_lock_without_playwright(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="no playwright package"):
         pv.locked_version(_lock(tmp_path))

@@ -2727,6 +2727,21 @@ subclass = false
 [symbols."otto.inventory:InventoryView"]
 subclass = false
 
+[symbols."otto.inventory:ProtectedPaths"]
+subclass = false
+
+[symbols."otto.inventory:ProtectedPaths.contains"]
+positional = ["path"]
+why = "the subject: the one path it tests, as a membership test reads"
+
+[symbols."otto.inventory:ProtectedPaths.contains_stat"]
+positional = ["st"]
+why = "the subject: the one open file's stat it tests, as contains reads"
+
+[symbols."otto.inventory:ProtectedPaths.union"]
+positional = ["other"]
+why = "the subject: the catalog it joins, as set.union reads"
+
 [symbols."otto.inventory:RefusedDefault"]
 subclass = false
 
@@ -2776,6 +2791,10 @@ construct = false
 subclass = false
 
 [symbols."otto.inventory:SnapshotCache"]
+construct = false
+subclass = false
+
+[symbols."otto.inventory:SnapshotInfo"]
 construct = false
 subclass = false
 
@@ -2879,6 +2898,14 @@ subclass = false
 subclass = false
 
 [symbols."otto.labs:SourceUnavailable"]
+subclass = false
+
+[symbols."otto.labs:HostListing"]
+construct = false
+subclass = false
+
+[symbols."otto.labs:SourceLinks"]
+construct = false
 subclass = false
 
 [symbols."otto.labs:LoginSummary"]
@@ -3576,6 +3603,10 @@ subclass = false
 construct = false
 subclass = false
 
+[symbols."otto.session:BuiltLab"]
+construct = false
+subclass = false
+
 [symbols."otto.session:DemotedProject"]
 construct = false
 subclass = false
@@ -3608,6 +3639,9 @@ construct = false
 subclass = false
 
 [symbols."otto.session:build_lab"]
+positional = ["projects"]
+
+[symbols."otto.session:build_lab_and_view"]
 positional = ["projects"]
 
 [symbols."otto.suite:ExpectCollector"]

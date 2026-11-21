@@ -100,6 +100,13 @@ element anywhere matches fails the load rather than yielding an empty lab.
 What *is* fine is a `labs` entry in a file that holds none of that lab's
 elements — another file, or another source, supplies them.
 
+**A template is the one exception to writing the declaration by hand.** A
+`jsonnet` source ({doc}`templating`) derives its `labs` table, its elements
+and their `resources` from inventory records each time it renders. What it
+renders is still a declaration, read by this page's rules: a lab exists only
+when the rendered `labs` table declares it, and the rendered elements join it
+by their membership patterns. Nothing is derived after the render.
+
 Resources are **declared**, never derived: this entry is what the lab holds *as
 a whole*.  An element or a host may declare its own alongside — three levels
 that combine freely; see [Elements](elements.md#elements) and [Per-host

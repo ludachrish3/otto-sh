@@ -75,6 +75,55 @@ def _budget_ssh_lab(port: int) -> str:
     return json.dumps(lab, indent=4) + "\n"
 
 
+_TEMPLATED_SOURCE = """\
+[[inventories]]
+name = "fleet"
+backend = "json"
+path = "templated/fleet.json"
+
+[[lab.sources]]
+backend = "jsonnet"
+paths = ["templated/fleet.jsonnet"]
+inventories = ["fleet"]
+import_paths = ["templated/lib"]
+"""
+
+_TEMPLATED_ENTRY = """\
+local lib = import 'fleet.libsonnet';
+function(otto) {
+  labs: { [lib.lab]: {} },
+  elements: [
+    {
+      name: r.key,
+      labs: [lib.lab],
+      hosts: [{ inventory: { name: 'fleet', key: r.key }, os_type: 'unix' }],
+    }
+    for r in otto.inventories.fleet
+  ],
+}
+"""
+
+TEMPLATED_HOSTS = 4
+"""How many hosts ``generate_project(templated_lab=True)``'s jsonnet source renders."""
+
+
+def _templated_files() -> dict[str, str]:
+    """The files of the generated project's one ``jsonnet`` lab source, by relative path.
+
+    An entry, one library under its import root, and the ``fleet`` json
+    inventory it renders a host per record of, into the ``templated`` lab.
+    """
+    records = {
+        f"tmpl-{i}": {"ip": f"10.77.0.{i + 1}", "creds": [{"login": "u", "password": "p"}]}
+        for i in range(TEMPLATED_HOSTS)
+    }
+    return {
+        "templated/fleet.jsonnet": _TEMPLATED_ENTRY,
+        "templated/lib/fleet.libsonnet": "{ lab: 'templated' }\n",
+        "templated/fleet.json": json.dumps(records, indent=4) + "\n",
+    }
+
+
 _TEST_BODY = "def test_x():\n    pass\n"
 
 _SUITE_BODY = """\
@@ -127,6 +176,7 @@ def generate_project(
     name: str = "genproject",
     realistic: bool = False,
     ssh_lab_port: int | None = None,
+    templated_lab: bool = False,
 ) -> Path:
     """Write a project under *root*; return the path for ``OTTOPATH``.
 
@@ -144,6 +194,10 @@ def generate_project(
     on that port, in the ``unix`` lab. A caller that passes a closed port
     measures otto's SSH path with no real host: the connection is refused at
     once.
+
+    *templated_lab* adds a ``jsonnet`` lab source rendering
+    :data:`TEMPLATED_HOSTS` hosts into the ``templated`` lab from a ``fleet``
+    json inventory, with one library under its import root.
     """
     # Through `make_project`, not a hand-rolled write: `.otto/settings.toml`
     # has exactly one spelling in the suite (tests/_fixtures/project_scaffold.py), and
@@ -159,6 +213,9 @@ def generate_project(
     if ssh_lab_port is not None:
         extra += _LAB_SOURCE.format(lab=root / name / "budget_lab")
         project_files["budget_lab/lab.json"] = _budget_ssh_lab(ssh_lab_port)
+    if templated_lab:
+        extra += _TEMPLATED_SOURCE
+        project_files.update(_templated_files())
     project = make_project(
         root / name,
         name=name,

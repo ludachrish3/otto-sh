@@ -1,8 +1,9 @@
-"""Replacing the built-in json lab source reaches the real product path.
+"""Replacing a built-in lab source reaches the real product path.
 
 ``build_lab_sources`` is what every lab load goes through; a backend
-registered over ``json`` with ``overwrite=True`` must be what it builds for a
-``backend = "json"`` source. The root isolation fixture restores the table.
+registered over ``json`` with ``overwrite=True``, or over the yielding
+``jsonnet`` without it, must be what it builds for a source naming that
+backend. The root isolation fixture restores the table.
 """
 
 from otto.labs.composite import CompositeLabRepository
@@ -10,7 +11,10 @@ from otto.labs.registry import LAB_REPOSITORIES, register_lab_repository
 from otto.labs.sources import build_lab_sources
 from tests._fixtures.project_scaffold import make_project
 
-REPLACES = [("otto.labs.registry:LAB_REPOSITORIES", "json")]
+REPLACES = [
+    ("otto.labs.registry:LAB_REPOSITORIES", "json"),
+    ("otto.labs.registry:LAB_REPOSITORIES", "jsonnet"),
+]
 """Every ``(table, built-in name)`` pair this module replaces."""
 
 
@@ -54,3 +58,30 @@ def test_a_replaced_json_source_is_what_build_lab_sources_builds(tmp_path):
     assert configured.config.paths == (tmp_path / "lab_data",)
     assert configured.env.project_root == tmp_path
     assert configured.env.label == "r/json#1"
+
+
+def test_a_replaced_jsonnet_source_is_what_build_lab_sources_builds(tmp_path):
+    from otto.config.project import Project
+
+    make_project(
+        tmp_path,
+        name="r",
+        extra='[[lab.sources]]\nbackend = "jsonnet"\npaths = ["lab_data/layouts"]\n',
+    )
+    project = Project(root=tmp_path)
+    spy = _Spy()
+    entry = LAB_REPOSITORIES.peek(name="jsonnet")
+    seen = []
+
+    def factory(c):
+        seen.append(c)
+        return spy
+
+    # jsonnet yields its name: no overwrite=True is needed to replace it.
+    register_lab_repository("jsonnet", config=entry.config, factory=factory)
+    composite = build_lab_sources(projects=[project])
+    assert [source.repository for source in composite.sources] == [spy]
+    (configured,) = seen
+    assert configured.config.paths == (tmp_path / "lab_data" / "layouts",)
+    assert configured.env.project_name == "r"
+    assert configured.env.label == "r/jsonnet#1"

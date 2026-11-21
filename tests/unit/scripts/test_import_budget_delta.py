@@ -2118,6 +2118,7 @@ def test_the_harness_measures_an_otto_that_has_no_command_list_helper(tmp_path: 
     assert done.returncode == 0, done.stderr
     assert done.stdout.split() == [
         "tracked_init", "tracked_docker", "tracked_host_probe", "tracked_host_power",
+        "tracked_tab_warm_templated",
     ]  # fmt: skip
 
 

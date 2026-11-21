@@ -187,6 +187,9 @@ depends_on = [
     "otto.config.corpus_snapshot",
     # otto.home_root: the OTTO_HOME variable's name, beside its one reader.
     "otto.home_root",
+    # otto.templating: the completion cache abandons a template render that
+    # outlives its budget through the templating core's cancellation seam.
+    "otto.templating",
 ]
 
 [[modules]]
@@ -418,6 +421,22 @@ layer = "foundation"
 depends_on = []
 
 [[modules]]
+path = "otto.templating"
+layer = "foundation"
+# Jsonnet templates for labs and inventories. binding.py is the one module
+# that imports a Jsonnet binding (`_jsonnet` or `_gojsonnet`, third-party, so
+# not an edge here), inside load_binding; tests/unit/templating/test_binding.py
+# scans src/otto for any other site. A leaf over otto.errors, so the sources
+# and composition layers above can render through it without a cycle.
+# otto.utils: the import callback resolves a candidate through `resolved_path`,
+# the one rule for which file a path names, which the protected-file catalog
+# it checks against resolves through too, and tests containment in a root with
+# `is_under`.
+# otto.config.corpus_snapshot: the callback stats a candidate through
+# `classify`, the one stat classification, before it opens it.
+depends_on = ["otto.config.corpus_snapshot", "otto.errors", "otto.utils"]
+
+[[modules]]
 path = "otto.examples"
 layer = "entry"
 # otto.inventory: the reference LabRepository resolves each record through
@@ -474,6 +493,9 @@ depends_on = [
     "otto.coverage.embedded_gcov",
     # otto.config.user_settings: the doctor reads the user settings file.
     "otto.config.user_settings",
+    # otto.session.lab: the doctor builds the selected lab through build_lab,
+    # the one lab-build decision `otto --lab X` and open_context share.
+    "otto.session.lab",
 ]
 
 [[modules]]
@@ -635,7 +657,12 @@ layer = "sources"
 # otto.tls (spec 2026-09-14 os-trust-http-helper): the NetBox session's OS-store
 # trust and request-timeout bound. Module-level import; otto.tls itself is a
 # stdlib-only leaf at import time.
+# otto.templating: a json inventory whose path is a `.jsonnet` file renders
+# through the one templating core, a foundation leaf.
+# otto.config.corpus_snapshot: the protected-file catalog's identity check stats
+# through `classify`, the one stat classification, inside the function.
 depends_on = [
+    "otto.config.corpus_snapshot",
     "otto.config.home",
     "otto.config.scope",
     "otto.config.user_settings",
@@ -645,6 +672,7 @@ depends_on = [
     "otto.models",
     "otto.models.base",
     "otto.registry",
+    "otto.templating",
     "otto.tls",
     "otto.utils",
 ]
@@ -698,6 +726,10 @@ layer = "sources"
 # record (`resolve_host_entry`) BEFORE the factory sees it — the loader is the
 # single join site (spec 2026-08-28 host-inventory §6). One-way: otto.inventory
 # does not import otto.labs.
+# otto.templating: the jsonnet lab source renders its entry files through the
+# one templating core. otto.config.home: the jsonnet lab source records the
+# last lab names it rendered in the workspace home (a diagnostic record that
+# holds lab names only). Both sit below this layer.
 depends_on = [
     "otto.registry",
     "otto.link",
@@ -707,6 +739,8 @@ depends_on = [
     "otto.host",
     "otto.errors",
     "otto.utils",
+    "otto.templating",
+    "otto.config.home",
 ]
 
 [[modules]]

@@ -15,15 +15,16 @@ presentation over it.
 - ``otto cache clear`` -- clears THIS workspace's cache files only (the engine
   is :func:`~otto.config.cache_maintenance.clear_workspace` on
   :func:`~otto.config.home.workspace_home`); ``--all`` clears every
-  workspace's cache files regardless of age, via
-  :func:`~otto.config.cache_maintenance.prune` with ``age_blind=True``. Either
-  way, a workspace directory is removed only once emptying it of cache files
-  leaves nothing behind -- an ``env/`` virtualenv always survives.
+  workspace's cache files regardless of age, and every record in the home's
+  ``lab-names/`` (:data:`~otto.config.cache_maintenance.LAB_NAMES_DIRNAME`),
+  via :func:`~otto.config.cache_maintenance.prune` with ``age_blind=True``.
+  Either way, a workspace directory is removed only once emptying it of cache
+  files leaves nothing behind -- an ``env/`` virtualenv always survives.
 - ``otto cache prune`` -- removes cache files older than ``--age`` days
   (default :data:`~otto.config.cache_maintenance.DEFAULT_MAX_AGE_DAYS`,
   matching :func:`~otto.config.cache_maintenance.prune`'s own default) across
-  every workspace; ``--dry-run`` reports what would happen without touching
-  the filesystem.
+  every workspace, and each ``lab-names/`` record older than that;
+  ``--dry-run`` reports what would happen without touching the filesystem.
 
 IMPORT DISCIPLINE: everything from ``otto.config.cache_maintenance`` and
 ``otto.config.home`` beyond the one small constant below is imported INSIDE
@@ -414,14 +415,20 @@ def _print_this_workspace() -> None:
 def clear(
     all_workspaces: Annotated[
         bool,
-        typer.Option("--all", help="Clear every workspace's cache files, not just this one's."),
+        typer.Option(
+            "--all",
+            help="Clear every workspace's cache files, not just this one's, "
+            "and every lab-names record.",
+        ),
     ] = False,
 ) -> None:
-    """Clear this workspace's cache files, or every workspace's with `--all`.
+    """Clear this workspace's cache files; `--all` clears every workspace's and lab-names/.
 
     Bare, this never removes the workspace directory itself. `--all` clears every
-    workspace's cache files regardless of age and removes a workspace directory
-    once it is empty; an `env/` virtualenv always keeps its directory.
+    workspace's cache files regardless of age, and every record in the home's
+    `lab-names/` (each scoped jsonnet source's last known lab names), and
+    removes a workspace directory once it is empty; an `env/` virtualenv always
+    keeps its directory.
     """
     # Developer note: bare keeps the workspace directory because it must exist
     # regardless of what else lives in it.
@@ -457,7 +464,11 @@ def prune(
         typer.Option("--dry-run", help="Report what would be pruned without removing anything."),
     ] = False,
 ) -> None:
-    """Remove cache files older than --age days across every workspace."""
+    """Remove cache files and lab-names records older than --age days, across every workspace.
+
+    A `lab-names/` record (a scoped jsonnet source's last known lab names)
+    goes by the same age rule as a cache file.
+    """
     from ..config.cache_maintenance import prune as run_prune
     from ..config.home import otto_home
 

@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -162,6 +162,34 @@ def anchor_path(value: Path, root: Path, *, quote: bool = True) -> Path:
 _PATH_LIST_SEP = re.compile(re.escape(os.pathsep))
 
 
+TEMPLATE_SUFFIX = ".jsonnet"
+"""The suffix of a Jsonnet template file, dot included: THE decision of what is a template.
+
+A ``jsonnet`` lab source's entry files (``otto.labs.sources.JSONNET_FILE_RULE``)
+and a json inventory's templated path (``otto.inventory.JsonInventory.templated``)
+both read it. It lives here rather than in ``otto.templating``, which owns
+the rendering, because every surface that reads lab sources already loads
+this module and importing the templating package there would cost each of
+them file operations.
+"""
+
+
+def refuse_empty_entry(value: object, *, expected: str) -> object:
+    """Refuse a path-list option holding an empty string, which would read as its anchor.
+
+    An empty entry anchored by :func:`anchor_path` names the anchor directory
+    itself (a project root, say), which no one writes on purpose. A config
+    model's ``mode="before"`` validator over a path-list option calls it;
+    *expected* says what an entry should name. Anything else passes through.
+
+    Raises:
+        ValueError: *value* is a list or tuple with an empty-string entry.
+    """
+    if isinstance(value, (list, tuple)) and any(entry == "" for entry in value):
+        raise ValueError(f"an entry is empty; name {expected}")
+    return value
+
+
 def kept_path_spelling(entry: str) -> str:
     """Return the spelling otto keeps for a root: ``~`` expanded, a relative one joined to the cwd.
 
@@ -222,6 +250,34 @@ def is_real_dir(path: Path) -> bool:
     the tree it was asked to tend.
     """
     return path.is_dir() and not path.is_symlink()
+
+
+def resolved_path(path: Path) -> Path | None:
+    """Return *path* resolved, symlinks collapsed; ``None`` when it cannot name a file.
+
+    The one rule for which file a path names, for the checks that judge a
+    file by what it is rather than how it is spelled: the protected-file
+    catalog (``otto.inventory.config.ProtectedPaths``) and the Jsonnet import
+    roots (``otto.templating.imports``). A NUL byte (``ValueError``), a
+    symlink loop (``RuntimeError`` before Python 3.13, ``OSError`` from it)
+    or any other resolution failure names no file.
+    """
+    try:
+        return path.resolve(strict=False)
+    except (ValueError, RuntimeError, OSError):
+        return None
+
+
+def is_under(path: PurePath, base: PurePath) -> bool:
+    """Whether *path* is *base* or lies beneath it, comparing COMPONENTS.
+
+    The one containment rule for paths otto has already spelled the way it
+    means them (resolved, normalized or anchored; this compares, it does not
+    resolve). Not a string prefix test: ``/var/lib/app`` does not contain
+    ``/var/lib/application/x``. A check that must exclude *base* itself
+    (strictly inside) is a different rule and says so at its site.
+    """
+    return path == base or base in path.parents
 
 
 def atomic_write_bytes(

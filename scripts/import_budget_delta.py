@@ -102,8 +102,8 @@ KNOWN_SURFACES = [
     "completion_project_handover", "test_project", "host_local_exec", "host_local_put",
     "host_local_get", "host_ssh_exec", "host_ssh_login", "dispatch_local_warm", "tracked_init",
     "tracked_env", "tracked_cache", "tracked_docker", "tracked_link", "tracked_tunnel",
-    "tracked_monitor", "tracked_cov", "tracked_reservation", "tracked_inventory", "tracked_schema",
-    "tracked_host_probe", "tracked_host_power",
+    "tracked_monitor", "tracked_cov", "tracked_reservation", "tracked_inventory", "tracked_lab",
+    "tracked_schema", "tracked_host_probe", "tracked_host_power", "tracked_tab_warm_templated",
 ]  # fmt: skip
 """The surfaces scripts/import_budget.py measures, literally: every record must hold each once.
 
@@ -119,8 +119,8 @@ REPO_SURFACES = [
     "test_project", "host_local_exec", "host_local_put", "host_local_get", "host_ssh_exec",
     "host_ssh_login", "dispatch_local_warm", "tracked_init", "tracked_env", "tracked_cache",
     "tracked_docker", "tracked_link", "tracked_tunnel", "tracked_monitor", "tracked_cov",
-    "tracked_reservation", "tracked_inventory", "tracked_schema", "tracked_host_probe",
-    "tracked_host_power",
+    "tracked_reservation", "tracked_inventory", "tracked_lab", "tracked_schema",
+    "tracked_host_probe", "tracked_host_power", "tracked_tab_warm_templated",
 ]  # fmt: skip
 """The surfaces that run inside the harness's generated repo (a `project_files` surface).
 

@@ -12,22 +12,36 @@ flat form, byte for byte as before instances existed.
 No credentials, ever: they live in the ``[creds]`` store or the record
 (spec §9.4), so a document is shareable, diffable and committable without
 leaking one.
+
+The same stated projection is what a Jsonnet template reads as its inputs
+(:func:`template_inputs`), narrowed further to the record fields a template
+may see (:data:`TEMPLATE_PUBLIC_FIELDS`).
 """
 
 import hashlib
 import json
-from collections.abc import Mapping
+import types
+import typing
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ValidationError
 from typing_extensions import final
 
 from ..models.inventory import INVENTORY_V2_FORMAT, InventoryInstance, InventoryRecord
-from ..utils import atomic_write_bytes
-from .discovery import Discovery
+from ..utils import annotation_is_subclass, atomic_write_bytes
+from .creds import below_creds_overlay
+from .discovery import Discovery, discover_inventory
 from .errors import InventoryDataError
 from .json_backend import is_comment_key, parse_discovery_document
+
+if TYPE_CHECKING:
+    from .view import InventoryView
+
+_M = typing.TypeVar("_M", bound=BaseModel)
 
 
 def stated_fields(record: InventoryRecord) -> dict[str, Any]:
@@ -46,9 +60,366 @@ def stated_fields(record: InventoryRecord) -> dict[str, Any]:
     would be a secret in a file the whole point of which is that it can be
     shared.
     """
-    dumped = record.model_dump(mode="json", exclude_unset=True, exclude_none=True)
+    dumped = _stated_dump(record)
     dumped.pop("creds", None)
     return dumped
+
+
+def _stated_dump(record: InventoryRecord) -> dict[str, Any]:
+    """Dump what *record* states (``exclude_unset``, ``exclude_none``) as JSON types.
+
+    The one spelling of "stated" behind :func:`stated_fields` and
+    :func:`public_record`.
+    """
+    return record.model_dump(mode="json", exclude_unset=True, exclude_none=True)
+
+
+class _NotPlainError(Exception):
+    """A value :func:`_plain` refuses; private, and never carries the value."""
+
+
+_PLAIN_LEAVES: tuple[type, ...] = (str, int, float, bool, type(None))
+
+
+def _plain(annotation: Any, value: Any) -> Any:
+    """Return *value* as plain data, read the way the base schema's *annotation* declares it.
+
+    The read a template's inputs are validated from: it never serializes,
+    formats or converts a value, so a value of a backend's own type (one
+    with its own serializer, say) cannot put a secret in the result or in
+    an error. A model instance's fields are read from its ``__dict__``
+    through ``object``'s own attribute lookup. A leaf must be exactly a ``str``, ``int``, ``float``,
+    ``bool`` or ``None``, a list exactly a ``list`` or ``tuple`` and a
+    mapping exactly a ``dict`` with ``str`` keys (subclasses refused). Where
+    *annotation* declares an otto model, an instance of it (or of a subclass)
+    is read as a dict of the fields that model declares and the instance
+    states, so a subclass's own fields are dropped; a dict is read with those
+    fields' annotations. Whether the result is valid is the schema's to say:
+    this only decides what may reach it.
+
+    Raises:
+        _NotPlainError: Something in *value* is none of these.
+    """
+    annotation = _unwrapped(annotation)
+    model = _declared_model(annotation)
+    if model is not None and isinstance(value, model):
+        # Through object's own lookup, so no attribute override on the value's class runs.
+        stated = object.__getattribute__(value, "__pydantic_fields_set__")
+        held = object.__getattribute__(value, "__dict__")
+        return {
+            name: _plain(field.annotation, held[name])
+            for name, field in model.model_fields.items()
+            if name in stated and name in held
+        }
+    kind = type(value)
+    if kind in _PLAIN_LEAVES:
+        return value
+    if kind in (list, tuple):
+        item = _argument(annotation, origins=(list, tuple), index=0)
+        return [_plain(item, v) for v in value]
+    if kind is dict:
+        if not all(type(k) is str for k in value):
+            raise _NotPlainError
+        if model is not None:
+            fields = model.model_fields
+            return {
+                k: _plain(fields[k].annotation if k in fields else Any, v) for k, v in value.items()
+            }
+        item = _argument(annotation, origins=(dict,), index=1)
+        return {k: _plain(item, v) for k, v in value.items()}
+    raise _NotPlainError
+
+
+def _unwrapped(annotation: Any) -> Any:
+    """Return *annotation* without its ``Annotated[...]`` metadata."""
+    while typing.get_origin(annotation) is typing.Annotated:
+        annotation = typing.get_args(annotation)[0]
+    return annotation
+
+
+def _declared_model(annotation: Any) -> "type[BaseModel] | None":
+    """Return the model *annotation* declares, directly or as a member of a union, else ``None``.
+
+    A generic alias (``list[X]``) declares none
+    (:func:`~otto.utils.annotation_is_subclass`).
+    """
+    if annotation_is_subclass(annotation, BaseModel):
+        return annotation
+    if typing.get_origin(annotation) in (typing.Union, types.UnionType):
+        for member in typing.get_args(annotation):
+            model = _declared_model(_unwrapped(member))
+            if model is not None:
+                return model
+    return None
+
+
+def _argument(annotation: Any, *, origins: tuple[type, ...], index: int) -> Any:
+    """Return *annotation*'s type argument at *index* when it is one of *origins*, else ``Any``."""
+    arguments = typing.get_args(annotation) if typing.get_origin(annotation) in origins else ()
+    return arguments[index] if len(arguments) > index else Any
+
+
+def _validated(model: "type[_M]", data: dict[str, Any]) -> "tuple[_M | None, list[str]]":
+    """Validate *data*, an instance's plain read, as *model*: the result, or the refused fields.
+
+    The refused fields are only the top-level names: a location's deeper
+    parts are the backend's own keys, and an error's message or input may
+    quote a value. The schema's error is never returned, so a caller raises
+    its refusal outside any handler and keeps no context that quotes it.
+    """
+    try:
+        return model.model_validate(data), []
+    except ValidationError as e:
+        return None, sorted({str(err["loc"][0]) for err in e.errors() if err["loc"]}) or ["?"]
+
+
+def _plain_fields(
+    model: "type[BaseModel]", instance: BaseModel, fields: "frozenset[str] | tuple[str, ...]"
+) -> "tuple[dict[str, Any], list[str]]":
+    """Read *instance*'s stated *fields* as *model* declares them: the plain data, and the refused.
+
+    Only fields *model* declares and *instance* states, not ``None``, are
+    read (the "stated" rule of :func:`stated_fields`), each through
+    :func:`_plain` with *model*'s annotation, never *instance*'s class's, so
+    a subclass cannot widen a field. A field :func:`_plain` refuses is named
+    in the second list and left out of the first.
+    """
+    stated = object.__getattribute__(instance, "__pydantic_fields_set__")
+    held = object.__getattribute__(instance, "__dict__")
+    plain: dict[str, Any] = {}
+    refused: list[str] = []
+    for name in sorted(fields):
+        field = model.model_fields.get(name)
+        if field is None or name not in stated or held.get(name) is None:
+            continue
+        try:
+            plain[name] = _plain(field.annotation, held[name])
+        except _NotPlainError:
+            refused.append(name)
+    return plain, refused
+
+
+TEMPLATE_PUBLIC_FIELDS: frozenset[str] = frozenset(
+    {
+        "ip",
+        "interfaces",
+        "hw_version",
+        "sw_version",
+        "os_name",
+        "os_version",
+        "board",
+        "site",
+        "rack",
+        "shelf",
+        "slot",
+        "is_virtual",
+        "element_id",
+        "groups",
+        "labels",
+    }
+)
+"""The :class:`~otto.models.inventory.InventoryRecord` fields a template may read.
+
+Every record field is either here or in :data:`TEMPLATE_PRIVATE_FIELDS`, and
+a test fails when a new field is in neither, so a field is never exposed to
+templates by default.
+"""
+
+TEMPLATE_PRIVATE_FIELDS: frozenset[str] = frozenset({"creds", "extra"})
+"""The record fields a template never reads, credentials and the backend's free-form ``extra``."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class InstanceRole:
+    """One instance a record's key belongs to, and the role it plays there."""
+
+    instance: str
+    """The instance's name."""
+    role: "str | None"
+    """The role the key plays, or ``None`` for a member without a role."""
+
+
+def public_record(
+    *,
+    inventory: str,
+    key: str,
+    record: InventoryRecord,
+    instances: "Sequence[InstanceRole] | None",
+) -> dict[str, Any]:
+    """Return *record* as a template reads it: its stated public fields, *inventory* and *key*.
+
+    The boundary is an allowlist, validated against otto's own schema before
+    anything is serialized. Only :data:`TEMPLATE_PUBLIC_FIELDS` are read, so
+    neither ``creds`` nor ``extra`` is ever present, and each is read as
+    plain data the way :class:`~otto.models.inventory.InventoryRecord`
+    declares it, never through the record's own class: a
+    backend's subclass cannot widen a public field (an interface carrying a
+    password, say), and no value's own serializer runs. That plain data is
+    validated as an ``InventoryRecord``, and what a template reads is that
+    validated record's stated fields: a record built without validation
+    (``model_construct``) cannot smuggle a dict into ``labels``, a
+    credential into ``groups``, or a value whose own serializer would name
+    a secret.
+
+    ``instances`` (``[{"instance", "role"}]``, in the order given) is
+    present only when *instances* is not ``None``, that is, when the
+    inventory's backend supports instances; an empty list says the key
+    belongs to none.
+
+    Raises:
+        otto.inventory.errors.InventoryDataError: A public field does not
+            match otto's record schema. The message names the inventory,
+            the key and the fields, never a value.
+    """
+    public, refused = _plain_fields(InventoryRecord, record, TEMPLATE_PUBLIC_FIELDS)
+    validated: "InventoryRecord | None" = None
+    if not refused:
+        validated, refused = _validated(InventoryRecord, public)
+    if validated is None:
+        # Raised outside the handler, so the schema's error, which quotes the
+        # value, is not even the refusal's __context__.
+        raise InventoryDataError(
+            f"inventory {inventory!r}, key {key!r}: fields "
+            f"{', '.join(repr(f) for f in refused)} are missing or invalid for otto's "
+            "inventory record schema, so the record cannot be given to a template"
+        )
+    projected: dict[str, Any] = {"inventory": inventory, "key": key}
+    projected.update(_stated_dump(validated))
+    if instances is not None:
+        projected["instances"] = [{"instance": i.instance, "role": i.role} for i in instances]
+    return projected
+
+
+def public_instances(
+    *, inventory: str, instances: "Mapping[str, InventoryInstance]"
+) -> dict[str, InventoryInstance]:
+    """Return *instances* as a template may read them: otto's own instance schema, validated.
+
+    The one projection of a backend's instances for a template: both the
+    membership a record carries (:func:`public_record`'s ``instances``) and
+    the ``instances`` input are built from it. Only an instance's ``members``
+    and ``roles`` are read, as plain strings, lists and dicts, so a
+    backend's subclass cannot add a field (a password, say), and they are
+    validated as a fresh ``InventoryInstance`` before anything is
+    serialized, so an instance built without validation
+    (``model_construct``) cannot smuggle a value into either, nor run a
+    value's own serializer.
+
+    Raises:
+        otto.inventory.errors.InventoryDataError: An instance does not match
+            otto's instance schema. The message names the inventory and the
+            instance, never a value, and keeps no error.
+    """
+    projected: dict[str, InventoryInstance] = {}
+    for name in sorted(instances):
+        instance = _public_instance(instances[name])
+        if instance is None:
+            raise InventoryDataError(
+                f"inventory {inventory!r}, instance {name!r}: its 'members' or 'roles' are "
+                "invalid for otto's inventory instance schema, so the instance cannot be "
+                "given to a template"
+            )
+        projected[name] = instance
+    return projected
+
+
+def _public_instance(instance: InventoryInstance) -> "InventoryInstance | None":
+    """Return *instance*'s plain members and roles, validated; ``None`` when they do not fit.
+
+    ``None`` rather than raising, so neither a refused value nor the
+    schema's error, which may quote one, reaches the caller's refusal, not
+    even as its context.
+    """
+    plain, refused = _plain_fields(InventoryInstance, instance, ("members", "roles"))
+    if refused:
+        return None
+    validated, _ = _validated(InventoryInstance, plain)
+    return validated
+
+
+def _roles_by_key(*, instances: "Mapping[str, InventoryInstance]") -> dict[str, list[InstanceRole]]:
+    """Map each key to every instance it belongs to, once per role, sorted by instance then role.
+
+    One pass over the instances, so the cost is their total membership. Within
+    an instance, a member without a role comes before the roles, which are
+    sorted.
+    """
+    found: defaultdict[str, list[InstanceRole]] = defaultdict(list)
+    for name in sorted(instances):
+        instance = instances[name]
+        for key in instance.members:
+            found[key].append(InstanceRole(instance=name, role=None))
+        for role in sorted(instance.roles):
+            for key in instance.roles[role]:
+                found[key].append(InstanceRole(instance=name, role=role))
+    return found
+
+
+def template_inputs(*, view: "InventoryView", names: Sequence[str], project: str) -> dict[str, Any]:
+    """Return what a template reads: *project*, and each inventory in *names*, credential-free.
+
+    The result is ``{"project", "inventories", "instances"}``.
+    ``inventories`` maps each name to its :func:`public_record` list, sorted
+    by key. ``instances`` maps each name to its instances (``{instance:
+    {"members", "roles"}}``, :func:`public_instances`), or to ``None`` when
+    its backend has no notion of instances; each record's membership is
+    read from the same projection.
+
+    Only the inventories *names* declares are read, each one below its creds
+    overlay (:func:`~otto.inventory.creds.below_creds_overlay`), so neither a
+    record's nor the store's credentials enter.
+
+    Before each inventory's discovery it asks the operation's cancellation
+    (``otto.templating.memo.current_cancellation``); once that is set, it
+    raises ``otto.templating.errors.RenderCancelled`` and starts neither that
+    discovery nor any later one. A worker abandoned at a deadline inside one
+    inventory's discovery therefore never starts the next.
+
+    Raises:
+        TypeError: *names* is a single string rather than a sequence of names.
+        otto.inventory.errors.InventoryError: A name in *names* is not
+            configured in *view*, or a record's public fields do not match
+            otto's record schema (:func:`public_record`), or an instance
+            does not match otto's instance schema (:func:`public_instances`).
+    """
+    if isinstance(names, str):
+        raise TypeError(f"names must be a sequence of inventory names, not the string {names!r}")
+    # Imported here, so the import-light inventory paths never load the templating package.
+    from ..templating.errors import RenderCancelled
+    from ..templating.memo import current_cancellation
+
+    inventories: dict[str, list[dict[str, Any]]] = {}
+    instance_maps: dict[str, dict[str, Any] | None] = {}
+    for name in dict.fromkeys(names):
+        if current_cancellation():
+            raise RenderCancelled(
+                f"inventory {name!r}: the operation was cancelled before its discovery started"
+            )
+        discovery = discover_inventory(
+            inventory=below_creds_overlay(inventory=view.select_name(name=name))
+        )
+        declared = (
+            None
+            if discovery.instances is None
+            else public_instances(inventory=name, instances=discovery.instances)
+        )
+        roles = None if declared is None else _roles_by_key(instances=declared)
+        inventories[name] = [
+            public_record(
+                inventory=name,
+                key=key,
+                record=discovery.records[key],
+                instances=None if roles is None else roles.get(key, []),
+            )
+            for key in sorted(discovery.records)
+        ]
+        instance_maps[name] = (
+            None
+            if declared is None
+            else {i: _instance_stated(declared[i]) for i in sorted(declared)}
+        )
+    return {"project": project, "inventories": inventories, "instances": instance_maps}
 
 
 def records_to_document(*, records: "Mapping[str, InventoryRecord]") -> dict[str, Any]:

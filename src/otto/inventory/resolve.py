@@ -10,6 +10,7 @@ from ..host.inventory_ref import (
     InventoryRef,
     InventoryReference,
     normalize_reference,
+    recording_fields,
 )
 from ..models.inventory import INVENTORY_KEY_FIELDS, MERGED_INVENTORY_FIELDS
 from .creds import merge_creds
@@ -25,6 +26,9 @@ class ResolvedEntry:
 
     host_data: dict[str, Any]
     ref: InventoryRef
+    supplied: frozenset[str] = frozenset()
+    """The fields of :attr:`host_data` the join decided: each copied from the record, and
+    ``creds`` when the record's creds reach the host. Empty for an inline entry."""
 
 
 def _normalized(host_data: dict[str, Any]) -> "InventoryReference | None":
@@ -148,7 +152,11 @@ def _join(
 ) -> ResolvedEntry:
     """Join *host_data* with *reference*'s record in *inventory*: the one join of every resolver.
 
-    The partition rule is described under :func:`resolve_view_entry`.
+    The partition rule is described under :func:`resolve_view_entry`. The
+    result's :attr:`ResolvedEntry.supplied` names the fields the join
+    decided. In a recorded build (:mod:`otto.host.provenance`), the creds are
+    attributed here, as their merge decides; every other field is attributed
+    by the host factory's merge, which reads :attr:`ResolvedEntry.supplied`.
     """
     key = reference.key
     inline = sorted(
@@ -178,23 +186,34 @@ def _join(
     # would replace each with the mask; a revealed one would leave the plain
     # password in this frame's locals for a traceback to show).
     stated = record.model_dump(exclude_none=True, exclude_unset=True)
-    for field_name in sorted(inventory.supplies - INVENTORY_KEY_FIELDS - MERGED_INVENTORY_FIELDS):
-        if field_name in stated:
-            resolved[field_name] = stated[field_name]
+    copied = [
+        name
+        for name in sorted(inventory.supplies - INVENTORY_KEY_FIELDS - MERGED_INVENTORY_FIELDS)
+        if name in stated
+    ]
+    for field_name in copied:
+        resolved[field_name] = stated[field_name]
     if "creds" in inventory.supplies:
         # The set has one member; a second one needs its own compose step here.
         inline_creds = host_data.get("creds")
         if isinstance(inline_creds, list):
             # Spec 2026-09-06 §6.2: the lab file is the highest layer and leads.
+            lower = stated.get("creds", [])
             resolved["creds"] = merge_creds(
-                lower=stated.get("creds", []),
+                lower=lower,
                 higher=inline_creds,
                 key=key,
                 lower_name="inventory record",
                 higher_name="lab file",
             )
+            copied.append("creds")
+            if recording_fields():
+                _note_lab_creds_merge(lower=lower, higher=inline_creds)
         elif inline_creds is None and "creds" in stated:
             resolved["creds"] = stated["creds"]
+            copied.append("creds")
+            if recording_fields():
+                _note_record_creds(creds=stated["creds"])
         # any other inline shape (the legacy dict) stays for the host spec's own error
     return ResolvedEntry(
         host_data=resolved,
@@ -205,4 +224,29 @@ def _join(
             name=reference.name,
             qualified=reference.qualified,
         ),
+        supplied=frozenset(copied),
     )
+
+
+def _note_lab_creds_merge(*, lower: list[Any], higher: list[Any]) -> None:
+    """Attribute the join's cred merge, lab file over record, in a recorded build."""
+    from ..host import provenance
+
+    provenance.note_cred_merge(
+        lower=lower,
+        higher=higher,
+        lower_layer=provenance.FieldLayer.RECORD,
+        higher_layer=provenance.FieldLayer.LAB_DATA,
+    )
+
+
+def _note_record_creds(*, creds: list[Any]) -> None:
+    """Attribute a record's creds that reach the host whole, in a recorded build.
+
+    Each field keeps the winner the creds store's merge recorded for it
+    (:class:`~otto.inventory.creds.CredsOverlay`, which ran in the record's
+    lookup), and is otherwise the record's.
+    """
+    from ..host import provenance
+
+    provenance.note_cred_fields(creds=creds, layer=provenance.FieldLayer.RECORD, keep_prior=True)

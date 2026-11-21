@@ -12,18 +12,28 @@ accepts. Every site that lists a source's lab files lists them through
 :class:`~otto.labs.sources.LabFileRule`; of those, the sites outside a
 backend read only the files :func:`otto_decodes`.
 
-Importing this module is light: the parsers load when a function runs.
+A ``.jsonnet`` entry is a lab file too, read through its ``jsonnet`` lab
+source: :func:`read_lab_document` with its :class:`RenderInputs` renders it
+(:func:`render_outcome`, the one place a render's key and import policy are
+built) and then reads the rendered document exactly as a hand-written one.
+
+Importing this module is light: the parsers and the templating core load
+when a function runs.
 """
 
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import final
 
 if TYPE_CHECKING:
+    from ..inventory.config import ProtectedPaths
+    from ..inventory.view import InventoryView
+    from ..templating.memo import RenderKey, RenderOutcome
+    from ..templating.render import RenderResult
     from .drops import Diagnostic
     from .json_repository import LabDocument
     from .sources import LabFileRule
@@ -50,6 +60,33 @@ class LabDocumentSource:
 
     provenance: "Mapping[str, Any] | None" = None
     """The ``_otto.provenance`` table of a rendered document; ``None`` for a plain one."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class RenderInputs:
+    """What one ``jsonnet`` lab source renders its entry files with, in one operation."""
+
+    view: "InventoryView"
+    """The operation's inventory view.
+
+    It holds the inventories a render reads, its protected-file catalog and
+    its render memo (:attr:`~otto.inventory.InventoryView.render_memo`)."""
+
+    inventories: tuple[str, ...]
+    """The inventories the source declares, and the only ones a render reads."""
+
+    project: str
+    """The declaring project's name, a template's ``otto.project``."""
+
+    project_root: Path
+    """The declaring project's root, which is the render memo's scope."""
+
+    import_roots: tuple[Path, ...]
+    """The directories an import may resolve under, in search order."""
+
+    entries: tuple[Path, ...]
+    """The source's entry files, as its ``paths`` expand: the only files it renders."""
 
 
 @final
@@ -146,61 +183,200 @@ def expand_lab_files(
 
 
 def otto_decodes(path: Path) -> bool:
-    """Return whether otto itself decodes *path* as a lab document.
+    """Return whether otto itself decodes *path* as a written lab document.
 
-    THE single decision of which lab files :func:`read_lab_document` can read:
-    a file with the json backend's suffix
-    (:data:`~otto.labs.sources.JSON_FILE_RULE`). A backend with its own
+    THE single decision of which lab files :func:`read_lab_document` can read
+    on their own: a file with the json backend's suffix
+    (:data:`~otto.labs.sources.JSON_FILE_RULE`). A ``jsonnet`` source's
+    entry is not one: :func:`read_lab_document` reads it only through its
+    source's render inputs. A backend with its own
     :class:`~otto.labs.sources.LabFileRule` may list files otto cannot decode
-    (a ``.yaml`` file, say); such a file is still fingerprinted, but every
-    reader outside its backend (the ``otto init`` doctor, the Next steps panel,
-    completion's declared-links read) skips it rather than misread it as
-    malformed JSON.
+    (a ``.yaml`` file, say); such a file, or a Jsonnet entry, is still
+    fingerprinted, but every reader outside its backend (the ``otto init``
+    doctor, the Next steps panel, completion's declared-links read) skips it
+    rather than misread it as malformed JSON.
     """
     from .sources import JSON_FILE_RULE
 
     return path.suffix == JSON_FILE_RULE.suffix
 
 
-def _open_lab_json(path: Path) -> IO[str]:
-    """Open the ``.json`` lab file *path* as text, in the locale's default encoding.
+def render_key(entry: Path, inputs: RenderInputs, *, protected: "ProtectedPaths") -> "RenderKey":
+    """Return the memo key *entry* renders under with *inputs*: THE one construction of a lab's.
 
-    The encoding is left to the locale, as the loader has always read lab
-    files: a strict UTF-8 decode would refuse a locale-encoded file that loads
-    today (on Windows, say).
+    Everything the render's outcome depends on: the declaring project (the
+    memo's scope), the resolved entry, the import roots, the inventories, the
+    project name, the view's protected-file catalog (*protected*, the value
+    the caller resolved once from :attr:`~otto.inventory.InventoryView.protected`)
+    and the packaged library's digest. :func:`render_outcome` renders under
+    it, and a source's validated read is kept under its entries' keys.
+
+    Raises:
+        TemplatingError: The packaged library is missing.
     """
-    return path.open()
+    from ..templating.imports import library_digest
+    from ..templating.memo import RenderKey
+
+    return RenderKey(
+        scope=inputs.project_root,
+        entry=entry.resolve(),
+        import_roots=inputs.import_roots,
+        inventories=inputs.inventories,
+        project=inputs.project,
+        protected=protected,
+        library_digest=library_digest(),
+    )
 
 
-def read_lab_document(path: Path) -> LabDocumentSource:
+def render_outcome(entry: Path, inputs: RenderInputs) -> "RenderOutcome":
+    """Return how the Jsonnet *entry* renders under *inputs*: the operation's one evaluation.
+
+    THE one place a lab render's key and import policy are built, so the
+    policy that refuses an import and the key that identifies the render
+    always agree. The view's protected-file catalog is resolved once
+    (:attr:`~otto.inventory.InventoryView.protected`), and that one value
+    goes into both the :class:`~otto.templating.memo.RenderKey` and the
+    :class:`~otto.templating.imports.ImportPolicy`. The render runs through
+    the view's memo (:meth:`~otto.templating.memo.RenderMemo.get_or_render`),
+    so every reader of one operation shares its outcome: it builds the
+    template's ``otto`` argument (:func:`~otto.inventory.snapshot.template_inputs`)
+    and renders (:func:`~otto.templating.render.render`), and both ask the
+    operation's cancellation first, so a render whose operation was given up
+    on never reaches the evaluator.
+
+    An *entry* that is not one of :attr:`RenderInputs.entries`, or that is
+    a protected file, or a view whose catalog refuses to render
+    (:attr:`~otto.inventory.ProtectedPaths.refusal`: a view no builder made,
+    or one whose user settings file cannot be read), is refused before
+    anything is read: its outcome is that error, and nothing
+    is memoized. An :class:`~otto.inventory.errors.InventoryError` raised
+    while the ``otto`` argument is built is settled as the key's error,
+    naming *entry* and the error's class, so no other reader of the
+    operation retries the discovery.
+    """
+    from ..inventory.errors import InventoryError
+    from ..inventory.snapshot import template_inputs
+    from ..templating.errors import RenderCancelled, RenderError, TemplatingError
+    from ..templating.imports import ImportPolicy
+    from ..templating.memo import RenderOutcome
+    from ..templating.render import RenderRequest, render
+    from .drops import is_timeout
+
+    resolved = entry.resolve()
+    if resolved not in {e.resolve() for e in inputs.entries}:
+        return RenderOutcome(error=f"{entry}: not an entry file of this lab source's paths")
+    protected = inputs.view.protected()
+    if protected.contains(resolved):
+        return RenderOutcome(error=f"{entry}: a protected file is never rendered")
+    try:
+        key = render_key(entry, inputs, protected=protected)
+        policy = ImportPolicy(roots=inputs.import_roots, protected=protected)
+    except TemplatingError as e:  # the catalog refuses to render, or no packaged library
+        return RenderOutcome(error=f"{entry}: {e}")
+
+    def run() -> "RenderResult":
+        try:
+            otto = template_inputs(
+                view=inputs.view, names=inputs.inventories, project=inputs.project
+            )
+        except InventoryError as e:
+            # Settled as the key's error (or its timeout), so the operation's
+            # other readers never retry a discovery that already failed.
+            if is_timeout(e):
+                raise RenderCancelled(f"{entry}: {e}") from e
+            raise RenderError(f"{entry}: {type(e).__name__}: {e}", origin=entry, line=None) from e
+        return render(RenderRequest(entry=entry, tla={"otto": otto}, policy=policy))
+
+    return inputs.view.render_memo.get_or_render(key, run)
+
+
+def read_lab_document(path: Path, *, render: "RenderInputs | None" = None) -> LabDocumentSource:
     """Read the lab file *path*: decode it, wrap its secrets, validate its sections.
 
     The secrets are wrapped (:func:`~otto.models.base.wrap_secret_values`)
     before the section contract runs, so no caller ever holds a parsed
     password as a plain string.
 
+    A ``.jsonnet`` *path* is an entry file of a ``jsonnet`` lab source, read
+    with that source's *render* inputs: its document is the one
+    :func:`render_outcome` renders, then decoded, wrapped and validated as a
+    ``.json`` file's is, with the rendered ``_otto.provenance`` table as
+    :attr:`LabDocumentSource.provenance`.
+
     Raises
     ------
     LabRepositoryError
         Naming the file, when it cannot be opened or decoded, holds malformed
         JSON, or breaks the section contract
-        (:func:`otto.labs.json_repository.parse_lab_sections`).
+        (:func:`otto.labs.json_repository.parse_lab_sections`); for a
+        ``.jsonnet`` file, when *render* is ``None`` or the render failed.
+    RenderCancelled
+        For a ``.jsonnet`` file whose render was cancelled
+        (:class:`~otto.templating.errors.RenderCancelled`).
     """
-    import json
-
-    from ..models.base import wrap_secret_values
+    from ..models.base import JsonFileError, read_json_file, wrap_secret_values
     from .errors import LabRepositoryError
     from .json_repository import parse_lab_sections
+    from .sources import JSONNET_FILE_RULE
 
-    try:
-        with _open_lab_json(path) as f:
-            data = json.load(f)
-    except json.JSONDecodeError as e:
-        raise LabRepositoryError(f"Lab file '{path}' contains malformed JSON: {e}") from e
-    except (OSError, UnicodeDecodeError) as e:
-        raise LabRepositoryError(f"Lab file '{path}' could not be read: {e}") from e
+    provenance: Mapping[str, Any] | None = None
+    if path.suffix == JSONNET_FILE_RULE.suffix:
+        if render is None:
+            raise LabRepositoryError(
+                f"{path}: a Jsonnet entry is read through its jsonnet lab source"
+            )
+        data = rendered_data(path, render)
+        provenance = _provenance(data)
+    else:
+        try:
+            data = read_json_file(path)
+        except JsonFileError as e:
+            what = "contains malformed JSON" if e.malformed else "could not be read"
+            raise LabRepositoryError(f"Lab file '{path}' {what}: {e}") from e.__cause__
     wrap_secret_values(data)
-    return LabDocumentSource(origin=path, sections=parse_lab_sections(data, str(path)))
+    return LabDocumentSource(
+        origin=path, sections=parse_lab_sections(data, str(path)), provenance=provenance
+    )
+
+
+def rendered_data(path: Path, render: RenderInputs) -> object:
+    """Return the JSON value the entry *path* renders to, through :func:`render_outcome`.
+
+    A cancelled render is no problem with the file, so it is never a
+    :class:`~otto.labs.errors.LabRepositoryError`: it raises the templating
+    layer's own :class:`~otto.templating.errors.RenderCancelled`, which
+    :func:`read_source` does not collect, and the source that rendered it
+    reports the whole read as its timeout.
+
+    Raises:
+        LabRepositoryError: Naming *path*, when the render failed.
+        RenderCancelled: Naming *path*, when the render was cancelled.
+    """
+    from ..templating.errors import RenderCancelled, RenderError, without_entry
+    from .errors import LabRepositoryError
+
+    outcome = render_outcome(path, render)
+    if outcome.timed_out:
+        raise RenderCancelled(
+            f"Lab file '{path}' was not rendered: {without_entry(outcome.error, path)}"
+        )
+    if outcome.result is None:
+        raise LabRepositoryError(
+            f"Lab file '{path}' could not be rendered: {without_entry(outcome.error, path)}"
+        )
+    try:
+        return outcome.result.value()
+    except RenderError as e:
+        raise LabRepositoryError(
+            f"Lab file '{path}' could not be rendered: {without_entry(e, path)}"
+        ) from e
+
+
+def _provenance(data: object) -> "Mapping[str, Any] | None":
+    """Return a rendered document's ``_otto.provenance`` table, or ``None`` when it has none."""
+    meta = data.get("_otto") if isinstance(data, dict) else None
+    provenance = meta.get("provenance") if isinstance(meta, dict) else None
+    return provenance if isinstance(provenance, dict) else None
 
 
 def accepted_documents(read: SourceRead, *, best_effort: bool) -> "list[LabDocument]":
@@ -235,7 +411,9 @@ def read_source(
     in-source duplicate rules against state threaded across *paths* only: two
     sources may declare the same lab, one source may not. A file that cannot be
     read or parsed is a problem, never raised, and the files after it are still
-    read; a rejected file leaves the duplicate state as it was.
+    read; a rejected file leaves the duplicate state as it was. A cancelled
+    render (:class:`~otto.templating.errors.RenderCancelled`) is no file's
+    problem: it propagates, and no file after it is read.
     """
     from .drops import Diagnostic
     from .errors import LabRepositoryError
@@ -250,7 +428,11 @@ def read_source(
         try:
             source = reader(path)
             document = parse_lab_document(
-                source.sections, path, seen_labs=seen_labs, seen_elements=seen_elements
+                source.sections,
+                path,
+                seen_labs=seen_labs,
+                seen_elements=seen_elements,
+                provenance=source.provenance,
             )
         except LabRepositoryError as e:
             problems.append(Diagnostic(where=str(path), reason=str(e)))

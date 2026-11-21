@@ -21,6 +21,7 @@ bootstrap path.
 
 import dataclasses
 import json
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,7 +36,8 @@ if TYPE_CHECKING:
     from ..creds.config import CredsIdentity
     from ..host.inventory_ref import InventoryReference
     from ..registry import FrozenMap
-    from .config import BindingIdentity
+    from ..templating.memo import RenderMemo
+    from .config import BindingIdentity, ProtectedPaths
     from .protocol import Inventory
 
 
@@ -245,6 +247,43 @@ def _stat_paths_of(inventory: object) -> "list[Path] | None":
     return stat() if callable(stat) else None
 
 
+def _no_protection() -> "ProtectedPaths":
+    """Return :data:`~otto.inventory.config.NO_CATALOG`: a view no builder made has no catalog."""
+    from .config import NO_CATALOG  # deferred: config imports this module
+
+    return NO_CATALOG
+
+
+@final
+class RenderMemoSlot:
+    """Where one operation's render memo lives: made on first use, shared by every copy of a view.
+
+    A view built afresh gets a new, empty slot; :func:`dataclasses.replace`
+    copies the reference, so every view derived from one operation's view
+    reaches one memo. The memo is made the first time
+    :attr:`InventoryView.render_memo` is read, so a process that never reads
+    it never imports :mod:`otto.templating.memo`. One reader does so whether
+    or not a template is configured: completion's enumeration takes each
+    project's cancellation token from the memo, so a cold TAB imports
+    ``otto.templating``, its ``memo`` and its ``errors`` (never a Jsonnet
+    binding, which only a render loads).
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._memo: "RenderMemo | None" = None
+
+    def get(self) -> "RenderMemo":
+        """Return the operation's memo, making it on the first call (one per slot, under a lock)."""
+        if self._memo is None:
+            with self._lock:
+                if self._memo is None:
+                    from ..templating.memo import RenderMemo  # deferred: bootstrap path
+
+                    self._memo = RenderMemo()
+        return self._memo
+
+
 @final
 @dataclass(frozen=True, kw_only=True, eq=False)
 class InventoryView:
@@ -273,6 +312,35 @@ class InventoryView:
 
     A qualified reference to any other name raises :func:`needs_view_message`,
     whatever :attr:`inventories` holds (see :meth:`of_default`)."""
+    protected: "Callable[[], ProtectedPaths]" = _no_protection
+    """Return the catalog of files no template may read, computed on first call.
+
+    Every builder in :mod:`otto.inventory.config` sets it
+    (:func:`~otto.inventory.config.protected_paths` over the view's own
+    settings files and tables). A view built by hand has no catalog
+    (:data:`~otto.inventory.config.NO_CATALOG`), so a template is never
+    rendered through it; its hand-written lab files read as before. A copy
+    (:meth:`for_project`, :meth:`with_refusal_hook`) keeps it."""
+    _render_memo_slot: RenderMemoSlot = field(
+        default_factory=RenderMemoSlot, compare=False, repr=False
+    )
+    """Where the operation's :attr:`render_memo` lives: a copy shares it, a new view has its own."""
+
+    @property
+    def render_memo(self) -> "RenderMemo":
+        """Return the operation's render memo, in which each Jsonnet render runs once per key.
+
+        A view stands for one operation (a run, a ``--list-labs``, a doctor
+        pass, one completion rebuild), so every caller of the builders in
+        :mod:`otto.inventory.config` builds one view per operation, and a
+        long-lived process builds one per lab load. A copy
+        (:meth:`for_project`, :meth:`with_refusal_hook`, and every view the
+        lab sources derive from one) shares this memo through
+        its private memo slot, so every reader of one operation sees one
+        evaluation; a view built afresh starts an empty memo, so the next
+        operation sees every edit.
+        """
+        return self._render_memo_slot.get()
 
     @classmethod
     def of_default(cls, *, inventory: "Inventory | None") -> "InventoryView":

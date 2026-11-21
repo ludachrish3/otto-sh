@@ -18,7 +18,10 @@ It reads three committed sources of truth and cross-checks four claims:
    tagged ``py3-none-<platform>``, which serves every version; ``per-version``
    does not).
 4. Each such package really has an installable wheel for every supported minor
-   on the documented Linux target.
+   on the documented Linux target, wherever the dependency markers select it
+   there. A package reached only behind a marker the target does not satisfy
+   (``gojsonnet`` is Linux aarch64 only) is not installed on it, so it owes the
+   target no wheel; the lock records no wheel for it there either.
 
 Claim 4 is the one that matters inside the gap: a missing wheel there does not
 surface until ``pip install --no-index`` runs on the isolated host, long after
@@ -40,6 +43,7 @@ import sys
 from pathlib import Path
 
 import tomli
+from packaging.markers import Marker
 
 ROOT_PACKAGE = "otto-sh"
 SECTION_HEADING = "### Native-extension dependencies"
@@ -125,27 +129,58 @@ def classify(wheels: list[dict]) -> str:
     return PER_VERSION_PURE_FALLBACK if len(binary) != len(tags) else PER_VERSION
 
 
-def runtime_closure(lock: dict) -> dict[str, list[dict]]:
+def target_environment(minor: tuple[int, int], arch: str = TARGET_ARCH) -> dict[str, str]:
+    """Return the PEP 508 marker environment of CPython *minor* on Linux *arch*."""
+    major, minor_number = minor
+    version = f"{major}.{minor_number}"
+    return {
+        "implementation_name": "cpython",
+        "implementation_version": f"{version}.0",
+        "os_name": "posix",
+        "platform_machine": arch,
+        "platform_python_implementation": "CPython",
+        "platform_release": "",
+        "platform_system": "Linux",
+        "platform_version": "",
+        "python_full_version": f"{version}.0",
+        "python_version": version,
+        "sys_platform": "linux",
+    }
+
+
+def runtime_closure(
+    lock: dict, environment: "dict[str, str] | None" = None
+) -> dict[str, list[dict]]:
     """Map every transitively-reachable runtime package to its lock entries.
 
     Walks ``dependencies`` only. ``dev-dependencies`` are excluded by
     construction: they are not installed by ``pip install otto-sh`` and never
     belong in an air-gap bundle, so letting them reach the docs table would
     make the gate demand rows for packages operators never download.
+
+    With an *environment* (a PEP 508 marker environment, such as
+    :func:`target_environment`), the walk follows an edge only when its
+    ``marker`` (if any) holds there, so a package reached only behind markers
+    the environment does not satisfy is left out, transitively.
     """
     entries: dict[str, list[dict]] = {}
     for package in lock["package"]:
         entries.setdefault(package["name"], []).append(package)
 
+    def followed(dependency: dict) -> bool:
+        marker = dependency.get("marker")
+        return environment is None or marker is None or Marker(marker).evaluate(environment)
+
     reached: dict[str, list[dict]] = {}
-    queue = [dep["name"] for dep in entries.get(ROOT_PACKAGE, [{}])[0].get("dependencies", [])]
+    root = entries.get(ROOT_PACKAGE, [{}])[0].get("dependencies", [])
+    queue = [dep["name"] for dep in root if followed(dep)]
     while queue:
         name = queue.pop()
         if name in reached or name not in entries:
             continue
         reached[name] = entries[name]
         for entry in entries[name]:
-            queue.extend(dep["name"] for dep in entry.get("dependencies", []))
+            queue.extend(dep["name"] for dep in entry.get("dependencies", []) if followed(dep))
     return reached
 
 
@@ -232,11 +267,19 @@ def binary_closure(lock: dict) -> dict[str, list[dict]]:
 
 
 def closure_wheel_gaps(lock: dict, minors: list[tuple[int, int]]) -> list[str]:
-    """Claim 4: each binary runtime dependency with no installable wheel for a minor."""
+    """Claim 4: each binary runtime dependency with no installable wheel for a minor.
+
+    A minor counts for a package only where the markers select the package on
+    the documented target under that minor (:func:`runtime_closure` with that
+    minor's :func:`target_environment`).
+    """
+    selected = {minor: runtime_closure(lock, target_environment(minor)).keys() for minor in minors}
     return [
         gap
         for name, wheels in sorted(binary_closure(lock).items())
-        for gap in wheel_gaps(name, wheels, minors, TARGET_ARCH)
+        for gap in wheel_gaps(
+            name, wheels, [minor for minor in minors if name in selected[minor]], TARGET_ARCH
+        )
     ]
 
 

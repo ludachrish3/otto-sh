@@ -54,7 +54,7 @@ _STAMP_INPUTS = [
     REPO_ROOT / "src" / "otto",
 ]
 
-# The fourteen first-party commands, in the order `otto --help` lists them:
+# The fifteen first-party commands, in the order `otto --help` lists them:
 # the registry's own, by origin, which is the one place that list is decided.
 # Each command page embeds its own --help.
 COMMANDS = builtin_command_names()

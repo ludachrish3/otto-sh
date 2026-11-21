@@ -3638,6 +3638,9 @@ member	otto.inventory:InventoryEnv.__eq__	method	sync	PK:other:-
 member	otto.inventory:InventoryEnv.__hash__	method	sync	-
 member	otto.inventory:InventoryEnv.anchor_dir	field
 member	otto.inventory:InventoryEnv.origin	field
+member	otto.inventory:InventoryEnv.own_table	field
+member	otto.inventory:InventoryEnv.protected	field
+member	otto.inventory:InventoryEnv.settings_file	field
 abstract	otto.inventory:InventoryEnv	@final @manifest:subclass=false
 name	otto.inventory:InventoryError	class
 mro	otto.inventory:InventoryError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
@@ -3660,7 +3663,7 @@ call	otto.inventory:InventoryUnreachableError	sync	PK:message:- KO:max_stale:N
 abstract	otto.inventory:InventoryUnreachableError	-
 name	otto.inventory:InventoryView	class
 mro	otto.inventory:InventoryView	-
-call	otto.inventory:InventoryView	sync	KO:inventories:- KO:bare_refused_by:O KO:project_root:N KO:on_refusal:N KO:keys:O KO:default_only:B:false
+call	otto.inventory:InventoryView	sync	KO:inventories:- KO:bare_refused_by:O KO:project_root:N KO:on_refusal:N KO:keys:O KO:default_only:B:false KO:protected:O KO:_render_memo_slot:O
 member	otto.inventory:InventoryView.bare_inventory	property:g--
 member	otto.inventory:InventoryView.bare_refused_by	field
 member	otto.inventory:InventoryView.default_only	field
@@ -3673,6 +3676,8 @@ member	otto.inventory:InventoryView.names	method	sync	-
 member	otto.inventory:InventoryView.of_default	classmethod	sync	KO:inventory:-
 member	otto.inventory:InventoryView.on_refusal	field
 member	otto.inventory:InventoryView.project_root	field
+member	otto.inventory:InventoryView.protected	field
+member	otto.inventory:InventoryView.render_memo	property:g--
 member	otto.inventory:InventoryView.select	method	sync	KO:reference:-
 member	otto.inventory:InventoryView.select_name	method	sync	KO:name:-
 member	otto.inventory:InventoryView.selected_name	method	sync	KO:reference:-
@@ -3681,18 +3686,20 @@ member	otto.inventory:InventoryView.with_refusal_hook	method	sync	KO:hook:-
 abstract	otto.inventory:InventoryView	@final @manifest:subclass=false
 name	otto.inventory:JsonInventory	class
 mro	otto.inventory:JsonInventory	-
-call	otto.inventory:JsonInventory	sync	PK:path:- KO:supplies:N
+call	otto.inventory:JsonInventory	sync	PK:path:- KO:supplies:N KO:import_paths:T:[] KO:env:N
 member	otto.inventory:JsonInventory.fingerprint	method	sync	-
 member	otto.inventory:JsonInventory.inventory_discovery	method	sync	-
 member	otto.inventory:JsonInventory.list_keys	method	sync	-
 member	otto.inventory:JsonInventory.lookup	method	sync	PK:key:-
 member	otto.inventory:JsonInventory.read_document	method	sync	KO:refuse:-
 member	otto.inventory:JsonInventory.stat_paths	method	sync	-
+member	otto.inventory:JsonInventory.templated	property:g--
 abstract	otto.inventory:JsonInventory	@final @manifest:subclass=false
 name	otto.inventory:JsonInventoryConfig	model
 mro	otto.inventory:JsonInventoryConfig	{otto.models:OttoModel}
 input	otto.inventory:JsonInventoryConfig	@manifest:construct=false	-	-	-
 member	otto.inventory:JsonInventoryConfig.__hash__	method	sync	-
+member	otto.inventory:JsonInventoryConfig.import_paths	field
 member	otto.inventory:JsonInventoryConfig.model_config	attribute
 member	otto.inventory:JsonInventoryConfig.path	field
 member	otto.inventory:JsonInventoryConfig.supplies	field
@@ -3713,6 +3720,17 @@ member	otto.inventory:NetBoxInventoryConfig.virtual_machines	field
 member	otto.inventory:NetBoxInventoryConfig.vm_filter	field
 member	otto.inventory:NetBoxInventoryConfig.vm_ip_source	field
 abstract	otto.inventory:NetBoxInventoryConfig	@final @manifest:subclass=false
+name	otto.inventory:ProtectedPaths	class
+mro	otto.inventory:ProtectedPaths	-
+call	otto.inventory:ProtectedPaths	sync	KO:files:- KO:refusal:N
+member	otto.inventory:ProtectedPaths.__eq__	method	sync	PK:other:-
+member	otto.inventory:ProtectedPaths.__hash__	method	sync	-
+member	otto.inventory:ProtectedPaths.contains	method	sync	PK:path:-
+member	otto.inventory:ProtectedPaths.contains_stat	method	sync	PK:st:-
+member	otto.inventory:ProtectedPaths.files	field
+member	otto.inventory:ProtectedPaths.refusal	field
+member	otto.inventory:ProtectedPaths.union	method	sync	PK:other:-
+abstract	otto.inventory:ProtectedPaths	@final @manifest:subclass=false
 name	otto.inventory:RecordDifference	class
 mro	otto.inventory:RecordDifference	-
 call	otto.inventory:RecordDifference	sync	@manifest:construct=false
@@ -3754,16 +3772,26 @@ member	otto.inventory:ResolvedEntry.__eq__	method	sync	PK:other:-
 member	otto.inventory:ResolvedEntry.__hash__	method	sync	-
 member	otto.inventory:ResolvedEntry.host_data	field
 member	otto.inventory:ResolvedEntry.ref	field
+member	otto.inventory:ResolvedEntry.supplied	field
 abstract	otto.inventory:ResolvedEntry	@final @manifest:subclass=false
 name	otto.inventory:SnapshotCache	class
 mro	otto.inventory:SnapshotCache	-
 call	otto.inventory:SnapshotCache	sync	@manifest:construct=false
+member	otto.inventory:SnapshotCache.consumed_snapshot	method	sync	-
 member	otto.inventory:SnapshotCache.fingerprint	method	sync	-
 member	otto.inventory:SnapshotCache.inventory_discovery	method	sync	-
 member	otto.inventory:SnapshotCache.list_keys	method	sync	-
 member	otto.inventory:SnapshotCache.lookup	method	sync	PK:key:-
 member	otto.inventory:SnapshotCache.refresh	method	sync	-
 abstract	otto.inventory:SnapshotCache	@final @manifest:subclass=false
+name	otto.inventory:SnapshotInfo	class
+mro	otto.inventory:SnapshotInfo	-
+call	otto.inventory:SnapshotInfo	sync	@manifest:construct=false
+member	otto.inventory:SnapshotInfo.__eq__	method	sync	PK:other:-
+member	otto.inventory:SnapshotInfo.__hash__	method	sync	-
+member	otto.inventory:SnapshotInfo.fetched_at	field
+member	otto.inventory:SnapshotInfo.served_stale	field
+abstract	otto.inventory:SnapshotInfo	@final @manifest:subclass=false
 name	otto.inventory:SupportsDiscovery	protocol
 mro	otto.inventory:SupportsDiscovery	-
 member	otto.inventory:SupportsDiscovery.inventory_discovery	method	sync	-
@@ -3783,7 +3811,7 @@ call	otto.inventory:build_inventory_from_declarations	sync	KO:declarations:- KO:
 name	otto.inventory:build_inventory_view	function
 call	otto.inventory:build_inventory_view	sync	KO:projects:- KO:user_settings_path:N
 name	otto.inventory:build_inventory_view_from_declarations	function
-call	otto.inventory:build_inventory_view_from_declarations	sync	KO:declarations:- KO:user_settings:- KO:user_settings_file:N
+call	otto.inventory:build_inventory_view_from_declarations	sync	KO:declarations:- KO:user_settings:- KO:user_settings_file:N KO:settings_files:T:[]
 name	otto.inventory:check_supplies	function
 call	otto.inventory:check_supplies	sync	PK:supplies:-
 name	otto.inventory:compile_inventory	function
@@ -3863,6 +3891,9 @@ call	otto.lab:run_on_all_hosts	coroutine	PK:cmds:- KO:pattern:N KO:concurrent:B:
 name	otto.labs:CompositeLabRepository	class
 mro	otto.labs:CompositeLabRepository	-
 call	otto.labs:CompositeLabRepository	sync	@manifest:construct=false
+member	otto.labs:CompositeLabRepository.declared_links_in_view	method	sync	KO:view:-
+member	otto.labs:CompositeLabRepository.declared_names_in_view	method	sync	KO:view:-
+member	otto.labs:CompositeLabRepository.host_listing_in_view	method	sync	KO:view:-
 member	otto.labs:CompositeLabRepository.lab_status_report	method	sync	KO:view:-
 member	otto.labs:CompositeLabRepository.list_host_summaries	method	sync	KO:inventory:N
 member	otto.labs:CompositeLabRepository.list_host_summaries_in_view	method	sync	KO:view:-
@@ -3888,6 +3919,13 @@ member	otto.labs:Diagnostic.__hash__	method	sync	-
 member	otto.labs:Diagnostic.reason	field
 member	otto.labs:Diagnostic.where	field
 abstract	otto.labs:Diagnostic	-
+name	otto.labs:HostListing	class
+mro	otto.labs:HostListing	-
+call	otto.labs:HostListing	sync	@manifest:construct=false
+member	otto.labs:HostListing.__eq__	method	sync	PK:other:-
+member	otto.labs:HostListing.names	field
+member	otto.labs:HostListing.summaries	field
+abstract	otto.labs:HostListing	@final @manifest:subclass=false
 name	otto.labs:HostSummary	class
 mro	otto.labs:HostSummary	-
 call	otto.labs:HostSummary	sync	KO:id:- KO:labs:O KO:lab_patterns:O KO:ip:S:"" KO:docker_capable:B:false KO:docker_priority:I:0 KO:os_type:N KO:logins:O KO:inventory_ref:O
@@ -3957,17 +3995,18 @@ call	otto.labs:LabSourceConstructionError	sync	@builtin:builtins.ValueError
 abstract	otto.labs:LabSourceConstructionError	-
 name	otto.labs:LabSourceEnv	class
 mro	otto.labs:LabSourceEnv	-
-call	otto.labs:LabSourceEnv	sync	KO:project_root:- KO:label:- KO:origin:- KO:profiles:-
+call	otto.labs:LabSourceEnv	sync	KO:project_root:- KO:label:- KO:origin:- KO:profiles:- KO:project_name:N
 member	otto.labs:LabSourceEnv.__eq__	method	sync	PK:other:-
 member	otto.labs:LabSourceEnv.__hash__	method	sync	-
 member	otto.labs:LabSourceEnv.label	field
 member	otto.labs:LabSourceEnv.origin	field
 member	otto.labs:LabSourceEnv.profiles	field
+member	otto.labs:LabSourceEnv.project_name	field
 member	otto.labs:LabSourceEnv.project_root	field
 abstract	otto.labs:LabSourceEnv	@final @manifest:subclass=false
 name	otto.labs:LabSourceFacts	class
 mro	otto.labs:LabSourceFacts	-
-call	otto.labs:LabSourceFacts	sync	KO:file_inputs:- KO:file_rule:O KO:key_roots:T:[]
+call	otto.labs:LabSourceFacts	sync	KO:file_inputs:- KO:file_rule:O KO:key_roots:N
 member	otto.labs:LabSourceFacts.__eq__	method	sync	PK:other:-
 member	otto.labs:LabSourceFacts.__hash__	method	sync	-
 member	otto.labs:LabSourceFacts.file_inputs	field
@@ -4008,6 +4047,14 @@ member	otto.labs:LoginSummary.login	field
 member	otto.labs:LoginSummary.protocols	field
 member	otto.labs:LoginSummary.proxy	field
 abstract	otto.labs:LoginSummary	@final @manifest:subclass=false
+name	otto.labs:SourceLinks	class
+mro	otto.labs:SourceLinks	-
+call	otto.labs:SourceLinks	sync	@manifest:construct=false
+member	otto.labs:SourceLinks.__eq__	method	sync	PK:other:-
+member	otto.labs:SourceLinks.entries	field
+member	otto.labs:SourceLinks.scope	field
+member	otto.labs:SourceLinks.source	field
+abstract	otto.labs:SourceLinks	@final @manifest:subclass=false
 name	otto.labs:SourceRef	class
 mro	otto.labs:SourceRef	-
 call	otto.labs:SourceRef	sync	KO:label:- KO:project_root:-
@@ -4018,12 +4065,14 @@ member	otto.labs:SourceRef.project_root	field
 abstract	otto.labs:SourceRef	@final @manifest:subclass=false
 name	otto.labs:SourceUnavailable	class
 mro	otto.labs:SourceUnavailable	-
-call	otto.labs:SourceUnavailable	sync	KO:source:- KO:scope:- KO:diagnostic:-
+call	otto.labs:SourceUnavailable	sync	KO:source:- KO:scope:- KO:diagnostic:- KO:timed_out:B:false
 member	otto.labs:SourceUnavailable.__eq__	method	sync	PK:other:-
 member	otto.labs:SourceUnavailable.__hash__	method	sync	-
+member	otto.labs:SourceUnavailable.cancellation	method	sync	-
 member	otto.labs:SourceUnavailable.diagnostic	field
 member	otto.labs:SourceUnavailable.scope	field
 member	otto.labs:SourceUnavailable.source	field
+member	otto.labs:SourceUnavailable.timed_out	field
 abstract	otto.labs:SourceUnavailable	@final @manifest:subclass=false
 name	otto.labs:SupportsDeclaredLinks	protocol
 mro	otto.labs:SupportsDeclaredLinks	-
@@ -4053,6 +4102,10 @@ name	otto.labs:SupportsLabStatus	protocol
 mro	otto.labs:SupportsLabStatus	-
 member	otto.labs:SupportsLabStatus.list_lab_status	method	sync	KO:view:-
 requires	otto.labs:SupportsLabStatus	list_lab_status
+name	otto.labs:SupportsOverridePolicy	protocol
+mro	otto.labs:SupportsOverridePolicy	-
+member	otto.labs:SupportsOverridePolicy.declared_overrides	method	sync	-
+requires	otto.labs:SupportsOverridePolicy	declared_overrides
 name	otto.labs:build_lab_sources	function
 call	otto.labs:build_lab_sources	sync	KO:projects:- KO:profiles:N
 name	otto.labs:host_summaries	function
@@ -5308,8 +5361,8 @@ member	otto.registry:BackendRegistry.peek	method	sync	KO:name:-
 member	otto.registry:BackendRegistry.prepare	method	sync	KO:name:- KO:raw:- KO:env:- KO:source:N
 member	otto.registry:BackendRegistry.project	method	sync	KO:name:-
 member	otto.registry:BackendRegistry.raw_items	method	sync	-
-member	otto.registry:BackendRegistry.register	method	sync	KO:name:- KO:entry:- KO:overwrite:B:false
-member	otto.registry:BackendRegistry.register_many	method	sync	PK:entries:- KO:overwrite:B:false
+member	otto.registry:BackendRegistry.register	method	sync	KO:name:- KO:entry:- KO:overwrite:B:false KO:yielding:B:false
+member	otto.registry:BackendRegistry.register_many	method	sync	PK:entries:- KO:overwrite:B:false KO:yielding:B:false
 member	otto.registry:BackendRegistry.revision	property:g--
 member	otto.registry:BackendRegistry.unregister	method	sync	KO:name:-
 abstract	otto.registry:BackendRegistry	@final @manifest:subclass=false
@@ -5397,8 +5450,8 @@ member	otto.registry:Registry.origin	method	sync	KO:name:-
 member	otto.registry:Registry.peek	method	sync	KO:name:-
 member	otto.registry:Registry.project	method	sync	KO:name:-
 member	otto.registry:Registry.raw_items	method	sync	-
-member	otto.registry:Registry.register	method	sync	KO:name:- KO:entry:- KO:overwrite:B:false
-member	otto.registry:Registry.register_many	method	sync	PK:entries:- KO:overwrite:B:false
+member	otto.registry:Registry.register	method	sync	KO:name:- KO:entry:- KO:overwrite:B:false KO:yielding:B:false
+member	otto.registry:Registry.register_many	method	sync	PK:entries:- KO:overwrite:B:false KO:yielding:B:false
 member	otto.registry:Registry.revision	property:g--
 member	otto.registry:Registry.unregister	method	sync	KO:name:-
 abstract	otto.registry:Registry	@final @manifest:subclass=false
@@ -5702,6 +5755,14 @@ member	otto.result:ShellResult.output	field
 member	otto.result:ShellResult.status	field
 member	otto.result:ShellResult.value	field
 abstract	otto.result:ShellResult	@final @manifest:subclass=false
+name	otto.session:BuiltLab	class
+mro	otto.session:BuiltLab	-
+call	otto.session:BuiltLab	sync	@manifest:construct=false
+member	otto.session:BuiltLab.__eq__	method	sync	PK:other:-
+member	otto.session:BuiltLab.__hash__	method	sync	-
+member	otto.session:BuiltLab.lab	field
+member	otto.session:BuiltLab.view	field
+abstract	otto.session:BuiltLab	@final @manifest:subclass=false
 name	otto.session:DemotedProject	class
 mro	otto.session:DemotedProject	-
 call	otto.session:DemotedProject	sync	@manifest:construct=false
@@ -5767,7 +5828,9 @@ member	otto.session:RequiredProject.reason	field
 member	otto.session:RequiredProject.required_by	field
 abstract	otto.session:RequiredProject	@final @manifest:subclass=false
 name	otto.session:build_lab	function
-call	otto.session:build_lab	sync	PK:projects:- KO:labs:-
+call	otto.session:build_lab	sync	PK:projects:- KO:labs:- KO:view:N
+name	otto.session:build_lab_and_view	function
+call	otto.session:build_lab_and_view	sync	PK:projects:- KO:labs:- KO:view:N
 name	otto.session:check_dependencies	function
 call	otto.session:check_dependencies	sync	KO:ctx:-
 name	otto.session:check_instruction_active	function

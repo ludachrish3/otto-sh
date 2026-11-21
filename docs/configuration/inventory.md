@@ -311,12 +311,10 @@ user file still declares a personal `[inventory]`, and the project's old bare
 references would otherwise resolve against your personal machines. A
 qualified `{"name": "default", ...}` reference is always allowed.
 
-**A lab source is not an inventory.** A lab source (`[[lab.sources]]`) says
-which hosts a lab has and what otto does with them; an inventory says what is
-true of each machine (its address, interfaces and credentials), keyed by an
-inventory key. A source's host entry *references* an inventory; the two are
-declared, named and resolved separately, which is why the reference's field is
-`name` and never `source`.
+**A lab source is not an inventory**
+({ref}`Host sources <sources-are-not-inventories>`). A source's host entry *references* an
+inventory; the two are declared, named and resolved separately, which is why
+the reference's field is `name` and never `source`.
 
 ### Resolution order
 
@@ -465,6 +463,54 @@ format, selected by a top-level `"$format"` marker:
 
 A backend of your own declares instances through the discovery method
 {ref}`described for backend authors <inventory-discovery>`.
+
+### A Jsonnet inventory file
+
+A json inventory's `path` may name a `.jsonnet` file instead of a `.json`
+one. Which it is, is decided on the path once symlinks are resolved: a
+symlink to a `.jsonnet` file is rendered, whatever its own name. otto
+renders it, in memory, and reads the JSON it renders exactly as it
+reads a written file: flat or `otto.inventory.v2`, with the same `supplies`
+rule and the same errors. A file that stands in for an inventory you do not
+have yet, such as NetBox, is the common case: the
+{ref}`templated-lab example <lab-templating-example>` uses two.
+
+```toml
+[[inventories]]
+name = "physical"
+backend = "json"
+path = "inventories/physical.jsonnet"
+import_paths = ["inventories/lib"]   # optional; none by default
+```
+
+- **It takes no arguments.** The file renders to the document itself, never a
+  function: an inventory has no project, and two projects that declare the
+  same inventory must read the same records.
+- **`import_paths`** lists the directories its imports resolve under, in
+  order. It defaults to none, so only `otto.libsonnet` is importable. Each
+  entry is anchored like `path` ([Paths](#paths)). The rules are a lab
+  template's ({ref}`Imports <lab-templating-imports>`): the file's own
+  directory is not a root, and no settings, inventory or credentials file is
+  ever served.
+- **It is rendered once per inventory view**, on its first lookup, like a
+  written file is read once; the next operation builds a new view and renders
+  it again. Its freshness fingerprint covers the file, every file its
+  imports could resolve to and `otto.libsonnet`, by their metadata, so
+  completion caches against it without rendering.
+- **A render failure is an inventory error** naming the file
+  (`<path>: could not be rendered: <reason>`).
+
+`import_paths` is accepted on a `.json` path too, and ignored there.
+
+Moving from the stand-in to NetBox changes the entry's `backend` and its
+settings ([The NetBox backend](#the-netbox-backend);
+{ref}`its virtual machines <netbox-virtual-machines>` for VMs). Nothing that
+references the inventory changes only if the stand-in's keys are the names
+NetBox gives the devices and its records state only what a NetBox record
+carries. A NetBox record carries no `groups` or `labels` yet
+([Record fields](#record-fields)), so a template that selects by them, as the
+templated-lab example's `inGroup('dut')` does, finds no members once the
+inventory is NetBox.
 
 (credentials-layered)=
 

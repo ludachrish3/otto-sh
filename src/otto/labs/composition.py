@@ -13,7 +13,7 @@ import functools
 import logging
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from typing_extensions import final, override
 
@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from .protocol import DeclaredLinkInputs, LabContribution
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 @final
@@ -74,7 +76,32 @@ def contribution_part(*, label: str, contribution: "LabContribution") -> SourceC
     )
 
 
-def compose_links(*, lab: "Lab", contributions: Sequence[SourceContribution]) -> "list[Link]":
+class ContributionGuard(Protocol):
+    """Run one step of a contribution's link resolution under its source's error rules.
+
+    The step is the contribution's addressing, or the resolution of its own
+    links; whatever it raises is that source's failure, as the caller
+    classifies a failure of the source's load. :func:`compose_links` calls it
+    once per step, with the contribution the step belongs to.
+    """
+
+    def __call__(self, contribution: SourceContribution, call: "Callable[[], _T]", /) -> _T:
+        """Return *call*'s result, raising its failure as *contribution*'s source's."""
+        ...
+
+
+def _unguarded(contribution: SourceContribution, call: "Callable[[], _T]", /) -> _T:
+    """Return *call*'s result: every failure propagates as raised."""
+    del contribution
+    return call()
+
+
+def compose_links(
+    *,
+    lab: "Lab",
+    contributions: Sequence[SourceContribution],
+    guard: "ContributionGuard | None" = None,
+) -> "list[Link]":
     """Return *lab*'s declared links, composed from *contributions* in source order.
 
     *lab* holds the composed hosts. A capable contribution's entries are
@@ -94,26 +121,38 @@ def compose_links(*, lab: "Lab", contributions: Sequence[SourceContribution]) ->
     attached link needs an endpoint that neither its own source nor *lab*
     addresses.
 
+    *guard* runs each contribution's addressing, and the resolution of its
+    own links, so a failure of either is that contribution's source's
+    (:class:`ContributionGuard`); ``None`` lets every failure propagate as
+    raised, as a source loaded directly does.
+
     Raises
     ------
     LabRepositoryError
         Naming the link's document and index, when a link that attaches does
-        not resolve.
+        not resolve; or whatever *guard* raises for it.
     """
+    run: ContributionGuard = guard if guard is not None else _unguarded
     # Every layer is memoized here, once per load: a source's thunk is called
     # at most once, however many endpoints read it, whether or not it caches.
     composed = functools.cache(functools.partial(_composed_addressing, lab))
     own = {
-        id(c): functools.cache(c.inputs.addressing) for c in contributions if c.inputs is not None
+        id(c): functools.cache(functools.partial(run, c, c.inputs.addressing))
+        for c in contributions
+        if c.inputs is not None
     }
     others = functools.cache(functools.partial(_last_addressing_wins, list(own.values())))
     merged: list[Link] | None = None
     owner: dict[str, str] = {}
     for contribution in contributions:
-        links = _links_of(
+        links = run(
             contribution,
-            lab=lab,
-            layers=[own[id(contribution)], composed, others] if id(contribution) in own else [],
+            functools.partial(
+                _links_of,
+                contribution,
+                lab=lab,
+                layers=[own[id(contribution)], composed, others] if id(contribution) in own else [],
+            ),
         )
         if not contribution.holds_lab and not links:
             continue

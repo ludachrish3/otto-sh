@@ -938,6 +938,126 @@ jobs:
           path: reports/junit/stability-cut-sweep/
           retention-days: 30
 
+  # The air-gapped install, as docs/installation.md documents it (#1176), per
+  # platform and Python: `nox -s packaging_offline` runs Step 1's `pip
+  # download` of the built wheel for this host and Python, installs it in a
+  # fresh venv with no index, checks the install is the wheel file for file,
+  # and renders the installed otto.libsonnet under the Jsonnet binding the
+  # host's marker installs. Nightly, not per push: the download resolves
+  # otto's dependencies on PyPI as a user's does, so the same commit can pass
+  # one night and fail the next when a dependency drops a wheel.
+  #
+  # The wheel is pure Python (py3-none-any), so one job builds it and every
+  # cell installs that file. Each cell runs on the platform it proves, because
+  # pip evaluates the dependency markers on the machine it runs on. The
+  # platform tags and the binding of each cell are noxfile.py's OFFLINE_CELLS,
+  # which a host matches by itself; these matrices only give each cell a
+  # runner.
+  packaging-offline-wheel:
+    name: packaging-offline-wheel (build the wheel every cell installs)
+    runs-on: ubuntu-latest
+    # `make wheel-check` is the web builds plus `uv build`: CI's wheel-smoke
+    # job runs it and two nox sessions in about 1.5 minutes, so a run near
+    # this limit is hung, not slow.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.10
+        run: uv python install 3.10
+
+      - name: Build and check the wheel
+        run: make wheel-check
+
+      - name: Upload the wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: packaging-offline-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  packaging-offline:
+    needs: [packaging-offline-wheel]
+    name: packaging-offline (${{ matrix.runner }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux x86_64 (glibc), Linux aarch64, macOS arm64, Windows AMD64.
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-15, windows-latest]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+
+      - name: Download the wheel
+        uses: actions/download-artifact@v8
+        with:
+          name: packaging-offline-wheel
+          path: dist/
+
+      # nox runs from a tool environment, not the project's: the dev group
+      # does not install on every cell (playwright has no musllinux wheel).
+      # The tool environment holds the built wheel, binary wheels
+      # only, so the noxfile can import otto and its dependencies; one
+      # spelling serves this job and the musl one below. bash on every
+      # runner, Windows included, expands the wheel's glob.
+      - name: Install offline and render the installed library
+        shell: bash
+        run: uv run --no-project --no-build --with nox --with nox-uv --with ./dist/otto_sh-*.whl nox -s packaging_offline-${{ matrix.python }}
+
+  # The musl cell: Alpine on x86_64, in the official Python image for each
+  # minor, so the interpreter, its C library and pip's platform tags are
+  # Alpine's own.
+  packaging-offline-musl:
+    needs: [packaging-offline-wheel]
+    name: packaging-offline (musl x86_64, Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: python:${{ matrix.python }}-alpine
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    env:
+      # The image's interpreter, never one uv downloads: .python-versions'
+      # first line is the floor, which only the 3.10 image holds.
+      UV_PYTHON: ${{ matrix.python }}
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Download the wheel
+        uses: actions/download-artifact@v8
+        with:
+          name: packaging-offline-wheel
+          path: dist/
+
+      - name: Install uv (it ships a musllinux wheel)
+        run: python -m pip install --root-user-action=ignore uv
+
+      - name: Install offline and render the installed library
+        run: uv run --no-project --no-build --with nox --with nox-uv --with ./dist/otto_sh-*.whl nox -s packaging_offline-${{ matrix.python }}
+
   # If any job fails, open (or update) a tracking issue so a flaky nightly
   # surfaces without anyone having to watch the Actions tab.
   report-failure:
@@ -957,6 +1077,9 @@ jobs:
         busybox-upstream-drift,
         python-canary,
         probe-cut-sweep,
+        packaging-offline-wheel,
+        packaging-offline,
+        packaging-offline-musl,
       ]
     # Only a run on main files an issue, the same condition as ci.yml's
     # reporter: a workflow_dispatch on a branch is someone's experiment, and its

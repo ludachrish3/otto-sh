@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
     from ..coverage.config import DestinationError
     from ..errors import FieldError
+    from ..inventory.view import InventoryView
     from ..reservations.check import ReservationBackendError
     from ..result import Result
     from ..run_context import OttoContext
@@ -919,9 +920,10 @@ def ensure_cli_session(ctx: typer.Context) -> None:
 def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     """Load the lab, build reservation state, and install the runtime context (idempotent).
 
-    Builds the lab through :func:`otto.session.build_lab` (which enforces
+    Builds the lab through :func:`otto.session.build_lab_and_view` (which enforces
     ``--lab``, aggregates the projects' sources, loads the lab and registers the
-    declared docker placeholder hosts), resolves reservation state (stashed on
+    declared docker placeholder hosts) and keeps the inventory view it was built
+    through, for :func:`session_inventory_view`; resolves reservation state (stashed on
     ``ctx.meta['otto_reservation']``), and installs an ``OttoContext`` with
     :func:`~otto.context.set_context`, registering its reset on the root Click
     context's ``call_on_close`` so it ends with the invocation. Guarded by
@@ -945,7 +947,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
 
     from ..bootstrap import bootstrap
     from ..invocation import RunPolicy, install_policy, installed_policy, reset_binding
-    from ..session.lab import build_lab
+    from ..session.lab import build_lab_and_view
 
     # The lab build reads the run policy (ingest picks each product's variant
     # entry by it), so the policy is installed before it. The root callback
@@ -962,10 +964,13 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     result = bootstrap()  # already run by entry(): the cached composition root
     projects = result.projects
     # `--lab` is not a hard-required Typer option (so lab-free subcommands can
-    # run without it); build_lab refuses an empty selection (`no_labs`) before
+    # run without it); the build refuses an empty selection (`no_labs`) before
     # any lab side effect, for everything that does need a lab.
-    lab = build_lab(projects, labs=list(opts.labs or []))
-    # build_lab registered the declared container placeholders
+    built = build_lab_and_view(projects, labs=list(opts.labs or []))
+    lab = built.lab
+    # The build registered the declared container placeholders. Its view is the
+    # session's: a verb that reads the inventories again reads this one.
+    meta[_INVENTORY_VIEW_KEY] = built.view
 
     # Resolve reservation identity + backend (first project with a [reservations]
     # section wins). With -R the backend is NOT constructed at all, so a broken
@@ -1012,6 +1017,27 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     ctx.find_root().call_on_close(lambda: reset_context(token))
     meta["_otto_lab_ready"] = True
     return get_context()
+
+
+_INVENTORY_VIEW_KEY = "otto_inventory_view"
+"""Where :func:`ensure_lab_context` keeps the session's inventory view on ``ctx.meta``."""
+
+
+def session_inventory_view(ctx: typer.Context) -> "InventoryView":
+    """Return the inventory view the session's lab was built through: its one reader.
+
+    :func:`ensure_lab_context` records it beside the lab, so a verb that reads
+    the inventories after the build (``otto lab explain``) reads the very
+    objects the build read, and builds no second view.
+
+    Raises:
+        RuntimeError: The session has no lab yet; call
+            :func:`ensure_lab_session` (or :func:`ensure_lab_context`) first.
+    """
+    view = ctx.meta.get(_INVENTORY_VIEW_KEY)
+    if view is None:
+        raise RuntimeError("no lab session: ensure_lab_context has not built the lab")
+    return view
 
 
 def try_ensure_lab(ctx: typer.Context) -> "OttoContext | None":

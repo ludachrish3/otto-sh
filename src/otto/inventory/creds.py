@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 from typing_extensions import final
 
-from ..models.base import CredSpec, compact_validation_error, cred_identity
+from ..host.inventory_ref import recording_fields
+from ..models import base as model_base
+from ..models.base import CredSpec, compact_validation_error
 from ..models.inventory import InventoryRecord
 from .errors import InventoryError
 from .protocol import Inventory
@@ -15,11 +17,6 @@ from .protocol import Inventory
 if TYPE_CHECKING:
     from ..creds.protocol import CredsStore
     from .discovery import Discovery
-
-
-def _stated(entry: dict[str, Any]) -> dict[str, Any]:
-    """Return the fields *entry* states: present and not ``None`` (R7, one level down)."""
-    return {k: v for k, v in entry.items() if v is not None}
 
 
 def merge_creds(
@@ -34,7 +31,8 @@ def merge_creds(
 
     Matching is by identity — ``login`` plus scope
     (:func:`~otto.models.base.cred_identity`), so ``protocols`` is part
-    of the key and is never composed. An identity in both layers gets
+    of the key and is never composed; each layer is keyed by
+    :func:`~otto.models.base.cred_layer_by_identity`. An identity in both layers gets
     ``{**lower_stated, **higher_stated}`` — the higher layer overrides a
     field it states and cannot remove one (``None`` states nothing). The
     result is sequenced HIGHER FIRST: every *higher* identity in its own
@@ -44,42 +42,16 @@ def merge_creds(
 
     Plain dicts in, plain dicts out — the join's currency. A password value is
     passed through as the layer holds it: a ``SecretStr`` from a dumped record
-    or store cred, a ``str`` from the lab file. Raises
-    :class:`~otto.inventory.errors.InventoryError` for an entry with no
-    non-empty string ``login``, for a non-``list``-of-``str`` ``protocols``,
-    and for an identity repeated within ONE layer; the message names the
-    layer and *key*, and lists an entry's field NAMES only (or the identity,
-    for a duplicate), because a value here may be a password.
+    or store cred, a ``str`` from the lab file. Raises an
+    :class:`~otto.inventory.errors.InventoryError` carrying the message of
+    what :func:`~otto.models.base.cred_layer_by_identity` refuses in either
+    layer, named *lower_name* or *higher_name*.
     """
-    where = f" (inventory key {key!r})" if key is not None else ""
-
-    def _by_identity(layer: list[dict[str, Any]], name: str) -> dict[str, dict[str, Any]]:
-        out: dict[str, dict[str, Any]] = {}
-        for entry in layer:
-            login = entry.get("login") if isinstance(entry, dict) else None
-            if not isinstance(login, str) or not login:
-                fields = sorted(entry) if isinstance(entry, dict) else type(entry).__name__
-                raise InventoryError(
-                    f"cred entry without a 'login' string in the {name} layer{where}: {fields}"
-                )
-            protocols = entry.get("protocols")
-            if protocols is None:
-                protocols = []
-            if not isinstance(protocols, list) or not all(isinstance(p, str) for p in protocols):
-                raise InventoryError(
-                    f"cred {login!r}: 'protocols' must be a list of strings "
-                    f"in the {name} layer{where}"
-                )
-            identity = cred_identity(login, protocols)
-            if identity in out:
-                raise InventoryError(
-                    f"duplicate cred entry {identity!r} in the {name} layer{where}"
-                )
-            out[identity] = _stated(entry)
-        return out
-
-    low = _by_identity(lower, lower_name)
-    high = _by_identity(higher, higher_name)
+    try:
+        low = model_base.cred_layer_by_identity(lower, name=lower_name, key=key)
+        high = model_base.cred_layer_by_identity(higher, name=higher_name, key=key)
+    except ValueError as e:
+        raise InventoryError(str(e)) from None
     merged = [{**low.get(identity, {}), **fields} for identity, fields in high.items()]
     merged.extend(fields for identity, fields in low.items() if identity not in high)
     return merged
@@ -186,6 +158,8 @@ class CredsOverlay:
             lower_name="creds store",
             higher_name="inventory record",
         )
+        if recording_fields():
+            _note_store_merge(lower=lower, higher=higher)
         creds = [_revalidate_merged_cred(c, key=key, label=self.store.label) for c in merged]
         return record.model_copy(update={"creds": creds})
 
@@ -210,6 +184,18 @@ class CredsOverlay:
         store_stat = getattr(self.store, "stat_paths", None)
         store_paths = store_stat() if callable(store_stat) else None
         return None if store_paths is None else [*paths, *store_paths]
+
+
+def _note_store_merge(*, lower: list[dict[str, Any]], higher: list[dict[str, Any]]) -> None:
+    """Attribute the overlay's cred merge, record over creds store, in a recorded build."""
+    from ..host import provenance
+
+    provenance.note_cred_merge(
+        lower=lower,
+        higher=higher,
+        lower_layer=provenance.FieldLayer.CREDS_STORE,
+        higher_layer=provenance.FieldLayer.RECORD,
+    )
 
 
 def below_creds_overlay(*, inventory: Inventory) -> Inventory:

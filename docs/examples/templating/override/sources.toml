@@ -1,0 +1,11 @@
+# A hand-written source, read first, holds an element named `east-dut0`.
+[[lab.sources]]
+name = "bench"
+backend = "json"
+paths = ["bench"]
+
+[[lab.sources]]
+backend = "jsonnet"
+paths = ["lab_data/layouts/router-lab.jsonnet"]
+inventories = ["physical", "virtual"]
+scope = { prefixes = ["router-lab."] }

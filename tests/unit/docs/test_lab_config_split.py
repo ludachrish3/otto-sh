@@ -66,6 +66,7 @@ AREA_PAGES = {
     "probing-hosts",
     "project-scope",
     "snmp",
+    "templating",
     "toolchain-tools",
 }
 

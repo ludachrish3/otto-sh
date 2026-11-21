@@ -24,6 +24,12 @@ from otto.init import (
     scaffold_candidates,
 )
 from tests._fixtures.project_scaffold import make_project
+from tests.unit.templating import conftest as _templating
+
+# The templating conftest's fixtures, for the templated tests below: the binding
+# proof every templated test file carries, and a private OTTO_HOME.
+jsonnet_binding_under_test = _templating.jsonnet_binding_under_test
+otto_home = _templating.otto_home
 
 
 def _scaffold(root: Path, *areas: str) -> ScaffoldReport:
@@ -1769,3 +1775,444 @@ def test_an_inventory_only_project_reports_its_broken_declaration_once(tmp_path,
     assert report.warnings == []
     assert report.inventories == []
     assert _text(report).count("inventory: physical:") == 1
+
+
+# ── Templated labs and inventories: the doctor's own checks never render (#1176) ─
+
+_NOT_RENDERED_TAIL = "; run otto init from inside an active project, or see otto --list-labs"
+
+
+def _not_rendered(entry: Path, refusal: str) -> str:
+    return f"{entry}: not rendered: {refusal}{_NOT_RENDERED_TAIL}"
+
+
+def _templated_inventory(root: Path, name: str, *, creds: bool = False) -> str:
+    """A ``.jsonnet`` json inventory *name* under *root*, optionally with a ``[creds]`` binding."""
+    from tests.unit.templating._doctor_project import records
+    from tests.unit.templating._lab_project import table, write
+
+    entry = write(root / "lab_data" / f"{name}.jsonnet", json.dumps(records("east")))
+    keys: dict = {"name": name, "backend": "json", "path": str(entry)}
+    text = table("[[inventories]]", **keys)
+    if creds:
+        store = write(root / "lab_data" / f"{name}-creds.json", {"dut-east": []})
+        store.chmod(0o600)
+        text += table("[inventories.creds]", backend="json", path=str(store))
+    return text
+
+
+def test_catalog_membership_never_raises(tmp_path, otto_home):
+    from otto.init.doctor import CatalogMembership, catalog_membership
+    from otto.inventory import InventoryView
+    from tests.unit.templating._doctor_project import catalog, templated
+
+    class Exploding(dict):
+        def __getattr__(self, name):
+            raise RuntimeError(f"no {name}")
+
+    member = templated(tmp_path / "a")
+    outsider = tmp_path / "b"
+    outsider.mkdir()
+    view = catalog(member)
+    assert catalog_membership(None, root=member.root) == CatalogMembership(
+        project=None, projects=None, refusal="the project is not one of the active projects"
+    )
+    assert catalog_membership(InventoryView(inventories=Exploding()), root=member.root) == (
+        CatalogMembership(
+            project=None, projects=None, refusal="the inventory view is not otto's active catalog"
+        )
+    )
+    assert catalog_membership(view, root=outsider) == CatalogMembership(
+        project=None, projects=None, refusal="the project is not one of the catalog's projects"
+    )
+    found = catalog_membership(view.for_project(root=member.root), root=member.root)
+    assert found.refusal is None
+    assert found.project is member
+    assert found.projects == [member]
+
+
+def test_membership_is_one_predicate(tmp_path, otto_home, monkeypatch):
+    """``otto init``'s catalog choice and the templating rows' eligibility never disagree."""
+    from otto.cli.init import _active_catalog
+    from otto.init.doctor import catalog_membership
+    from tests.unit.templating._doctor_project import templated
+    from tests.unit.templating._lab_project import project
+
+    member = templated(tmp_path / "member")
+    bare = project(tmp_path / "bare", "", name="bare")  # declares no inventory at all
+    outsider = templated(tmp_path / "outsider", name="outsider")
+    alias = tmp_path / "alias"
+    alias.symlink_to(member.root)
+    monkeypatch.setattr("otto.declared.get_projects", lambda: [member, bare])
+    for root, expected in (
+        (member.root, member),
+        (bare.root, bare),
+        (alias, member),
+        (outsider.root, None),
+    ):
+        chosen = _active_catalog(root)
+        if expected is None:
+            assert chosen is None
+            continue
+        assert chosen is not None
+        membership = catalog_membership(chosen, root=root)
+        assert membership.project is expected, root
+        assert membership.projects == [member, bare]
+
+
+def test_active_root_without_an_inventory_declaration_is_a_member(tmp_path, otto_home):
+    from otto.init.doctor import catalog_membership
+    from otto.inventory.config import deferred_catalog_projects
+    from tests.unit.templating._doctor_project import catalog, templated
+    from tests.unit.templating._lab_project import project
+
+    supplier = templated(tmp_path / "supplier", name="supplier")
+    bare = project(tmp_path / "bare", "", name="bare")
+    view = catalog(supplier, bare)
+    assert deferred_catalog_projects(view) == [supplier, bare]
+    assert catalog_membership(view, root=bare.root).project is bare
+
+
+def test_deferred_catalog_retention_reads_no_user_file(tmp_path, otto_home, monkeypatch):
+    from otto.config import user_settings
+    from otto.inventory.config import deferred_catalog_projects, deferred_inventory_view
+    from tests.unit.templating._doctor_project import templated
+    from tests.unit.templating._lab_project import project
+
+    (otto_home / "settings.toml").write_text(  # scaffold-exempt: malformed TOML, never read here
+        "not valid toml [[["
+    )
+    reads: list = []
+    real = user_settings.load_user_settings
+    monkeypatch.setattr(
+        user_settings, "load_user_settings", lambda **kw: reads.append(kw) or real(**kw)
+    )
+    projects = [templated(tmp_path / "a"), project(tmp_path / "b", "", name="b")]
+    view = deferred_inventory_view(projects=projects)
+    assert deferred_catalog_projects(view) == projects
+    assert deferred_catalog_projects(view) is not deferred_catalog_projects(view)
+    assert deferred_catalog_projects(view.for_project(root=projects[1].root)) == projects
+    assert reads == []
+
+
+def test_no_catalog_reports_not_rendered_rows(tmp_path, otto_home, monkeypatch):
+    from tests.unit.templating._doctor_project import entry_path, templated
+    from tests.unit.templating._render_helpers import count_evaluations
+
+    sut = templated(tmp_path / "sut", extra=_templated_inventory(tmp_path / "sut", "virtual"))
+    evaluations = count_evaluations(monkeypatch)
+    report = check_project(sut.root)
+    assert evaluations() == 0
+    assert report.ok, _text(report)
+    rows = [w for w in report.warnings if "not rendered" in w]
+    assert rows == [
+        "virtual: not rendered by the doctor's own checks; see the templating rows",
+        _not_rendered(entry_path(sut.root), "the project is not one of the active projects"),
+    ]
+    assert [label.name for label in report.inventories] == ["physical"]
+
+
+def test_outside_root_with_only_a_jsonnet_source_is_not_rendered(tmp_path, otto_home, monkeypatch):
+    from tests.unit.templating._doctor_project import (
+        catalog,
+        entry_path,
+        recorded_renders,
+        sites_entry,
+        templated,
+    )
+    from tests.unit.templating._lab_project import jsonnet_source, project, write
+    from tests.unit.templating._render_helpers import count_evaluations
+
+    a = templated(tmp_path / "a", name="proj-a")
+    write(entry_path(tmp_path / "b"), sites_entry())
+    b = project(
+        tmp_path / "b", jsonnet_source(paths=[str(entry_path(tmp_path / "b"))]), name="proj-b"
+    )
+    evaluations = count_evaluations(monkeypatch)
+    opened: list[Path] = []
+    real_read = Path.read_text
+
+    def reading(self, *args, **kwargs):
+        opened.append(self)
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", reading)
+    with recorded_renders(monkeypatch) as renders:
+        report = check_project(b.root, catalog=catalog(a))
+    assert evaluations() == 0
+    assert renders == []
+    assert entry_path(b.root) not in opened
+    assert report.warnings == [
+        _not_rendered(entry_path(b.root), "the project is not one of the catalog's projects")
+    ]
+
+
+def test_credential_wrapped_templated_inventory_is_never_discovered_by_doctor_checks(
+    tmp_path, otto_home, monkeypatch
+):
+    """A ``.jsonnet`` ``default`` and named inventory with ``[creds]``: only dispatch renders."""
+    from otto.inventory.creds import below_creds_overlay
+    from otto.inventory.json_backend import JsonInventory
+    from tests.unit.templating._doctor_project import catalog, sites_entry
+    from tests.unit.templating._lab_project import jsonnet_source, project, table, write
+
+    root = tmp_path / "sut"
+    default = write(root / "lab_data" / "default.jsonnet", "{}")
+    store = write(root / "lab_data" / "default-creds.json", {})
+    store.chmod(0o600)
+    entry = write(root / "lab_data" / "layouts" / "sites.jsonnet", sites_entry())
+    settings = (
+        table("[inventory]", backend="json", path=str(default))
+        + table("[creds]", backend="json", path=str(store))
+        + _templated_inventory(root, "physical", creds=True)
+        + jsonnet_source(paths=[str(entry)], inventories=["physical"])
+    )
+    sut = project(root, settings)
+    rendered: list[JsonInventory] = []
+    real = JsonInventory.read_document
+
+    def recording(self, *, refuse):
+        if self.templated:
+            rendered.append(self)
+        return real(self, refuse=refuse)
+
+    monkeypatch.setattr(JsonInventory, "read_document", recording)
+    outsider = project(tmp_path / "other", "", name="other")
+    for view in (None, catalog(outsider)):
+        rendered.clear()
+        report = check_project(sut.root, catalog=view)
+        assert rendered == [], view
+        assert report.ok, _text(report)
+        assert [w for w in report.warnings if "doctor's own checks" in w] == [
+            "default: not rendered by the doctor's own checks; see the templating rows",
+            "physical: not rendered by the doctor's own checks; see the templating rows",
+        ]
+    rendered.clear()
+    member = catalog(sut)
+    report = check_project(sut.root, catalog=member)
+    assert report.ok, _text(report)
+    held = below_creds_overlay(inventory=member.inventories["physical"])
+    assert rendered == [held]
+
+
+def test_any_render_the_doctor_triggers_holds_the_catalogs_protection(
+    tmp_path, otto_home, monkeypatch
+):
+    """No doctor path renders through a view whose protected catalog is the empty default."""
+    from tests.unit.templating._doctor_project import catalog, recorded_renders, templated
+
+    sut = templated(
+        tmp_path / "sut",
+        extra=_templated_inventory(tmp_path / "sut", "virtual"),
+        inventories=["physical", "virtual"],
+    )
+    settings = sut.root / ".otto" / "settings.toml"
+    view = catalog(sut)
+    with recorded_renders(monkeypatch) as renders:
+        report = check_project(sut.root, catalog=view)
+    assert report.ok, _text(report)
+    assert len(renders) == 2  # the lab entry and the templated inventory, each once
+    protected = view.protected()
+    assert settings.resolve() in protected.files
+    assert all(request.policy.protected == protected for request in renders)
+
+
+def test_doctor_checks_keep_their_own_inventories(tmp_path, monkeypatch):
+    """The golden workspaces against a member catalog: today's rows, and nothing rendered."""
+    from otto.init import doctor as doctor_module
+    from tests.unit.labs import test_unchanged_loading as pins
+    from tests.unit.templating._render_helpers import count_evaluations
+
+    real = doctor_module.check_project
+    evaluations = count_evaluations(monkeypatch)
+
+    def against_the_catalog(root: Path) -> DoctorReport:
+        return real(root, catalog=_catalog(*sorted(root.parent.iterdir())))
+
+    monkeypatch.setattr(doctor_module, "check_project", against_the_catalog)
+    assert pins.doctor(tmp_path) == json.loads(pins.DOCTOR_GOLDEN.read_text())
+    assert evaluations() == 0
+
+
+def test_unchanged_doctor_output_for_existing_projects(tmp_path, monkeypatch):
+    from tests.unit.labs import test_unchanged_loading as pins
+    from tests.unit.templating._render_helpers import count_evaluations
+
+    evaluations = count_evaluations(monkeypatch)
+    assert pins.doctor(tmp_path) == json.loads(pins.DOCTOR_GOLDEN.read_text())
+    assert evaluations() == 0
+
+
+def test_arbitrary_catalog_regression_stays_green(tmp_path, otto_home):
+    """The arbitrary-catalog case, and its templated twin: a not-rendered row, no exception."""
+    from otto.inventory import InventoryView
+    from tests.unit.templating._doctor_project import entry_path, templated
+
+    class Exploding(dict):
+        def get(self, name, default=None):
+            raise RuntimeError(f"backend for {name} is down")
+
+        def __contains__(self, name):
+            return True
+
+    sut = templated(tmp_path / "sut")
+    report = check_project(sut.root, catalog=InventoryView(inventories=Exploding()))
+    assert report.ok, _text(report)
+    assert [w for w in report.warnings if "not rendered" in w] == [
+        _not_rendered(entry_path(sut.root), "the inventory view is not otto's active catalog")
+    ]
+
+
+def test_non_jsonnet_checks_run_as_today_when_not_rendering(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import entry_path, templated
+    from tests.unit.templating._lab_project import json_source, write
+
+    hand = tmp_path / "sut" / "lab"
+    write(
+        hand / "lab.json",
+        {
+            "labs": {"bench": {}},
+            "elements": [
+                {"name": "e", "labs": ["bench"], "hosts": [{"ip": "10.0.0.1", "nonsense": 1}]}
+            ],
+        },
+    )
+    sut = templated(tmp_path / "sut", extra=json_source(hand))
+    report = check_project(sut.root)
+    [problem] = report.verdict(name="lab").problems
+    assert problem.startswith(f"{hand / 'lab.json'}: element 'e' hosts[0] ")
+    assert "nonsense" in problem
+    assert _not_rendered(entry_path(sut.root), "the project is not one of the active projects") in (
+        report.warnings
+    )
+
+
+def test_malformed_user_settings_stays_one_problem_row(tmp_path, otto_home):
+    """The broken user file, with a templated lab in an active project: reported once."""
+    from tests.unit.templating._doctor_project import catalog, entry_path, templated
+
+    user_file = otto_home / "settings.toml"
+    user_file.write_text("not valid toml [[[")  # scaffold-exempt: malformed TOML under test
+    sut = templated(tmp_path / "sut")
+    for view in (None, catalog(sut)):
+        report = check_project(sut.root, catalog=view)
+        assert not report.ok
+        rows = [line for line in _text(report).splitlines() if str(user_file) in line]
+        assert len(rows) == 1, rows
+        assert rows[0].startswith("inventory: ")
+    # Under the catalog, nothing renders: the entry is one warning, not a second problem.
+    assert f"{entry_path(sut.root)}: not rendered: no protected-file catalog could be built" in (
+        "\n".join(report.warnings)
+    )
+
+
+def test_doctor_reports_a_render_error_naming_entry_and_line(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog, entry_path, templated
+
+    sut = templated(tmp_path / "sut", entry="function(otto)\n  { labs: error 'boom' }\n")
+    report = check_project(sut.root, catalog=catalog(sut))
+    assert not report.ok
+    [problem] = report.verdict(name="lab").problems
+    assert f"{entry_path(sut.root)}:2: boom" in problem
+
+
+def test_doctor_validates_rendered_hosts_like_hand_written_ones(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog, sites_entry, templated
+    from tests.unit.templating._lab_project import CREDS, json_source, project, write
+
+    sut = templated(tmp_path / "sut", entry=sites_entry(os_type="'nosuch'"))
+    [rendered] = check_project(sut.root, catalog=catalog(sut)).verdict(name="lab").problems
+    hand = tmp_path / "hand" / "lab"
+    host = {"ip": "10.0.1.1", "os_type": "nosuch", "creds": CREDS}
+    write(
+        hand / "lab.json",
+        {
+            "labs": {"site-east": {}},
+            "elements": [{"name": "east-dut0", "labs": ["site-east"], "hosts": [host]}],
+        },
+    )
+    written = project(tmp_path / "hand", json_source(hand), name="hand")
+    [hand_written] = check_project(written.root).verdict(name="lab").problems
+    reason = "Unknown os_type profile 'nosuch'."
+    assert reason in rendered
+    assert reason in hand_written
+    assert "element 'east-dut0' hosts[0]" in rendered
+    assert "element 'east-dut0' hosts[0]" in hand_written
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_symlink_spelled_root_gets_identical_rows(tmp_path, otto_home, fallback):
+    from tests.unit.templating._doctor_project import catalog, sites_entry, templated
+    from tests.unit.templating._lab_project import jsonnet_source, project, write
+
+    sut = templated(tmp_path / "sut", sites=("east", "west"), entry=sites_entry(os_type="'nosuch'"))
+    projects = [sut]
+    if fallback:
+        entry = write(tmp_path / "sib" / "sib.jsonnet", "function(otto) error 'sibling'\n")
+        projects.append(project(tmp_path / "sib", jsonnet_source(paths=[str(entry)]), name="sib"))
+    alias = tmp_path / "alias"
+    alias.symlink_to(sut.root)
+    spelled = check_project(sut.root, catalog=catalog(*projects))
+    aliased = check_project(alias, catalog=catalog(*projects))
+    rows = spelled.verdict(name="lab").problems
+    assert rows
+    assert aliased.verdict(name="lab").problems == rows
+    if fallback:  # listed per project, then every load meets the sibling's failure
+        [row] = rows
+        assert "sibling" in row
+    else:  # one load failure per lab, each its own text
+        assert [("'site-east'" in r, "'site-west'" in r) for r in rows] == [
+            (True, False),
+            (False, True),
+        ]
+
+
+def test_a_declared_unavailable_lab_reads_alike_hand_written_and_templated(tmp_path, monkeypatch):
+    """One document declaring a lab unavailable, as a ``lab.json`` and as a rendered entry.
+
+    The doctor gives both the same outcome: the lab area passes, no problem
+    row, and ``otto init`` exits 0. The report's refusal tells a declaration
+    from a failed source, so only the second is a problem.
+    """
+    from tests.unit.templating._lab_project import (
+        CREDS,
+        json_source,
+        jsonnet_source,
+        project,
+        write,
+    )
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    document = {
+        "labs": {"bench": {}, "rig": {"unavailable": "dut: expected 2, found 1"}},
+        "elements": [
+            {
+                "name": "dut0",
+                "labs": ["bench"],
+                "hosts": [{"ip": "10.0.0.1", "os_type": "unix", "creds": CREDS}],
+            }
+        ],
+    }
+    hand = write(tmp_path / "hand" / "lab" / "lab.json", document)
+    entry = write(
+        tmp_path / "tmpl" / "lab" / "lab.jsonnet", f"function(otto) {json.dumps(document)}\n"
+    )
+    roots = {
+        "hand-written": project(tmp_path / "hand", json_source(hand), name="hand").root,
+        "templated": project(
+            tmp_path / "tmpl", jsonnet_source(paths=[str(entry)]), name="tmpl"
+        ).root,
+    }
+    _activate(monkeypatch, *roots.values())
+    outcomes = {}
+    for kind, root in roots.items():
+        report = check_project(root, catalog=_catalog(*roots.values()))
+        result = _init(root)
+        outcomes[kind] = (
+            report.ok,
+            report.verdict(name="lab").state,
+            report.verdict(name="lab").problems,
+            [w for w in report.warnings if "rig" in w],
+            result.exit_code,
+        )
+    assert outcomes["hand-written"] == outcomes["templated"] == (True, "ok", [], [], 0)

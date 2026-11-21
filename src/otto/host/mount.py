@@ -17,6 +17,8 @@ from pathlib import Path
 
 from typing_extensions import final
 
+from ..utils import is_under
+
 
 @final
 @dataclass(frozen=True)
@@ -48,15 +50,6 @@ class Mount:
     makes it useful for seeding fixture data."""
 
 
-def _is_under(base: Path, path: Path) -> bool:
-    """Whether *path* is *base* or lies beneath it, comparing COMPONENTS.
-
-    Not a string prefix test: ``/var/lib/app`` must not claim
-    ``/var/lib/application/x``.
-    """
-    return path == base or base in path.parents
-
-
 def mount_for(*, mounts: "list[Mount]", container_path: "str | Path") -> "Mount | None":
     """Return the mount covering *container_path*, or ``None``.
 
@@ -76,7 +69,7 @@ def _best(mounts: "list[Mount]", path: Path, *, key: "Callable[[Mount], Path]") 
     best: "Mount | None" = None
     for mount in mounts:
         base: Path = key(mount)
-        if not _is_under(base, path):
+        if not is_under(path, base):
             continue
         if best is None or len(base.parts) > len(key(best).parts):
             best = mount

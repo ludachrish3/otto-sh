@@ -9,6 +9,9 @@ same rules:
 
 - **A taken name raises** :class:`DuplicateRegistration` unless the caller
   passes ``overwrite=True``, and the message names both registering modules.
+  A built-in registered with ``yielding=True`` (only otto's own modules may
+  pass it) gives its name up instead: a later registration of that name from
+  another module replaces it and logs one warning.
 - **A registration is a complete record** of the registry's declared ``entry``
   type: a frozen dataclass or a frozen model. A bare value, a bare :class:`Ref`
   or a record holding a ``list``, ``dict`` or ``set`` raises
@@ -80,6 +83,7 @@ import difflib
 import enum
 import inspect
 import itertools
+import logging
 import sys
 import weakref
 from collections.abc import Callable, Collection, Generator, Iterable, Iterator, Mapping, Sequence
@@ -89,6 +93,8 @@ from typing import Any, Generic, TypeVar, cast
 from typing_extensions import final, override
 
 from otto.errors import OttoError
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "BackendRegistry",
@@ -836,9 +842,16 @@ class _Stored:
     generation: int
     owes_check: bool = False
     """The record holds a Ref and its check_resolved has not passed yet."""
+    yielding: bool = False
+    """A later registration of the name replaces this one without ``overwrite``."""
 
 
-_SnapshotRow = tuple[str, object, str, "str | None", int, bool]
+@dataclasses.dataclass(frozen=True)
+class _SnapshotRow:
+    """One stored entry as a test snapshot holds it: the name and its stored state."""
+
+    name: str
+    stored: _Stored
 
 
 @final
@@ -936,41 +949,66 @@ class Registry(Generic[E]):
 
     # -- writes -------------------------------------------------------------
 
-    def register(self, *, name: str, entry: E, overwrite: bool = False) -> None:
+    def register(
+        self, *, name: str, entry: E, overwrite: bool = False, yielding: bool = False
+    ) -> None:
         """Register *entry* under *name*; a taken name raises unless *overwrite*.
+
+        *yielding* marks a built-in that gives its name up: a later
+        registration of *name* from another module replaces it without
+        *overwrite* and logs one warning naming both registering modules.
+        The replacement does not yield unless it passes *yielding* itself.
+        Only otto's own modules may pass it.
 
         Raises:
             RegistrationRefused: If project test files are loading and the
                 registrant is outside the ``otto`` package, if a registry check
-                is running, or if a ``RequireProject`` registry is written outside
-                a project's init import.
+                is running, if a ``RequireProject`` registry is written outside
+                a project's init import, or if *yielding* is passed from
+                outside the ``otto`` package.
             IncompleteRegistration: If *entry* is not a complete, frozen
                 record of the registry's entry type.
-            DuplicateRegistration: If *name* is already registered and
-                *overwrite* is false; the message names both registering
-                modules.
+            DuplicateRegistration: If *name* is already registered, its
+                registration does not yield to this registrant (it does not
+                yield, or this module made it), and *overwrite* is false; the
+                message names both registering modules.
             ValueError: From the registry's *validate* hook; nothing is stored.
         """
-        self._register_batch([(name, entry)], overwrite=overwrite)
+        self._register_batch([(name, entry)], overwrite=overwrite, yielding=yielding)
 
-    def register_many(self, entries: "Iterable[tuple[str, E]]", *, overwrite: bool = False) -> None:
+    def register_many(
+        self,
+        entries: "Iterable[tuple[str, E]]",
+        *,
+        overwrite: bool = False,
+        yielding: bool = False,
+    ) -> None:
         """Register every ``(name, entry)`` pair of *entries* atomically.
 
         Every check runs on the whole batch before anything is written, so a
-        failure commits nothing. ``overwrite=True`` covers stored names, never
-        a name repeated within the batch.
+        failure commits nothing. ``overwrite=True`` and a yielding stored
+        name cover stored names, never a name repeated within the batch.
+        *yielding* marks every entry of the batch as :meth:`register` does.
 
         It raises what :meth:`register` raises.
         """
-        self._register_batch(list(entries), overwrite=overwrite)
+        self._register_batch(list(entries), overwrite=overwrite, yielding=yielding)
 
-    def _register_batch(self, batch: "list[tuple[str, E]]", *, overwrite: bool) -> None:
+    def _register_batch(
+        self, batch: "list[tuple[str, E]]", *, overwrite: bool, yielding: bool
+    ) -> None:
         if not batch:
             return  # nothing to register: no change, so no commit and no revision bump
         registrant = _attributed_module()
+        if yielding and not _is_otto_origin(registrant):
+            raise RegistrationRefused(
+                f"{self._kind} {batch[0][0]!r}: yielding=True from {registrant!r} is refused; "
+                "only otto's own modules may yield a name"
+            )
         project = get_registering_project()
         names = [name for name, _ in batch]
         holding_refs: set[str] = set()
+        yielded: dict[str, _Stored] = {}
 
         def write(bump_generation: bool) -> None:
             for name, entry in batch:
@@ -980,7 +1018,12 @@ class Registry(Generic[E]):
                 else:
                     generation = old.generation if old is not None else 0
                 self._entries[name] = _Stored(
-                    entry, registrant, project, generation, owes_check=name in holding_refs
+                    entry,
+                    registrant,
+                    project,
+                    generation,
+                    owes_check=name in holding_refs,
+                    yielding=yielding,
                 )
 
         _commit(
@@ -993,10 +1036,21 @@ class Registry(Generic[E]):
                 bump_revision=self._bump,
                 capabilities=lambda: self._check_capabilities(names, project),
                 records=lambda: holding_refs.update(self._check_records(batch)),
-                collisions=lambda: self._check_collisions(names, overwrite, registrant),
+                collisions=lambda: yielded.update(
+                    self._check_collisions(names, overwrite, registrant)
+                ),
                 validate=lambda: self._run_validate(batch),
             )
         )
+        for name, replaced in yielded.items():
+            logger.warning(
+                "%s %r: %s replaces otto's built-in (%s); otto's %r is unavailable in this process",
+                self._kind,
+                name,
+                registrant,
+                replaced.origin,
+                name,
+            )
 
     def _check_capabilities(self, names: list[str], project: str | None) -> None:
         """Apply each declared capability (step 4)."""
@@ -1016,9 +1070,18 @@ class Registry(Generic[E]):
         """
         return {name for name, entry in batch if self._check_record(name, entry)}
 
-    def _check_collisions(self, names: list[str], overwrite: bool, registrant: str) -> None:
-        """Refuse a taken name without *overwrite*, and any repeat within the batch (step 6)."""
+    def _check_collisions(
+        self, names: list[str], overwrite: bool, registrant: str
+    ) -> "dict[str, _Stored]":
+        """Refuse a taken name without *overwrite*, and any repeat within the batch (step 6).
+
+        A stored name that yields to *registrant* (another module registered
+        it with ``yielding=True``) is not refused. Return the stored record
+        of each such name, by name, so the caller warns once the write has
+        landed.
+        """
         seen: set[str] = set()
+        yielded: dict[str, _Stored] = {}
         for name in names:
             if name in seen:
                 raise DuplicateRegistration(
@@ -1026,12 +1089,18 @@ class Registry(Generic[E]):
                     "overwrite=True never covers that"
                 )
             seen.add(name)
-            if name in self._entries and not overwrite:
-                raise DuplicateRegistration(
-                    f"{self._kind} {name!r} is already registered by "
-                    f"{self._entries[name].origin!r}; second registration from "
-                    f"{registrant!r}. Pass overwrite=True to replace it deliberately."
-                )
+            stored = self._entries.get(name)
+            if stored is None or overwrite:
+                continue
+            if stored.yielding and stored.origin != registrant:
+                yielded[name] = stored
+                continue
+            raise DuplicateRegistration(
+                f"{self._kind} {name!r} is already registered by "
+                f"{stored.origin!r}; second registration from "
+                f"{registrant!r}. Pass overwrite=True to replace it deliberately."
+            )
+        return yielded
 
     def _run_validate(self, batch: "list[tuple[str, E]]") -> None:
         """Run the registry's validate hook on the proposed table (step 7 of a registration)."""
@@ -1174,8 +1243,8 @@ class Registry(Generic[E]):
             if self._entries.get(name) is not stored:
                 return  # replaced while the Ref imported: the newer entry stays
             generation = next(_GENERATIONS) if bump_generation else stored.generation
-            self._entries[name] = _Stored(
-                result, stored.origin, stored.project, generation, owes_check=owes_check
+            self._entries[name] = dataclasses.replace(
+                stored, value=result, generation=generation, owes_check=owes_check
             )
 
         _commit(
@@ -1279,10 +1348,7 @@ class Registry(Generic[E]):
 
     def _snapshot(self) -> "list[_SnapshotRow]":
         """Return the stored state, in order, with nothing resolved (test support)."""
-        return [
-            (name, s.value, s.origin, s.project, s.generation, s.owes_check)
-            for name, s in self._entries.items()
-        ]
+        return [_SnapshotRow(name, stored) for name, stored in self._entries.items()]
 
     def _restore(self, state: "list[_SnapshotRow]") -> None:
         """Reinstall *state* exactly, running no check (test support).
@@ -1294,21 +1360,19 @@ class Registry(Generic[E]):
 
         def write(bump_generation: bool) -> None:
             self._entries = {
-                name: _Stored(
-                    value,
-                    origin,
-                    project,
-                    next(_GENERATIONS) if bump_generation else generation,
-                    owes_check=owes_check,
+                row.name: (
+                    dataclasses.replace(row.stored, generation=next(_GENERATIONS))
+                    if bump_generation
+                    else row.stored
                 )
-                for name, value, origin, project, generation, owes_check in state
+                for row in state
             }
 
         _commit(
             _Change(
                 _Op.RESTORE,
                 self._kind,
-                [row[0] for row in state],
+                [row.name for row in state],
                 _attributed_module(),
                 write=write,
                 bump_revision=self._bump,
@@ -1317,15 +1381,15 @@ class Registry(Generic[E]):
 
     def _origins_added_since(self, state: "list[_SnapshotRow]") -> set[str]:
         """Origins of entries registered (or replaced) since *state* (test support)."""
-        before = {(row[0], row[4]) for row in state}
+        before = {(row.name, row.stored.generation) for row in state}
         return {s.origin for n, s in self._entries.items() if (n, s.generation) not in before}
 
     def _drop_non_otto(self) -> set[str]:
         """Drop every entry not registered by an otto module; return their origins."""
         state = self._snapshot()
-        dropped = {row[2] for row in state if not _is_otto_origin(row[2])}
+        dropped = {row.stored.origin for row in state if not _is_otto_origin(row.stored.origin)}
         if dropped:
-            self._restore([row for row in state if _is_otto_origin(row[2])])
+            self._restore([row for row in state if _is_otto_origin(row.stored.origin)])
         return dropped
 
 
@@ -1800,16 +1864,25 @@ class BackendRegistry(Generic[Env, T, M]):
         return self._table.capabilities
 
     def register(
-        self, *, name: str, entry: "BackendEntry[Env, T, M]", overwrite: bool = False
+        self,
+        *,
+        name: str,
+        entry: "BackendEntry[Env, T, M]",
+        overwrite: bool = False,
+        yielding: bool = False,
     ) -> None:
         """Register a backend entry; see :meth:`Registry.register`."""
-        self._table.register(name=name, entry=entry, overwrite=overwrite)
+        self._table.register(name=name, entry=entry, overwrite=overwrite, yielding=yielding)
 
     def register_many(
-        self, entries: "Iterable[tuple[str, BackendEntry[Env, T, M]]]", *, overwrite: bool = False
+        self,
+        entries: "Iterable[tuple[str, BackendEntry[Env, T, M]]]",
+        *,
+        overwrite: bool = False,
+        yielding: bool = False,
     ) -> None:
         """Register several backend entries atomically; see :meth:`Registry.register_many`."""
-        self._table.register_many(entries, overwrite=overwrite)
+        self._table.register_many(entries, overwrite=overwrite, yielding=yielding)
 
     def unregister(self, *, name: str) -> None:
         """Remove a backend; see :meth:`Registry.unregister`."""

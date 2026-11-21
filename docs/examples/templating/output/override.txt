@@ -1,0 +1,1 @@
+error: element 'east-dut0' in lab 'router-lab.east': routers/jsonnet#2 would replace the machines of routers/bench (10.1.0.9 as inline) with (10.1.0.1 as physical/east-r1); declare overrides = ['east-dut0'] on routers/jsonnet#2 to mean it

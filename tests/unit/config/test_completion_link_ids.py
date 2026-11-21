@@ -203,8 +203,8 @@ def test_collect_links_carries_endpoint_hosts_for_lab_scoping(tmp_path: Path) ->
         ],
     )
     assert collect_links([project]) == [
-        {"id": "edge", "hosts": ["test1", "test2"]},
-        {"id": "test1--test2", "hosts": ["test1", "test2"]},
+        {"id": "edge", "hosts": ["test1", "test2"], "scope": None},
+        {"id": "test1--test2", "hosts": ["test1", "test2"], "scope": None},
     ]
 
 
@@ -237,4 +237,6 @@ def test_declared_twice_with_disjoint_hosts_merges_both_declarations(tmp_path: P
         ],
     )
     assert collect_link_ids([project], loaded_ids={"alt1", "alt2"}) == ["x"]
-    assert collect_links([project]) == [{"id": "x", "hosts": ["test1", "test2", "alt1", "alt2"]}]
+    assert collect_links([project]) == [
+        {"id": "x", "hosts": ["test1", "test2", "alt1", "alt2"], "scope": None}
+    ]

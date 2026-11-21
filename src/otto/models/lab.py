@@ -172,3 +172,36 @@ class ElementSpec(OttoModel):
     def matches(self, lab: str) -> bool:
         """Whether this element is a member of *lab* (any pattern fullmatches)."""
         return any(re.fullmatch(p, lab) for p in self.labs)
+
+
+_REGEX_SYNTAX: frozenset[str] = frozenset(".^$*+?{}[]|()")
+"""The characters that, unescaped, make a membership pattern more than one literal name."""
+
+
+def literal_of_pattern(pattern: str) -> str | None:
+    r"""Return the one lab name membership *pattern* matches, when it provably matches one.
+
+    A pattern is read as :meth:`ElementSpec.matches` reads it, with
+    :func:`re.fullmatch`. One made only of plain characters and backslash
+    escapes of characters that are not ASCII letters or digits (the form
+    :func:`re.escape` and ``otto.libsonnet``'s ``escapeName`` write) matches
+    exactly the string it spells, which is returned. Anything else is
+    ``None``: a class, a quantifier, an alternation, a group, an anchor, an
+    escape of a letter or digit (a ``\d`` class, a back-reference) or a
+    trailing backslash. ``None`` is also the answer for the rare pattern
+    that matches one string through syntax (``[b]ench``): a name is proven
+    here, never guessed.
+    """
+    out: list[str] = []
+    chars = iter(pattern)
+    for char in chars:
+        if char == "\\":
+            escaped = next(chars, None)
+            if escaped is None or (escaped.isascii() and escaped.isalnum()):
+                return None
+            out.append(escaped)
+        elif char in _REGEX_SYNTAX:
+            return None
+        else:
+            out.append(char)
+    return "".join(out)

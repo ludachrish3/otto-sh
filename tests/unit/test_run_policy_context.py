@@ -174,8 +174,16 @@ def _without_the_root_callback(monkeypatch, build_lab):
     """Stub ``ensure_lab_context``'s inputs for a caller that drives the group directly."""
     from types import SimpleNamespace
 
+    from otto.inventory import InventoryView
+    from otto.session.lab import BuiltLab
+
     patch_bootstrap(monkeypatch, [])  # ensure_lab_context reads the composition root
-    monkeypatch.setattr("otto.session.lab.build_lab", build_lab)
+    monkeypatch.setattr(
+        "otto.session.lab.build_lab_and_view",
+        lambda projects, labs: BuiltLab(
+            lab=build_lab(projects, labs), view=InventoryView.of_default(inventory=None)
+        ),
+    )
     monkeypatch.setattr(
         "otto.reservations.factory.build_reservation_gate",
         lambda *args, **kwargs: SimpleNamespace(identity=None),

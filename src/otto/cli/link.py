@@ -61,7 +61,9 @@ def _link_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     ``OTTO_LAB``, and a lab holds only the links touching its own hosts. So
     the completer scopes the same way — via the cached per-lab host map, the
     same source ``otto host <TAB>`` uses — rather than offering every lab
-    file's links and letting ``find_link`` refuse most of them.
+    file's links and letting ``find_link`` refuse most of them. A scoped
+    source's link is offered only under a selected lab inside its scope: the
+    one relevance decision, ``otto.link.derive.link_attaches``.
     """
     # The composition root: importing it installs the initiator that composes
     # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
@@ -73,7 +75,8 @@ def _link_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     try:
         labs = selected_lab_names(ctx)
         loaded_ids = set(lab_scoped_host_ids(ctx)) if labs else None
-        ids = collect_link_ids(get_projects(), loaded_ids=loaded_ids)
+        selection = frozenset(labs) if labs else None
+        ids = collect_link_ids(get_projects(), loaded_ids=loaded_ids, selection=selection)
     except Exception:  # noqa: BLE001 — completion never crashes the shell
         ids = []
     return sorted(i for i in ids if i.startswith(incomplete))

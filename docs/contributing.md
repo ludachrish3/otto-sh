@@ -1945,6 +1945,13 @@ per-version wheel coverage — plus the air-gap download loop's Python list from
 the committed `uv.lock` and `[project] classifiers`, and fails on drift, so a
 dependency that starts or stops shipping binary wheels breaks the docs build
 rather than the next air-gapped install.
+The page's *Known gaps* claims about the Jsonnet bindings are checked by
+`make check-jsonnet-markers` (`scripts/check_jsonnet_markers.py`): a binary-only
+`uv pip compile` per target platform and Python must install the binding the
+page names, and the two documented gaps must fail naming theirs. It reaches
+PyPI, so it is not part of `make docs-lint` or the local gate; CI's
+`lint-python` job runs it on every pull request, and
+`tests/unit/test_jsonnet_markers.py` drives the same logic offline.
 
 ### Documentation layout
 

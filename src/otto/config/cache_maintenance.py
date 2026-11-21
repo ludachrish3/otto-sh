@@ -27,7 +27,10 @@ special-cased", so a stray directory under ``~/.otto`` (a future cache, an
 operator's own notes) is never a candidate just because nothing rules it out
 first. Candidates come from :func:`Path.iterdir` with an explicit
 ``is_symlink()`` guard -- a symlinked workspace name is never followed, so a
-prune can't be tricked into deleting cache files somewhere else on disk.
+prune can't be tricked into deleting cache files somewhere else on disk. The
+one thing a pass reaches outside a workspace is named, not matched: the
+records directly in the home's :data:`LAB_NAMES_DIRNAME`, which only the
+home-wide :func:`prune` removes, under the same no-follow rule.
 
 The third leg is that every filesystem call that can fail for reasons outside
 this module's control -- another process's permissions, a directory sitting
@@ -88,6 +91,17 @@ Literals for the same reason as :data:`CACHE_FILE_NAMES`; pinned equal to
 `test_session_dir_names_match_the_home_constants`. They go with the
 workspace's cache: `clear` removes them, and `prune` removes them from a
 workspace it leaves no young cache file in."""
+
+LAB_NAMES_DIRNAME = "lab-names"
+"""The one home-level directory a pass reaches: scoped jsonnet sources' last known lab names.
+
+Its records (``otto.labs.last_good``) are rebuildable diagnostics keyed by
+source, not by workspace, so only the home-wide :func:`prune` (``otto cache
+prune`` and ``otto cache clear --all``) removes them; bare
+:func:`clear_workspace` never leaves its workspace. A literal for the same
+reason as :data:`CACHE_FILE_NAMES`; pinned equal to
+:data:`otto.config.home.LAB_NAMES_CACHE_DIRNAME` by
+`test_lab_names_dirname_matches_the_home_constant`."""
 
 MARKER_FILENAMES = {"names": "completion_cache.names.ok", "tests": "completion_cache.tests.ok"}
 """The two markers beside the cache, each an mtime and nothing else.
@@ -440,9 +454,14 @@ def prune(
     the next workspace rather than aborting -- directory iteration order is
     arbitrary, so an error early in the walk must never silently skip every
     workspace after it.
+
+    The records under *home*'s :data:`LAB_NAMES_DIRNAME` go by the same rule
+    as a cache file: each one older than the cutoff (any one, ``age_blind``)
+    is removed (:func:`_prune_lab_names`).
     """
     cutoff = time.time() - max_age_days * 86400
     report = MaintenanceReport()
+    _prune_lab_names(home, cutoff=cutoff, dry_run=dry_run, age_blind=age_blind, report=report)
     for ws in _candidates(home):
         touched = False
         young_here = False
@@ -506,3 +525,38 @@ def prune(
     report.retained_young = _dedupe(report.retained_young)
     report.retained_nonempty = _dedupe(report.retained_nonempty)
     return report
+
+
+def _prune_lab_names(
+    home: Path, *, cutoff: float, dry_run: bool, age_blind: bool, report: MaintenanceReport
+) -> None:
+    """Remove the last-known-lab-name records under *home* older than *cutoff* into *report*.
+
+    Only what sits directly in a real :data:`LAB_NAMES_DIRNAME` directory and
+    is not a directory itself is a candidate (a record, or a temporary an
+    interrupted write left); a symlink is unlinked, never followed, and a
+    symlinked directory is not entered. A record's age is its file's mtime:
+    when its names were first recorded, so a record pruned while still right
+    is written again by its source's next complete read. The directory itself
+    stays. A record that cannot be removed is left as it is and not reported.
+    """
+    directory = home / LAB_NAMES_DIRNAME
+    if not _is_real_dir(directory):
+        return
+    try:
+        entries = sorted(directory.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if _is_real_dir(entry):
+            continue
+        try:
+            st = entry.lstat()
+        except OSError:
+            continue
+        if not (age_blind or st.st_mtime < cutoff):
+            continue
+        if not dry_run and _remove_entry(entry) is None:
+            continue
+        report.files_removed.append(entry)
+        report.bytes_freed += st.st_size

@@ -10,6 +10,7 @@ cannot live at module scope.
 import contextlib
 import json
 import logging
+import threading
 from pathlib import Path
 
 import otto.config.completion_cache as cc
@@ -18,6 +19,7 @@ from otto.inventory import register_inventory_backend
 from otto.inventory.registry import INVENTORY_BACKENDS
 from otto.models.base import OttoModel
 from otto.models.inventory import InventoryRecord
+from tests._fixtures.completion_deadline import expire_when
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.project_scaffold import touch_settings
@@ -396,7 +398,7 @@ def test_a_tab_over_a_profile_holding_a_secret_never_makes_the_key(tmp_path, mon
     resolved = cc.resolve_process_inventory([project])
     cc.project_host_summaries(project, resolved, profiles=profiles)
     cc.project_host_summaries(project, resolved, profiles=profiles)  # the memo's hit
-    assert len(cc._SUMMARY_MEMO) == 1
+    assert len(cc._SUMMARY_MEMO) == 2  # its names and its host enumeration, each once
     assert not (otto_home() / DIGEST_SALT_FILENAME).exists()
 
 
@@ -702,11 +704,17 @@ def test_a_switched_creds_symlink_never_reuses_the_memo(tmp_path, monkeypatch):
     assert logins() == ["bob"]
 
 
-class _StatusRaises:
-    """A lab source whose status report must never be asked for a name-only request."""
+class _Status:
+    """A lab source listing ``stale`` but whose status read, through the view, declares ``east``.
+
+    *raises* makes the status read fail, as a source whose status call is down.
+    """
+
+    def __init__(self, *, raises: bool = False) -> None:
+        self.raises = raises
 
     def list_labs(self) -> list[str]:
-        return ["east"]
+        return ["stale"]
 
     def load_lab(self, name, **_):
         from otto.labs import LabNotFoundError
@@ -714,26 +722,95 @@ class _StatusRaises:
         raise LabNotFoundError(name)
 
     def list_lab_status(self, *, view):
-        raise AssertionError("a name-only request asked for lab status")
+        from otto.labs import LabRepositoryError, LabStatus
+
+        if self.raises:
+            raise LabRepositoryError("the status service is down")
+        return [LabStatus(name="east")]
 
 
-def test_a_name_only_request_never_calls_status(tmp_path, monkeypatch):
+class _HeldStatus(_Status):
+    """A :class:`_Status` whose status read waits on :attr:`release`, noting its thread."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.on_main_thread: list[bool] = []
+
+    def list_lab_status(self, *, view):
+        self.on_main_thread.append(threading.current_thread() is threading.main_thread())
+        self.entered.set()
+        assert self.release.wait(60), "the test never released the status read"
+        return super().list_lab_status(view=view)
+
+
+def _status_project(tmp_path, monkeypatch, *, repository: _Status):
     from otto.labs import register_lab_repository
     from otto.labs.sources import PendingLabSource
     from otto.registry import FrozenMap
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    register_lab_repository("status-raises", config=_NoConfig, factory=lambda c: _StatusRaises())
+    register_lab_repository("status-source", config=_NoConfig, factory=lambda c: repository)
     root = tmp_path / "sut"
     source = PendingLabSource(
-        backend="status-raises",
-        label="sut/status-raises#1",
+        backend="status-source",
+        label="sut/status-source#1",
         raw=FrozenMap.freeze_json(value={}),
         origin=str(root / ".otto" / "settings.toml"),
         project_root=root,
     )
-    project = _named(tmp_path, "sut", settings={}, lab_sources=[source])
+    return _named(tmp_path, "sut", settings={}, lab_sources=[source])
+
+
+def test_lab_names_come_from_the_status_read_through_the_view(tmp_path, monkeypatch):
+    """A source's ``--lab`` names are its status read's, the labs it declares now (lab templating).
+
+    Never its ``list_labs()``: a ``jsonnet`` source's are recorded last-known
+    names, which only an unavailable scoped source's listing may show.
+    """
+    project = _status_project(tmp_path, monkeypatch, repository=_Status())
     assert cc.collect_lab_names([project]) == ["east"]
+
+
+def test_a_failed_status_read_declares_no_names_and_says_why(tmp_path, monkeypatch):
+    project = _status_project(tmp_path, monkeypatch, repository=_Status(raises=True))
+    assert cc.collect_lab_names([project]) == []
+    assert ("source sut/status-source#1", "the status service is down") in [
+        (d["where"], d["reason"]) for d in cc.collect_host_drops([project])
+    ]
+
+
+def test_a_status_call_never_runs_outside_the_deadline(tmp_path, monkeypatch):
+    """A ``--lab`` TAB never waits on a source's status call: it runs inside the deadline.
+
+    The protection the phase-1 rule (names from ``list_labs()``, never a
+    status call) gave, kept now that the names come from the status read: a
+    status call that blocks costs its source's names at the deadline, and
+    runs on the bounded worker, never on the TAB's own thread.
+    """
+    held = _HeldStatus()
+    project = _status_project(tmp_path, monkeypatch, repository=held)
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    done = threading.Event()
+    real = cc._enumerate_lab_names  # the worker the held status read abandons
+
+    def enumerate_then_say(*args, **kwargs):
+        try:
+            return real(*args, **kwargs)
+        finally:
+            done.set()
+
+    monkeypatch.setattr(cc, "_enumerate_lab_names", enumerate_then_say)
+    expire_when(monkeypatch, held.entered)
+    try:
+        assert cc.collect_lab_names([project]) == []
+        assert any(d["timed_out"] for d in cc.collect_host_drops([project]))
+    finally:
+        held.release.set()
+    assert done.wait(60), "the worker never finished once released"
+    assert held.on_main_thread, "control: the status read was called"
+    assert not any(held.on_main_thread), "a status call ran on the TAB's own thread"
 
 
 def test_an_opaque_named_inventory_makes_the_block_opaque(tmp_path, monkeypatch):

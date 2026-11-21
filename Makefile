@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-cut-sweep stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed shell-transcripts kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts wheel-check wheel-smoke check-api-keywords
+.PHONY: help quick quick-guards gate-scope gate-tip gate-status land lock-check all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-bed coverage-hostless coverage-hostless-fold coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-tag release-campaign stability stability-unit stability-cut-sweep stability-unix stability-tunnel stability-embedded console-release-bed chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed shell-transcripts kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts wheel-check wheel-smoke check-api-keywords check-jsonnet-markers
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -831,7 +831,7 @@ test-ts: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once — no cove
 # recipe line (see the release: warning above for what happens when that rule
 # is violated).
 # NOTE: prerequisites assume serial execution; do not run wheel-check under make -j.
-wheel-check: clean-dist $(DASHBOARD_DIST) $(COVAPP_DIST) build ## (Build & Release) Build the wheel from the dist rule's dashboard and coverage-app outputs (rebuilt only when stale; the release forces a rebuild through clean-web-assets) and assert the wheel embeds both src/otto/_webassets/{monitor/dist,covapp}/ artifacts (air-gap requirement) and the PEP 561 py.typed marker
+wheel-check: clean-dist $(DASHBOARD_DIST) $(COVAPP_DIST) build ## (Build & Release) Build the wheel from the dist rule's dashboard and coverage-app outputs (rebuilt only when stale; the release forces a rebuild through clean-web-assets) and assert the wheel embeds both src/otto/_webassets/{monitor/dist,covapp}/ artifacts (air-gap requirement), the PEP 561 py.typed marker and the reserved Jsonnet library otto/templating/otto.libsonnet
 	@$(SAY) "asserting dist/*.whl embeds the web assets"
 	@for entry in monitor/dist/index.html covapp/index.html; do \
 		dir="otto/_webassets/$${entry%%/*}/"; \
@@ -856,6 +856,11 @@ wheel-check: clean-dist $(DASHBOARD_DIST) $(COVAPP_DIST) build ## (Build & Relea
 		exit 1; \
 	fi; \
 	echo "wheel-check: OK — otto/py.typed (PEP 561 marker) embedded."
+	@if ! unzip -l dist/*.whl | grep -q 'otto/templating/otto\.libsonnet$$'; then \
+		echo "wheel-check: FAIL — otto/templating/otto.libsonnet missing from dist/*.whl; every Jsonnet template that imports 'otto.libsonnet' would fail to render." >&2; \
+		exit 1; \
+	fi; \
+	echo "wheel-check: OK — otto/templating/otto.libsonnet (the reserved Jsonnet library) embedded."
 	@scripts/check_airgap.sh
 	@if unzip -l dist/*.whl | grep -q '\.map$$'; then \
 		echo "wheel-check: FAIL — sourcemap (*.map) files embedded in the wheel; the wheel-exclude in pyproject.toml [tool.uv.build-backend] should strip them." >&2; \
@@ -1995,6 +2000,12 @@ lock-check: ## (Quality) The lock file matches pyproject.toml (uv lock --check);
 	@$(SAY) "uv lock --check"
 	@uv lock --check
 
+# Reaches PyPI (uv pip compile), so it is no static lane of the local gate:
+# CI's lint-python runs it once per pull request.
+check-jsonnet-markers: ## (Quality) Fail unless pyproject.toml's markers install the documented Jsonnet binding on each target platform and Python, and the two documented gaps fail naming theirs (scripts/check_jsonnet_markers.py; reaches PyPI)
+	@$(SAY) "Jsonnet binding markers: a binary-only uv pip compile per target and Python"
+	@uv run python -m scripts.check_jsonnet_markers
+
 check-python: ## (Quality) All Python static analysis, tree-pure: lock-check, then ruff with the architecture gates (lint-python), then ty (recipe lines, so the lock is checked first even under -j)
 	@$(MAKE) lock-check
 	@$(MAKE) lint-python
@@ -2126,6 +2137,7 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 src/otto/coverage/embedded_gcov/starter/cov_entry.c \
                 src/otto/kmodcov/kmodcov.h          \
                 src/otto/kmodcov/consumer.mk        \
+                src/otto/templating/otto.libsonnet  \
                 schemas/support_matrix.json         \
                 scripts/render_support_matrix.py    \
                 $(shell find tests/conformance -name '*.py') \

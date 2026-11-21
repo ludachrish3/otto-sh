@@ -52,6 +52,10 @@ Without `overwrite=True` this raises
 CLI top-level commands follow the same rule; see {doc}`extending-cli`'s
 [Collisions](extending-cli.md#collisions) section.
 
+A built-in may instead *yield* its name: your registration of that name
+replaces it without `overwrite=True`, and otto logs one warning naming both
+modules (otto's own backend of that name is then unavailable in the process).
+
 (configured-backends)=
 ## Configured backends: one wrapper shape
 

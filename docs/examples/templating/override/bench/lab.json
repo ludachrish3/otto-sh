@@ -1,0 +1,9 @@
+{
+  "elements": [
+    {
+      "name": "east-dut0",
+      "labs": ["router-lab.east"],
+      "hosts": [{"ip": "10.1.0.9", "creds": [{"login": "admin", "password": "admin"}]}]
+    }
+  ]
+}
