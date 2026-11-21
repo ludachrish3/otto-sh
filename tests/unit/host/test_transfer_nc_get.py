@@ -1477,9 +1477,9 @@ class TestTheTunneledGetIsSizeTerminated:
         # measures, and a scripted device is not needed to hold them. The
         # runner raises, so a declaration that failed to take would leave the
         # capability unsettled rather than quietly probing something else.
-        userland = Userland(UserlandOptions(shell_dialect="ash", applet_nc="present"), _unreachable)
+        userland = Userland(UserlandOptions(applet_nc="present"), _unreachable, command_frame="ash")
         await userland.resolve()
-        assert userland.shell_dialect == "ash", "the premise never held"
+        assert userland.command_frame == "ash", "the premise never held"
         assert userland.has_applet(applet="nc") == "present", "the premise never held"
 
         async def exec_side(cmd: str, timeout=None, **kw):

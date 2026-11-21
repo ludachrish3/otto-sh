@@ -1156,9 +1156,6 @@ class UserlandOptions:
     already benefit.
     """
 
-    shell_dialect: str | None = None
-    """Registered ``CommandFrame`` type_name, or ``None`` to probe."""
-
     elevation: str | None = None
     """``"sudo"``, ``"su"``, ``"none"``, or ``None`` to probe."""
 

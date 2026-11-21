@@ -505,7 +505,26 @@ class UserlandOptionsSpec(OttoModel):
     naming the key, instead of silently selecting a fallback at runtime.
     """
 
-    shell_dialect: str | None = rt.field_default(rt.UserlandOptions, "shell_dialect")
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_shell_dialect(cls, data: object) -> object:
+        """Refuse a ``shell_dialect`` key, naming the fix: the host's ``command_frame``.
+
+        Caught here rather than left to ``extra='forbid'`` so an old lab file
+        fails with the migration instead of a bare unknown-field error. Here
+        and not on the host spec, because every source of this table (a host
+        entry, an os_profile, ``[host_preferences]``) is validated by this
+        model.
+        """
+        if isinstance(data, dict) and "shell_dialect" in data:
+            old = data["shell_dialect"]
+            write = f' and write "command_frame": "{old}" on the host instead' if old else ""
+            raise ValueError(
+                "userland_options.shell_dialect was replaced by the host's command_frame: "
+                f"remove it{write}."
+            )
+        return data
+
     elevation: Literal["sudo", "su", "none"] | None = rt.field_default(
         rt.UserlandOptions, "elevation"
     )
@@ -554,7 +573,6 @@ class UserlandOptionsSpec(OttoModel):
     def to_runtime(self) -> rt.UserlandOptions:
         """Build the ``UserlandOptions`` runtime dataclass from validated fields."""
         return rt.UserlandOptions(
-            shell_dialect=self.shell_dialect,
             elevation=self.elevation,
             sudo_form=self.sudo_form,
             base64_flag=self.base64_flag,

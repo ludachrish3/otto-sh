@@ -14,7 +14,7 @@ def test_userland_reads_gnu_for_a_plain_unix_host() -> None:
 
 def test_userland_reads_busybox_from_the_userland_layer_not_from_os_type() -> None:
     """BusyBox guests report ``os_type: unix`` — the flavor is NOT readable off it."""
-    data = {"os_type": "unix", "sw_version": "1.35.0", "userland_options": {"shell_dialect": "ash"}}
+    data = {"os_type": "unix", "sw_version": "1.35.0", "userland_options": {"elevation": "su"}}
     assert _userland(data) == "busybox-1.35.0"
 
 
@@ -29,7 +29,7 @@ def test_userland_reads_zephyr_with_its_version() -> None:
     "data",
     [
         {"os_family": "embedded", "os_type": "zephyr"},
-        {"os_type": "unix", "userland_options": {"shell_dialect": "ash"}},
+        {"os_type": "unix", "userland_options": {"elevation": "su"}},
     ],
     ids=["zephyr-without-os_version", "busybox-without-sw_version"],
 )

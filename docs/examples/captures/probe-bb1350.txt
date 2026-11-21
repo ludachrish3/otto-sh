@@ -28,20 +28,21 @@ INFO     Connection closed to <Peer 127.0.0.1 <port>>
 │ applet_uuencode │ present   │ declared │
 │ base64_flag     │ -d        │ declared │
 │ checksum        │ md5sum    │ declared │
+│ command_frame   │ ash       │ declared │
 │ elevation       │ su        │ declared │
-│ shell_dialect   │ ash       │ declared │
 │ stat_size       │ stat      │ declared │
 │ timeout_style   │ coreutils │ declared │
 ╰─────────────────┴───────────┴──────────╯
 
-declared = already pinned in this host's userland_options, and never re-probed. probed = the device
+declared = already pinned in this host's lab.json entry, and never re-probed. probed = the device
 answered, so this one is worth pinning. assumed = otto could not ask, so the value is only what otto
 did before it asked anything -- and it is left out of the pin for that reason, because inside a JSON
 payload a guess is indistinguishable from a measurement.
 
-Every capability is declared in this host's userland_options already, so none of them needed a
-probe. This is the pin in force:
+Every capability is declared in this host's lab.json entry already, so none of them needed a probe.
+This is the pin in force:
 
+"command_frame": "ash",
 "userland_options": {
   "applet_base64": "present",
   "applet_nc": "present",
@@ -53,7 +54,6 @@ probe. This is the pin in force:
   "base64_flag": "-d",
   "checksum": "md5sum",
   "elevation": "su",
-  "shell_dialect": "ash",
   "stat_size": "stat",
   "timeout_style": "coreutils"
 }

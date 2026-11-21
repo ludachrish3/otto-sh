@@ -126,9 +126,30 @@ _NEVER_PROBED = {"version"}
 _OUTSIDE_THE_ROUND = {"sudo_form"}
 
 
+# The one capability declared outside ``UserlandOptions``: the host's own
+# ``command_frame`` declares the shell, and the probe measures it otherwise.
+_HOST_DECLARED = "command_frame"
+
+
 def _probeable_field_names() -> list[str]:
     skipped = _NEVER_PROBED | _OUTSIDE_THE_ROUND
-    return sorted(f.name for f in fields(UserlandOptions) if f.name not in skipped)
+    options = [f.name for f in fields(UserlandOptions) if f.name not in skipped]
+    return sorted([*options, _HOST_DECLARED])
+
+
+def _declaring(declared: dict, runner) -> Userland:
+    """Build a ``Userland`` with *declared* answers, each given where a host declares it."""
+    options = {k: v for k, v in declared.items() if k != _HOST_DECLARED}
+    return Userland(UserlandOptions(**options), runner, command_frame=declared.get(_HOST_DECLARED))
+
+
+def _settled(userland) -> dict[str, str]:
+    """Everything a user may pin: the options table plus a settled ``command_frame``."""
+    pinned = dict(userland.as_lab_json())
+    assert _HOST_DECLARED not in pinned, "command_frame is a host key, not a userland option"
+    if userland.is_settled(name=_HOST_DECLARED):
+        pinned[_HOST_DECLARED] = userland.command_frame
+    return pinned
 
 
 # The applet capabilities, and the six that are not. Derived from
@@ -174,11 +195,9 @@ def _ok(value: str = "") -> CommandResult:
     return CommandResult(status=Status.Success, value=value, retcode=0)
 
 
-# `shell_dialect` is the one resolved field the lab-data spec types as a bare
-# `str | None` rather than a Literal, so UserlandOptionsSpec validates ANY
-# string for it and the paste-ready round trip cannot police it. Its
-# vocabulary is pinned here instead, or the field rides along on the other
-# five fields' Literals and a probe answering "posix" ships unnoticed.
+# `command_frame` is the one resolved capability UserlandOptionsSpec does not
+# validate: it is pinned as the host's own key. What the probe may answer is
+# pinned here instead, or a probe answering "posix" ships unnoticed.
 _MEASURED_DIALECTS = {"ash", "bash"}
 
 
@@ -212,7 +231,7 @@ _FULLY_DEGRADED = {
     "base64_flag": "absent",
     "checksum": "absent",
     "elevation": "none",
-    "shell_dialect": "ash",
+    "command_frame": "ash",
     "stat_size": "absent",
     "timeout_style": "absent",
     # Every applet name reported `<name>=0` by a batch that RAN, control and
@@ -243,12 +262,10 @@ _FULLY_DEGRADED = {
 #                  this capability existed), so assuming "md5sum" on a host
 #                  that could not even answer the probe would build a command
 #                  likely to 127 and report a good transfer as a bad one.
-#   shell_dialect  otto's unix path has always assumed bash, and nothing
-#                  routes this PROBE's value to frame selection yet — an
-#                  `ash` CommandFrame IS registered now
-#                  (build_command_frame("ash") succeeds), but recording
-#                  "ash" for an unasked host would still claim a measurement
-#                  nobody took, not merely name a frame that can't be built.
+#   command_frame  otto's unix path has always assumed bash: a session on a
+#                  host that declares no frame is framed as bash. Recording
+#                  "ash" for an unasked host would claim a measurement
+#                  nobody took.
 #   applet_*       `present`, uniformly, and it is the same rule the six
 #                  above are instances of rather than a seventh argument:
 #                  otto reached for `shutdown`, `scp` and `base64` by name
@@ -259,7 +276,7 @@ _UNASKABLE = {
     "base64_flag": "absent",
     "checksum": "absent",
     "elevation": "sudo",
-    "shell_dialect": "bash",
+    "command_frame": "bash",
     "stat_size": "stat",
     "timeout_style": "absent",
     **dict.fromkeys(_APPLET_FIELDS, APPLET_PRESENT),
@@ -463,10 +480,10 @@ async def test_a_declared_answer_is_never_probed(field_name):
     await Userland(UserlandOptions(), baseline).resolve()
 
     runner = _Runner()
-    userland = Userland(UserlandOptions(**{field_name: "DECLARED"}), runner)
+    userland = _declaring({field_name: "DECLARED"}, runner)
     await userland.resolve()
 
-    assert userland.as_lab_json()[field_name] == "DECLARED"
+    assert _settled(userland)[field_name] == "DECLARED"
     assert set(runner.calls) < set(baseline.calls), (
         f"declaring {field_name} removed no probe: declared run issued "
         f"{runner.calls}, undeclared run issued {baseline.calls}"
@@ -527,11 +544,11 @@ async def test_declaring_every_capability_issues_no_command_at_all():
     declared |= dict.fromkeys(_APPLET_FIELDS, APPLET_PRESENT)
     runner = _Runner()
 
-    userland = Userland(UserlandOptions(**declared), runner)
+    userland = _declaring(declared, runner)
     await userland.resolve()
 
     assert runner.calls == [], f"a fully declared host still probed: {runner.calls}"
-    assert userland.as_lab_json() == declared
+    assert _settled(userland) == declared
 
 
 @pytest.mark.asyncio
@@ -553,15 +570,17 @@ async def test_the_pasteable_pin_round_trips_through_lab_data_and_then_costs_not
     device = next(d for d in _DEVICES if d.name == "gnu-coreutils-bash")
     first = Userland(UserlandOptions(), _Runner(device.works, applets=device.applets))
     await first.resolve()
-    pinned = first.as_lab_json()
+    pinned = _settled(first)
     assert set(pinned) == set(_probeable_field_names()), (
         f"the device answered everything, so the pin must be complete; it omitted "
         f"{sorted(set(_probeable_field_names()) - set(pinned))}"
     )
 
-    options = UserlandOptionsSpec(**json.loads(json.dumps(pinned))).to_runtime()
+    pasted = json.loads(json.dumps(pinned))
+    frame = pasted.pop(_HOST_DECLARED)
+    options = UserlandOptionsSpec(**pasted).to_runtime()
     second_runner = _Runner()
-    second = Userland(options, second_runner)
+    second = Userland(options, second_runner, command_frame=frame)
     await second.resolve()
 
     assert second_runner.calls == [], (
@@ -637,14 +656,15 @@ async def test_the_debug_summary_is_pasteable_into_lab_json(caplog):
 
     summary = [r.getMessage() for r in caplog.records if "pin these" in r.getMessage()]
     assert summary, "no pasteable summary was emitted"
-    payload = json.loads(summary[0].split('-- "userland_options": ', 1)[1])
+    payload = json.loads(summary[0].split('"userland_options": ', 1)[1])
     assert payload == userland.as_lab_json()
     assert payload["elevation"] == "sudo"
     assert payload["timeout_style"] == "coreutils"
     UserlandOptionsSpec(**payload)
-    # The spec types shell_dialect as a free `str`, so the line above accepts
-    # anything at all for it — see _MEASURED_DIALECTS.
-    assert payload["shell_dialect"] in _MEASURED_DIALECTS
+    # The measured shell is offered as the host's own key, ahead of the table
+    # and never inside it.
+    assert summary[0].split("-- ", 1)[1].startswith('"command_frame": "ash", "userland_options": ')
+    assert "command_frame" not in payload
     _assert_debug_only(caplog)
 
 
@@ -663,7 +683,7 @@ async def test_every_resolved_field_gets_its_own_debug_line(caplog):
         await userland.resolve()
 
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("userland: ")]
-    for name, value in userland.as_lab_json().items():
+    for name, value in _settled(userland).items():
         source = "declared" if name == "elevation" else "probed"
         assert f"userland: {name} = {value} ({source})" in lines, (
             f"no {source} debug line for {name}; got {lines}"
@@ -792,7 +812,7 @@ async def test_every_option_field_is_probed_or_documented_as_never_probed():
     userland = Userland(UserlandOptions(), _Runner())
     await userland.resolve()
 
-    assert set(userland.as_lab_json()) == set(_probeable_field_names()), (
+    assert set(_settled(userland)) == set(_probeable_field_names()), (
         "Userland resolves a different set of fields than UserlandOptions declares; "
         "add a probe, or add the field to _NEVER_PROBED with a reason"
     )
@@ -826,7 +846,7 @@ async def test_is_settled_separates_a_measurement_from_an_assumption(field_name)
         f"probe round become a verdict about the device"
     )
 
-    declared = Userland(UserlandOptions(**{field_name: "DECLARED"}), _Runner())
+    declared = _declaring({field_name: "DECLARED"}, _Runner())
     await declared.resolve()
     assert declared.is_settled(name=field_name), "a declaration is settled by definition"
 
@@ -866,7 +886,7 @@ async def test_a_host_answering_nothing_degrades_rather_than_raising():
 
     await userland.resolve()
 
-    assert userland.as_lab_json() == _FULLY_DEGRADED
+    assert _settled(userland) == _FULLY_DEGRADED
 
 
 @pytest.mark.asyncio
@@ -884,7 +904,7 @@ async def test_only_a_zero_exit_counts_as_a_yes(fail_retcode):
 
     await userland.resolve()
 
-    assert userland.as_lab_json() == _FULLY_DEGRADED
+    assert _settled(userland) == _FULLY_DEGRADED
 
 
 @dataclass(frozen=True)
@@ -936,7 +956,7 @@ _DEVICES = [
             "base64_flag": "absent",
             "stat_size": "stat",
             "checksum": "md5sum",
-            "shell_dialect": "ash",
+            "command_frame": "ash",
         },
         # Measured 2026-08-14 in a BusyBox-only chroot: no `base64`, no `scp`, no
         # `shutdown`; `nc`, `poweroff` and both uu halves are there. The row
@@ -963,7 +983,7 @@ _DEVICES = [
             "base64_flag": "-d",
             "stat_size": "stat",
             "checksum": "md5sum",
-            "shell_dialect": "ash",
+            "command_frame": "ash",
         },
         # Measured 2026-08-14: `base64` has arrived; `scp` and `shutdown`
         # are still absent, as on every matrix row.
@@ -989,7 +1009,7 @@ _DEVICES = [
             "base64_flag": "-d",
             "stat_size": "stat",
             "checksum": "md5sum",
-            "shell_dialect": "ash",
+            "command_frame": "ash",
         },
         # Measured 2026-08-14: identical applet set to 1.28.1 -- the applet
         # answers do not move across the `timeout` convention change.
@@ -1006,7 +1026,7 @@ _DEVICES = [
             "base64_flag": "-d",
             "stat_size": "wc",
             "checksum": "md5sum",
-            "shell_dialect": "ash",
+            "command_frame": "ash",
         },
         applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
@@ -1034,7 +1054,7 @@ _DEVICES = [
             "base64_flag": "-d",
             "stat_size": "stat",
             "checksum": "md5sum",
-            "shell_dialect": "bash",
+            "command_frame": "bash",
         },
         # The row where `scp` and `shutdown` are PRESENT, so the table is not
         # uniform in the two names the `scp-transfer` and `shutdown-command`
@@ -1059,7 +1079,7 @@ _DEVICES = [
             "base64_flag": "-d",
             "stat_size": "stat",
             "checksum": "md5sum",
-            "shell_dialect": "ash",
+            "command_frame": "ash",
         },
         applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
@@ -1089,7 +1109,7 @@ _DEVICES = [
             "base64_flag": "--decode",
             "stat_size": "stat",
             "checksum": "md5sum",
-            "shell_dialect": "ash",
+            "command_frame": "ash",
         },
         applets=frozenset({"base64", "nc", "poweroff", "uudecode", "uuencode"}),
     ),
@@ -1118,7 +1138,7 @@ async def test_a_scripted_device_resolves_to_its_measured_answers(device):
 
     await userland.resolve()
 
-    assert userland.as_lab_json() == device.all_expected
+    assert _settled(userland) == device.all_expected
     # Read through the READERS too, derived from the field list: a property (or
     # a `has_applet` wired to the wrong key) returns a real string and is
     # invisible to a map-only assertion.
@@ -1127,8 +1147,8 @@ async def test_a_scripted_device_resolves_to_its_measured_answers(device):
     # Independent of the row's own expectation, and of the spec: this is the
     # one field the spec types as a free string, so a probe answering "posix"
     # would satisfy both the row (once someone updated it) and the validator.
-    assert userland.shell_dialect in _MEASURED_DIALECTS, (
-        f"{userland.shell_dialect!r} is not a dialect anything measured"
+    assert userland.command_frame in _MEASURED_DIALECTS, (
+        f"{userland.command_frame!r} is not a dialect anything measured"
     )
 
 
@@ -1400,7 +1420,7 @@ async def test_resolution_stops_once_the_whole_budget_is_spent(
     # ...and only what the budget actually reached may be pinned. Stated per
     # row rather than derived, so a change to the arithmetic has to be looked
     # at rather than absorbed.
-    assert userland.as_lab_json() == pasteable
+    assert _settled(userland) == pasteable
 
 
 # ── the constraints the plan binds this module to ───────────────────────────
@@ -1426,7 +1446,7 @@ async def test_a_declared_version_changes_nothing(version):
     userland = Userland(UserlandOptions(version=version), runner)
     await userland.resolve()
 
-    assert userland.as_lab_json() == reference.as_lab_json()
+    assert _settled(userland) == _settled(reference)
     assert runner.calls == baseline.calls
 
 
@@ -1535,7 +1555,7 @@ async def test_a_wedged_host_is_not_amplified_by_the_fan_out(monkeypatch):
     assert len(runner.calls) > affordable, "the cooldown never expired, so it is a surrender"
     # `ash` is what the recovered device says; `bash` is what was assumed while
     # it was wedged, so this cannot pass on a stale value.
-    assert userland.shell_dialect == "ash"
+    assert userland.command_frame == "ash"
 
 
 @pytest.mark.asyncio
@@ -1611,7 +1631,8 @@ async def test_the_pasteable_summary_never_offers_a_value_otto_did_not_measure(c
 
     summary = [r.getMessage() for r in caplog.records if "pin these" in r.getMessage()]
     assert summary, "no pasteable summary was emitted"
-    payload = json.loads(summary[0].split('-- "userland_options": ', 1)[1])
+    payload = json.loads(summary[0].split('"userland_options": ', 1)[1])
+    assert "command_frame" not in summary[0], "an unmeasured shell was offered as a pin"
 
     # The applet batch is refused too, and every one of its seven keys is
     # therefore absent from the payload -- the sharpest version of this hazard,
@@ -1627,7 +1648,7 @@ async def test_the_pasteable_summary_never_offers_a_value_otto_did_not_measure(c
     # The host still HAS answers for the ones it could not ask — it just may
     # not invite anyone to make them permanent.
     assert userland.stat_size == "stat"
-    assert userland.shell_dialect == "bash"
+    assert userland.command_frame == "bash"
     assert userland.has_applet(applet="scp") == APPLET_PRESENT
     _assert_debug_only(caplog)
 
@@ -1681,7 +1702,7 @@ _BLIP_RECOVERY = [
     ("base64_flag", {_P_BASE64_SHORT, _P_BASE64_LONG}, "gnu-coreutils-bash", "absent", "-d"),
     ("stat_size", {_P_STAT, _P_WC}, "busybox-stat-compiled-out", "stat", "wc"),
     ("checksum", {_P_MD5SUM}, "busybox-1.28.1", "absent", "md5sum"),
-    ("shell_dialect", {_P_BASH}, "busybox-1.28.1", "bash", "ash"),
+    ("command_frame", {_P_BASH}, "busybox-1.28.1", "bash", "ash"),
     # `scp` rather than an applet the row HAS: the assumed answer is `present`
     # for every applet, so a row whose device also says present could not tell
     # a re-probe from the standing guess. 1.28.1 has no `scp`, so the two
@@ -1960,7 +1981,7 @@ async def test_a_batch_that_did_not_measure_the_device_leaves_it_unasked(shape, 
             f"the {shape} batch settled {applet}, so a refused probe round became "
             f"a verdict about the device"
         )
-    assert userland.as_lab_json() == {
+    assert _settled(userland) == {
         k: v for k, v in _FULLY_DEGRADED.items() if k not in _APPLET_FIELDS
     }, "an unmeasured applet answer reached the pasteable pin"
     _assert_debug_only(caplog)

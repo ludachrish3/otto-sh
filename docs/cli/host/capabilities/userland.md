@@ -29,22 +29,23 @@ applet_nc        present    probed
 applet_scp       absent     probed
 base64_flag      -d         probed
 checksum         md5sum     probed
+command_frame    bash       probed
 elevation        sudo       probed
-shell_dialect    bash       probed
 stat_size        stat       probed
 sudo_form        shell      probed
 timeout_style    coreutils  probed
 ```
 
 The source is the actionable column. `declared` means the value is already
-pinned in this host's `userland_options` and is never re-probed; `probed` means
+pinned in this host's entry and is never re-probed; `probed` means
 the device answered, so it is worth pinning; `assumed` means otto could not ask
 and the value is only what otto did before it asked anything.
 
-Then the pasteable payload — the settled answers, under the key a `lab.json`
+Then the pasteable payload — the settled answers, under the keys a `lab.json`
 host entry carries:
 
 ```json
+"command_frame": "bash",
 "userland_options": {
   "elevation": "sudo",
   "sudo_form": "shell",
@@ -55,6 +56,12 @@ host entry carries:
 
 Paste that into the host's entry and the next connection issues no probe at
 all. See {doc}`../../../configuration/host-options` for where the table lives and how it layers.
+
+The shell is the one answer pinned outside the table. `command_frame` is the
+host's own key ({doc}`../../../configuration/lab/host-fields`): a host that
+declares it is never probed for it, and it is also what frames the host's
+sessions. A measured shell does not change how sessions are framed: sessions on a host
+that declares no `command_frame` are framed as bash until you paste the pin.
 
 **Assumed values are absent from the payload.** The reading above the payload
 is where those values are visible, labelled for what they are. A host that

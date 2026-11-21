@@ -902,6 +902,35 @@ class TestCredSpec:
             _cred_spec([{"login": "a", "password": "x"}], user="hunter2-looking-value")
         assert "hunter2" not in e.value.errors(include_input=False)[0]["msg"]
 
+    def test_a_shell_dialect_pin_is_refused_with_the_migration_message(self):
+        """The old ``userland_options.shell_dialect`` is refused, naming its replacement."""
+        entry = {"ip": "10.0.0.1", "userland_options": {"shell_dialect": "ash", "elevation": "su"}}
+        with pytest.raises(ValidationError, match="shell_dialect was replaced") as e:
+            UnixHostSpec.model_validate(entry)
+        assert (
+            "userland_options.shell_dialect was replaced by the host's command_frame: "
+            'remove it and write "command_frame": "ash" on the host instead.'
+        ) in str(e.value)
+
+    def test_a_null_shell_dialect_is_refused_and_only_removed(self):
+        """``shell_dialect: null`` declared nothing, so the advice names nothing to write."""
+        entry = {"ip": "10.0.0.1", "userland_options": {"shell_dialect": None}}
+        with pytest.raises(ValidationError, match="shell_dialect was replaced") as e:
+            UnixHostSpec.model_validate(entry)
+        assert "host's command_frame: remove it." in str(e.value)
+
+    def test_a_shell_dialect_preference_is_refused_with_the_same_message(self):
+        """``[host_preferences]`` reaches the same table, so it gets the same refusal."""
+        from otto.host import Element
+        from otto.host.factory import create_host_from_dict
+
+        with pytest.raises(ValidationError, match=r'write "command_frame": "bash" on the host'):
+            create_host_from_dict(
+                {"ip": "10.0.0.1"},
+                preferences={".*": {"userland_options": {"shell_dialect": "bash"}}},
+                element=Element(name="e"),
+            )
+
     def test_creds_optional_on_unix_host(self):
         assert UnixHostSpec.model_validate(CRED_BASE).creds == []
 

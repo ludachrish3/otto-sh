@@ -64,6 +64,10 @@ from otto.utils import Status
 # and states the reasoning in full.
 _PINNABLE = sorted(f.name for f in fields(UserlandOptions) if f.name != "version")
 
+# The table's rows: the pinnable options, plus the shell, which a host entry
+# declares as its own ``command_frame`` key rather than as a userland option.
+_ROWS = sorted([*_PINNABLE, "command_frame"])
+
 # The three words `_resolve_once` classifies a capability with. Spelled out so
 # a report that quietly stopped emitting one of them cannot pass by matching
 # whatever it does emit instead.
@@ -189,7 +193,8 @@ async def _report(
 def _pin_text(lines: list) -> str:
     """The printed pin, from its key to the end -- what a user would select."""
     lines = [line for line in lines if isinstance(line, str)]
-    start = next((i for i, line in enumerate(lines) if line.startswith('"userland_options"')), None)
+    keys = ('"command_frame"', '"userland_options"')
+    start = next((i for i, line in enumerate(lines) if line.startswith(keys)), None)
     assert start is not None, "no pasteable pin in the output:\n" + "\n".join(lines)
     return "\n".join(lines[start:])
 
@@ -203,7 +208,12 @@ def _pinned(lines: list) -> dict[str, str]:
     """
     lines = [line for line in lines if isinstance(line, str)]
     parsed = json.loads("{" + _pin_text(lines) + "}")
-    assert list(parsed) == ["userland_options"], f"unexpected top-level keys: {list(parsed)}"
+    assert set(parsed) <= {"command_frame", "userland_options"}, (
+        f"unexpected top-level keys: {list(parsed)}"
+    )
+    assert "command_frame" not in parsed["userland_options"], (
+        "command_frame is the host's own key, never a userland option"
+    )
     return parsed["userland_options"]
 
 
@@ -301,6 +311,38 @@ async def test_a_device_that_answers_everything_offers_every_capability_for_pinn
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("retcode", "frame"), [(0, "bash"), (1, "ash")])
+async def test_the_measured_shell_is_printed_as_the_host_s_command_frame(retcode, frame):
+    """The probe still reports the shell it found, as the key a host entry declares it with.
+
+    ``command_frame`` is a host key, so it is printed beside the
+    ``userland_options`` table and never inside it, and the old
+    ``shell_dialect`` name appears nowhere.
+    """
+    userland = _userland(retcode=retcode, applets=list(PROBED_APPLETS))
+    lines = await _report(userland)
+
+    assert _rows(lines)["command_frame"] == (frame, "probed")
+    text = _pin_text(lines)
+    assert text.startswith(f'"command_frame": "{frame}",\n"userland_options": {{'), text
+    assert json.loads("{" + text + "}")["command_frame"] == frame
+    assert "shell_dialect" not in "\n".join(str(line) for line in lines)
+    assert "shell_dialect" not in _rows(lines)
+
+
+@pytest.mark.asyncio
+async def test_a_declared_command_frame_is_reported_as_declared_and_never_probed():
+    """A host that declares its frame has answered the question, so nothing asks the device."""
+    device = _Device(applets=list(PROBED_APPLETS))
+    userland = Userland(UserlandOptions(), device, command_frame="ash")
+    lines = await _report(userland)
+
+    assert _rows(lines)["command_frame"] == ("ash", "declared")
+    assert not [c for c in device.calls if "BASH_VERSION" in c], device.calls
+    assert _pin_text(lines).startswith('"command_frame": "ash",\n')
+
+
+@pytest.mark.asyncio
 async def test_a_host_that_settled_nothing_prints_no_pin_and_says_why():
     """An empty pin is the honest output, so the reasons have to travel with it.
 
@@ -377,7 +419,7 @@ async def test_every_capability_appears_in_the_table_with_a_source():
     )
     rows = _rows(lines)
 
-    assert sorted(rows) == _PINNABLE
+    assert sorted(rows) == _ROWS
     assert {source for _, source in rows.values()} == {"assumed"}
 
 

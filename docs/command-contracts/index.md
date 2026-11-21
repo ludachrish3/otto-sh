@@ -240,7 +240,7 @@ Where: the `pooled-shell` and `default-session` routes. Kind: device: the device
 
 On these routes otto types the command into a terminal, and the characters otto adds around the command count against the line's length. A Linux terminal cuts a typed line past 4095 characters, with no error: the kernel holds a typed line in a 4096-byte buffer, its newline included (measured on BusyBox guests). BusyBox's shell, ash, cuts a line at 1022 characters, but only while the terminal echoes what is typed back. otto turns echo off when it opens a session, so the limit is 4095 where that worked and 1022 where it did not (the device has no `stty`, or its `stty` refuses). otto also uses 1022 when it sizes a file transfer's lines before it has opened any session to the host, since it cannot yet know whether echo is off. `otto host <id> probe` prints the terminal mapping it measured, with `, echo on` after it where echo stayed on, so the limit there is 1022 on a BusyBox shell.
 
-On an ash shell `run` counts each line before typing it, and refuses a line over the limit with an error naming it. Elsewhere the terminal cuts it without an error.
+On a host whose `command_frame` is `ash`, `run` counts each line before typing it, and refuses a line over the limit with an error naming it. Elsewhere the terminal cuts it without an error.
 
 Not limited this way: a local host's session, which reads the command from a pipe, not a terminal; and `exec` on the `ssh-channel` route, which has its own limit. A Zephyr board's own shell buffer is a separate limit, never measured.
 

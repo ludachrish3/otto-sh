@@ -3238,12 +3238,12 @@ call	otto.host:Userland	sync	@manifest:construct=false
 member	otto.host:Userland.as_lab_json	method	sync	KO:sudo_login:N
 member	otto.host:Userland.base64_flag	property:g--
 member	otto.host:Userland.checksum	property:g--
+member	otto.host:Userland.command_frame	property:g--
 member	otto.host:Userland.elevation	property:g--
 member	otto.host:Userland.has_applet	method	sync	KO:applet:-
 member	otto.host:Userland.is_settled	method	sync	KO:name:-
 member	otto.host:Userland.resolve	method	coroutine	-
 member	otto.host:Userland.resolve_sudo_form	method	coroutine	KO:login:- KO:probe:-
-member	otto.host:Userland.shell_dialect	property:g--
 member	otto.host:Userland.stat_size	property:g--
 member	otto.host:Userland.sudo_form	method	sync	KO:login:-
 member	otto.host:Userland.sudo_form_known	method	sync	KO:login:-

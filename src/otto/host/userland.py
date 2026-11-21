@@ -8,7 +8,9 @@ once, cached for the host's lifetime, and degrades to a documented fallback
 when the probe cannot answer.
 
 Declared values in ``userland_options`` win outright and skip the probe
-entirely, which is the point of declaring them.
+entirely, which is the point of declaring them. The shell is the one
+capability declared elsewhere: its declaration is the host's own
+``command_frame``.
 
 Probe traffic runs at ``LogMode.NEVER``: it is otto's internal machinery, not
 the user's command output, and it would otherwise dominate a session log.
@@ -45,9 +47,12 @@ what today:
     ``_get_one``, for post-transfer integrity verification — ``md5sum`` on
     both sides when present, a byte-size comparison via ``stat_size``
     otherwise)
-``shell_dialect``
-    nothing yet — an ``ash`` frame is registered, but nothing routes this
-    probe's result to it; see the hole below
+``command_frame``
+    ``otto.host.survey.dial.hop_dial_script``. A host that declares
+    ``command_frame`` is never probed for it. A measured answer is reported
+    and offered as a pin; it does not change the frame a session uses, which
+    is the declared one only (see
+    :func:`otto.host.session.refuse_if_typed_line_would_be_cut` for why)
 ``applet_<name>``, one per entry in :data:`PROBED_APPLETS`
     three consumers, and NOT the same one for all seven names -- which is the
     point of a per-name capability. ``applet_uudecode``/``applet_uuencode``
@@ -77,23 +82,8 @@ on the first call, and again on any later call that falls outside
 time is NOT charged to the caller's ``timeout=``; see
 :meth:`otto.host.host.BaseHost.run`.
 
-**Known hole: ``shell_dialect`` is measured but not yet consumable.** Every
-BusyBox host resolves it to ``"ash"``. An ``ash`` frame is now registered
-(:class:`~otto.host.command_frame.AshFrame`, in
-``otto.host.command_frame``) and ``build_command_frame("ash")`` succeeds —
-that half of the original hole is closed. What remains missing is the
-WIRING: no call site in this codebase reads :attr:`Userland.shell_dialect`
-and passes it to ``build_command_frame`` — every existing
-``build_command_frame`` call site (``host/specs.py``, ``unix_host.py``,
-``embedded_host.py``) resolves a DECLARED ``command_frame`` string, never
-this probe's result. So the resolved value is still a MEASUREMENT to record
-and pin, not a frame name any caller looks up through this probe. Until
-something does that routing, do not feed :attr:`Userland.shell_dialect` to
-the frame registry; the other five are safe to consume today, and all
-five of them have a consumer — see the table above — leaving ``shell_dialect``
-the only one of the FIXED SIX still without one. Two of the seven applet
-capabilities are likewise unconsumed (``applet_base64``, ``applet_nc``), each
-for a different reason — see the table above.
+Two of the seven applet capabilities have no consumer (``applet_base64``,
+``applet_nc``), each for a different reason — see the table above.
 
 Most of the probe COMMAND SPELLINGS here have two other copies, and where a
 copy exists all three have to agree: ``tests/busybox/test_applet_contracts.py``
@@ -107,7 +97,7 @@ That third, Tier 1 copy exists only for spellings with a real ARGUMENT-PARSING
 question a BusyBox version could answer differently -- ``timeout``'s
 ``-t SECS PROG`` vs ``SECS PROG``, ``base64``'s ``-d`` vs ``--decode``,
 ``stat``'s ``-c %s`` vs ``--format=%s``, and ``wc``'s ``-c <`` vs ``-c FILE``.
-``elevation`` (a bare ``command -v`` presence check), ``shell_dialect`` (a
+``elevation`` (a bare ``command -v`` presence check), ``command_frame`` (a
 shell-builtin variable read), and ``checksum`` (``Userland._probe_checksum``'s
 own docstring: one spelling, not a contested pair) have no such question, so
 Tier 1 carries no copy of theirs and the two-copy rule applies to them
@@ -407,7 +397,7 @@ APPLET_ABSENT = "absent"
 _APPLET_PREFIX = "applet_"
 # The capability key and the `UserlandOptions` field share this prefix, and the
 # sharing is load-bearing rather than tidy: `_resolve_once` reads a declaration
-# with `getattr(self._options, name)` for the fixed six, and the applet block
+# through `Userland._declared` for the fixed six, and the applet block
 # reads its declarations exactly the same way. A prefix written twice would let
 # the two drift into a declaration nothing consults.
 
@@ -595,9 +585,9 @@ def _parse_applet_answers(output: str) -> "dict[str, bool]":
 #     answer the probe that command is exactly the one likely to 127 —
 #     turning a transfer that actually landed correctly into a reported
 #     failure, not a weaker check.
-# ``shell_dialect``
-#     ``bash``. otto's unix path has always assumed it, and no ``CommandFrame``
-#     is registered under ``ash`` at all — see the module docstring's hole.
+# ``command_frame``
+#     ``bash``. otto's unix path has always assumed it: a session on a host
+#     that declares no ``command_frame`` is framed as bash.
 # ``applet_<name>``
 #     ``present``, for every name, DERIVED rather than typed -- and the six
 #     above are the reason it can be one uniform rule instead of seven
@@ -623,7 +613,7 @@ _UNASKABLE_DEFAULTS = {
     "base64_flag": "absent",
     "stat_size": "stat",
     "checksum": "absent",
-    "shell_dialect": "bash",
+    "command_frame": "bash",
     **{applet_capability(a): APPLET_PRESENT for a in PROBED_APPLETS},
 }
 
@@ -670,8 +660,11 @@ class Userland:
         run: Callable[..., Coroutine[Any, Any, CommandResult]],
         *,
         line_turn: "Callable[[], AbstractAsyncContextManager[None]] | None" = None,
+        command_frame: "str | None" = None,
     ) -> None:
         self._options = options
+        # The host's declared ``command_frame`` name, or None to probe for it.
+        self._command_frame = command_frame
         self._run = run
         # The host's entry (``BaseHost._host_entry``: the loop claim, the
         # hook re-entry refusal and the line turn), taken BEFORE this
@@ -873,13 +866,13 @@ class Userland:
             ("base64_flag", self._probe_base64),
             ("stat_size", self._probe_stat),
             ("checksum", self._probe_checksum),
-            ("shell_dialect", self._probe_dialect),
+            ("command_frame", self._probe_dialect),
         )
         sources: dict[str, str] = {}
         for name, probe in probes:
             if name in settled:
                 continue
-            declared = getattr(self._options, name)
+            declared = self._declared(name)
             if declared:
                 resolved[name], sources[name] = declared, "declared"
                 settled.add(name)
@@ -915,7 +908,7 @@ class Userland:
             name = applet_capability(applet)
             if name in settled:
                 continue
-            declared = getattr(self._options, name)
+            declared = self._declared(name)
             if declared:
                 resolved[name], sources[name] = declared, "declared"
                 settled.add(name)
@@ -936,10 +929,7 @@ class Userland:
             self._retry_after = _monotonic() + _RETRY_COOLDOWN_S
         for name in sorted(sources):
             _logger.debug("userland: %s = %s (%s)", name, resolved[name], sources[name])
-        _logger.debug(
-            'userland: pin these to skip the probes -- "userland_options": %s',
-            json.dumps(self.as_lab_json(), sort_keys=True),
-        )
+        _logger.debug("userland: pin these to skip the probes -- %s", " ".join(_pin_entries(self)))
 
     async def _probe_elevation(self) -> str | None:
         """``sudo`` > ``su`` > ``none``, or None when the preference cannot be settled.
@@ -1093,6 +1083,16 @@ class Userland:
         _logger.debug("userland: probe %r could not be asked (%s)", cmd, reason)
         return None
 
+    def _declared(self, name: str) -> "str | None":
+        """Return the declared answer for capability *name*, or ``None`` to probe.
+
+        Every capability is declared in ``userland_options`` except the shell,
+        which the host's ``command_frame`` declares.
+        """
+        if name == "command_frame":
+            return self._command_frame
+        return getattr(self._options, name)
+
     def _get(self, name: str) -> str:
         if not self._resolved:
             raise RuntimeError(f"Userland.{name} read before resolve()")
@@ -1208,16 +1208,13 @@ class Userland:
         return self._get("checksum")
 
     @property
-    def shell_dialect(self) -> str:
-        """The measured shell dialect — ``"bash"`` | ``"ash"``.
+    def command_frame(self) -> str:
+        """The host's shell, by ``CommandFrame`` type name: declared, else measured.
 
-        An ``ash`` ``CommandFrame`` is now registered (``AshFrame``), so
-        ``build_command_frame(self.shell_dialect)`` would no longer raise on
-        the common BusyBox case — but nothing calls it that way yet. See the
-        module docstring's hole note before wiring this property to a
-        consumer.
+        The host's declared ``command_frame`` when it has one; otherwise what
+        the probe measured, ``"bash"`` or ``"ash"``.
         """
-        return self._get("shell_dialect")
+        return self._get("command_frame")
 
     def has_applet(self, *, applet: str) -> str:
         """:data:`APPLET_PRESENT` or :data:`APPLET_ABSENT` for one *applet*.
@@ -1289,6 +1286,9 @@ class Userland:
     def as_lab_json(self, *, sudo_login: "str | None" = None) -> dict[str, str]:
         """Return the SETTLED answers, as a table a user may safely pin.
 
+        The table is the host's ``userland_options``, so ``command_frame`` is
+        not in it: that one is pinned as the host's own key.
+
         ``sudo_form`` is in it when declared, or when it was measured for
         *sudo_login*: a measured form is one login's answer, so the caller
         names whose answer it pins.
@@ -1313,7 +1313,9 @@ class Userland:
         at all, because ``_resolve_once`` asks only about names that are
         neither settled nor declared.
         """
-        pinned = {k: v for k, v in self._resolved.items() if k in self._settled}
+        pinned = {
+            k: v for k, v in self._resolved.items() if k in self._settled and k != "command_frame"
+        }
         if self._options.sudo_form or (
             sudo_login is not None and self.sudo_form_settled(login=sudo_login)
         ):
@@ -1328,6 +1330,18 @@ class Userland:
 # Formatting only. :meth:`Userland.as_lab_json` is the authority on WHAT may be
 # pinned -- these helpers never decide that, they only lay out what it returns
 # and explain what it left behind.
+
+
+def _pin_entries(
+    userland: "Userland", *, sudo_login: "str | None" = None, indent: "int | None" = None
+) -> list[str]:
+    """Return the pasteable host-entry text: ``command_frame`` if settled, then the options."""
+    entries = []
+    if userland.is_settled(name="command_frame"):
+        entries.append(f'"command_frame": {json.dumps(userland.command_frame)},')
+    options = json.dumps(userland.as_lab_json(sudo_login=sudo_login), indent=indent, sort_keys=True)
+    entries.append(f'"userland_options": {options}')
+    return entries
 
 
 def _capability_rows(
@@ -1363,7 +1377,7 @@ def _capability_rows(
     for name in sorted(values):
         if not userland.is_settled(name=name):
             source = "assumed"
-        elif getattr(userland._options, name):  # noqa: SLF001 — same-module read of the declarations `_resolve_once` classifies from
+        elif userland._declared(name):  # noqa: SLF001 — same-module read of the declarations `_resolve_once` classifies from
             source = "declared"
         else:
             source = "probed"
@@ -1391,7 +1405,7 @@ def _sudo_form_row(userland: "Userland", sudo_login: "str | None") -> "tuple[str
 
 
 _SOURCE_LEGEND = (
-    "declared = already pinned in this host's userland_options, and never re-probed. "
+    "declared = already pinned in this host's lab.json entry, and never re-probed. "
     "probed = the device answered, so this one is worth pinning. "
     "assumed = otto could not ask, so the value is only what otto did before it asked "
     "anything -- and it is left out of the pin for that reason, because inside a JSON "
@@ -1416,7 +1430,6 @@ def _probe_report(
     from rich.text import Text
 
     rows = _capability_rows(userland, sudo_login=sudo_login)
-    pin = userland.as_lab_json(sudo_login=sudo_login)
     assumed = [n for n, _, s in rows if s == "assumed"]
     from ..console import id_column, literal_cell
 
@@ -1439,7 +1452,7 @@ def _probe_report(
             ),
             "",
         ]
-    if not pin:
+    if len(assumed) == len(rows):
         lines.append(
             Text(
                 f"Nothing settled, so there is nothing to pin: all {len(rows)} values above are "
@@ -1462,7 +1475,7 @@ def _probe_report(
     elif all(s == "declared" for _, _, s in rows):
         lines.append(
             Text(
-                "Every capability is declared in this host's userland_options already, so none "
+                "Every capability is declared in this host's lab.json entry already, so none "
                 "of them needed a probe. This is the pin in force:"
             )
         )
@@ -1474,9 +1487,8 @@ def _probe_report(
             )
         )
     lines.append("")
-    payload = json.dumps(pin, indent=2, sort_keys=True).splitlines()
-    lines.append(f'"userland_options": {payload[0]}')
-    lines.extend(payload[1:])
+    for entry in _pin_entries(userland, sudo_login=sudo_login, indent=2):
+        lines.extend(entry.splitlines())
     return lines
 
 
@@ -1600,11 +1612,10 @@ class UserlandHost:
       runs them through ``loop.subprocess_shell`` (``/bin/sh``) while ``run``
       runs commands in a persistent ``bash`` (``LocalSession``), so the resolver
       would describe a shell the caller's commands never use: measured,
-      ``shell_dialect`` resolved to ``"ash"`` on a machine that declares
+      the shell probe answered ``"ash"`` on a machine that declares
       ``has_bash=True`` and really does run ``run()`` in bash, and the
-      ``resolve()`` debug line offers that value as a pasteable ``lab.json``
-      pin. Nothing consumes ``shell_dialect`` yet (see the module docstring's
-      hole), which is the only reason this is latent rather than live.
+      ``resolve()`` debug line would offer that value as a pasteable
+      ``lab.json`` pin.
     * **neither class can be pinned out of it.** ``userland_options`` is a
       :class:`~otto.host.unix_host.UnixHost` field, so the escape hatch
       ``otto.host.file_ops.refuse_if_base64_is_absent`` offers an operator --
@@ -2700,7 +2711,7 @@ GAPS: list[Gap] = [
                     "(2026-08-14) to change more than this surface: it also decides how "
                     "every local `run(sudo=True)` elevates, and its probes run in "
                     "`exec`'s `/bin/sh` rather than the `bash` `run()` uses, which "
-                    "resolved `shell_dialect` to `ash` on a machine declaring "
+                    "measured the shell as `ash` on a machine declaring "
                     "`has_bash=True`. See `UserlandHost` for the three findings and "
                     "`todo/busybox-phase-5-followups-2026-08-13.md` §2 for the "
                     "decomposition. The exposure this leaves is also the smaller of the "
