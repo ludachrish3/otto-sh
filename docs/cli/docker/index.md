@@ -279,7 +279,9 @@ await api.run("echo $FOO")  # prints bar
 spawns a fresh `docker exec` against the parent; its lines are logged on
 the container ({ref}`docker-exec-logging`). Use `exec()` when
 you want to fan out independent commands; use `run()` when you need
-stateful or interactive flows.
+stateful or interactive flows. A container `exec()` that times out or is
+cancelled leaves its command running in the container
+({ref}`docker-exec-stop`).
 
 ## Shared directories
 
