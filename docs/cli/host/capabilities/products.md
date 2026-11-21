@@ -63,8 +63,8 @@ There is no force mode. To install a product again, uninstall it first.
 | `await host.stage()` | yes | Stage every product (no install), installed or not. |
 | `await host.install(stage_only=False)` | yes | Pass over every installed product, then stage and install the rest (stage only, with `stage_only`). |
 | `await host.uninstall()` | yes | Product logs, uninstall every product, debug logs (best-effort). |
-| `await host.is_installed()` | yes | True iff ≥1 product and all installed. |
-| `await host.is_uninstalled()` | yes | Inverse of `is_installed()`. |
+| `await host.is_installed()` | yes | True iff ≥1 product and all installed. A partly installed host is not. |
+| `await host.is_uninstalled()` | yes | True iff no product is installed (also with none declared). A partly installed host is neither installed nor uninstalled. |
 | `await host.cleanup()` | no | `uninstall()`, then remove dev tools and toolchain tools. |
 | `await host.is_clean()` | no | True iff no product, dev tool, or toolchain tool is present. |
 

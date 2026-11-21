@@ -783,14 +783,15 @@ class ProjectActions:
     async def status(self, opts: StatusOptions) -> InstallState:  # noqa: ARG002 — --full is the orchestrator's (cleanliness is lab-level); the parameter is the override's
         """Report this project's install state across the fleet.
 
-        COUNTS PRODUCTS, NOT HOSTS. A host-level ``is_installed()`` answers
-        False for a host that is clean and for a host that is half-installed
-        alike, so a reduction over host booleans cannot see the state that
-        matters most. Counting the owned products directly can: all installed
-        is INSTALLED, none is UNINSTALLED, anything between is PARTIAL.
+        COUNTS PRODUCTS, NOT HOSTS: a project's products are spread over hosts,
+        so a reduction over host booleans could not say which hosts it left out.
+        Counting the owned products directly can: all installed is INSTALLED,
+        none is UNINSTALLED, anything between is PARTIAL -- the same meanings
+        :meth:`otto.host.host.BaseHost.is_installed` and ``is_uninstalled`` give
+        one host's products.
 
-        Owning no products anywhere is UNINSTALLED, mirroring
-        :meth:`otto.host.host.BaseHost.is_installed`'s empty-products rule --
+        Owning no products anywhere is UNINSTALLED, as
+        :meth:`otto.host.host.BaseHost.is_uninstalled` answers for a host with none --
         nothing that could be installed is not vacuously "installed". Callers
         that need to tell "nothing to install" from "nothing installed" ask
         :attr:`owns_products`.
@@ -814,14 +815,12 @@ class ProjectActions:
     async def is_uninstalled(self) -> bool:
         """Whether none of this project's products is installed anywhere on the fleet.
 
-        DELIBERATELY UNPAIRED: there is no ``is_installed()`` at this layer.
-        False on such a boolean would cover PARTIAL and UNINSTALLED alike,
-        which is the exact conflation :meth:`status`' third member exists to
-        resolve, and the caller most likely to ask -- a converge -- is the one
-        that must tell them apart. Hosts carry the symmetric pair because a
-        host's own answer is per-product; a project's is an aggregate, and an
-        aggregate is where the middle state appears. Ask :meth:`status` for
-        anything except "is there nothing of mine left to find".
+        DELIBERATELY UNPAIRED: there is no ``is_installed()`` at this layer; the
+        converge that asks needs the three-way :meth:`status`, and a boolean
+        cannot name PARTIAL. This is the same "none installed" a host answers
+        (:meth:`otto.host.host.BaseHost.is_uninstalled`): a partly installed
+        project is neither. Ask :meth:`status` for anything except "is there
+        nothing of mine left to find".
 
         ONE AUTHORITY: a project whose install state comes from something otto
         cannot see overrides ``status`` and nothing else, and this answer

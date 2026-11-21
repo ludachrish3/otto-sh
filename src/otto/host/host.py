@@ -1340,7 +1340,11 @@ class Host(Protocol):
         ...
 
     async def is_uninstalled(self, *, owner: str | None = None) -> bool:
-        """Return ``True`` iff :meth:`is_installed` returns ``False``."""
+        """Return ``True`` iff none of the products is installed.
+
+        A partly installed host is neither installed nor uninstalled; a host with
+        no products (for *owner*) has none installed, so it is uninstalled.
+        """
         ...
 
     async def is_clean(self) -> bool:
@@ -3501,10 +3505,23 @@ class BaseHost(ABC):
                 return False
         return True
 
-    @cli_exposed(output_dir=False, help_="Report the opposite of `is-installed`.")
+    @cli_exposed(
+        output_dir=False,
+        help_="Report whether no product is installed; a partly installed host is neither.",
+    )
     async def is_uninstalled(self, *, owner: str | None = None) -> bool:
-        """Inverse of :meth:`is_installed`."""
-        return not await self.is_installed(owner=owner)
+        """Return True iff no *owner*-scoped product is installed.
+
+        THE ONE "none installed" decision at host level: the mirror of
+        :meth:`is_installed`, not its inverse. A host with some products
+        installed and some not is neither installed nor uninstalled, and
+        :meth:`is_clean` builds on this. A host with no products has none
+        installed, so it is uninstalled (it is also not installed).
+        """
+        for product in self._owned_products(owner):
+            if await product.is_installed(cast("Host", self)):
+                return False
+        return True
 
     @cli_exposed
     async def cleanup(
