@@ -376,7 +376,7 @@ either: the hook marks every test of a module for a cell and entry, so a
 passing control becomes an unexpected pass.
 
 The lane's wall time before and after is reported with the cells; the budget
-is the lane's 1200 s timeout, which is a watchdog and not a measure.
+is the lane's 1500 s timeout, which is a watchdog and not a measure.
 
 ## Non-goals
 
