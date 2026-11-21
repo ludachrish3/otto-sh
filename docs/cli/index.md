@@ -534,6 +534,12 @@ returns:
 | `Status.Error` | 2 (Click also uses 2 for usage errors) |
 | `Status.Unstable` | 3 |
 
+`otto test` is the one command that reaches `Status.Unstable` without a
+`Result`: a repeated run whose pass rate is below its `--threshold` exits 3,
+and nothing else in `otto test` does (pytest's own code 3, an internal error in
+pytest or a plugin, is reported as 2). The rule is under
+[Repeating a test](test/index.md#repeating-a-test).
+
 Commands that run something on a host are ssh-like instead: they exit with the
 remote command's own return code, or 255 when the command never ran because the
 connection failed. Whether that exit code, and the command's output, mean the

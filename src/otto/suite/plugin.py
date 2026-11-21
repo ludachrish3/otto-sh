@@ -451,6 +451,18 @@ class OttoPlugin:
         the session loaded, and pytest's own. Read then, not in
         ``pytest_configure``: pytest's built-in plugins and the conftests of
         nested directories register theirs after this plugin is configured."""
+        self.iteration_failures_only: bool = False
+        """Whether every failure pytest counted was a failed iteration of a repeated run.
+
+        Set at ``pytest_sessionfinish``: ``True`` when the run had a stability
+        collector, at least one call report failed, and pytest's own tally of
+        failed reports (``session.testsfailed``: call, setup and teardown
+        phases and collection errors alike) is exactly those. A setup or
+        teardown error, a collection error or a failed call outside a repeated
+        run makes it ``False``, so ``otto.suite.run._final_exit_code``
+        can leave a repeated run's pass/fail to its ``--threshold`` only when
+        failed iterations are all that failed."""
+        self._iteration_failures = 0
         self._stability_collector = stability_collector
         self._iterations = iterations
         self._duration = duration
@@ -901,9 +913,17 @@ class OttoPlugin:
             for item in session.items
         ]
 
-    def pytest_sessionfinish(self, exitstatus: int) -> None:
-        """Keep the session's exit status (:attr:`exitstatus`)."""
+    def pytest_sessionfinish(self, session: pytest.Session, exitstatus: int) -> None:
+        """Keep the session's exit status and whether only iterations failed."""
         self.exitstatus = int(exitstatus)
+        # A session cut short (`-x`, `--maxfail`, a hook asking to stop) did not
+        # run everything it selected, so the threshold has no complete run to judge.
+        stopped_early = bool(session.shouldstop or session.shouldfail)
+        self.iteration_failures_only = (
+            self._iteration_failures > 0
+            and session.testsfailed == self._iteration_failures
+            and not stopped_early
+        )
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_runtestloop(self, session: pytest.Session) -> None:
@@ -1165,6 +1185,9 @@ class OttoPlugin:
         if report.when != "call":
             return
         self._stability_collector.record(report.nodeid, passed=report.passed)
+        # Counted as pytest's own tally counts a failure (Session.pytest_runtest_logreport).
+        if report.failed and not hasattr(report, "wasxfail"):
+            self._iteration_failures += 1
 
     @pytest.hookimpl(tryfirst=True, hookwrapper=True)
     def pytest_runtest_makereport(
