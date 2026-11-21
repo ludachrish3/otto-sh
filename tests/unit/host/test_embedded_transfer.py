@@ -3,7 +3,7 @@ Unit tests for ConsoleFileTransfer — console file transfer for embedded hosts.
 
 The tests drive the real :class:`ConsoleFileTransfer` against a
 ``FakeZephyrFs`` double: an in-memory model of a Zephyr target's ``fs`` shell
-that interprets ``fs read``/``fs write``/``fs rm`` and renders ``fs read``
+that interprets ``fs read``/``fs write``/``fs trunc``/``fs rm`` and renders ``fs read``
 output in the device's real hexdump format. No connection is involved, so the
 hexdump encode/decode and the chunked-write logic are exercised end to end.
 """
@@ -75,9 +75,13 @@ def _hexdump(data: bytes) -> str:
 class FakeZephyrFs:
     """In-memory stand-in for a Zephyr target's ``fs`` shell.
 
-    Models just enough of ``fs read``/``fs write``/``fs rm`` to round-trip
-    files. There is no "fs shell missing" mode — that case is now declared
-    statically via the host's ``filesystem`` field
+    Models just enough of ``fs read``/``fs write``/``fs trunc``/``fs rm`` to
+    round-trip files. ``failed`` records every command the device answered
+    with a failure: on the real device each one is logged to the console about
+    a second later (#972), so a sunny-day put must leave it empty.
+
+    There is no "fs shell missing" mode — that case is now declared statically via the
+    host's ``filesystem`` field
     (:class:`~otto.host.embedded_filesystem.NoFileSystem`), and the transfer
     short-circuits before ever reaching this fake.
     """
@@ -85,11 +89,17 @@ class FakeZephyrFs:
     def __init__(self, *, mounted: bool = True) -> None:
         self.store: dict[str, bytearray] = {}
         self.calls: list[str] = []
+        self.failed: list[str] = []
         self.mounted = mounted
 
     async def exec_cmd(self, cmd: str, timeout: float | None = None) -> CommandResult:
         self.calls.append(cmd)
+        result = await self._answer(cmd)
+        if not result.status.is_ok:
+            self.failed.append(cmd)
+        return result
 
+    async def _answer(self, cmd: str) -> CommandResult:  # noqa: PLR0911 — one return per modelled subcommand
         parts = cmd.split()
         sub = parts[1]
 
@@ -134,6 +144,17 @@ class FakeZephyrFs:
             if offset + len(data) > len(buf):
                 buf.extend(b"\x00" * (offset + len(data) - len(buf)))
             buf[offset : offset + len(data)] = data
+            return _cs(cmd, "", Status.Success, 0)
+
+        if sub == "trunc":
+            # An existing file only: an absent one is an error, as on the device.
+            path = parts[2]
+            if path not in self.store:
+                return _cs(cmd, f"fs: file open error ({path}) (-2)", Status.Failed, -2)
+            length = int(parts[3])
+            buf = self.store[path]
+            del buf[length:]
+            buf.extend(b"\x00" * (length - len(buf)))
             return _cs(cmd, "", Status.Success, 0)
 
         if sub == "rm":
@@ -306,17 +327,151 @@ class TestMountBehavior:
 
 class TestPut:
     @pytest.mark.asyncio
-    async def test_removes_destination_before_write(self, tmp_path):
-        """fs write never truncates, so put removes the destination first."""
+    async def test_put_truncates_after_the_last_write_and_never_removes_first(self, tmp_path):
+        """fs write never truncates, so put truncates to the written length after the writes.
+
+        It must not remove the destination first: that `fs rm` fails on a new
+        file, and the device logs the failure to the console where a close
+        can land on it (#972).
+        """
         fake = FakeZephyrFs()
         xfer = _console_transfer(fake)
         src = tmp_path / "f.bin"
         src.write_bytes(b"data")
 
         await xfer.put_files(src_files=[src], dest_dir=RAM)
-        rm_idx = fake.calls.index("fs rm /RAM:/f.bin")
-        first_write = next(i for i, c in enumerate(fake.calls) if c.startswith("fs write"))
-        assert rm_idx < first_write
+        assert not [c for c in fake.calls if c.startswith("fs rm")]
+        last_write = max(i for i, c in enumerate(fake.calls) if c.startswith("fs write"))
+        assert fake.calls[last_write + 1 :] == ["fs trunc /RAM:/f.bin 4"]
+
+    @pytest.mark.asyncio
+    async def test_put_of_a_new_file_issues_no_failing_command(self, tmp_path):
+        """#972: a sunny-day put of a new file triggers no device error line."""
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"x" * 70)
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Success, err
+        assert fake.failed == []
+        assert bytes(fake.store["/RAM:/f.bin"]) == b"x" * 70
+
+    @pytest.mark.asyncio
+    async def test_empty_file_over_a_non_empty_one_leaves_it_empty(self, tmp_path):
+        fake = FakeZephyrFs()
+        fake.store["/RAM:/f.bin"] = bytearray(b"old contents")
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"")
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Success, err
+        assert bytes(fake.store["/RAM:/f.bin"]) == b""
+        assert fake.failed == []
+
+    @pytest.mark.asyncio
+    async def test_empty_new_file_is_created_without_a_failure(self, tmp_path):
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"")
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Success, err
+        assert fake.store["/RAM:/f.bin"] == bytearray()
+        assert fake.failed == []
+
+    @pytest.mark.asyncio
+    async def test_failed_truncate_is_recovered_by_the_remove_then_write_pass(self, tmp_path):
+        class TruncFails(FakeZephyrFs):
+            async def exec_cmd(self, cmd, timeout=None):
+                if cmd.startswith("fs trunc"):
+                    self.calls.append(cmd)
+                    self.failed.append(cmd)
+                    return _cs(cmd, "fs: truncate error (-5)", Status.Failed, -8)
+                return await super().exec_cmd(cmd, timeout)
+
+        fake = TruncFails()
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"abc")
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Success, err
+        assert bytes(fake.store["/RAM:/f.bin"]) == b"abc"
+        assert fake.calls.count("fs trunc /RAM:/f.bin 3") == 1
+
+    @pytest.mark.asyncio
+    async def test_filesystem_without_truncate_removes_the_destination_first(self, tmp_path):
+        class NoTrunc(FatRamFileSystem):
+            def trunc_command(self, path, *, length):
+                return None
+
+        fake = FakeZephyrFs()
+        fake.store["/RAM:/f.bin"] = bytearray(b"X" * 80)
+        xfer = _console_transfer(fake, filesystem=NoTrunc())
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"short")
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Success, err
+        assert bytes(fake.store["/RAM:/f.bin"]) == b"short"
+        assert not [c for c in fake.calls if c.startswith("fs trunc")]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("existing", [None, b"O" * 200])
+    async def test_shell_without_trunc_falls_back_to_remove_then_write(self, tmp_path, existing):
+        """A vendor shell that rejects ``fs trunc`` still ends with the right file."""
+
+        class UnknownTrunc(FakeZephyrFs):
+            async def _answer(self, cmd):
+                if cmd.startswith("fs trunc"):
+                    return _cs(cmd, "trunc: command not found", Status.Failed, -1)
+                return await super()._answer(cmd)
+
+        fake = UnknownTrunc()
+        if existing is not None:
+            fake.store["/RAM:/f.bin"] = bytearray(existing)
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"n" * 40)
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Success, err
+        assert bytes(fake.store["/RAM:/f.bin"]) == b"n" * 40
+        kinds = [c.split()[1] for c in fake.calls if c.split()[1] in ("write", "trunc", "rm")]
+        assert kinds == ["write", "write", "trunc", "rm", "write", "write"]
+
+    @pytest.mark.asyncio
+    async def test_failed_truncate_then_failed_rewrite_fails_with_the_rewrites_error(
+        self, tmp_path
+    ):
+        class Broken(FakeZephyrFs):
+            def __init__(self):
+                super().__init__()
+                self.trunced = False
+
+            async def _answer(self, cmd):
+                if cmd.startswith("fs trunc"):
+                    self.trunced = True
+                    return _cs(cmd, "trunc: command not found", Status.Failed, -1)
+                if cmd.startswith("fs write") and self.trunced:
+                    return _cs(cmd, "Failed to write /RAM:/f.bin (-5)", Status.Failed, -8)
+                return await super()._answer(cmd)
+
+        fake = Broken()
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"n" * 40)
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Error
+        assert "fs write" in err
+        assert "fs trunc" not in err
+        assert len([c for c in fake.calls if c.startswith("fs trunc")]) == 1
+        assert fake.calls[-1] == "fs rm /RAM:/f.bin"
+        assert "/RAM:/f.bin" not in fake.store
 
     @pytest.mark.asyncio
     async def test_stale_tail_does_not_survive_overwrite(self, tmp_path):
@@ -682,7 +837,7 @@ class TestCleanupOnFailure:
                     self.calls.append(cmd)
                     return _cs(
                         cmd,
-                        "Failed to write /RAM:/f (-28)",
+                        "Failed to write /RAM:/f.bin (-28)",
                         Status.Failed,
                         -8,
                     )
@@ -701,13 +856,12 @@ class TestCleanupOnFailure:
 
         status, _err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Error
-        # The PRE-write rm at the top of _console_put_one is the first
-        # rm; the cleanup rm after the failure is the second. Two `fs rm`
-        # calls against the same dest path is the signal we want.
+        # A put no longer starts with an rm (#972). The failure here is
+        # -ENOSPC, so the put removes the destination and retries once
+        # (rm #1); the retry fails too and the cleanup rm follows (rm #2).
         rm_calls = [c for c in fake.calls if c == "fs rm /RAM:/f.bin"]
-        assert len(rm_calls) == 2, (
-            f"expected pre-write rm + post-failure cleanup rm, got: {fake.calls}"
-        )
+        assert len(rm_calls) == 2, f"expected fallback rm + cleanup rm, got: {fake.calls}"
+        assert fake.calls[-1] == "fs rm /RAM:/f.bin"
 
     @pytest.mark.asyncio
     async def test_cleanup_failure_does_not_mask_real_error(self, tmp_path):
@@ -717,11 +871,10 @@ class TestCleanupOnFailure:
 
         class FlakyCleanupFs(self._FailAfterNWrites):
             async def exec_cmd(self, cmd, timeout=None):
-                # Let the first rm (pre-write) succeed; raise on the
-                # cleanup rm (the second one).
-                if cmd.startswith("fs rm") and "cleanup" not in cmd:
-                    self.rm_seen = getattr(self, "rm_seen", 0) + 1
-                    if self.rm_seen == 2:
+                # The first rm is the no-space fallback; the second is the cleanup.
+                if cmd.startswith("fs rm"):
+                    self.rms = getattr(self, "rms", 0) + 1
+                    if self.rms == 2:
                         raise RuntimeError("device went away")
                 return await super().exec_cmd(cmd, timeout)
 
@@ -738,8 +891,8 @@ class TestCleanupOnFailure:
 
     @pytest.mark.asyncio
     async def test_successful_write_does_not_cleanup(self, tmp_path):
-        """No spurious cleanup when the write succeeds — the pre-write
-        ``fs rm`` is the only one we expect on the happy path."""
+        """No spurious cleanup when the write succeeds — the happy path
+        issues no ``fs rm`` at all."""
         fake = FakeZephyrFs()
         xfer = _console_transfer(fake)
         src = tmp_path / "f.bin"
@@ -747,7 +900,315 @@ class TestCleanupOnFailure:
         status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
         assert status == Status.Success, err
         rm_calls = [c for c in fake.calls if c.startswith("fs rm")]
-        assert len(rm_calls) == 1, f"happy path should issue only the pre-write rm; got: {rm_calls}"
+        assert rm_calls == [], f"happy path should issue no rm; got: {rm_calls}"
+
+
+class TestWriteRaises:
+    """An exception mid-put must not leave the new bytes over the old tail."""
+
+    @pytest.mark.asyncio
+    async def test_raising_write_cleans_up_best_effort_and_reraises(self, tmp_path):
+        class Raises(FakeZephyrFs):
+            def __init__(self):
+                super().__init__()
+                self.writes = 0
+
+            async def exec_cmd(self, cmd, timeout=None):
+                if cmd.startswith("fs write"):
+                    self.writes += 1
+                    if self.writes == 2:
+                        self.calls.append(cmd)
+                        raise RuntimeError("console dropped")
+                return await super().exec_cmd(cmd, timeout)
+
+        fake = Raises()
+        fake.store["/RAM:/f.bin"] = bytearray(b"O" * 200)
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"n" * 70)
+
+        with pytest.raises(RuntimeError, match="console dropped"):
+            await xfer._console_put_one(src, RAM)
+        assert fake.calls[-1] == "fs rm /RAM:/f.bin"
+        assert "/RAM:/f.bin" not in fake.store
+
+    @pytest.mark.asyncio
+    async def test_failing_cleanup_does_not_mask_the_original_exception(self, tmp_path):
+        class Raises(FakeZephyrFs):
+            async def exec_cmd(self, cmd, timeout=None):
+                if cmd.startswith("fs write"):
+                    raise RuntimeError("console dropped")
+                if cmd.startswith("fs rm"):
+                    raise ValueError("cleanup died")
+                return await super().exec_cmd(cmd, timeout)
+
+        xfer = _console_transfer(Raises())
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"n")
+
+        with pytest.raises(RuntimeError, match="console dropped"):
+            await xfer._console_put_one(src, RAM)
+
+
+class TestFallbackHardening:
+    """The fallback's remove, the no-space reading, cleanup and progress under replay."""
+
+    @pytest.mark.asyncio
+    async def test_failed_fallback_remove_after_a_failed_truncate_fails_the_put(self, tmp_path):
+        class Stubborn(FakeZephyrFs):
+            async def _answer(self, cmd):
+                if cmd.startswith("fs trunc"):
+                    return _cs(cmd, "fs: truncate error (-5)", Status.Failed, -8)
+                if cmd.startswith("fs rm"):
+                    return _cs(cmd, "Failed to remove /RAM:/f.bin (-16)", Status.Failed, -16)
+                return await super()._answer(cmd)
+
+        fake = Stubborn()
+        fake.store["/RAM:/f.bin"] = bytearray(b"old contents")
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"new")
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Error
+        assert "fs rm /RAM:/f.bin failed" in err
+        # the fallback's remove, then the cleanup's remove
+        assert fake.calls.count("fs rm /RAM:/f.bin") == 2
+
+    @pytest.mark.asyncio
+    async def test_failed_remove_after_no_space_fails_the_put(self, tmp_path):
+        class Full(FakeZephyrFs):
+            async def _answer(self, cmd):
+                if cmd.startswith("fs write"):
+                    return _cs(cmd, f"Failed to write {cmd.split()[2]} (-28)", Status.Failed, -8)
+                if cmd.startswith("fs rm"):
+                    return _cs(cmd, "Failed to remove /RAM:/f.bin (-16)", Status.Failed, -16)
+                return await super()._answer(cmd)
+
+        fake = Full()
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"new")
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Error
+        assert "fs rm /RAM:/f.bin failed" in err
+        assert len([c for c in fake.calls if c.startswith("fs write")]) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_space_line_followed_by_another_log_line_is_no_space(self, tmp_path):
+        class Chatty(FakeZephyrFs):
+            def __init__(self):
+                super().__init__()
+                self.seen = 0
+
+            async def _answer(self, cmd):
+                if cmd.startswith("fs write"):
+                    self.seen += 1
+                    if self.seen == 1:
+                        out = f"Failed to write {cmd.split()[2]} (-28)\n<err> os: late line (-5)"
+                        return _cs(cmd, out, Status.Failed, -8)
+                return await super()._answer(cmd)
+
+        fake = Chatty()
+        fake.store["/RAM:/f.bin"] = bytearray(b"old")
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"new")
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Success, err
+        assert fake.calls.count("fs rm /RAM:/f.bin") == 1
+
+    @pytest.mark.asyncio
+    async def test_unrelated_late_line_ending_in_no_space_is_not_no_space(self, tmp_path):
+        class Late(FakeZephyrFs):
+            async def _answer(self, cmd):
+                if cmd.startswith("fs write"):
+                    out = f"Failed to write {cmd.split()[2]} (-22)\n<err> os: other thing (-28)"
+                    return _cs(cmd, out, Status.Failed, -8)
+                return await super()._answer(cmd)
+
+        fake = Late()
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"new")
+
+        status, _err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Error
+        assert len([c for c in fake.calls if c.startswith("fs write")]) == 1
+
+    @pytest.mark.asyncio
+    async def test_raising_rm_command_does_not_mask_the_original_exception(self, tmp_path):
+        class BadRm(FatRamFileSystem):
+            def rm_command(self, path):
+                raise ValueError("no rm for you")
+
+        class Raises(FakeZephyrFs):
+            async def exec_cmd(self, cmd, timeout=None):
+                if cmd.startswith("fs write"):
+                    raise RuntimeError("console dropped")
+                return await super().exec_cmd(cmd, timeout)
+
+        xfer = _console_transfer(Raises(), filesystem=BadRm())
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"n")
+
+        with pytest.raises(RuntimeError, match="console dropped"):
+            await xfer._console_put_one(src, RAM)
+
+    @pytest.mark.asyncio
+    async def test_progress_never_goes_back_when_a_later_chunk_has_no_space(self, tmp_path):
+        class LaterFull(FakeZephyrFs):
+            def __init__(self):
+                super().__init__()
+                self.seen = 0
+
+            async def _answer(self, cmd):
+                if cmd.startswith("fs write"):
+                    self.seen += 1
+                    if self.seen == 2:
+                        return _cs(
+                            cmd, f"Failed to write {cmd.split()[2]} (-28)", Status.Failed, -8
+                        )
+                return await super()._answer(cmd)
+
+        fake = LaterFull()
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"n" * 70)
+        calls: list = []
+
+        status, err = _pf(await xfer.run_put([src], RAM, progress_factory=_spy_factory(calls)), src)
+        assert status == Status.Success, err
+        done = [d for _s, _d, d, _t in calls]
+        assert done == sorted(done)
+        assert max(done) <= 70
+        assert done[-1] == 70
+
+    @pytest.mark.asyncio
+    async def test_progress_never_goes_back_when_the_truncate_fails(self, tmp_path):
+        class TruncFails(FakeZephyrFs):
+            async def _answer(self, cmd):
+                if cmd.startswith("fs trunc"):
+                    return _cs(cmd, "fs: truncate error (-5)", Status.Failed, -8)
+                return await super()._answer(cmd)
+
+        fake = TruncFails()
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"n" * 70)
+        calls: list = []
+
+        status, err = _pf(await xfer.run_put([src], RAM, progress_factory=_spy_factory(calls)), src)
+        assert status == Status.Success, err
+        done = [d for _s, _d, d, _t in calls]
+        assert done == sorted(done)
+        assert max(done) <= 70
+        assert done[-1] == 70
+
+    @pytest.mark.asyncio
+    async def test_truncate_error_text_is_in_the_debug_log(self, tmp_path, caplog):
+        class TruncFails(FakeZephyrFs):
+            async def _answer(self, cmd):
+                if cmd.startswith("fs trunc"):
+                    return _cs(cmd, "fs: truncate error (-5)", Status.Failed, -8)
+                return await super()._answer(cmd)
+
+        xfer = _console_transfer(TruncFails())
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"abc")
+        with caplog.at_level("DEBUG", logger="otto.host.transfer.console"):
+            await xfer.put_files(src_files=[src], dest_dir=RAM)
+        assert "truncate error (-5)" in caplog.text
+
+
+class TestNoSpaceFallback:
+    """A nearly full copy-on-write filesystem: the old file's space is only
+    freed by removing it, so a no-space failure removes the destination and
+    retries the whole write once, never more."""
+
+    class _NoSpace(FakeZephyrFs):
+        """Fake whose first ``fail_writes`` ``fs write`` calls report -ENOSPC."""
+
+        def __init__(self, fail_writes: int, *, code: int = -28) -> None:
+            super().__init__()
+            self.fail_writes = fail_writes
+            self.code = code
+            self.seen = 0
+
+        async def exec_cmd(self, cmd, timeout=None):
+            if cmd.startswith("fs write"):
+                self.seen += 1
+                if self.seen <= self.fail_writes:
+                    self.calls.append(cmd)
+                    self.failed.append(cmd)
+                    return _cs(
+                        cmd,
+                        f"Failed to write {cmd.split()[2]} ({self.code})",
+                        Status.Failed,
+                        -8,
+                    )
+            return await super().exec_cmd(cmd, timeout)
+
+    @pytest.mark.asyncio
+    async def test_no_space_removes_the_old_file_and_retries_once(self, tmp_path):
+        fake = self._NoSpace(fail_writes=1)
+        fake.store["/RAM:/f.bin"] = bytearray(b"O" * 200)
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"n" * 70)
+        calls: list = []
+
+        status, err = _pf(await xfer.run_put([src], RAM, progress_factory=_spy_factory(calls)), src)
+        assert status == Status.Success, err
+        assert bytes(fake.store["/RAM:/f.bin"]) == b"n" * 70
+        assert fake.calls.count("fs rm /RAM:/f.bin") == 1
+        # The retry replays the writes from offset 0; the bar never goes back.
+        assert [done for _s, _d, done, _t in calls] == [32, 64, 70]
+        assert_progress_invariants(
+            _events(calls),
+            src=str(src),
+            total=70,
+            granularity=ConsoleFileTransfer.progress_granularity.put,
+        )
+
+    @pytest.mark.asyncio
+    async def test_second_no_space_returns_the_error_without_a_third_attempt(self, tmp_path):
+        fake = self._NoSpace(fail_writes=99)
+        fake.store["/RAM:/f.bin"] = bytearray(b"O" * 200)
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"n" * 70)
+
+        status, err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Error
+        assert "(-28)" in err
+        assert len([c for c in fake.calls if c.startswith("fs write")]) == 2
+        assert "/RAM:/f.bin" not in fake.store
+
+    @pytest.mark.asyncio
+    async def test_other_write_failure_does_not_retry(self, tmp_path):
+        fake = self._NoSpace(fail_writes=99, code=-22)
+        xfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"n" * 70)
+
+        status, _err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Error
+        assert len([c for c in fake.calls if c.startswith("fs write")]) == 1
+        assert fake.calls.count("fs rm /RAM:/f.bin") == 1  # the cleanup only
+
+    @pytest.mark.asyncio
+    async def test_a_path_containing_the_no_space_text_is_not_a_no_space_failure(self, tmp_path):
+        fake = self._NoSpace(fail_writes=99, code=-22)
+        xfer = _console_transfer(fake)
+        src = tmp_path / "a(-28).bin"
+        src.write_bytes(b"n" * 70)
+
+        status, _err = _sm(await xfer.put_files(src_files=[src], dest_dir=RAM))
+        assert status == Status.Error
+        assert len([c for c in fake.calls if c.startswith("fs write")]) == 1
 
 
 # ---------------------------------------------------------------------------

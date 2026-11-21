@@ -8,6 +8,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -47,11 +48,34 @@ def _label_errno(retcode: int) -> str:
 
 logger = logging.getLogger(__name__)
 
+
+def _failed_message(command: str, result: CommandResult) -> str:
+    """Format a failed device command as ``<cmd> failed (retcode=<label>): <output>``."""
+    return f"{command} failed (retcode={_label_errno(result.retcode)}): {result.value.strip()}"
+
+
+@dataclass(frozen=True)
+class _PassOutcome:
+    """What one write pass of a console put left behind.
+
+    ``no_space`` and ``trunc_failed`` say why a failed pass failed, read from the raw
+    command results, so the caller decides the one fallback without parsing *result*'s message.
+    """
+
+    result: Result
+    reported: int
+    no_space: bool = False
+    trunc_failed: bool = False
+
+
 # Bytes per `fs write` invocation. Each byte costs three characters of hex
 # ("XX ") on the command line, so the chunk size must stay within the target's
 # `CONFIG_SHELL_CMD_BUFF_SIZE` and `CONFIG_SHELL_ARGC_MAX`. 32 is comfortably
 # inside the values otto-overlay.conf sets (512-byte buffer, 64 args).
 _WRITE_CHUNK = 32
+
+# The errno the device shell prints at the end of a failed filesystem command's line: `(-28)`.
+_ERRNO_TAIL_RE = re.compile(r"\s\((-\d+)\)\s*$")
 
 # `fs read` emits 16 bytes per hexdump line.
 _HEXDUMP_COLS = 16
@@ -213,10 +237,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         if not result.status.is_ok:
             return Result(
                 status=Status.Error,
-                msg=(
-                    f"{read_cmd} failed (retcode={_label_errno(result.retcode)}): "
-                    f"{result.value.strip()}"
-                ),
+                msg=_failed_message(read_cmd, result),
             )
 
         try:
@@ -247,18 +268,116 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         Empty files emit a single ``(0, 0)`` event so the bar appears and
         immediately completes. Returns a :class:`~otto.result.Result` carrying
         ``value=<dest path>`` on success.
+
+        The file is written and then truncated to its length. When a write reports no space or
+        the truncate fails for any reason, the put falls back once to removing the destination
+        and writing the whole file again with no truncate; a filesystem whose ``trunc_command``
+        returns ``None`` takes that same pass from the start. A put cancelled over an existing
+        file can leave the new bytes followed by the old file's tail: put again or remove the
+        file.
         """
         data = src.read_bytes()
         dest = dest_dir / src.name
         dest_path = dest.as_posix()
-        src_str = str(src)
-        total = len(data)
-        logger.debug(f"{self._name}: fs write {src} -> {dest_path} ({total} bytes)")
+        logger.debug(f"{self._name}: fs write {src} -> {dest_path} ({len(data)} bytes)")
 
-        # `fs write` seeks to an offset but never truncates, so a shorter new
-        # file would leave a stale tail behind. Remove the destination first;
-        # a "not found" failure here is expected and ignored.
-        await self._exec_cmd(self._filesystem.rm_command(dest_path), timeout=_RM_TIMEOUT)
+        # A failing pass leaves a partial file on the device, which blocks any retry on a
+        # capacity-bound filesystem (the half-written bytes still consume space), so a failed
+        # put removes it best-effort; a failure there is logged, never propagated. A raised
+        # Exception does the same; cancellation is left alone.
+        try:
+            outcome = await self._put_with_fallback(data, str(src), dest_path, progress_handler)
+        except Exception:
+            await self._cleanup_partial(dest_path)
+            raise
+        if outcome.result.is_ok:
+            return Result(status=Status.Success, value=dest)
+        await self._cleanup_partial(dest_path)
+        return outcome.result
+
+    async def _put_with_fallback(
+        self,
+        data: bytes,
+        src_str: str,
+        dest_path: str,
+        progress_handler: TransferProgressHandler | None,
+    ) -> _PassOutcome:
+        """Write then truncate; on no space or a failed truncate take the one fallback pass."""
+        trunc_cmd = self._filesystem.trunc_command(dest_path, length=len(data))
+        if trunc_cmd is None:
+            return await self._remove_then_write(
+                data, src_str, dest_path, progress_handler, -1, tolerate_remove_failure=True
+            )
+        outcome = await self._write_pass(
+            data, src_str, dest_path, progress_handler, -1, trunc_cmd=trunc_cmd
+        )
+        if outcome.result.is_ok or not (outcome.no_space or outcome.trunc_failed):
+            return outcome
+        # The old file's space is still held, which is what a copy-on-write filesystem needs
+        # freed; a shell without a truncate fails it. After a remove the file is new and
+        # needs no truncate. The writes replay from offset 0 but the bar must not go back.
+        why = "filesystem full" if outcome.no_space else f"truncate failed ({outcome.result.msg})"
+        logger.debug(
+            f"{self._name}: {dest_path}: {why}, removing the destination and writing it once more"
+        )
+        # This put already wrote the file, so it exists and its remove must succeed.
+        return await self._remove_then_write(
+            data,
+            src_str,
+            dest_path,
+            progress_handler,
+            outcome.reported,
+            tolerate_remove_failure=False,
+        )
+
+    async def _remove_then_write(
+        self,
+        data: bytes,
+        src_str: str,
+        dest_path: str,
+        progress_handler: TransferProgressHandler | None,
+        reported: int,
+        *,
+        tolerate_remove_failure: bool,
+    ) -> _PassOutcome:
+        """Remove the destination, then write the whole file with no truncate.
+
+        The one pass shared by the fallback and by a filesystem with no truncate. A failed
+        remove fails the pass unless *tolerate_remove_failure*: a put that starts here
+        (no truncate) may find no file to remove, while the fallback follows this put's own
+        write, so the file exists.
+        """
+        rm_cmd = self._filesystem.rm_command(dest_path)
+        removed = await self._exec_cmd(rm_cmd, timeout=_RM_TIMEOUT)
+        if not removed.status.is_ok and not tolerate_remove_failure:
+            failed = Result(status=Status.Error, msg=_failed_message(rm_cmd, removed))
+            return _PassOutcome(failed, reported)
+        return await self._write_pass(
+            data, src_str, dest_path, progress_handler, reported, trunc_cmd=None
+        )
+
+    async def _write_pass(
+        self,
+        data: bytes,
+        src_str: str,
+        dest_path: str,
+        progress_handler: TransferProgressHandler | None,
+        reported: int,
+        *,
+        trunc_cmd: str | None,
+    ) -> _PassOutcome:
+        """Write *data* to *dest_path* from offset 0, then run *trunc_cmd* when given.
+
+        ``fs write`` seeks to an offset but never truncates, so a longer previous file
+        would keep a stale tail; the truncate after the last write removes it without a
+        remove-first, because ``fs rm`` of an absent file fails on the device and the
+        device logs that failure to the console about a second later, where a close can
+        land on it (#972).
+
+        *reported* is the highest ``bytes_done`` reported so far (-1: none, so an empty
+        file's one ``(0, 0)`` event still fires).
+        """
+        total = len(data)
 
         # Zephyr 3.7's `fs write` takes `<path> [-o <offset>] <byte>...`. The
         # `-o <offset>` flag is **required** — without it every positional
@@ -270,17 +389,8 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
 
         # An empty file: a single zero-byte `fs write -o 0` still creates it
         # via the underlying `fs_open(... O_CREAT | O_WRITE)`.
-        if not data:
-            result = await self._exec_cmd(
-                self._filesystem.write_command(dest_path, offset=0, hexbytes=""),
-                timeout=_WRITE_TIMEOUT,
-            )
-            check = self._check_write(result, dest_path, 0)
-            if check.is_ok and progress_handler is not None:
-                progress_handler(src_str, dest_path, 0, 0)
-            return check if not check.is_ok else Result(status=Status.Success, value=dest)
-
-        for offset in range(0, total, _WRITE_CHUNK):
+        offsets = range(0, total, _WRITE_CHUNK) if data else range(1)
+        for offset in offsets:
             chunk = data[offset : offset + _WRITE_CHUNK]
             hexbytes = " ".join(f"{b:02x}" for b in chunk)
             result = await self._exec_cmd(
@@ -289,16 +399,40 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             )
             check = self._check_write(result, dest_path, offset)
             if not check.is_ok:
-                # Partial file left on the device blocks any retry on a
-                # capacity-bound filesystem (the half-written bytes still
-                # consume space). Best-effort `fs rm` so the next attempt
-                # starts from a clean slate; a failure here is logged but
-                # not propagated — the caller already has the real error.
-                await self._cleanup_partial(dest_path)
-                return check
-            if progress_handler is not None:
-                progress_handler(src_str, dest_path, offset + len(chunk), total)
-        return Result(status=Status.Success, value=dest)
+                return _PassOutcome(check, reported, no_space=self._is_no_space(result, dest_path))
+            done = offset + len(chunk)
+            if progress_handler is not None and done > reported:
+                progress_handler(src_str, dest_path, done, total)
+            reported = max(reported, done)
+
+        if trunc_cmd is not None:
+            result = await self._exec_cmd(trunc_cmd, timeout=_WRITE_TIMEOUT)
+            if not result.status.is_ok:
+                failed = Result(
+                    status=Status.Error,
+                    msg=_failed_message(trunc_cmd, result),
+                )
+                return _PassOutcome(failed, reported, trunc_failed=True)
+        return _PassOutcome(Result(status=Status.Success), reported)
+
+    @staticmethod
+    def _is_no_space(result: CommandResult, dest_path: str) -> bool:
+        """Report whether a failed ``fs write`` says ``-ENOSPC``.
+
+        The shell's own retcode is ``-ENOEXEC`` whenever a builtin fails, so the
+        filesystem's errno is read from the output, line by line: the failure's own line
+        names the destination and ends with ``(-28)``. Other log lines the device prints
+        around it neither hide that line nor count, because a line without the destination
+        path is not the failure's; a bare ``-28`` retcode is accepted too. The raw command
+        result is read, never the formatted message, which holds the destination path.
+        """
+        if result.retcode == -errno.ENOSPC:
+            return True
+        for line in result.value.splitlines():
+            tail = _ERRNO_TAIL_RE.search(line)
+            if tail is not None and dest_path in line and int(tail.group(1)) == -errno.ENOSPC:
+                return True
+        return False
 
     async def _cleanup_partial(self, dest_path: str) -> None:
         """Best-effort removal of a half-written destination file after a mid-transfer failure.
@@ -311,7 +445,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             await self._exec_cmd(self._filesystem.rm_command(dest_path), timeout=_RM_TIMEOUT)
         except Exception as exc:  # noqa: BLE001 — best-effort cleanup of partial transfer, non-fatal
             logger.debug(
-                f"{self._name}: cleanup `fs rm {dest_path}` failed after a transfer error: {exc!r}"
+                f"{self._name}: cleanup of {dest_path} failed after a transfer error: {exc!r}"
             )
 
     def _check_write(
@@ -324,11 +458,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         if not result.status.is_ok:
             return Result(
                 status=Status.Error,
-                msg=(
-                    f"fs write {dest_path} at offset {offset} failed "
-                    f"(retcode={_label_errno(result.retcode)}): "
-                    f"{result.value.strip()}"
-                ),
+                msg=_failed_message(f"fs write {dest_path} at offset {offset}", result),
             )
         return Result(status=Status.Success)
 

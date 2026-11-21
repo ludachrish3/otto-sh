@@ -118,8 +118,18 @@ class EmbeddedFileSystem(ABC):
         """Render the command that removes *path*."""
         return f"fs rm {path}"
 
-    def trunc_command(self, path: str, *, length: int) -> str:
-        """Render the command that truncates *path* to *length* bytes."""
+    def trunc_command(self, path: str, *, length: int) -> str | None:
+        """Render the command that truncates *path* to *length* bytes.
+
+        A console ``put`` writes the file and then truncates it to the written
+        length, so a longer previous file leaves no stale tail and no failing
+        ``fs rm`` is issued on the sunny-day path. Return ``None`` when the
+        device shell has no truncate: the put then removes the destination and
+        writes the whole file from the start. A shell whose truncate fails (or
+        is missing) but that still returns a command gets the same
+        remove-then-write once per put, after one failing command and a double
+        write.
+        """
         return f"fs trunc {path} {length}"
 
     def ls_command(self, path: str) -> str:
