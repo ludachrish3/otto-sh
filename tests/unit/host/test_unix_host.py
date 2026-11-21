@@ -25,7 +25,7 @@ from otto.host.command_frame import ExecInput
 from otto.host.connections import _UserConnections
 from otto.host.element import Element
 from otto.host.exec_route import ExecRoute
-from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+from otto.host.host import DEFAULT_COMMAND_TIMEOUT, _ProbeAnswer
 from otto.host.login_proxy import Cred
 from otto.host.options import NcOptions, SftpOptions, SshOptions, UserlandOptions
 from otto.host.session import ShellSession
@@ -4398,13 +4398,13 @@ async def test_reboot_wait_on_a_console_sees_the_device_go_down_and_come_back(
         device.up = False
         return Result(status=Status.Success)
 
-    async def probe_fresh(timeout: float) -> "Exception | None":
+    async def probe_fresh(timeout: float) -> _ProbeAnswer:
         # The down phase's probe.
-        failure = await real_probe_fresh(timeout)
-        polls.append(failure is None)
+        answer = await real_probe_fresh(timeout)
+        polls.append(answer.reached)
         if len(polls) == 2:  # booted: the login prompt is back from the next dial on
             device.up = True
-        return failure
+        return answer
 
     async def probe_live(timeout: float) -> "Exception | None":
         # The up phase's probe: counted with the down phase's polls.
