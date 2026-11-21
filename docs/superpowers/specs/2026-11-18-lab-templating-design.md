@@ -181,9 +181,10 @@ recorded in section 12. Rejected along the way:
   (Jinja2) and then Terraform's (HCL) template languages.
 - Rendering happens in memory. Nothing is written to disk.
 - **Jsonnet packaging (section 6.9):** one platform-independent otto wheel,
-  with the binding chosen by environment markers: `gojsonnet` on Linux, the
-  C++ `jsonnet` on Windows and Apple-silicon macOS, and no binding on Intel
-  macOS.
+  with the binding chosen by environment markers: the C++ `jsonnet` on Linux
+  x86_64, Windows and Apple-silicon macOS, `gojsonnet` on Linux aarch64, and
+  no binding elsewhere. Intel macOS is unsupported (maintainer ruling
+  2026-11-21: no CI cells, no claim).
 
 **D1–D6 (section 11):** six decisions the reviews left to the maintainer.
 He accepted the recommended option for each; they are marked
@@ -391,8 +392,12 @@ credentials are passed.
   inside a root.
 - `otto.libsonnet` is reserved and always importable.
 - `JSONNET_PATH` and ambient search paths never apply.
-- Evaluation runs with stack and output limits, and `std.trace` output is
-  discarded rather than written to stderr.
+- Evaluation runs with stack and output limits. `std.trace` output goes to
+  stderr as Jsonnet prints it, during TAB too, and can still print after a
+  completion timeout because the abandoned worker keeps running. Templates
+  must not trace secrets, and template inputs never hold one. Neither binding
+  offers a per-evaluation trace sink, and an fd-2 redirect is process-wide
+  (maintainer decision, 2026-11-20).
 
 **Output.** A JSON object with any subset of `labs`, `elements` and `links`.
 It goes through `wrap_secret_values`, `parse_lab_sections` and
@@ -536,7 +541,9 @@ so the second engine shapes the public contract. Marked as my call.
   refuses to print a document containing a recognized literal secret, using
   the one secret recognizer (`SECRET_DATA_KEYS`, `src/otto/models/base.py`),
   rather than printing an altered one.
-- **`otto lab explain <host-id> --lab NAME`** prints, for one selected lab:
+- **`otto -l NAME lab explain <host-id>`** takes the lab from the global `-l`
+  option like every other verb, with no reservation gate (read-only), and
+  prints, for one selected lab:
   - the lab source and entry file behind the host;
   - instance, role and host definition, where the scaffolding emitted them
     (plain Jsonnet gets the entry file only);
@@ -560,8 +567,11 @@ naming the source. Nothing below weakens that for a source without a scope.
 
 - A `jsonnet` source may declare `scope`: exact lab names or literal
   prefixes. These are settings, not template regex.
-- otto enforces it on rendered output: every declared lab, every element
-  membership and every link the source contributes must fall inside it.
+- otto enforces it on rendered output: every declared lab and every element
+  membership the source contributes must fall inside it. Links are admitted
+  by the scope rather than checked against it: the composite asks a scoped
+  source for a lab's contribution only when its scope admits that lab, so
+  the source's links reach only labs inside it.
   Shared equipment that joins labs by an open pattern stays in a hand-written
   source.
 - When a scoped source fails, labs provably outside its scope load normally.
@@ -646,14 +656,25 @@ instances only. Raw upstream output is never cached.
 
 - One platform-independent otto wheel. The binding is chosen by PEP 508
   environment markers in `[project] dependencies`:
-  - `gojsonnet` on Linux (x86-64 and aarch64, `manylinux2014`, matching the
-    documented air-gap recipe in `docs/installation.md`);
-  - the C++ `jsonnet` on Windows and Apple-silicon macOS;
-  - no binding on Intel macOS, where neither publishes a wheel. Using a
-    template there fails naming the platform; otto itself installs.
-- Known gaps, documented: Alpine/musl Linux has no `gojsonnet` wheel; there is
-  no `gojsonnet` wheel for 3.15 yet (relevant only when the 3.15 canary is
-  promoted).
+  - the C++ `jsonnet` on Linux x86_64 (glibc and musl), Windows AMD64 and
+    Apple-silicon macOS, under the marker
+    `(sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64') or (sys_platform == 'darwin' and platform_machine == 'arm64')`;
+  - `gojsonnet` on Linux aarch64 with `python_version < '3.15'`, under the
+    marker
+    `python_version < '3.15' and sys_platform == 'linux' and platform_machine == 'aarch64'`;
+  - no binding anywhere else. Using a template there
+    fails naming the platform; otto itself installs. Intel macOS is
+    unsupported (maintainer ruling 2026-11-21: no CI cells, no claim);
+  - the documented x86_64 offline target in `docs/installation.md` moves from
+    `manylinux2014_x86_64` to `manylinux_2_28_x86_64`, keeping
+    `manylinux2014_x86_64` alongside it for the other wheels, because the C++
+    `jsonnet` wheel is `manylinux_2_28` only.
+- Known gaps, documented (maintainer decision, 2026-11-20): Alpine is
+  supported on x86_64; RHEL/CentOS 7 and any glibc < 2.28 x86_64 has no
+  binding wheel (sdist build or failure); Alpine/musl on aarch64 has no
+  `gojsonnet` wheel (sdist build with a Go toolchain, or failure); Linux
+  aarch64 on 3.15 waits on #1210. Intel macOS is unsupported (maintainer
+  ruling 2026-11-21: no CI cells, no claim).
 - One shim is the only place either binding is imported. It is imported
   lazily, so a project without Jsonnet pays nothing at import time.
 - The template test suite runs under both bindings in CI, because the C++ and
@@ -751,7 +772,8 @@ instances only. Raw upstream output is never cached.
   per entry file during a real operation.
 - **Inspection.** `render` and `explain` produce the expected output.
 - **Packaging.** The marker set installs binary-only on every documented
-  offline target; Intel macOS installs otto without a binding.
+  offline target. Intel macOS is unsupported (maintainer ruling 2026-11-21:
+  no CI cells, no claim), so it is no target.
 - **Docs.**
   - A worked-example page under `docs/configuration/lab/`, linked from
     `lab-config.md` and `host-sources.md`.
