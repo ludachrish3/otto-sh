@@ -661,3 +661,51 @@ async def test_remove_coverage_dirs_on_an_embedded_host_sends_nothing():
     board.run = _refuse
     assert (await board.remove_coverage_dirs()).is_ok
     assert await board.coverage_dirs_clean() is True
+
+
+# =========================================================================== #
+# One meaning at every level (#1056)
+# =========================================================================== #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flags", "installed", "uninstalled"),
+    [
+        ([True, True], True, False),
+        ([True, False], False, False),  # partly installed: neither
+        ([False, False], False, True),
+    ],
+)
+async def test_host_project_and_lab_agree_on_installed_and_uninstalled(
+    monkeypatch, recording_host, flags, installed, uninstalled
+):
+    """Host, project and lab answer the same two questions the same way, on one two-product host.
+
+    The host used to answer ``is_uninstalled`` as ``not is_installed``, so a host
+    with one of two products on read as uninstalled -- and as clean -- while the
+    project and the lab, which count products, said "partial".
+    """
+    from otto.project import actions_for, orchestrator
+    from otto.project.actions import ProjectActions
+    from tests.unit.project.test_orchestrator import _FakeCtx, _register_actions, _wire_lab
+
+    recording_host.products = [
+        _ScriptedProduct(f"p{i}", owner="acme", installed=on) for i, on in enumerate(flags)
+    ]
+    ctx = _FakeCtx([recording_host])
+    _register_actions("acme", ProjectActions)
+    (acme,) = _wire_lab(monkeypatch, ["acme"], ctx)
+    project_actions = actions_for(project=acme, ctx=ctx)
+
+    # The host, whole and owner-scoped.
+    for owner in (None, "acme"):
+        assert await recording_host.is_installed(owner=owner) is installed
+        assert await recording_host.is_uninstalled(owner=owner) is uninstalled
+    # The project and the lab reduce the same products.
+    assert await project_actions.is_uninstalled() is uninstalled
+    assert await orchestrator.is_uninstalled() is uninstalled
+    # Anything installed is not clean, at the host and at the project.
+    if any(flags):
+        assert await recording_host.is_clean() is False
+        assert await project_actions.is_clean() is False

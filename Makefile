@@ -1421,8 +1421,13 @@ conformance: ## Run the host-contract conformance suite (`conformance`-marked; e
 # 2026-09-02 with the BusyBox family lock in place (`aa957c5d`): 657 items,
 # 105.87s -- 14s over the 2026-08-24 figure, from the 92 added items and the
 # new serialization together; nowhere near this cap.
+#
+# RAISED FROM 1200s TO 1500s on 2026-11-20. The lane had grown to 1509 items
+# and four clean runs that day took 980 s, 1049 s, 1083 s and 1092 s: within
+# two minutes of the old cap, so a slow guest would have ended a healthy run
+# as a timeout (exit 124) with no failing test behind it.
 CONFORMANCE_CELLS ?= all
-CONFORMANCE_BED_TIMEOUT := 1200s
+CONFORMANCE_BED_TIMEOUT := 1500s
 MATRIX_CANDIDATE := reports/.support-matrix-candidate.json
 # A VERIFY LANE: it folds the run into $(MATRIX_CANDIDATE), judges that against
 # the committed matrix (a downgrade fails the lane) and leaves schemas/ alone;
