@@ -58,6 +58,7 @@ from .errors import (
     RawLandingError,
     SessionSetupError,
     UnsupportedOnUserlandError,
+    UntypableCommandError,
 )
 from .exec_route import ExecRoute
 from .exit_status import exit_status_of, no_return_code_result
@@ -465,6 +466,7 @@ async def _log_and_run(
     expects: "list[Expect | CredentialExpect] | None",
     timeout: float,
     exec_input: "ExecInput | None",
+    host: str,
     write_progress: "Callable[[int, int], None] | None" = None,
 ) -> CommandResult:
     """Log *cmd* unless *mode* is NEVER, then run it on *session*, its sink and redaction set.
@@ -476,6 +478,9 @@ async def _log_and_run(
     trace is redacted. A delegated call (``exec_input.exec_log``) logs as
     ``resolve_exec_log`` answers instead.
     """
+    # Before the command is logged: a refused command was never sent. *host*
+    # names the host in the refusal.
+    session._refuse_untypable(cmd=cmd, host=host)  # noqa: SLF001 -- this module's own session
     xl = begin_exec_log(cmd, mode, log_command, log_output, exec_input=exec_input)
     return await session.run_cmd(
         cmd=cmd,
@@ -547,10 +552,69 @@ _BEFORE_ANY_SESSION_ECHOES = False
 opens assumes, so a line no session here could carry is refused without costing a connection."""
 
 
+_TERMINAL_KEYS = frozenset(chr(c) for c in (*range(0x20), 0x7F)) - {"\n", "\t"}
+"""The characters a terminal or a shell's line editor acts on instead of delivering.
+
+Every C0 control character and DEL, except newline (the line's end) and TAB
+(typed literally, :meth:`~otto.host.command_frame.CommandFrame.typed`).
+Measured through ``run()`` on bash: Ctrl-C, Ctrl-R, Ctrl-U and ESC hang the
+command until its timeout, Ctrl-W, DEL and backspace erase what was typed
+before them, Ctrl-D and Ctrl-V vanish and a carriage return becomes a newline
+(#1224). A carriage return that is half of a CRLF line ending is not counted."""
+
+_KEY_NAMES = {0x08: "backspace", 0x0D: "a carriage return", 0x1B: "ESC", 0x7F: "DEL"}
+
+
+def _key_name(ch: str) -> str:
+    """Return a reader's name for control character *ch*: ``Ctrl-C (0x03)``, ``DEL (0x7f)``."""
+    code = ord(ch)
+    return f"{_KEY_NAMES.get(code) or 'Ctrl-' + chr(code + 0x40)} (0x{code:02x})"
+
+
+def refuse_if_terminal_would_act_on(
+    frame: "CommandFrame | None", cmd: str, *, terminal: bool, host: str = ""
+) -> None:
+    """Refuse *cmd* when it holds a character the terminal it is typed at would act on.
+
+    Only for a POSIX shell dialect (:class:`~otto.host.command_frame.BashFrame`
+    and its subclasses) typed at a terminal: a session on a pipe delivers
+    every byte, and another dialect's console is not measured. Nothing has
+    been typed when this raises.
+
+    Raises:
+        ~otto.host.errors.UntypableCommandError: *cmd* holds one of
+            ``_TERMINAL_KEYS``.
+    """
+    if not terminal or not isinstance(frame, BashFrame):
+        return
+    # A CRLF line ending is typed as it always was (the terminal reads the CR as
+    # a second Enter): a script saved with them is ordinary user input.
+    found = sorted({ch for ch in cmd.replace("\r\n", "\n") if ch in _TERMINAL_KEYS})
+    if not found:
+        return
+    names = ", ".join(_key_name(ch) for ch in found)
+    where = f"{host}: " if host else ""
+    raise UntypableCommandError(
+        f"{where}the command holds {names}, which a terminal acts on as a keystroke "
+        f"instead of passing to the command, so nothing was sent. To send a keystroke "
+        f"to the session, use `send()`. To give the command that byte as data, spell "
+        f"it in the command, for example `printf '\\{ord(found[0]):03o}'`."
+    )
+
+
 def render_payload(
-    frame: CommandFrame, cmd: str, *, m: SessionMarkers, exec_input: "ExecInput | None"
+    frame: CommandFrame,
+    cmd: str,
+    *,
+    m: SessionMarkers,
+    exec_input: "ExecInput | None",
+    terminal: bool,
 ) -> str:
     """Return what a session types for *cmd*: the ``run`` frame, or the ``exec`` frame.
+
+    *terminal* says the payload is typed at a terminal, not written to a
+    pipe: the command is then spelled the way the dialect's line reader takes
+    it whole (:meth:`~otto.host.command_frame.CommandFrame.typed`).
 
     *exec_input* ``None`` is a ``run``: :meth:`~otto.host.command_frame.CommandFrame.frame`.
     Otherwise an ``exec``:
@@ -558,17 +622,20 @@ def render_payload(
     stdin, restore and credential. The one renderer of a command's payload.
     """
     if exec_input is None:
-        return frame.frame(cmd, m=m)
-    payload = frame.frame_exec(
-        cmd,
-        m=m,
-        stdin_eof=exec_input.stdin_eof,
-        restore=exec_input.restore,
-        credential=exec_input.credential,
-    )
-    if exec_input.identity is None:
-        return payload
-    return frame.identity_guard(payload=payload, mark=exec_input.identity, m=m)
+        payload = frame.frame(cmd, m=m)
+    else:
+        payload = frame.frame_exec(
+            cmd,
+            m=m,
+            stdin_eof=exec_input.stdin_eof,
+            restore=exec_input.restore,
+            credential=exec_input.credential,
+        )
+        if exec_input.identity is not None:
+            payload = frame.identity_guard(payload=payload, mark=exec_input.identity, m=m)
+    # The frame is built from the command as written (it reads the command
+    # to place its own tokens); only what is typed is spelled for the terminal.
+    return frame.typed(cmd=payload) if terminal else payload
 
 
 def typed_line_ceiling(frame: "CommandFrame | None", *, echoes: bool) -> int:
@@ -779,7 +846,12 @@ def _synthetic_lines(
 ) -> "list[str]":
     """Return the physical lines *frame* types for *cmd*, against the synthetic marker set."""
     markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
-    return render_payload(frame, cmd, m=markers, exec_input=exec_input).rstrip("\n").split("\n")
+    # terminal=True: a line is only ever measured for a session that types at one.
+    return (
+        render_payload(frame, cmd, m=markers, exec_input=exec_input, terminal=True)
+        .rstrip("\n")
+        .split("\n")
+    )
 
 
 def _command_line_length(frame: "CommandFrame", cmd: str, *, exec_input: "ExecInput | None") -> int:
@@ -1538,6 +1610,14 @@ class ShellSession(ABC):
         if not self._alive:
             raise RuntimeError(f"{self._log_tag}: session is not alive")
 
+    def _refuse_untypable(self, *, cmd: str, host: str) -> None:
+        """Refuse *cmd* if this session's terminal would act on a character of it.
+
+        :func:`refuse_if_terminal_would_act_on` for this session's dialect and
+        transport; *host* names the host in the refusal.
+        """
+        refuse_if_terminal_would_act_on(self._frame, cmd, terminal=self.reads_a_terminal, host=host)
+
     async def send(self, text: str | SecretStr) -> None:
         """Send raw text to the session's stdin.
 
@@ -1951,7 +2031,13 @@ class ShellSession(ABC):
         # the exit code is captured — is supplied by the session's CommandFrame
         # so that a target can diverge from the bash form (see ZephyrFrame);
         # an exec gets the frame's exec frame (render_payload).
-        framed = render_payload(self._frame, cmd, m=self._markers, exec_input=exec_input)
+        framed = render_payload(
+            self._frame,
+            cmd,
+            m=self._markers,
+            exec_input=exec_input,
+            terminal=self.reads_a_terminal,
+        )
         # Truncate for the log so a multi-line script doesn't dominate the
         # output. The frame seam is the natural call site to instrument once —
         # every dialect then gets the visibility for free.
@@ -3307,6 +3393,7 @@ class HostSession:
             expects=expects,
             timeout=timeout,
             exec_input=exec_input,
+            host=self._host_id or self._name,
         )
 
     def _decline_command(self, sc: ShellCommand) -> CommandResult:
@@ -5226,6 +5313,7 @@ class SessionManager:
             expects=expects,
             timeout=timeout,
             exec_input=exec_input,
+            host=self._name,
             write_progress=write_progress,
         )
         return _ran_on(result, ExecRoute.DEFAULT_SESSION)

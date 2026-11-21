@@ -251,6 +251,11 @@ class SessionMarkers:
         )
 
 
+LITERAL_NEXT = "\x16"
+"""Ctrl-V: typed before a character, it makes a line editor or a terminal take that character
+literally (readline's ``quoted-insert``, the line discipline's ``lnext``)."""
+
+
 class CommandFrame(ABC):
     """A shell's command-framing dialect: wrap commands for execution and parse the echoed stream.
 
@@ -381,6 +386,17 @@ class CommandFrame(ABC):
         :func:`whole_line_echo`) and before the probe.
         """
         ...
+
+    def typed(self, *, cmd: str) -> str:
+        """Return *cmd* as it must be typed at a terminal for this dialect's shell to read it whole.
+
+        A session on a terminal types the command into the shell's line
+        reader, which may act on a character instead of taking it. The
+        default changes nothing; a dialect whose reader would change the
+        command overrides this. A session that writes to a pipe never calls
+        it (:func:`otto.host.session.render_payload`).
+        """
+        return cmd
 
     @abstractmethod
     def frame(self, cmd: str, *, m: SessionMarkers) -> str:
@@ -869,6 +885,19 @@ class BashFrame(CommandFrame):
         # `${HOME:-/}`: a login with no home starts in `/`, as login(1) does.
         word = shlex.quote(f'cd "${{HOME:-/}}" || exit; echo "{m.begin}"; {cls._frame_body(cmd)}\n')
         return f"exec env -i {keep} {SESSION_SHELL} -l -c {word}\n"
+
+    @override
+    def typed(self, *, cmd: str) -> str:
+        # A line editor (bash, zsh, mksh) takes TAB as its completion key: it
+        # dropped a TAB between two words and replaced `/us<TAB>` with `/usr/`
+        # (#1224). LITERAL_NEXT (Ctrl-V) before it makes the editor, or the
+        # terminal's own line discipline where the shell has no editor, take
+        # the TAB as a character. Measured on every shell of
+        # tests/_fixtures/interactive_shell.py, command line and here-document,
+        # after the handshake turned echo off. Not covered: BusyBox ash's own
+        # line editor, which runs only while the terminal echoes (a host with
+        # no `stty`, #953) and completes on TAB whatever precedes it.
+        return cmd.replace("\t", LITERAL_NEXT + "\t")
 
     @override
     def frame(self, cmd: str, *, m: SessionMarkers) -> str:

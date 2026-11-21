@@ -826,6 +826,7 @@ member	otto.host.command_frame:BashFrame.single_client_console	attribute
 member	otto.host.command_frame:BashFrame.streams_output_live	attribute
 member	otto.host.command_frame:BashFrame.terminal_restore	method	sync	PK:restore:-
 member	otto.host.command_frame:BashFrame.type_name	attribute
+member	otto.host.command_frame:BashFrame.typed	method	sync	KO:cmd:-
 abstract	otto.host.command_frame:BashFrame	-
 name	otto.host.command_frame:CommandFrame	class
 mro	otto.host.command_frame:CommandFrame	-
@@ -859,6 +860,7 @@ member	otto.host.command_frame:CommandFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.save_terminal	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.single_client_console	attribute
 member	otto.host.command_frame:CommandFrame.streams_output_live	attribute
+member	otto.host.command_frame:CommandFrame.typed	method	sync	KO:cmd:-
 abstract	otto.host.command_frame:CommandFrame	end_pattern extract_retcode frame handshake marks_begin parse_output recover
 name	otto.host.command_frame:ExecInput	class
 mro	otto.host.command_frame:ExecInput	-
@@ -909,6 +911,7 @@ member	otto.host.command_frame:RawFrame.save_terminal	method	sync	PK:m:-
 member	otto.host.command_frame:RawFrame.single_client_console	attribute
 member	otto.host.command_frame:RawFrame.streams_output_live	attribute
 member	otto.host.command_frame:RawFrame.type_name	attribute
+member	otto.host.command_frame:RawFrame.typed	method	sync	KO:cmd:-
 abstract	otto.host.command_frame:RawFrame	-
 name	otto.host.command_frame:SessionMarkers	class
 mro	otto.host.command_frame:SessionMarkers	-
@@ -959,6 +962,7 @@ member	otto.host.command_frame:ZephyrFrame.shell_lines_after_begin	attribute
 member	otto.host.command_frame:ZephyrFrame.single_client_console	attribute
 member	otto.host.command_frame:ZephyrFrame.streams_output_live	attribute
 member	otto.host.command_frame:ZephyrFrame.type_name	attribute
+member	otto.host.command_frame:ZephyrFrame.typed	method	sync	KO:cmd:-
 abstract	otto.host.command_frame:ZephyrFrame	-
 name	otto.host.command_frame:command_value	function
 call	otto.host.command_frame:command_value	sync	PK:output:- KO:line_ending:S:"\n"
@@ -1610,6 +1614,7 @@ member	otto.host:BashFrame.single_client_console	attribute
 member	otto.host:BashFrame.streams_output_live	attribute
 member	otto.host:BashFrame.terminal_restore	method	sync	PK:restore:-
 member	otto.host:BashFrame.type_name	attribute
+member	otto.host:BashFrame.typed	method	sync	KO:cmd:-
 abstract	otto.host:BashFrame	-
 name	otto.host:CommandFrame	class
 mro	otto.host:CommandFrame	-
@@ -1643,6 +1648,7 @@ member	otto.host:CommandFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host:CommandFrame.save_terminal	method	sync	PK:m:-
 member	otto.host:CommandFrame.single_client_console	attribute
 member	otto.host:CommandFrame.streams_output_live	attribute
+member	otto.host:CommandFrame.typed	method	sync	KO:cmd:-
 abstract	otto.host:CommandFrame	end_pattern extract_retcode frame handshake marks_begin parse_output recover
 name	otto.host:CommandPowerConfig	model
 mro	otto.host:CommandPowerConfig	{otto.models:OttoModel}
@@ -2623,6 +2629,7 @@ member	otto.host:RawFrame.save_terminal	method	sync	PK:m:-
 member	otto.host:RawFrame.single_client_console	attribute
 member	otto.host:RawFrame.streams_output_live	attribute
 member	otto.host:RawFrame.type_name	attribute
+member	otto.host:RawFrame.typed	method	sync	KO:cmd:-
 abstract	otto.host:RawFrame	-
 name	otto.host:RawLandingError	class
 mro	otto.host:RawLandingError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
@@ -3280,6 +3287,7 @@ member	otto.host:ZephyrFrame.shell_lines_after_begin	attribute
 member	otto.host:ZephyrFrame.single_client_console	attribute
 member	otto.host:ZephyrFrame.streams_output_live	attribute
 member	otto.host:ZephyrFrame.type_name	attribute
+member	otto.host:ZephyrFrame.typed	method	sync	KO:cmd:-
 abstract	otto.host:ZephyrFrame	-
 name	otto.host:ZephyrHost	class
 mro	otto.host:ZephyrHost	{otto.host:EmbeddedHost} {otto.host:RemoteHost} {otto.host:BaseHost}
