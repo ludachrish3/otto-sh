@@ -53,6 +53,7 @@ from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, lab_data_dir, register_zephyr_inline_frame
 from tests._fixtures.netbox_replay import LOGICAL_URL, RequestTrap, route_requests_to
 from tests._fixtures.paths import ensure_custom_hosts_on_path
+from tests._fixtures.portable import portable
 
 ROOT = Path(otto.__file__).resolve().parents[2]
 """The checkout root, written ``<root>`` in every artifact."""
@@ -331,7 +332,7 @@ def _remote_host(host: Any) -> dict[str, Any]:
         "lab_info": host.lab_info.name,
         "resources": sorted(host.resources),
         "inventory_key": ref.key,
-        "inventory_backend": _portable(ref.backend, roots={"<root>": ROOT}),
+        "inventory_backend": portable(ref.backend, places={"<root>": ROOT}),
         "logins": sorted(c.login for c in host.creds),
         "console_options": _jsonable(host.console_options),
         "interfaces": {name: _jsonable(i) for name, i in sorted(host.interfaces.items())},
@@ -532,26 +533,6 @@ def _workspaces(workdir: Path) -> "dict[str, dict[str, Path]]":
     return spaces
 
 
-def _portable(text: str, *, roots: "dict[str, Path]") -> str:
-    """*text* with each root in *roots* written as its placeholder; longest path first.
-
-    *roots* maps a placeholder (``<A>``, ``<B>``, ``<home>``, ``<root>``) to a
-    directory. Both the path as given and its resolved form are replaced, so a
-    symlinked temporary directory cannot leak through.
-    """
-    spellings = sorted(
-        {
-            (str(form), placeholder)
-            for placeholder, path in roots.items()
-            for form in (path, path.resolve())
-        },
-        key=lambda pair: -len(pair[0]),
-    )
-    for spelled, placeholder in spellings:
-        text = text.replace(spelled, placeholder)
-    return text
-
-
 _DOCTOR_AREAS = frozenset({"settings", "lab"})
 """The areas an inventory declaration can move; the others are not this pin's business."""
 
@@ -582,7 +563,7 @@ def doctor(workdir: Path) -> dict[str, Any]:
             roots = {f"<{label}>": root for label, root in projects.items()}
             roots |= {"<home>": home, "<root>": ROOT}
             text = json.dumps({label: _report(root) for label, root in projects.items()})
-            result[name] = json.loads(_portable(text, roots=roots))
+            result[name] = json.loads(portable(text, places=roots))
     return result
 
 

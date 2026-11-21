@@ -3,7 +3,8 @@
 A source may implement any of the optional capabilities
 (:class:`~otto.labs.protocol.SupportsInventoryView`,
 :class:`~otto.labs.protocol.SupportsLabStatus`,
-:class:`~otto.labs.protocol.SupportsLabScope`) or none of them. Each function
+:class:`~otto.labs.protocol.SupportsLabScope`,
+:class:`~otto.labs.protocol.SupportsLabContribution`) or none of them. Each function
 here is the one place that decides what a source receives: the capability
 when it has it, otherwise today's legacy call with what a legacy backend can
 take, :attr:`~otto.inventory.InventoryView.bare_inventory`.
@@ -20,10 +21,12 @@ from ..inventory.errors import InventoryError
 from .drops import record_drop
 from .errors import LabRepositoryError
 from .protocol import (
+    LabContribution,
     LabRepository,
     LabScope,
     LabStatus,
     SupportsInventoryView,
+    SupportsLabContribution,
     SupportsLabScope,
     SupportsLabStatus,
 )
@@ -87,6 +90,24 @@ def load_lab_through(
     if isinstance(repository, SupportsInventoryView):
         return repository.load_lab_in_view(name, preferences=preferences, view=view)
     return repository.load_lab(name, preferences=preferences, inventory=view.bare_inventory)
+
+
+def load_contribution_through(
+    *,
+    repository: LabRepository,
+    name: str,
+    preferences: dict[str, dict[str, Any]] | None = None,
+    view: "InventoryView",
+) -> LabContribution | None:
+    """Return *repository*'s contribution to lab *name*, or ``None`` when it has no such capability.
+
+    The source's :meth:`~otto.labs.protocol.SupportsLabContribution.load_contribution`
+    through *view*. ``None`` for a source without it: the caller loads that
+    one through :func:`load_lab_through`, and its links come resolved.
+    """
+    if not isinstance(repository, SupportsLabContribution):
+        return None
+    return repository.load_contribution(name, preferences=preferences, view=labs_view(view=view))
 
 
 def lab_scope_of(*, repository: LabRepository) -> LabScope | None:

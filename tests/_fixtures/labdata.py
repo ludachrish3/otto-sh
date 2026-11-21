@@ -331,3 +331,29 @@ def json_lab_sources(
             project_root=root,
         )
     ]
+
+
+def built_json_source(root: Path, label: str, *files: Path, profiles: Any = None) -> Any:
+    """A built ``[[lab.sources]]`` json source of project *label* at *root*, reading *files*.
+
+    Prepared and built through the registered json backend, as
+    :func:`~otto.labs.sources.build_lab_sources` builds it, so the source is
+    the one a configuration gets. *profiles* is the
+    :class:`~otto.host.os_profile.ProfileContext` its hosts resolve through;
+    omitted, none. Returns the :class:`~otto.labs.LabSource`.
+    """
+    from otto.host.os_profile import ProfileContext
+    from otto.labs import LabSource
+    from otto.labs.registry import LAB_REPOSITORIES
+    from otto.labs.sources import prepare_lab_sources
+
+    (state,) = prepare_lab_sources(
+        json_lab_sources(root, list(files), name=label),
+        profiles=profiles if profiles is not None else ProfileContext.empty(),
+    )
+    assert state.prepared is not None
+    return LabSource(
+        label=state.pending.label,
+        repository=LAB_REPOSITORIES.build(prepared=state.prepared),
+        project_root=state.pending.project_root,
+    )

@@ -92,15 +92,16 @@ def _names_static_key_paths(projects: list[Project]) -> list[Path]:
 
 
 def lab_key_paths(projects: list[Project]) -> list[Path]:
-    """Every lab file the projects' prepared sources read, then every directory they were found in.
+    """Every key path of the projects' prepared sources, then every directory they were found in.
 
     For the cache WRITER only, after init: it prepares the sources
-    (:func:`~otto.labs.sources.prepared_lab_sources`) and expands their
-    entries, and the writer stores the result beside the entry so a warm
-    reader never does either. A source whose backend is not registered, or
-    that is not file-backed, contributes nothing (its TTL class covers it);
-    so does a project whose sources fail to prepare, which no cache write may
-    crash over.
+    (:func:`~otto.labs.sources.prepared_lab_sources`) and asks each for its
+    key paths (:meth:`~otto.labs.sources.LabSourceState.key_paths`: the lab
+    files it reads, by its backend's file rule), and the writer stores the
+    result beside the entry so a warm reader never does either. A source
+    whose backend is not registered, or that is not file-backed, contributes
+    nothing (its TTL class covers it); so does a project whose sources fail
+    to prepare, which no cache write may crash over.
 
     Every directory the enumeration entered is a key path too — its mtime
     moves when a file appears, is removed or is renamed there, which is how a
@@ -121,7 +122,7 @@ def lab_key_paths(projects: list[Project]) -> list[Path]:
             continue
         for state in states:
             if state.is_known():
-                paths.extend(state.lab_files(visited=visited))
+                paths.extend(state.key_paths(visited=visited))
     return [*paths, *sorted(visited)]
 
 

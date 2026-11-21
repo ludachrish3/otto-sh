@@ -3856,6 +3856,14 @@ member	otto.labs:CompositeLabRepository.load_lab	method	sync	PK:name:- KO:prefer
 member	otto.labs:CompositeLabRepository.load_lab_in_view	method	sync	PK:name:- KO:preferences:N KO:view:-
 member	otto.labs:CompositeLabRepository.load_lab_reported	method	sync	PK:name:- KO:preferences:N KO:view:- KO:report:-
 abstract	otto.labs:CompositeLabRepository	@final @manifest:subclass=false
+name	otto.labs:DeclaredLinkInputs	class
+mro	otto.labs:DeclaredLinkInputs	-
+call	otto.labs:DeclaredLinkInputs	sync	KO:entries:- KO:addressing:-
+member	otto.labs:DeclaredLinkInputs.__eq__	method	sync	PK:other:-
+member	otto.labs:DeclaredLinkInputs.__hash__	method	sync	-
+member	otto.labs:DeclaredLinkInputs.addressing	field
+member	otto.labs:DeclaredLinkInputs.entries	field
+abstract	otto.labs:DeclaredLinkInputs	@final @manifest:subclass=false
 name	otto.labs:Diagnostic	class
 mro	otto.labs:Diagnostic	-
 call	otto.labs:Diagnostic	sync	KO:where:- KO:reason:-
@@ -3879,6 +3887,24 @@ member	otto.labs:HostSummary.labs	field
 member	otto.labs:HostSummary.logins	field
 member	otto.labs:HostSummary.os_type	field
 abstract	otto.labs:HostSummary	@final @manifest:subclass=false
+name	otto.labs:JSON_FILE_RULE	value
+name	otto.labs:LabContribution	class
+mro	otto.labs:LabContribution	-
+call	otto.labs:LabContribution	sync	KO:lab:- KO:not_found:- KO:links:-
+member	otto.labs:LabContribution.__eq__	method	sync	PK:other:-
+member	otto.labs:LabContribution.__hash__	method	sync	-
+member	otto.labs:LabContribution.lab	field
+member	otto.labs:LabContribution.links	field
+member	otto.labs:LabContribution.not_found	field
+abstract	otto.labs:LabContribution	@final @manifest:subclass=false
+name	otto.labs:LabFileRule	class
+mro	otto.labs:LabFileRule	-
+call	otto.labs:LabFileRule	sync	KO:suffix:- KO:directory_file:-
+member	otto.labs:LabFileRule.__eq__	method	sync	PK:other:-
+member	otto.labs:LabFileRule.__hash__	method	sync	-
+member	otto.labs:LabFileRule.directory_file	field
+member	otto.labs:LabFileRule.suffix	field
+abstract	otto.labs:LabFileRule	@final @manifest:subclass=false
 name	otto.labs:LabNotFoundError	class
 mro	otto.labs:LabNotFoundError	{otto.labs:LabRepositoryError} {otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.labs:LabNotFoundError	sync	@builtin:builtins.Exception
@@ -3923,6 +3949,15 @@ member	otto.labs:LabSourceEnv.origin	field
 member	otto.labs:LabSourceEnv.profiles	field
 member	otto.labs:LabSourceEnv.project_root	field
 abstract	otto.labs:LabSourceEnv	@final @manifest:subclass=false
+name	otto.labs:LabSourceFacts	class
+mro	otto.labs:LabSourceFacts	-
+call	otto.labs:LabSourceFacts	sync	KO:file_inputs:- KO:file_rule:O KO:key_roots:T:[]
+member	otto.labs:LabSourceFacts.__eq__	method	sync	PK:other:-
+member	otto.labs:LabSourceFacts.__hash__	method	sync	-
+member	otto.labs:LabSourceFacts.file_inputs	field
+member	otto.labs:LabSourceFacts.file_rule	field
+member	otto.labs:LabSourceFacts.key_roots	field
+abstract	otto.labs:LabSourceFacts	@final @manifest:subclass=false
 name	otto.labs:LabStatus	class
 mro	otto.labs:LabStatus	-
 call	otto.labs:LabStatus	sync	KO:name:- KO:unavailable:N
@@ -3974,6 +4009,10 @@ member	otto.labs:SourceUnavailable.diagnostic	field
 member	otto.labs:SourceUnavailable.scope	field
 member	otto.labs:SourceUnavailable.source	field
 abstract	otto.labs:SourceUnavailable	@final @manifest:subclass=false
+name	otto.labs:SupportsDeclaredLinks	protocol
+mro	otto.labs:SupportsDeclaredLinks	-
+member	otto.labs:SupportsDeclaredLinks.declared_link_entries	method	sync	KO:view:-
+requires	otto.labs:SupportsDeclaredLinks	declared_link_entries
 name	otto.labs:SupportsHostSummaries	protocol
 mro	otto.labs:SupportsHostSummaries	-
 member	otto.labs:SupportsHostSummaries.list_host_summaries	method	sync	KO:inventory:N
@@ -3986,6 +4025,10 @@ name	otto.labs:SupportsInventoryView	protocol
 mro	otto.labs:SupportsInventoryView	-
 member	otto.labs:SupportsInventoryView.load_lab_in_view	method	sync	PK:name:- KO:preferences:N KO:view:-
 requires	otto.labs:SupportsInventoryView	load_lab_in_view
+name	otto.labs:SupportsLabContribution	protocol
+mro	otto.labs:SupportsLabContribution	-
+member	otto.labs:SupportsLabContribution.load_contribution	method	sync	PK:name:- KO:preferences:N KO:view:-
+requires	otto.labs:SupportsLabContribution	load_contribution
 name	otto.labs:SupportsLabScope	protocol
 mro	otto.labs:SupportsLabScope	-
 member	otto.labs:SupportsLabScope.lab_scope	method	sync	-
@@ -4008,6 +4051,8 @@ name	otto.labs:labs_view	function
 call	otto.labs:labs_view	sync	KO:view:-
 name	otto.labs:list_host_ids	function
 call	otto.labs:list_host_ids	sync	KO:repository:-
+name	otto.labs:load_contribution_through	function
+call	otto.labs:load_contribution_through	sync	KO:repository:- KO:name:- KO:preferences:N KO:view:-
 name	otto.labs:load_lab_through	function
 call	otto.labs:load_lab_through	sync	KO:repository:- KO:name:- KO:preferences:N KO:view:-
 name	otto.labs:logins_of_creds	function
@@ -4026,6 +4071,15 @@ member	otto.link:AppliedPlacement.placement	field
 member	otto.link:AppliedPlacement.selector	field
 abstract	otto.link:AppliedPlacement	@final @manifest:subclass=false
 name	otto.link:BOTH_DIRECTIONS	value
+name	otto.link:DeclaredLinkEntry	class
+mro	otto.link:DeclaredLinkEntry	-
+call	otto.link:DeclaredLinkEntry	sync	KO:origin:- KO:index:- KO:entry:-
+member	otto.link:DeclaredLinkEntry.__eq__	method	sync	PK:other:-
+member	otto.link:DeclaredLinkEntry.__hash__	method	sync	-
+member	otto.link:DeclaredLinkEntry.entry	field
+member	otto.link:DeclaredLinkEntry.index	field
+member	otto.link:DeclaredLinkEntry.origin	field
+abstract	otto.link:DeclaredLinkEntry	@final @manifest:subclass=false
 name	otto.link:DirectionState	class
 mro	otto.link:DirectionState	-
 call	otto.link:DirectionState	sync	@manifest:construct=false
@@ -4047,6 +4101,14 @@ name	otto.link:FlowDirection	enum
 mro	otto.link:FlowDirection	-
 enum	otto.link:FlowDirection	A_TO_B	S:"a->b"
 enum	otto.link:FlowDirection	B_TO_A	S:"b->a"
+name	otto.link:HostAddressing	class
+mro	otto.link:HostAddressing	-
+call	otto.link:HostAddressing	sync	KO:ip:- KO:interfaces:O
+member	otto.link:HostAddressing.__eq__	method	sync	PK:other:-
+member	otto.link:HostAddressing.__hash__	method	sync	-
+member	otto.link:HostAddressing.interfaces	field
+member	otto.link:HostAddressing.ip	field
+abstract	otto.link:HostAddressing	@final @manifest:subclass=false
 name	otto.link:IMPAIRERS	value
 name	otto.link:ImpairReport	class
 mro	otto.link:ImpairReport	-

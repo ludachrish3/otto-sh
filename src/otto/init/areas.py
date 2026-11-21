@@ -91,9 +91,10 @@ def lab_file_groups(root: Path) -> list[list[Path]]:
     which files hold this project's hosts. Checks the entries with the SAME
     :func:`otto.labs.sources.compile_lab_sources` ``Project.parse_settings``
     uses, prepares each one whose backend is registered, then asks each
-    file-backed source for its files (a directory entry contributes its
-    ``lab.json``; a ``.json`` entry IS the file; a glob contributes every
-    match). A source whose backend is not registered yet is left to
+    file-backed source for its files, by the source's own rule
+    (:meth:`~otto.labs.sources.LabSourceState.lab_files`: for a json source,
+    a directory entry contributes its ``lab.json``, a ``.json`` entry IS the
+    file, a glob contributes every match). A source whose backend is not registered yet is left to
     :func:`deferred_lab_sources`.
 
     The grouping is load-bearing for the duplicate rules, which are per SOURCE:
@@ -109,11 +110,11 @@ def lab_file_groups(root: Path) -> list[list[Path]]:
     not check or prepare raises that ``ValueError``: the doctor reports it
     once, under the lab area.
     """
-    from ..labs.json_repository import LAB_FILENAME
+    from ..labs.sources import JSON_FILE_RULE
 
     states = _lab_states(root)
     if states is None:
-        return [[root / "lab_data" / LAB_FILENAME]]
+        return [[root / "lab_data" / JSON_FILE_RULE.directory_file]]
     return [state.lab_files() for state in states if state.is_known() and state.is_file_backed()]
 
 

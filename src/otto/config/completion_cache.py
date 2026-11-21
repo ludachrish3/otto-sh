@@ -2100,25 +2100,23 @@ def collect_host_ids(projects: list["Project"], lab_names: list[str] | None = No
 def _read_lab_links(lab_file: Path) -> list[dict[str, Any]]:
     """Best-effort read of a lab.json's ``links`` array ([] on any problem).
 
-    Completion must never crash on bad user data, so malformed shapes are
-    silently empty here. Links have no repository seam yet — hosts moved to
-    ``LabRepository`` enumeration, this stayed a direct read. Like every
-    lab-file reader it wraps the passwords it parsed
-    (:func:`~otto.models.base.wrap_secret_values`) before anything else holds
-    the document.
+    Completion must never crash on bad user data, so a file the loader refuses
+    is silently empty here. Links have no repository seam yet — hosts moved to
+    ``LabRepository`` enumeration, this stayed a direct read, through the one
+    lab-document reader (:func:`otto.labs.documents.read_lab_document`), which
+    wraps the passwords it parsed before anything else holds the document.
+    A file otto does not decode itself
+    (:func:`otto.labs.documents.otto_decodes`) holds no links here.
     """
-    # Function-local: a Project (already parsed here) has loaded the models.
-    from ..models.base import wrap_secret_values
+    from ..labs import documents
+    from ..labs.errors import LabRepositoryError
 
+    if not documents.otto_decodes(lab_file):
+        return []
     try:
-        data = json.loads(lab_file.read_text())
-    except (OSError, json.JSONDecodeError):
+        return documents.read_lab_document(lab_file).sections["links"]
+    except LabRepositoryError:
         return []
-    wrap_secret_values(data)
-    if not isinstance(data, dict):
-        return []
-    links = data.get("links", [])
-    return links if isinstance(links, list) else []
 
 
 def collect_link_ids(

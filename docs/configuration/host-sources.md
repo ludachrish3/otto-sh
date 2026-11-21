@@ -252,6 +252,11 @@ labs entry 'site': my_project/virtual overrides my_project/global
 A source that holds elements for a lab but declares no `labs` entry for it
 contributes members only, and leaves the earlier declaration standing.
 
+Declared links are not part of an element: every source's links resolve over
+the merged lab, so a link may name a host another source declares, and a link
+id two sources declare keeps the later source's link
+({ref}`lab-links-across-sources`).
+
 Inside a *single* source a duplicate is still an error, not an override: there
 it is a typo (see {ref}`one-source-several-files` above). Splitting the
 records across two `[[lab.sources]]` entries is the opt-in to override

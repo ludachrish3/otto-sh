@@ -5,7 +5,7 @@ computes the lab key paths (the files, then the directories they were found
 in) and stores them, with the entry's TTL class, beside the entry. The warm
 readers (``read_sections``, ``read_tunnel_ids``, ``inspect_section``)
 validate against those stored values: they stat what was stored and never
-call ``prepared_lab_sources``, a config model or ``expand_lab_paths``. A new
+call ``prepared_lab_sources``, a config model or ``expand_lab_files``. A new
 file matching a glob still invalidates, because it moves its directory's
 mtime, and that directory is one of the stored key paths.
 """
@@ -47,9 +47,9 @@ def _poison(monkeypatch) -> None:
     def boom(*args, **kwargs):
         raise AssertionError("a warm reader prepared a lab source or globbed its files")
 
-    from otto.labs import json_repository, sources
+    from otto.labs import documents, json_repository, sources
 
-    monkeypatch.setattr(json_repository, "expand_lab_paths", boom)
+    monkeypatch.setattr(documents, "expand_lab_files", boom)
     monkeypatch.setattr(json_repository.JsonLabSourceConfig, "model_validate", classmethod(boom))
     monkeypatch.setattr(sources, "prepared_lab_sources", boom)
 

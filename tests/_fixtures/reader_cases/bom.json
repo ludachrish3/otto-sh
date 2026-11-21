@@ -1,0 +1,20 @@
+﻿{
+  "labs": {"case": {"resources": ["bench-1"], "metadata": {"site": "here"}}},
+  "elements": [
+    {
+      "name": "alpha",
+      "labs": ["case"],
+      "hosts": [
+        {"ip": "10.20.0.1", "os_type": "unix", "creds": [{"login": "u", "password": "p"}]}
+      ]
+    },
+    {
+      "name": "beta",
+      "labs": ["case"],
+      "hosts": [
+        {"ip": "10.20.0.2", "os_type": "unix", "creds": [{"login": "u", "password": "p"}]}
+      ]
+    }
+  ],
+  "links": [{"endpoints": [{"host": "alpha"}, {"host": "beta"}]}]
+}

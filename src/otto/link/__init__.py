@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .check import LinkCheckReport as LinkCheckReport
     from .check import check_link as check_link
+    from .derive import DeclaredLinkEntry as DeclaredLinkEntry
+    from .derive import HostAddressing as HostAddressing
     from .impairer import IMPAIRERS as IMPAIRERS
     from .impairer import build_impairer as build_impairer
     from .impairer import register_impairer as register_impairer
@@ -68,6 +70,8 @@ if TYPE_CHECKING:
 _LAZY_ATTRS: dict[str, str] = {
     "LinkCheckReport": "otto.link.check",
     "check_link": "otto.link.check",
+    "DeclaredLinkEntry": "otto.link.derive",
+    "HostAddressing": "otto.link.derive",
     "IMPAIRERS": "otto.link.impairer",
     "build_impairer": "otto.link.impairer",
     "register_impairer": "otto.link.impairer",
@@ -126,9 +130,11 @@ __all__ = [
     "BOTH_DIRECTIONS",
     "IMPAIRERS",
     "AppliedPlacement",
+    "DeclaredLinkEntry",
     "DirectionState",
     "DryRunPlan",
     "FlowDirection",
+    "HostAddressing",
     "ImpairReport",
     "ImpairmentParams",
     "Link",

@@ -10,6 +10,7 @@ import pytest
 
 from otto.config.user_settings import load_user_settings
 from otto.inventory import build_inventory_from_declarations, resolve_host_entry
+from otto.inventory.view import InventoryView
 from otto.labs.json_repository import _JsonFileLabRepository
 from otto.labs.loader import load_lab
 from tests._fixtures.labdata import lab_data_dir
@@ -51,7 +52,9 @@ def _entries(tech):
     repository = _JsonFileLabRepository(search_paths=[lab_data_dir() / tech])
     # The fixture's parsed elements, exactly as the loader sees them: the first
     # host entry of each, paired with the element it belongs to.
-    docs = repository._load_documents()
+    docs = repository._load_documents(
+        best_effort=False, view=InventoryView.of_default(inventory=None)
+    )
     return {
         el.name: (el.hosts[0], el.to_element())
         for doc in docs

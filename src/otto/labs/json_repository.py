@@ -1,21 +1,23 @@
 """Built-in ``"json"`` ``LabRepository`` backend: loads labs from ``lab.json`` files."""
 
-import json
+import abc
+import functools
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ConfigDict, Field, ValidationError, ValidationInfo, field_validator
-from typing_extensions import final
+from typing_extensions import final, override
 
 from ..host.factory import (
+    HostIdentity,
     create_host_from_dict,
     host_identity,
 )
 from ..host.os_profile import ProfileContext
 from ..host.remote_host import describe_identity
-from ..models.base import OttoModel, compact_validation_error, wrap_secret_values
+from ..models.base import OttoModel, compact_validation_error
 from ..models.lab import ElementSpec, LabEntrySpec
 from ..utils import anchor_path
 from .drops import Diagnostic
@@ -23,25 +25,36 @@ from .errors import (
     LabNotFoundError,
     LabRepositoryError,
 )
-from .protocol import HostSummary, LabStatus, logins_of_host_data
+from .protocol import (
+    DeclaredLinkInputs,
+    HostSummary,
+    LabContribution,
+    LabStatus,
+    logins_of_host_data,
+)
+from .sources import JSON_FILE_RULE, LabSourceFacts
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterator
 
     from ..host.element import Element
     from ..host.inventory_ref import MachineIdentity
     from ..inventory.protocol import Inventory
+    from ..inventory.resolve import ResolvedEntry
     from ..inventory.view import InventoryView
+    from ..link.derive import DeclaredLinkEntry, HostAddressing
     from ..registry import Configured
 
     # Annotation only: load_lab() below imports Lab at call time, so a
     # backend loads the lab model only when it builds a lab.
+    from .documents import SourceRead
     from .loader import Lab
     from .sources import LabSourceEnv
 
 logger = logging.getLogger(__name__)
 
-LAB_FILENAME = "lab.json"
+LAB_FILENAME = JSON_FILE_RULE.directory_file
+"""The file a json directory entry contributes (:data:`~otto.labs.sources.JSON_FILE_RULE`)."""
 
 # Known top-level sections of a lab.json object (v2): ``labs`` is the table of
 # declared labs keyed by name, ``elements`` the array of element entries (each
@@ -56,10 +69,8 @@ _MIGRATION_HINT = (
     "See https://otto-sh.readthedocs.io/en/stable/configuration/lab/migrating.html#migrating-from-the-hosts-array"
 )
 
-_GLOB_CHARS = frozenset("*?[")
-
-# WHY `from ..inventory import ...` is function-local at every use site below
-# (three of them): every command that loads a lab reaches this module, and a
+# WHY `from ..inventory import ...` is function-local at every use site below:
+# every command that loads a lab reaches this module, and a
 # module-scope import would put otto.inventory's nine modules on each of them
 # for the overwhelmingly common process that never resolves a single
 # reference. The edge is real and
@@ -67,84 +78,16 @@ _GLOB_CHARS = frozenset("*?[")
 # a sys.modules lookup beside a pydantic validation.
 
 
-def expand_lab_paths(paths: "Iterable[Path]", *, visited: "set[Path] | None" = None) -> list[Path]:
-    """Every lab file a list of ``paths`` entries names (spec §2.4).
-
-    THE single home of the entry-to-files rule, read by the json backend, the
-    completion-cache fingerprint and the ``otto init`` doctor: a directory
-    contributes its ``lab.json``; a ``.json`` path is the file; an entry with
-    a glob metacharacter is expanded relative to its non-glob prefix (sorted,
-    files only, ``.json`` only). Entries that resolve to nothing are skipped —
-    the composite's existence rule reports the consequence.
-
-    Each FILE appears once, at its first-seen position, however many entries
-    name it: ``paths = [d, d/"elements/*.json"]`` — the main file by directory
-    plus the split files by glob, one directory level down — is the documented
-    layout written the natural way, and listing ``d/lab.json`` twice would
-    trip the in-source duplicate rule (:func:`check_in_source_duplicates`)
-    against the file itself. Identity is the RESOLVED path, so two spellings
-    of one file collapse. A bare ``d/"*.json"`` glob straight over the lab
-    directory is a hazard rather than a shortcut: ``inventory.json`` and
-    ``creds.json`` (spec 2026-09-06 creds-store §8.1) live in that same
-    directory and would be swept in as lab files too.
-
-    When *visited* is given, every directory this walk enters is added to it
-    (the glob's non-glob root, each match's parent, a bare directory entry, a
-    ``.json`` entry's parent) — so a caller building a stat-only key set can
-    see "a file appeared here" by the directory's own mtime instead of
-    re-running the glob.
-    """
-    found: list[Path] = []
-    seen: set[Path] = set()
-
-    def add(candidate: Path) -> None:
-        """Append *candidate* unless some earlier entry already named that file."""
-        key = candidate.resolve()
-        if key in seen:
-            logger.debug(f"lab path {candidate} already contributed by an earlier entry")
-            return
-        seen.add(key)
-        found.append(candidate)
-
-    for entry in paths:
-        text = str(entry)
-        if any(c in text for c in _GLOB_CHARS):
-            parts = entry.parts
-            first_glob = next(i for i, p in enumerate(parts) if any(c in p for c in _GLOB_CHARS))
-            root = Path(*parts[:first_glob]) if first_glob else Path()
-            pattern = str(Path(*parts[first_glob:]))
-            if visited is not None:
-                visited.add(root)
-            matches = sorted(p for p in root.glob(pattern) if p.is_file() and p.suffix == ".json")
-            if not matches:
-                logger.debug(f"lab path glob {text!r} matched no .json file")
-            for match in matches:
-                add(match)
-                if visited is not None:
-                    visited.add(match.parent)
-            continue
-        if entry.suffix == ".json":
-            candidate = entry
-            if visited is not None and candidate.parent.is_dir():
-                visited.add(candidate.parent)
-        else:
-            candidate = entry / LAB_FILENAME
-            if visited is not None and entry.is_dir():
-                visited.add(entry)
-        if candidate.is_file():
-            add(candidate)
-    return found
-
-
 def parse_lab_sections(data: object, source: str) -> dict[str, Any]:
     """Validate a parsed ``lab.json`` object's section shape; return its sections.
 
-    The single source of truth for the ``lab.json`` object contract — shared by
-    the runtime loader (``_JsonFileLabRepository._load_lab_file``) and the
-    ``otto init`` doctor (``otto.init.doctor._validate_lab``) so the doctor
-    cannot drift from what otto actually accepts (there is no second validator
-    to drift). *data* is the already-parsed JSON value; *source* names its
-    origin (a file path) for error messages.
+    The single source of truth for the ``lab.json`` object contract, run by the
+    one lab-document reader (:func:`otto.labs.documents.read_lab_document`)
+    that the runtime loader, the ``otto init`` doctor and every other lab-file
+    reader go through, so none of them can drift from what otto actually
+    accepts (there is no second validator to drift). *data* is the
+    already-parsed JSON value; *source* names its origin (a file path) for
+    error messages.
 
     Returns ``{"labs": dict, "elements": list, "links": list}`` (absent
     sections empty). ``$schema`` and ``_``-prefixed keys are comment space.
@@ -286,18 +229,15 @@ class LabDocument:
     """The file's raw ``links`` entries, resolved later against loaded ids."""
 
 
-@final
-class _JsonFileLabRepository:
-    """Load labs from ``lab.json`` files across a fixed set of search paths.
+class _DocumentLabRepository(abc.ABC):
+    """Serve labs from one source's lab documents: the core every file-backed source shares.
 
-    A search path takes one of three forms: a **directory**, which is searched
-    for a ``lab.json``; a path ending in **``.json``**, which *is* the lab
-    file; or a **glob** (an entry containing ``*``, ``?`` or ``[``), which
-    expands to the sorted ``.json`` files it matches. Any form that resolves to
-    nothing is skipped silently, so a repository may draw on several sources
-    and tolerate absent ones.
+    A subclass supplies the documents through its one seam,
+    :meth:`_read_source`; everything a source answers (a lab's load, its
+    host summaries, the declared labs and their status) is computed here from
+    them, so two file-backed sources given the same documents answer alike.
 
-    Each lab file is a v2 JSON object with three optional sections — ``labs``
+    Each document is a v2 lab object with three optional sections — ``labs``
     (the table of declared labs, keyed by name, each with ``resources`` and
     ``metadata``), ``elements`` (entries carrying identity, ``labs``
     membership patterns, ``metadata`` and their host entries) and ``links``.
@@ -305,19 +245,18 @@ class _JsonFileLabRepository:
     message; top-level ``_``-prefixed keys are comment space and unknown
     sections fail loud.
 
-    The files of ONE source compose by union (spec §2.4): an element in one
-    file may join a lab declared in another, and a duplicate within the source
-    — the same element slug, or the same lab declared twice — is a typo, not an
-    override, and fails naming both files. The search paths are
-    supplied once at construction — this is the built-in ``"json"`` backend,
-    and its factory feeds it the anchored ``paths`` of the
-    ``[[lab.sources]]`` entry that selected it.
+    The documents of ONE source compose by union (spec §2.4): an element in
+    one document may join a lab declared in another, and a duplicate within
+    the source — the same element slug, or the same lab declared twice — is a
+    typo, not an override, and fails naming both files.
 
-    :meth:`load_lab` returns THIS source's contribution to a lab: the members
-    whose element patterns :func:`re.fullmatch` the requested name, plus the
-    lab's ``resources``/``metadata`` if this source declares it. The composite
+    :meth:`load_contribution` returns THIS source's contribution to a lab:
+    the members whose element patterns :func:`re.fullmatch` the requested
+    name, plus the lab's ``resources``/``metadata`` if this source declares
+    it, and the source's declared links unresolved. The composite
     (:class:`otto.labs.composite.CompositeLabRepository`) merges contributions
-    across sources.
+    across sources and then resolves every source's links once;
+    :meth:`load_lab` resolves this source's links against this source alone.
     """
 
     def __init__(
@@ -328,10 +267,8 @@ class _JsonFileLabRepository:
     ) -> None:
         """Configure the paths this repository draws lab data from.
 
-        Each entry of *search_paths* is a directory (searched for a
-        ``lab.json``), a path ending in ``.json`` (read directly as the lab
-        file), or a glob (expanded to the ``.json`` files it matches).
-        Entries that do not resolve to an existing file are skipped.
+        *search_paths* are the source's ``paths`` entries, as the subclass
+        reads them; a lab that is not found names them.
 
         *profiles* are the project data profiles the hosts' ``os_type`` resolves
         through (the source's :attr:`~otto.labs.sources.LabSourceEnv.profiles`);
@@ -386,41 +323,80 @@ class _JsonFileLabRepository:
         """Load this source's contribution to *name*, each reference resolved through *view*.
 
         The :class:`~otto.labs.protocol.SupportsInventoryView` capability, and
-        what :meth:`load_lab` runs. The join happens HERE, once per entry,
-        before the factory ever sees the dict
-        (:func:`~otto.inventory.resolve_view_entry`): a bare reference
-        resolves through ``default`` and a qualified one through the
-        inventory it names. *preferences* and the errors are
+        what :meth:`load_lab` runs: :meth:`load_contribution`, with this
+        source's own links resolved against this source alone
+        (:func:`~otto.labs.composition.compose_links`). A link naming a host
+        only another source holds is therefore an unknown host here; through
+        the composite it resolves. *preferences* and the errors are
         :meth:`load_lab`'s.
         """
-        from ..inventory.resolve import resolve_view_entry  # lazy: see the note above
+        from .composition import compose_links, contribution_part
+
+        contribution = self.load_contribution(name, preferences=preferences, view=view)
+        lab = contribution.lab
+        if lab is None:
+            raise LabNotFoundError(str(contribution.not_found))
+        lab.links = compose_links(
+            lab=lab,
+            contributions=[contribution_part(label=type(self).__name__, contribution=contribution)],
+        )
+        return lab
+
+    def load_contribution(
+        self,
+        name: str,
+        *,
+        preferences: dict[str, dict[str, Any]] | None = None,
+        view: "InventoryView",
+    ) -> LabContribution:
+        """Return this source's contribution to *name*: its hosts, and its links unresolved.
+
+        The :class:`~otto.labs.protocol.SupportsLabContribution` capability.
+        The join happens HERE, once per entry, before the factory ever sees
+        the dict (:func:`~otto.inventory.resolve_view_entry`): a bare
+        reference resolves through ``default`` and a qualified one through
+        the inventory it names. The link inputs come from the same read as
+        the hosts and span the whole source (:func:`link_inputs_of`).
+
+        A source that neither declares *name* nor holds an element matching
+        it contributes no lab, with the reason, and still its links.
+
+        Raises
+        ------
+        LabNotFoundError
+            If no lab file exists in any search path.
+        LabRepositoryError
+            If a lab file is malformed, a host's data is invalid, or an entry
+            references an inventory key that cannot be resolved.
+        """
+        from . import documents
         from .loader import Lab
 
         try:
-            docs = self._load_documents()
+            read = self._read_source(best_effort=False, view=view)
         except FileNotFoundError as e:
             raise LabNotFoundError(str(e)) from None
+        docs = documents.accepted_documents(read, best_effort=False)
+        links = link_inputs_of(read, view=view, profiles=self.profiles)
 
         declared: LabEntrySpec | None = None
         members: list[tuple[ElementSpec, Path]] = []  # (element, source file)
-        all_elements: list[ElementSpec] = []
-        all_links: list[Any] = []
         for doc in docs:
             if name in doc.entries:
-                # Unique per source: _load_documents errors on a repeat.
+                # Unique per source: the read refuses a repeat.
                 declared = doc.entries[name]
             members.extend((el, doc.path) for el in doc.elements if el.matches(name))
-            all_elements.extend(doc.elements)
-            all_links.extend(doc.links)
-        # ``all_elements`` and ``all_links`` span ALL lab files so declared links
-        # can resolve dangling (cross-lab) endpoints below.
 
         if declared is None and not members:
             searched = "\n  ".join(str(p) for p in self.search_paths)
-            raise LabNotFoundError(
-                f"Lab '{name}' is neither declared in a 'labs' table nor matched by any "
-                f"element's 'labs' patterns in:\n  {searched}"
-            ) from None
+            return LabContribution(
+                lab=None,
+                not_found=(
+                    f"Lab '{name}' is neither declared in a 'labs' table nor matched by any "
+                    f"element's 'labs' patterns in:\n  {searched}"
+                ),
+                links=links,
+            )
 
         lab = Lab(name=name)
         if declared is not None:
@@ -434,78 +410,21 @@ class _JsonFileLabRepository:
             runtime = element.to_element()
             for idx, host_data in enumerate(element.hosts):
                 _add_host(lab, host_data, runtime, idx, path, preferences, view, self.profiles)
-
-        from ..link.derive import addressing_from_dict, resolve_declared_links
-
-        # Only declared links consume `addressing`, and resolving an id costs a
-        # full profile-merge + validation per record across EVERY lab file — so
-        # a lab that declares no links (the default `otto init` writes, and the
-        # common case) skips the walk entirely rather than paying for a map
-        # nothing reads.
-        #
-        # Guard: these records span ALL lab files, including entries never
-        # validated (they belong to other labs) — skip shapes that can't
-        # produce an id rather than crash link resolution on someone else's typo.
-        # The requested lab's own hosts were already validated above, so any
-        # exception here belongs to an unrelated lab's malformed record.
-        addressing: dict[str, Any] = {}
-        # ``to_element()`` once per ELEMENT, not once per host: one runtime
-        # element is shared by its hosts everywhere else, and rebuilding it per
-        # entry here would be the only place that is not true.
-        all_entries: list[tuple[Element, dict[str, Any]]] = []
-        for el in all_elements if all_links else []:
-            runtime = el.to_element()
-            all_entries.extend((runtime, h) for h in el.hosts)
-        for runtime, h in all_entries:
-            try:
-                # Resolved inside the per-item try: a referenced entry has no
-                # address of its own, so a link naming one is only derivable
-                # once the record is joined on — and an entry belonging to
-                # ANOTHER lab (whose key this process's inventories may not
-                # hold) is skipped here exactly like any other unresolvable
-                # record, rather than failing this lab's load.
-                host_id, host_addressing = addressing_from_dict(
-                    resolve_view_entry(h, view=view, element=runtime).host_data,
-                    runtime,
-                    profiles=self.profiles,
-                )
-            except Exception as e:  # noqa: BLE001 — per-item resilience, see guard above
-                # Log the reason: this now also fires for a WELL-FORMED record
-                # whose os_profile / command_frame is registered by init modules
-                # this process never loaded, and the downstream symptom is a
-                # confusing "unknown host" for a host that is right there.
-                logger.debug(f"Skipping unresolvable host record {h!r}: {e}")
-                continue
-            if host_id in addressing and addressing[host_id] != host_addressing:
-                logger.warning(
-                    "Duplicate host id %r across lab files with differing addressing; "
-                    "keeping the first. Differentiate the element name, or set board/slot.",
-                    host_id,
-                )
-                continue
-            addressing[host_id] = host_addressing
-        loaded_ids = set(lab.hosts)
-        # ``all_links`` spans ALL lab files (like ``all_elements``), so a
-        # typo'd link between two hosts of an UNRELATED lab must not break this
-        # lab's load: ``resolve_declared_links`` skips entries touching no loaded
-        # host, symmetric with the cross-lab host-record containment above. Links
-        # touching this lab still fail loud with their original file index.
-        try:
-            declared_links = resolve_declared_links(
-                all_links, addressing, source=LAB_FILENAME, loaded_ids=loaded_ids
-            )
-        except ValueError as e:
-            raise LabRepositoryError(str(e)) from e
-        # Membership: only links with >= 1 endpoint in this lab (guaranteed by
-        # the skip above, restated here so the invariant is visible at the call site).
-        lab.links = [
-            link
-            for link in declared_links
-            if link.a.host in loaded_ids or link.b.host in loaded_ids
-        ]
-
         logger.debug(f"Loaded lab '{name}' with {len(lab.hosts)} hosts")
-        return lab
+        return LabContribution(lab=lab, not_found=None, links=links)
+
+    def declared_link_entries(self, *, view: "InventoryView") -> "list[DeclaredLinkEntry]":
+        """Return every ``links`` entry of the source, for all of its labs, building no host.
+
+        The :class:`~otto.labs.protocol.SupportsDeclaredLinks` capability:
+        :func:`declared_link_entries` over a best-effort read, so a malformed
+        file is left out and a source without lab files has none.
+        """
+        try:
+            read = self._read_source(best_effort=True, view=view)
+        except FileNotFoundError:
+            return []
+        return declared_link_entries(read)
 
     def list_host_summaries(self, *, inventory: "Inventory | None" = None) -> list[HostSummary]:
         """Every host across the configured lab files, without building hosts.
@@ -563,90 +482,63 @@ class _JsonFileLabRepository:
         declarations, is the honest answer at load.
         """
         from ..host.inventory_ref import MachineIdentity  # lazy: see the note above
-        from ..inventory.errors import InventoryError
-        from ..inventory.resolve import resolve_view_entry
-        from .drops import is_refusal, record_drop
+        from .drops import record_drop
 
         by_id: dict[str, HostSummary] = {}
         # id -> every machine identity folded into it, each with its declaration
         folded: dict[str, list[_Declared]] = {}
 
         try:
-            docs = self._load_documents(best_effort=True)
+            docs = self._load_documents(best_effort=True, view=view)
         except FileNotFoundError:
             return []
 
         declared = sorted({n for doc in docs for n in doc.entries})
-        for doc in docs:
-            for element in doc.elements:
-                labs = [n for n in declared if element.matches(n)]
-                try:
-                    runtime = element.to_element()
-                except ValueError as e:
-                    # The runtime Element re-checks what ElementSpec already
-                    # refused; if the two ever drift apart, the element is
-                    # skipped and SAID, never raised into the shell.
-                    record_drop(f"{doc.path}: element {element.name!r}", str(e))
-                    continue
-                for index, entry in enumerate(element.hosts):
-                    where = f"{doc.path}: element {element.name!r} hosts[{index}]"
-                    try:
-                        resolved = resolve_view_entry(entry, view=view, element=runtime)
-                        host_data = resolved.host_data
-                        identity = host_identity(host_data, element=runtime, profiles=self.profiles)
-                    except (ValueError, TypeError, InventoryError) as e:
-                        # Skipped, never raised — but SAID: this is the one
-                        # place a referenced entry silently fell out of
-                        # completion (see otto.labs.drops). A ValidationError is
-                        # rendered without its input, as the loader renders it.
-                        # A refused bare reference already recorded its drop.
-                        if not is_refusal(e):
-                            reason = (
-                                compact_validation_error(e)
-                                if isinstance(e, ValidationError)
-                                else str(e)
-                            )
-                            record_drop(where, reason)
-                        continue
-                    incoming = _Declared(
-                        identity=MachineIdentity(ip=identity.ip, ref=resolved.ref),
-                        described=describe_identity(
-                            element.name, identity.board, identity.slot, identity.ip
-                        ),
+        # Membership once per ELEMENT: its entries arrive together, in order.
+        matched: ElementSpec | None = None
+        labs: list[str] = []
+        for found in _identified_entries(docs, view=view, profiles=self.profiles):
+            element, identity, resolved = found.element, found.identity, found.resolved
+            if element is not matched:
+                matched, labs = element, [n for n in declared if element.matches(n)]
+            incoming = _Declared(
+                identity=MachineIdentity(ip=identity.ip, ref=resolved.ref),
+                described=describe_identity(
+                    element.name, identity.board, identity.slot, identity.ip
+                ),
+            )
+            first = by_id.get(identity.id)
+            if first is not None:
+                # Every portion of an id joins with ``-``, so two records can
+                # compose one id (``a-b`` vs ``a`` + board ``b``, or one
+                # element restated across labs). The same machine: its labs
+                # fold into the kept summary. A different machine would vanish
+                # from completion: dropped, naming both.
+                clash = _first_clash(incoming=incoming, seen=folded[identity.id])
+                if clash is None:
+                    folded[identity.id].append(incoming)
+                    first.labs.extend(n for n in labs if n not in first.labs)
+                    first.lab_patterns.extend(
+                        p for p in element.labs if p not in first.lab_patterns
                     )
-                    first = by_id.get(identity.id)
-                    if first is not None:
-                        # Every portion of an id joins with ``-``, so two
-                        # records can compose one id (``a-b`` vs ``a`` + board
-                        # ``b``, or one element restated across labs). The same
-                        # machine: its labs fold into the kept summary. A
-                        # different machine would vanish from completion:
-                        # dropped, naming both.
-                        clash = _first_clash(incoming=incoming, seen=folded[identity.id])
-                        if clash is None:
-                            folded[identity.id].append(incoming)
-                            first.labs.extend(n for n in labs if n not in first.labs)
-                            first.lab_patterns.extend(
-                                p for p in element.labs if p not in first.lab_patterns
-                            )
-                        else:
-                            record_drop(
-                                where,
-                                _summary_collision(host_id=identity.id, kept=clash, lost=incoming),
-                            )
-                        continue
-                    folded[identity.id] = [incoming]
-                    by_id[identity.id] = HostSummary(
-                        id=identity.id,
-                        labs=list(labs),
-                        lab_patterns=list(element.labs),
-                        ip=identity.ip,
-                        docker_capable=identity.docker_capable,
-                        docker_priority=identity.docker_priority,
-                        os_type=str(host_data.get("os_type", "unix")),
-                        logins=logins_of_host_data(host_data),
-                        inventory_ref=resolved.ref,
+                else:
+                    record_drop(
+                        found.where(),
+                        _summary_collision(host_id=identity.id, kept=clash, lost=incoming),
                     )
+                continue
+            folded[identity.id] = [incoming]
+            by_id[identity.id] = HostSummary(
+                id=identity.id,
+                labs=list(labs),
+                lab_patterns=list(element.labs),
+                ip=identity.ip,
+                docker_capable=identity.docker_capable,
+                docker_priority=identity.docker_priority,
+                os_type=str(resolved.host_data.get("os_type", "unix")),
+                logins=logins_of_host_data(resolved.host_data),
+                inventory_ref=resolved.ref,
+            )
 
         return sorted(by_id.values(), key=lambda s: s.id)
 
@@ -660,7 +552,10 @@ class _JsonFileLabRepository:
         raised, so listing stays best-effort. These are the names of
         :meth:`list_lab_status`, read once by the same walk.
         """
-        return [status.name for status in self._lab_statuses()]
+        from ..inventory.view import InventoryView  # lazy: see the note above
+
+        view = InventoryView.of_default(inventory=None)
+        return [status.name for status in self._lab_statuses(view=view)]
 
     def list_lab_status(self, *, view: "InventoryView") -> list[LabStatus]:
         """Return every lab :meth:`list_labs` names, with whether it can be used now.
@@ -668,20 +563,19 @@ class _JsonFileLabRepository:
         The :class:`~otto.labs.protocol.SupportsLabStatus` capability. A lab
         whose ``labs`` entry sets ``unavailable`` carries that reason, where
         ``<file>: lab '<name>'``; every other lab is available. It reads the
-        lab files exactly as :meth:`list_labs` does, and never *view*: a lab's
-        availability is what its file says.
+        lab files exactly as :meth:`list_labs` does: a lab's availability is
+        what its document says, and *view* only reaches the documents' read.
         """
-        del view  # availability is the lab file's statement alone
-        return self._lab_statuses()
+        return self._lab_statuses(view=view)
 
-    def _lab_statuses(self) -> list[LabStatus]:
+    def _lab_statuses(self, *, view: "InventoryView") -> list[LabStatus]:
         """Return the status of every declared lab, sorted by name: the one read of both listings.
 
         A malformed or duplicating file is skipped (``_load_documents`` with
         ``best_effort``).
         """
         try:
-            docs = self._load_documents(best_effort=True)
+            docs = self._load_documents(best_effort=True, view=view)
         except FileNotFoundError:
             return []
         statuses = [
@@ -696,52 +590,93 @@ class _JsonFileLabRepository:
         ]
         return sorted(statuses, key=lambda status: status.name)
 
-    def _load_documents(self, *, best_effort: bool = False) -> list[LabDocument]:
-        """Parse every lab file: its path, labs table, elements and raw links.
+    def _load_documents(self, *, best_effort: bool, view: "InventoryView") -> list[LabDocument]:
+        """Return the source's lab documents, each with its path, labs table, elements and links.
 
-        Within ONE source a duplicate is a typo, never an override: the same
-        element slug or the same lab declaration in two files fails naming both.
-        *best_effort* (completion paths) skips a malformed or duplicating file
-        with a debug log instead of raising.
+        Within ONE source a duplicate is a typo, never an override, so the
+        same element slug or the same lab declaration in two documents fails
+        naming both. The first problem of the read (:meth:`_read_source`) is
+        raised as a :class:`~otto.labs.errors.LabRepositoryError`;
+        *best_effort* (completion paths) instead skips each malformed or
+        duplicating file, recorded as a drop (:func:`otto.labs.drops.record_drop`).
+
+        Raises
+        ------
+        FileNotFoundError
+            :meth:`_read_source`'s signal that the source holds no lab file.
         """
-        docs: list[LabDocument] = []
-        seen_elements: dict[str, SeenElement] = {}
-        seen_labs: dict[str, Path] = {}
-        for lab_file in self._find_lab_files():
-            try:
-                doc = parse_lab_document(
-                    self._load_lab_file(lab_file),
-                    lab_file,
-                    seen_labs=seen_labs,
-                    seen_elements=seen_elements,
-                )
-            except LabRepositoryError as e:
-                if not best_effort:
-                    raise
-                from .drops import record_drop
+        from .documents import accepted_documents
 
-                logger.debug(
-                    f"skipping lab file {lab_file} while enumerating (malformed or duplicating)"
-                )
-                record_drop(str(lab_file), str(e))
-                continue
-            docs.append(doc)
-        return docs
+        return accepted_documents(
+            self._read_source(best_effort=best_effort, view=view), best_effort=best_effort
+        )
 
-    def _find_lab_files(self) -> list[Path]:
-        """Find all lab files across the configured search paths.
+    @abc.abstractmethod
+    def _read_source(self, *, best_effort: bool, view: "InventoryView") -> "SourceRead":
+        """Read the source's lab files into documents and problems: the one call of ``read_source``.
 
-        Delegates the entry-to-files rule to :func:`expand_lab_paths` — the
-        same helper ``LabSourceState.lab_files()`` reads, so the backend and
-        the config side can never disagree about which files a source holds.
+        The one seam a file-backed source supplies; a subclass that does not
+        is refused at construction. *best_effort* says whether the caller
+        raises the read's first problem or skips it, for a source whose read
+        can stop early; *view* is the inventory view the caller resolves
+        references through, for a source whose documents depend on it.
 
         Raises
         ------
         FileNotFoundError
             Internal signal (translated to LabNotFoundError by ``load_lab`` and
-            swallowed by ``list_labs``) when no lab file is found.
+            swallowed by the listings) when the source holds no lab file.
         """
-        found = expand_lab_paths(self.search_paths)
+
+
+@final
+class _JsonFileLabRepository(_DocumentLabRepository):
+    """Load labs from ``lab.json`` files across a fixed set of search paths.
+
+    A search path takes one of three forms: a **directory**, which is searched
+    for a ``lab.json``; a path ending in **``.json``**, which *is* the lab
+    file; or a **glob** (an entry containing ``*``, ``?`` or ``[``), which
+    expands to the sorted ``.json`` files it matches
+    (:data:`~otto.labs.sources.JSON_FILE_RULE`). Any form that resolves to
+    nothing is skipped silently, so a repository may draw on several sources
+    and tolerate absent ones.
+
+    The search paths are supplied once at construction — this is the built-in
+    ``"json"`` backend, and its factory feeds it the anchored ``paths`` of the
+    ``[[lab.sources]]`` entry that selected it. Everything else is
+    :class:`_DocumentLabRepository`'s.
+    """
+
+    @override
+    def _read_source(self, *, best_effort: bool, view: "InventoryView") -> "SourceRead":
+        """Read every lab file of the source (:func:`otto.labs.documents.read_source`).
+
+        Neither argument is read: a json lab file is its own document, and
+        its read never stops early.
+        """
+        del best_effort, view
+        from .documents import read_source
+
+        return read_source(self._find_lab_files())
+
+    def _find_lab_files(self) -> list[Path]:
+        """Find all lab files across the configured search paths.
+
+        Delegates the entry-to-files rule to
+        :func:`~otto.labs.documents.expand_lab_files` under
+        :data:`~otto.labs.sources.JSON_FILE_RULE` — the function and the rule
+        ``LabSourceState.lab_files()`` reads for a json source, so the backend
+        and the config side can never disagree about which files a source
+        holds.
+
+        Raises
+        ------
+        FileNotFoundError
+            When no lab file is found (:meth:`_read_source`'s signal).
+        """
+        from .documents import expand_lab_files
+
+        found = expand_lab_files(self.search_paths, rule=JSON_FILE_RULE)
 
         if not found:
             searched = "\n  ".join(str(p) for p in self.search_paths)
@@ -752,38 +687,6 @@ class _JsonFileLabRepository:
             ) from None
 
         return found
-
-    def _load_lab_file(self, lab_file: Path) -> dict[str, Any]:
-        """Load one ``lab.json``: an object with ``labs``/``elements``/``links`` sections.
-
-        Reads the file, then delegates the section-shape contract (object guard,
-        ``_``-comment allowance — also tolerating a top-level ``$schema`` key,
-        the editor-wiring idiom — v1 ``hosts`` rejection, unknown-section
-        rejection, per-section type check) to :func:`parse_lab_sections` — the
-        same helper the ``otto init`` doctor uses, so the two can never diverge.
-
-        Raises
-        ------
-        LabRepositoryError
-            If the file contains malformed JSON, its top-level value is not a
-            JSON object, it carries the v1 ``hosts`` section or an unknown one,
-            or a section's value has the wrong JSON type.
-        """
-        try:
-            with lab_file.open() as f:
-                data = json.load(f)
-            wrap_secret_values(data)
-        except json.JSONDecodeError as e:
-            raise LabRepositoryError(f"Lab file '{lab_file}' contains malformed JSON: {e}") from e
-        return parse_lab_sections(data, str(lab_file))
-
-
-@dataclass(frozen=True)
-class LabSourceFacts:
-    """What otto learns about a source from its parsed configuration."""
-
-    file_inputs: tuple[Path, ...]
-    """The anchored directory, .json-file and glob entries a json source reads."""
 
 
 class JsonLabSourceConfig(OttoModel):
@@ -827,6 +730,187 @@ class JsonLabSourceConfig(OttoModel):
 def _json_lab_source(c: "Configured[JsonLabSourceConfig, LabSourceEnv]") -> _JsonFileLabRepository:
     """Build the built-in json source from its parsed configuration."""
     return _JsonFileLabRepository(search_paths=list(c.config.paths), profiles=c.env.profiles)
+
+
+def _entry_where(*, origin: Path, element: ElementSpec, index: int) -> str:
+    """Return how a drop names host entry *index* of *element* in the document from *origin*."""
+    return f"{origin}: element {element.name!r} hosts[{index}]"
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class IdentifiedEntry:
+    """One host entry of a lab document, resolved through a view and identified."""
+
+    origin: Path
+    """The document the entry was declared in."""
+
+    element: ElementSpec
+    """The element the entry belongs to."""
+
+    index: int
+    """The entry's index in :attr:`element`'s ``hosts``."""
+
+    resolved: "ResolvedEntry"
+    """The entry joined on its inventory record (:func:`~otto.inventory.resolve_view_entry`)."""
+
+    identity: "HostIdentity"
+    """The host's identity (:func:`~otto.host.factory.host_identity`), its id among it."""
+
+    def where(self) -> str:
+        """Return how a drop names this entry: its document, element and index."""
+        return _entry_where(origin=self.origin, element=self.element, index=self.index)
+
+
+def _identified_entries(
+    docs: "list[LabDocument]", *, view: "InventoryView", profiles: ProfileContext
+) -> "Iterator[IdentifiedEntry]":
+    """Resolve and identify every host entry of *docs* through *view*, in declaration order.
+
+    Lazily, one entry at a time, so a caller's own drops (a summary's
+    collision) interleave with these in declaration order.
+
+    Each id comes from :func:`~otto.host.factory.host_identity` under
+    *profiles* (the source's), the profile merge and validation host
+    construction applies. Best-effort: an element whose runtime form refuses
+    it, or an entry that does not resolve or validate, is left out and
+    recorded as a drop (:func:`otto.labs.drops.record_drop`); a bare
+    reference the view refuses records its own.
+    """
+    from ..inventory.errors import InventoryError  # lazy: see the note above
+    from ..inventory.resolve import resolve_view_entry
+    from .drops import is_refusal, record_drop
+
+    for doc in docs:
+        for element in doc.elements:
+            try:
+                runtime = element.to_element()
+            except ValueError as e:
+                # The runtime Element re-checks what ElementSpec already
+                # refused; if the two ever drift apart, the element is
+                # skipped and SAID, never raised into the shell.
+                record_drop(f"{doc.path}: element {element.name!r}", str(e))
+                continue
+            for index, entry in enumerate(element.hosts):
+                try:
+                    resolved = resolve_view_entry(entry, view=view, element=runtime)
+                    identity = host_identity(resolved.host_data, element=runtime, profiles=profiles)
+                except (ValueError, TypeError, InventoryError) as e:
+                    # Skipped, never raised — but SAID: this is the one
+                    # place a referenced entry silently fell out of
+                    # completion (see otto.labs.drops). A ValidationError is
+                    # rendered without its input, as the loader renders it.
+                    # A refused bare reference already recorded its drop.
+                    if not is_refusal(e):
+                        reason = (
+                            compact_validation_error(e)
+                            if isinstance(e, ValidationError)
+                            else str(e)
+                        )
+                        record_drop(
+                            _entry_where(origin=doc.path, element=element, index=index), reason
+                        )
+                    continue
+                yield IdentifiedEntry(
+                    origin=doc.path,
+                    element=element,
+                    index=index,
+                    resolved=resolved,
+                    identity=identity,
+                )
+
+
+def _addressing(
+    docs: "list[LabDocument]", *, view: "InventoryView", profiles: ProfileContext
+) -> "dict[str, HostAddressing]":
+    """Return the addressing of every host record of *docs*, by host id, without building a host.
+
+    The map declared links resolve their endpoints against, so it spans every
+    document, including entries of other labs that were never validated.
+    Each record is joined on its inventory record through *view*, and its id
+    comes from :func:`~otto.link.derive.addressing_from_dict` under
+    *profiles* (the source's). A record that cannot produce an id is skipped
+    (logged at debug): it may belong to an unrelated lab, whose typo must not
+    break this one. Of two records with one id the first is kept; a warning
+    says so when their addressing differs.
+    """
+    from ..inventory.resolve import resolve_view_entry  # lazy: see the note above
+    from ..link.derive import addressing_from_dict
+
+    addressing: dict[str, HostAddressing] = {}
+    # ``to_element()`` once per ELEMENT, not once per host: one runtime
+    # element is shared by its hosts everywhere else, and rebuilding it per
+    # entry here would be the only place that is not true.
+    all_entries: list[tuple[Element, dict[str, Any]]] = []
+    for doc in docs:
+        for el in doc.elements:
+            runtime = el.to_element()
+            all_entries.extend((runtime, h) for h in el.hosts)
+    for runtime, h in all_entries:
+        try:
+            # Resolved inside the per-item try: a referenced entry has no
+            # address of its own, so a link naming one is only derivable
+            # once the record is joined on — and an entry belonging to
+            # ANOTHER lab (whose key this process's inventories may not
+            # hold) is skipped here exactly like any other unresolvable
+            # record, rather than failing this lab's load.
+            host_id, host_addressing = addressing_from_dict(
+                resolve_view_entry(h, view=view, element=runtime).host_data,
+                runtime,
+                profiles=profiles,
+            )
+        except Exception as e:  # noqa: BLE001 — per-item resilience, see the docstring
+            # Log the reason: this now also fires for a WELL-FORMED record
+            # whose os_profile / command_frame is registered by init modules
+            # this process never loaded, and the downstream symptom is a
+            # confusing "unknown host" for a host that is right there.
+            logger.debug(f"Skipping unresolvable host record {h!r}: {e}")
+            continue
+        held = addressing.get(host_id)
+        if held is not None:
+            if held != host_addressing:
+                logger.warning(
+                    "Duplicate host id %r across lab files with differing addressing; "
+                    "keeping the first. Differentiate the element name, or set board/slot.",
+                    host_id,
+                )
+            continue
+        addressing[host_id] = host_addressing
+    return addressing
+
+
+def declared_link_entries(read: "SourceRead") -> "list[DeclaredLinkEntry]":
+    """Return every ``links`` entry of every document of *read*, in file then index order.
+
+    The one extraction of a source's declared links, for all of its labs at
+    once: it needs no lab name and builds no host, reading the documents'
+    data only. Each entry keeps its document and its index there, which its
+    error names.
+    """
+    from ..link.derive import DeclaredLinkEntry
+
+    return [
+        DeclaredLinkEntry(origin=doc.path, index=index, entry=entry)
+        for doc in read.documents
+        for index, entry in enumerate(doc.links)
+    ]
+
+
+def link_inputs_of(
+    read: "SourceRead", *, view: "InventoryView", profiles: ProfileContext
+) -> DeclaredLinkInputs:
+    """Return *read*'s declared links, with a thunk that computes their addressing.
+
+    The entries are :func:`declared_link_entries`; the thunk is
+    ``_addressing`` over the same documents through *view*, each id under
+    *profiles* (the source's), so a dangling endpoint gets the id host
+    construction gives its record. A load that never resolves a link never
+    calls it.
+    """
+    return DeclaredLinkInputs(
+        entries=declared_link_entries(read),
+        addressing=functools.partial(_addressing, read.documents, view=view, profiles=profiles),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -960,8 +1044,9 @@ def parse_lab_document(
 
     The labs table and the elements are parsed, then the in-source duplicate
     rules run against the source's *seen_labs* / *seen_elements* (which this
-    updates). The runtime loader and ``otto init`` doctor both read a lab file
-    through this, so what one accepts the other accepts.
+    updates). The one source read (:func:`otto.labs.documents.read_source`)
+    runs this for the runtime loader and the ``otto init`` doctor alike, so what
+    one accepts the other accepts.
 
     Raises:
         LabRepositoryError: a malformed entry, or a duplicate within the source.
@@ -996,11 +1081,12 @@ def check_in_source_duplicates(
     The recording happens only once both checks pass, so a rejected file never
     poisons the state for the files after it.
 
-    Callers are ``_JsonFileLabRepository._load_documents`` and the
-    ``otto init`` doctor (``otto.init.doctor._parse_lab_documents``), which is the
-    whole point of it being public: the doctor must refuse exactly what the
-    loader refuses, and it can only do that by running this code rather than a
-    second copy of it.
+    Its caller is :func:`parse_lab_document`, which the one source read
+    (:func:`otto.labs.documents.read_source`) runs for both
+    ``_JsonFileLabRepository._read_source`` and the ``otto init`` doctor
+    (``otto.init.doctor._parse_lab_documents``): the doctor must refuse exactly
+    what the loader refuses, and it can only do that by running this code
+    rather than a second copy of it.
 
     Raises
     ------

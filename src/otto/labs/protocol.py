@@ -1,6 +1,6 @@
 """``LabRepository`` protocol — the DB-agnostic interface all lab-repository backends satisfy."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     # so the string annotations below are read by static type-checking alone.
     from ..inventory.protocol import Inventory
     from ..inventory.view import InventoryView
+    from ..link.derive import DeclaredLinkEntry, HostAddressing
     from .loader import Lab
 
 
@@ -355,4 +356,93 @@ class SupportsLabScope(Protocol):
 
     def lab_scope(self) -> LabScope | None:
         """Return this backend's :class:`LabScope`, or ``None`` when it is unscoped."""
+        ...
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class DeclaredLinkInputs:
+    """A source's declared links, unresolved, and the addressing they resolve against.
+
+    Source-wide: every ``links`` entry of every document of the source, for
+    all of its labs at once, so a link reaching a host of another lab (a
+    dangling end) still resolves.
+    """
+
+    entries: "list[DeclaredLinkEntry]"
+    """Every raw ``links`` entry of the source, in document then index order."""
+
+    addressing: "Callable[[], Mapping[str, HostAddressing]]"
+    """Return the addressing of every host record of the source, by host id.
+
+    Otto calls it at most once per load, and only when an attached link needs
+    an endpoint: a link of this source, or a link of another source whose
+    endpoint neither that source nor the merged lab addresses. A load whose
+    links all resolve without it, or that has no links, never calls it.
+    """
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class LabContribution:
+    """One source's contribution to a lab: its hosts, and its declared links unresolved.
+
+    A source that neither declares nor matches the lab has :attr:`lab`
+    ``None`` and says why in :attr:`not_found`, but may still carry links (a
+    source that holds only links) or the addressing another source's link
+    resolves against.
+    """
+
+    lab: "Lab | None"
+    """The source's hosts, resources and metadata for the lab; ``None`` if none.
+
+    Its ``links`` are ignored: composition replaces them with the links it
+    resolves from :attr:`links`.
+    """
+
+    not_found: str | None
+    """Why the source contributes no hosts, when :attr:`lab` is ``None``."""
+
+    links: DeclaredLinkInputs
+    """The source's declared links and their addressing, resolved by the composite."""
+
+
+@runtime_checkable
+class SupportsLabContribution(Protocol):
+    """Optional capability: contribute a lab's hosts and leave its links to the composite.
+
+    The composite asks every such source for its contribution, merges the
+    hosts, and then resolves every source's links once, over the composed
+    lab, so a link may name a host another source declares. A backend
+    without it is loaded through :func:`~otto.labs.load_lab_through` and
+    keeps resolving its own links.
+    """
+
+    def load_contribution(
+        self,
+        name: str,
+        *,
+        preferences: dict[str, dict[str, Any]] | None = None,
+        view: "InventoryView",
+    ) -> LabContribution:
+        """Return this source's contribution to lab *name*, each reference resolved through *view*.
+
+        Resolves no link. *preferences* and the errors are
+        :meth:`SupportsInventoryView.load_lab_in_view`'s, except that a source
+        that does not hold the lab returns a contribution with no lab rather
+        than raising :class:`~otto.labs.LabNotFoundError`.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsDeclaredLinks(Protocol):
+    """Optional capability: list a source's declared links without loading a lab.
+
+    Accepted, and not yet read by otto: completion still reads the links of
+    the files a source lists (:meth:`~otto.labs.sources.LabSourceState.lab_files`).
+    """
+
+    def declared_link_entries(self, *, view: "InventoryView") -> "list[DeclaredLinkEntry]":
+        """Return every raw ``links`` entry of the source, best-effort, building no host."""
         ...

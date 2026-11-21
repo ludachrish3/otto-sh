@@ -1,0 +1,126 @@
+{
+  "a": {
+    "dangling": [],
+    "declared_by": {},
+    "links": [
+      [
+        "alpha--beta",
+        "alpha@10.40.0.1",
+        "beta@10.40.0.2"
+      ]
+    ]
+  },
+  "b": {
+    "dangling": [],
+    "declared_by": {},
+    "links": [
+      [
+        "alpha--beta",
+        "alpha@10.40.1.1",
+        "beta@10.40.1.2"
+      ]
+    ]
+  },
+  "c": "LabRepositoryError: Invalid link in <case>/lab.json at index 0: unknown host 'ghost' (no such host in any lab file)",
+  "d": {
+    "dangling": [],
+    "declared_by": {},
+    "links": [
+      [
+        "alpha--beta",
+        "beta@10.40.3.2",
+        "alpha@10.40.3.1"
+      ]
+    ]
+  },
+  "e": {
+    "dangling": [],
+    "declared_by": {},
+    "links": [
+      [
+        "uplink",
+        "gamma@10.40.4.3",
+        "delta@10.40.4.4"
+      ]
+    ]
+  },
+  "f": {
+    "dangling": [],
+    "declared_by": {},
+    "links": [
+      [
+        "alpha--beta",
+        "alpha@10.40.5.1",
+        "beta@10.40.5.2"
+      ],
+      [
+        "extra",
+        "alpha@10.40.5.1",
+        "beta@10.40.5.2"
+      ]
+    ]
+  },
+  "g": {
+    "dangling": [
+      "chassis-lc-2--peer: chassis-lc-2"
+    ],
+    "declared_by": {
+      "chassis-lc-2--peer": "a/json#1"
+    },
+    "links": [
+      [
+        "chassis-lc-2--peer",
+        "chassis-lc-2@10.40.6.2",
+        "peer@10.40.6.9"
+      ]
+    ]
+  },
+  "h": {
+    "dangling": [],
+    "declared_by": {},
+    "links": [
+      [
+        "alpha--legacy",
+        "alpha@10.40.7.2",
+        "legacy@10.40.7.1"
+      ]
+    ]
+  },
+  "i": {
+    "dangling": [],
+    "declared_by": {},
+    "links": [
+      [
+        "uplink",
+        "epsilon@10.40.8.5",
+        "zeta@10.40.8.6"
+      ],
+      [
+        "a-only",
+        "alpha@10.40.8.1",
+        "beta@10.40.8.2"
+      ],
+      [
+        "legacy-only",
+        "gamma",
+        "delta"
+      ]
+    ]
+  },
+  "j": {
+    "dangling": [],
+    "declared_by": {},
+    "links": [
+      [
+        "alpha--beta",
+        "alpha@10.40.9.1",
+        "beta@10.40.9.2"
+      ],
+      [
+        "back",
+        "beta@10.40.9.2",
+        "alpha@10.40.9.1"
+      ]
+    ]
+  }
+}

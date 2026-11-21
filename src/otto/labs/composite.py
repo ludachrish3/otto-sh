@@ -34,10 +34,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from typing_extensions import final
 
+from .composition import SourceContribution, compose_links, contribution_part
 from .drops import Diagnostic
 from .errors import LabNotFoundError, LabRepositoryError, LabUnavailableError
 from .protocol import HostSummary, LabScope, LabStatus, SourceRef, SupportsLabStatus
-from .views import lab_scope_of, lab_statuses, load_lab_through
+from .views import lab_scope_of, lab_statuses, load_contribution_through, load_lab_through
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -237,10 +238,14 @@ class CompositeLabRepository:
         DECLARED by some source (:attr:`LabStatusReport.declared_by`). A
         source whose scope excludes *name* is skipped, so a scoped source that
         is down never fails a lab outside its scope. Each remaining source's
-        contribution is loaded through :func:`~otto.labs.load_lab_through`
-        under the view of its own project and merged in order — elements
+        contribution is loaded under the view of its own project
+        (:func:`~otto.labs.load_contribution_through`, else
+        :func:`~otto.labs.load_lab_through`) and merged in order — elements
         replaced wholesale by slug, the ``labs`` entry replaced wholesale by
-        the last declaring source.
+        the last declaring source. The declared links are then composed once,
+        over the merged hosts (:func:`~otto.labs.composition.compose_links`),
+        so a link may name a host another source declares; a source that
+        holds only links still contributes them.
 
         Raises
         ------
@@ -254,13 +259,17 @@ class CompositeLabRepository:
             apiece — for the json backend, the search paths it looked in.
         LabRepositoryError
             If *name* is declared but no element anywhere matches it, if two
-            surviving elements produce the same host id, or propagated from
-            the first failing unscoped source — a broken backend is never
-            silently dropped from the merge.
+            surviving elements produce the same host id, if a declared link
+            touching the lab does not resolve, or propagated from the first
+            failing unscoped source — a broken backend is never silently
+            dropped from the merge.
         """
         self._admit(name, report=report)
         declared_by = [ref.label for ref in report.declared_by.get(name, [])]
         loaded: "list[tuple[str, Lab]]" = []
+        # Each source's part in the lab's links, in source order; composed once
+        # the hosts are merged, so no source's links resolve against it alone.
+        contributions: list[SourceContribution] = []
         # Each source's own not-found text, kept for the failure messages below.
         # Since R15 every load goes through this class, so a reason discarded
         # here is a reason the user never sees — and for the json backend that
@@ -270,12 +279,17 @@ class CompositeLabRepository:
         reasons: list[str] = []
         for source in self.sources:
             try:
-                lab = _load_from(source=source, name=name, preferences=preferences, view=view)
+                got = _load_from(source=source, name=name, preferences=preferences, view=view)
             except LabNotFoundError as e:  # a per-source protocol signal, not a failure
                 reasons.append(f"{source.label}: {e}")
                 continue
-            if lab is not None:
-                loaded.append((source.label, lab))
+            if got is None:
+                continue
+            if got.lab is None:
+                reasons.append(f"{source.label}: {got.not_found}")
+            else:
+                loaded.append((source.label, got.lab))
+            contributions.append(got.part)
         if not declared_by:
             # Loading first buys the second sentence: "your elements DO match
             # this name, you just never declared it" is the actual mistake in
@@ -343,14 +357,12 @@ class CompositeLabRepository:
                 merged.resources = set(lab.resources)
                 merged.metadata[name] = dict(lab.metadata.get(name, {}))
                 lab_entry_from = label
-            by_id = {link.id: link for link in merged.links}
-            by_id.update({link.id: link for link in lab.links})
-            merged.links = list(by_id.values())
         if not merged.hosts:
             raise LabRepositoryError(
                 f"Lab {name!r} is declared by {', '.join(declared_by)} but no element in any "
                 f"source matches it — add a 'labs' pattern to an element or remove the declaration"
             )
+        merged.links = compose_links(lab=merged, contributions=contributions)
         return merged
 
     def _admit(self, name: str, *, report: LabStatusReport) -> None:
@@ -498,14 +510,34 @@ def _source_view(*, view: "InventoryView", source: LabSource) -> "InventoryView"
     return view.for_project(root=source.project_root)
 
 
+@final
+@dataclass(frozen=True, kw_only=True)
+class _Loaded:
+    """One source's answer for a lab: its hosts, if any, and its part in the lab's links."""
+
+    lab: "Lab | None"
+    """The source's hosts for the lab, or ``None`` when it holds none (a link-only source)."""
+
+    not_found: str | None
+    """Why the source holds no hosts for the lab, when :attr:`lab` is ``None``."""
+
+    part: SourceContribution
+    """The source's declared links, unresolved, or its own resolved ones."""
+
+
 def _load_from(
     *,
     source: LabSource,
     name: str,
     preferences: dict[str, dict[str, Any]] | None,
     view: "InventoryView",
-) -> "Lab | None":
+) -> "_Loaded | None":
     """Load *source*'s contribution to lab *name*, or ``None`` when its scope excludes *name*.
+
+    A source with the contribution capability
+    (:func:`~otto.labs.load_contribution_through`) hands back its links
+    unresolved; any other is loaded through :func:`~otto.labs.load_lab_through`
+    and keeps the links it resolved itself.
 
     Raises
     ------
@@ -519,21 +551,49 @@ def _load_from(
     scope = lab_scope_of(repository=source.repository)
     if scope is not None and not scope.contains(name=name):
         return None
-    lab = _scoped_call(
+    source_view = _source_view(view=view, source=source)
+    got = _scoped_call(
         source=source,
         scope=scope,
-        call=lambda: load_lab_through(
-            repository=source.repository,
-            name=name,
-            preferences=preferences,
-            view=_source_view(view=view, source=source),
+        call=lambda: _answer(source=source, name=name, preferences=preferences, view=source_view),
+    )
+    if isinstance(got, _SourceFailure):
+        raise LabUnavailableError(
+            name=name, diagnostic=got.diagnostic, declared=False
+        ) from got.error
+    return got
+
+
+def _answer(
+    *,
+    source: LabSource,
+    name: str,
+    preferences: dict[str, dict[str, Any]] | None,
+    view: "InventoryView",
+) -> _Loaded:
+    """Return *source*'s answer for lab *name* through *view*, as its capabilities route it."""
+    contribution = load_contribution_through(
+        repository=source.repository, name=name, preferences=preferences, view=view
+    )
+    if contribution is not None:
+        return _Loaded(
+            lab=contribution.lab,
+            not_found=contribution.not_found,
+            part=contribution_part(label=source.label, contribution=contribution),
+        )
+    lab = load_lab_through(
+        repository=source.repository, name=name, preferences=preferences, view=view
+    )
+    return _Loaded(
+        lab=lab,
+        not_found=None,
+        part=SourceContribution(
+            label=source.label,
+            inputs=None,
+            resolved_links=list(lab.links),
+            host_ids=frozenset(lab.hosts),
         ),
     )
-    if isinstance(lab, _SourceFailure):
-        raise LabUnavailableError(
-            name=name, diagnostic=lab.diagnostic, declared=False
-        ) from lab.error
-    return lab
 
 
 _T = TypeVar("_T")

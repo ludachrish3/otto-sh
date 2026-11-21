@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 from otto.labs import LabNotFoundError, LabRepositoryError
-from otto.labs.json_repository import _JsonFileLabRepository, expand_lab_paths
+from otto.labs.documents import expand_lab_files
+from otto.labs.json_repository import _JsonFileLabRepository
+from otto.labs.sources import JSON_FILE_RULE
 from tests._fixtures.labdata import write_lab_json
 
 HOST = {
@@ -100,7 +102,7 @@ def test_overlapping_path_entries_read_a_file_once(tmp_path: Path) -> None:
     assert set(repository.load_lab("veg").hosts) == {"alt1"}
 
 
-def test_expand_lab_paths_dedupes_keeping_first_seen_order(tmp_path: Path) -> None:
+def test_expand_lab_files_dedupes_keeping_first_seen_order(tmp_path: Path) -> None:
     """De-dup is by RESOLVED path and preserves the first occurrence's position."""
     d = tmp_path / "lab"
     write_lab_json(d / "lab.json", [HOST])
@@ -108,7 +110,9 @@ def test_expand_lab_paths_dedupes_keeping_first_seen_order(tmp_path: Path) -> No
 
     # The third entry spells the SAME file a different way, so a textual
     # de-dup would keep it and a resolved one drops it.
-    found = expand_lab_paths([d, d / "*.json", d.parent / "lab" / ".." / "lab" / "lab.json"])
+    found = expand_lab_files(
+        [d, d / "*.json", d.parent / "lab" / ".." / "lab" / "lab.json"], rule=JSON_FILE_RULE
+    )
 
     assert found == [d / "lab.json", d / "extra.json"]
 
@@ -171,3 +175,27 @@ def test_duplicate_lab_declaration_across_files_of_one_source_errors(tmp_path: P
     (tmp_path / "two.json").write_text(json.dumps({"labs": {"veg": {"resources": ["x"]}}}))
     with pytest.raises(LabRepositoryError, match=r"'veg'.*one\.json.*two\.json"):
         _JsonFileLabRepository([tmp_path / "*.json"]).load_lab("veg")
+
+
+def test_the_backend_reads_the_files_its_prepared_state_lists(tmp_path: Path) -> None:
+    """The backend and the cache/doctor side list one source's files by one rule."""
+    from otto.host.os_profile import ProfileContext
+    from otto.labs.sources import compile_lab_sources, prepare_lab_sources
+    from otto.models.settings import LabConfigSpec
+
+    d = tmp_path / "lab"
+    write_lab_json(d / "lab.json", [HOST])
+    write_lab_json(d / "extra.json", [dict(HOST, element="b", ip="10.0.0.2")], declare_labs=False)
+    (d / "main.lab").write_text("{}")
+    paths = ["lab", "lab/*"]
+    (state,) = prepare_lab_sources(
+        compile_lab_sources(
+            LabConfigSpec.model_validate({"sources": [{"backend": "json", "paths": paths}]}),
+            project_name="r",
+            root=tmp_path,
+        ),
+        profiles=ProfileContext.empty(),
+    )
+    repository = _JsonFileLabRepository([tmp_path / p for p in paths])
+    assert repository._find_lab_files() == state.lab_files() == [d / "lab.json", d / "extra.json"]
+    assert set(repository.load_lab("veg").hosts) == {"alt1", "b"}
