@@ -257,6 +257,28 @@ truth for:
   {class}`~otto.host.transfer.EmbeddedFileTransfer` and the embedded
   monitor's disk parser drive when they talk to the device.
 
+A console `put` writes the file with `write_command` and then truncates it to
+the written length with `trunc_command`, so a longer previous file leaves no
+stale tail. It does **not** remove the destination first: on a new file that
+`rm` fails, and a Zephyr device logs the failure to the console about a second
+later, where a close can land on it and kill the device's telnet backend.
+
+If a write reports no space (`-ENOSPC`, errno 28) or the truncate fails for any
+reason, the put removes the destination and writes the whole file once more
+with no truncate. That also frees the old file's space on a nearly full
+copy-on-write filesystem. A shell with no truncate should return `None` from
+`trunc_command`: its puts then take that remove-then-write pass from the start.
+If it returns the stock `fs trunc` instead, every put costs one failing
+command and a double write, and on Zephyr each failing command logs an error to
+the console.
+
+Return `None` only when the shell really has no truncate. A filesystem that
+returns `None` still starts each put with a remove, and on a new file that
+remove fails; on a Zephyr-like device the failure is logged to the console.
+
+A put cancelled over an existing file can leave the new bytes followed by the
+old file's tail. Put the file again, or remove it.
+
 The three built-ins — `NoFileSystem` (`none`), `FatRamFileSystem` (`fat-ram`),
 `LittleFsFileSystem` (`littlefs`) — assume the stock Zephyr `fs` shell. The
 transfer code and disk parser never hardcode the literal `fs …` strings, so a
@@ -315,8 +337,11 @@ class MyFsFileSystem(EmbeddedFileSystem):
     def rm_command(self, path):
         return f"myfs rm {path}"
 
-    # trunc_command, ls_command, statvfs_command inherit the stock
-    # `fs <verb> ...` defaults — override only if the vendor shell differs.
+    def trunc_command(self, path, *, length):
+        return None  # this shell has no truncate: a put removes first instead
+
+    # ls_command, statvfs_command inherit the stock `fs <verb> ...`
+    # defaults — override only if the vendor shell differs.
 
 
 register_filesystem("myfs", MyFsFileSystem)

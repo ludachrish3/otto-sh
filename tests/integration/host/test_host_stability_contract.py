@@ -191,13 +191,10 @@ class TestTransferCycleStability:
             # promise is meaningless if `fs rm` silently no-ops — so we
             # assert the delete actually succeeded.
             #
-            # Note on log noise: `EmbeddedFileTransfer.put_files` issues
-            # its own pre-clean `fs rm <dest>` before each write. On LFS
-            # that prints "Failed to remove ... (-2)" on the first write
-            # to a path (the file genuinely doesn't exist yet); on FAT
-            # the same `fs rm` is silent. Both are expected. The delete
-            # asserted on below runs *after* a confirmed-good round-trip,
-            # so the file definitely exists.
+            # Note: a put writes and then truncates; it issues no `fs rm` of its
+            # own (#972), so the first write to a path logs no error. The delete
+            # asserted on below runs *after* a confirmed-good round-trip, so the
+            # file definitely exists.
             local_src.unlink()
             (landing / name).unlink()
             del_status = await _delete_remote(host1, remote_dir / name)
