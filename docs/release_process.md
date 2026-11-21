@@ -319,7 +319,10 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
   group, nothing from `src/`), once at the locked versions (nox session
   `wheel_smoke`) and once with every direct dependency pinned to the minimum
   `pyproject.toml` declares, on Python 3.10 (`wheel_smoke_floors`). Each
-  time, `scripts/wheel_smoke.py` imports every module, runs every
+  time, `scripts/wheel_smoke.py` checks that the installed otto is the
+  built wheel, file for file against the wheel's `RECORD`, renders a
+  template that imports the installed `otto.libsonnet` under the Jsonnet
+  binding the host's marker installs, imports every module, runs every
   third-party import statement in otto's source (the function-local ones
   too), and runs `otto test`, with pytest's plugin autoload on and off.
   Every other lane runs an editable otto in the dev venv, where a
@@ -340,6 +343,16 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
   lets the bad release in, or declare that package with a minimum of its
   own. The nightly `unit-floors` lane runs the unit suite at the same
   floors, and is triaged the same way.
+
+  The nightly `packaging-offline` jobs prove the
+  {ref}`air-gapped install <air-gap-download>` on each platform its Step 1
+  names and on every supported Python (nox session `packaging_offline`):
+  Step 1's `pip download` of the built wheel for that platform's tags, a
+  fresh venv that installs it with no index, the same identity check and
+  library render. A red cell whose download fails names the dependency that
+  no longer ships a wheel for that platform and Python; a red render names
+  the binding. The platforms, their tags and bindings are one table,
+  `OFFLINE_CELLS` in `noxfile.py`.
 - **publish** uploads to PyPI via OIDC, gated by the `pypi` GitHub
   Environment.
 - **docs** builds the HTML documentation on a clean runner and packs the two

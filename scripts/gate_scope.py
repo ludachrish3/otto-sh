@@ -250,6 +250,7 @@ UNIT_TREES = {
     "logger": ["tests/unit/logger", "tests/integration/logger"],
     "check": ["tests/unit/check"],
     "creds": ["tests/unit/creds"],
+    "templating": ["tests/unit/templating"],
     "env": [
         "tests/unit/env",
         "tests/unit/test_ci_color_env.py",
@@ -383,6 +384,8 @@ WORKFLOW_READERS = [
     "tests/unit/test_ci_web_gate.py",
     "tests/unit/test_declared_harness_bounds.py",
     "tests/unit/test_dependency_floor_lanes.py",
+    "tests/unit/test_jsonnet_markers.py",
+    "tests/unit/test_packaging_offline_cells.py",
     "tests/unit/test_support_matrix.py",
     "tests/unit/test_tach_layers.py",
     "tests/unit/test_tier_marker_invariants.py",

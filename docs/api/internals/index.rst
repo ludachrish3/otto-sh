@@ -44,6 +44,7 @@ of these pages.
    reservations
    snmp
    suite/index
+   templating
    tunnel
    utils
    vendoring

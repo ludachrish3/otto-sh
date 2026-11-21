@@ -330,6 +330,18 @@ class _StoredSnapshot:
 
 
 @final
+@dataclass(frozen=True, kw_only=True)
+class SnapshotInfo:
+    """The snapshot an inventory's cache answered from in this process."""
+
+    fetched_at: datetime
+    """When its records were fetched from the backend (aware, UTC by default)."""
+
+    served_stale: bool
+    """Whether it was served because the backend could not be reached."""
+
+
+@final
 class SnapshotCache:
     """Wrap *inner* so a process pays one fetch per TTL window.
 
@@ -375,6 +387,8 @@ class SnapshotCache:
         self.snapshot_path = Path(cache_dir) / f"{slug}.json"
         self.meta_path = Path(cache_dir) / f"{slug}.meta.json"
         self._discovery: "Discovery | None" = None
+        self._fetched_at: "datetime | None" = None
+        """When :attr:`_discovery`'s records were fetched: its meta's ``fetched_at``."""
         self._hash: "str | None" = None
         self.stale_notice: "str | None" = None
         """Set when this object served a snapshot because the backend was unreachable.
@@ -520,10 +534,11 @@ class SnapshotCache:
         discovery = discover_inventory(inventory=self.inner)
         doc = discovery_to_document(discovery=discovery)
         self._hash = document_hash(doc)
+        fetched_at = self._clock()
         write_key = f"write:{self.snapshot_path}"
         try:
             written = write_document_atomically(self.snapshot_path, doc)
-            self._write_meta(self._clock(), self._hash, hashlib.sha256(written).hexdigest())
+            self._write_meta(fetched_at, self._hash, hashlib.sha256(written).hexdigest())
         except OSError as e:
             if write_required:
                 raise InventoryError(
@@ -552,6 +567,7 @@ class SnapshotCache:
         # a notice left standing would have `otto inventory refresh` reporting
         # the outage it just cleared.
         self.stale_notice = None
+        self._fetched_at = fetched_at
         return discovery
 
     def _warn_stale(self, stored: _StoredSnapshot, error: InventoryError) -> None:
@@ -591,6 +607,7 @@ class SnapshotCache:
         stored = self._stored(now)
         if stored is not None and stored.age < self._ttl:
             self._discovery = stored.discovery
+            self._fetched_at = stored.fetched_at
             return self._discovery
         try:
             self._discovery = self._fetch_and_write()
@@ -612,7 +629,20 @@ class SnapshotCache:
                 raise refusal from e
             self._warn_stale(stored, e)
             self._discovery = stored.discovery
+            self._fetched_at = stored.fetched_at
         return self._discovery
+
+    def consumed_snapshot(self) -> "SnapshotInfo | None":
+        """Return the snapshot this object has answered from, or ``None`` before its first answer.
+
+        Its ``fetched_at`` is the one the snapshot's meta records (a fetch
+        made in this process records its own), and its ``served_stale`` is
+        whether :attr:`stale_notice` is set. Reads only what
+        this object already holds: it never fetches, and never reads a file.
+        """
+        if self._discovery is None or self._fetched_at is None:
+            return None
+        return SnapshotInfo(fetched_at=self._fetched_at, served_stale=self.stale_notice is not None)
 
     # -- protocol ----------------------------------------------------------
     def inventory_discovery(self) -> Discovery:

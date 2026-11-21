@@ -60,7 +60,11 @@ object. `check_resolved` still runs once for such a record, at its first
 modules, unless the caller passes `overwrite=True`, which replaces the entry
 completely, in place. A batch (`register_many`) checks every name before it
 writes any, and `overwrite=True` never covers a name repeated within one
-batch. A failed registration changes nothing.
+batch. A failed registration changes nothing. A built-in registered with
+`yielding=True` (only otto's own modules may pass it) gives its name up
+instead: a registration of that name from another module replaces it without
+`overwrite=True` and logs one warning naming both modules, and the
+replacement does not yield ({doc}`../../extend/extending-backends`).
 
 **Attribution.** The engine records who registered each entry; no caller
 supplies it. A direct `.register()` credits the module that called it. Every
@@ -105,7 +109,7 @@ command, derived from `PROJECT_INSTRUCTIONS` (itself a view over
 
 | Registry | Kind | Register via | Built-ins |
 | --- | --- | --- | --- |
-| `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the fourteen first-party verbs (`run`, `test`, `host`, …) |
+| `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the fifteen first-party verbs (`run`, `test`, `host`, …) |
 | `STANDALONE_INSTRUCTIONS` | `otto run` subcommand on a plain function | {func}`~otto.instructions.instruction` | — |
 | `PROJECT_ACTIONS` | a project's `ProjectActions` subclass and the bodies it declares, keyed by the project (only from that project's init import) | `otto.project.actions.register_project_actions` | — |
 | `FIRST_PARTY_ACTIONS` | otto's own `ProjectActions` class and its seven bodies, one row keyed `otto`: a slot the instruction tables read and never import | only `otto.project.actions`, when it is imported and from its `declare()` | `otto` |

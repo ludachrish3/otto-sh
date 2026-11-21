@@ -12,15 +12,49 @@ inline host, a container and the builtin ``local`` host carry an empty ref.
 
 :class:`MachineIdentity` pairs a host's address with its ref, and
 :func:`same_machine` is the one judgement of whether two declarations of one
-host id are one machine; every merge asks it through :func:`first_conflict`.
+host id are one machine; every merge asks it through :func:`first_conflict`,
+and a whole element replacing another through :func:`same_machines`.
+:func:`spell_machine` is how a message names one.
+
+:data:`FIELD_RECORDING` and :func:`recording_fields` are the one seam of
+``otto lab explain``'s recording (:mod:`otto.host.provenance`): every merge
+that could note where a value came from asks :func:`recording_fields` first,
+and imports the recording module only when it says yes. They live here
+because every lab build has loaded this module already, so a build that
+explains nothing loads nothing more.
 
 Pure Python: this module imports no pydantic, so the bootstrap path can read a
 reference without building a model.
 """
 
+import contextlib
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
+
+FIELD_RECORDING: "ContextVar[Any]" = ContextVar("otto_field_recording", default=None)
+"""The :class:`~otto.host.provenance.FieldTrace` of the live recording, or ``None``.
+
+Set only by :func:`otto.host.provenance.recording`; read through
+:func:`recording_fields`."""
+
+
+def recording_fields() -> bool:
+    """Return whether a recording of where each host value comes from is live.
+
+    The question every recording site asks before it imports
+    :mod:`otto.host.provenance` or builds anything for it.
+    """
+    return FIELD_RECORDING.get() is not None
+
+
+NOT_RECORDING = contextlib.nullcontext()
+"""The scope of a load no recording attributes, one shared object that costs nothing.
+
+What a recording site enters instead of its scope when :func:`recording_fields`
+says no (a source's load in the composite, a host entry's in a lab file)."""
+
 
 DEFAULT_INVENTORY = "default"
 """The inventory a bare reference resolves through, and the name a legacy
@@ -203,3 +237,23 @@ def first_conflict(
     ``None`` when every one is. Every merge decides a collision through it.
     """
     return next((s for s in seen if not same_machine(a=incoming, b=s)), None)
+
+
+def same_machines(
+    *, replaced: "Sequence[MachineIdentity]", incoming: "Sequence[MachineIdentity]"
+) -> bool:
+    """Return whether *incoming* declares the machines *replaced* did, as a whole.
+
+    Each incoming identity is :func:`same_machine` with some replaced one, and
+    each replaced identity with some incoming one; which host id each is
+    declared under is not compared, so an element whose boards moved still
+    holds the same machines.
+    """
+    return all(any(same_machine(a=i, b=r) for r in replaced) for i in incoming) and all(
+        any(same_machine(a=r, b=i) for i in incoming) for r in replaced
+    )
+
+
+def spell_machine(*, identity: MachineIdentity) -> str:
+    """Spell *identity* as a message names a machine: ``<ip> as <name>/<key>``, or ``as inline``."""
+    return f"{identity.ip} as {spell_ref(ref=identity.ref)}"

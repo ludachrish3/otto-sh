@@ -45,7 +45,7 @@ from typing import Any
 from .home_root import HOME_ENV_VAR, home_dir
 
 CACHE_FILENAME = "completion_cache.json"
-SCHEMA = 31
+SCHEMA = 32
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
 WINDOW_SECONDS = 60
 """How long the ``names`` marker vouches for the ``names`` key set."""
@@ -485,6 +485,25 @@ def _lab_host_set(names: dict[str, Any], labs: list[str], always: list[str]) -> 
     return hosts
 
 
+def _link_attaches(row: dict[str, Any], scoped: "set[str] | None", labs: list[str]) -> bool:
+    """Mirror ``otto.link.derive.link_attaches`` over one cached ``links`` row.
+
+    *scoped* is the selected labs' host set (``loaded_ids``), ``None`` with no
+    lab selected; *labs* is the selection. A row's ``scope`` is the stored
+    ``{"names", "prefixes"}`` of ``otto.labs.LabScope``, or ``None``.
+    """
+    if scoped is None:
+        return True
+    if not any(h in scoped for h in row.get("hosts", [])):
+        return False
+    scope = row.get("scope")
+    if isinstance(scope, dict) and labs:
+        names = scope.get("names", [])
+        prefixes = scope.get("prefixes", [])
+        return any(lab in names or any(lab.startswith(p) for p in prefixes) for lab in labs)
+    return True
+
+
 def _host_logins(
     source: dict[str, Any], names: dict[str, Any], host_id: str | None, term: str | None
 ) -> list[str]:
@@ -549,11 +568,12 @@ def _payload_values(
         if scoped is not None:
             values = [h for h in values if h in scoped]
     elif key == "links":
-        values = [
-            str(e["id"])
-            for e in names.get("links", [])
-            if scoped is None or any(h in scoped for h in e.get("hosts", []))
-        ]
+        # One id may have a row per scope; each is offered once.
+        values = list(
+            dict.fromkeys(
+                str(e["id"]) for e in names.get("links", []) if _link_attaches(e, scoped, labs)
+            )
+        )
     elif key == "transfer_backends":
         values = [
             str(e["name"])

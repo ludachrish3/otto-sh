@@ -69,7 +69,7 @@ def test_the_json_source_reads_the_json_rule_and_names_no_key_roots(tmp_path: Pa
     state = _state(tmp_path, "json", paths=["lab_data"])
     assert state.prepared is not None
     assert state.prepared.facts.file_rule == JSON_FILE_RULE
-    assert state.prepared.facts.key_roots == ()
+    assert state.prepared.facts.key_roots is None
     assert state.file_rule() == JSON_FILE_RULE
     assert state.key_paths() == state.lab_files() == [tmp_path / "lab_data" / "lab.json"]
 

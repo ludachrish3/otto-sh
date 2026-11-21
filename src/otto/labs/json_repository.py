@@ -3,6 +3,7 @@
 import abc
 import functools
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,11 +16,12 @@ from ..host.factory import (
     create_host_from_dict,
     host_identity,
 )
+from ..host.inventory_ref import NOT_RECORDING, recording_fields
 from ..host.os_profile import ProfileContext
 from ..host.remote_host import describe_identity
 from ..models.base import OttoModel, compact_validation_error
 from ..models.lab import ElementSpec, LabEntrySpec
-from ..utils import anchor_path
+from ..utils import anchor_path, refuse_empty_entry
 from .drops import Diagnostic
 from .errors import (
     LabNotFoundError,
@@ -36,6 +38,7 @@ from .sources import JSON_FILE_RULE, LabSourceFacts
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from contextlib import AbstractContextManager
 
     from ..host.element import Element
     from ..host.inventory_ref import MachineIdentity
@@ -228,6 +231,13 @@ class LabDocument:
     links: list[Any]
     """The file's raw ``links`` entries, resolved later against loaded ids."""
 
+    provenance: "Mapping[str, Any] | None" = None
+    """Where a rendered document's elements came from (its ``_otto.provenance`` table).
+
+    ``None`` for a hand-written lab file. Read from
+    :attr:`~otto.labs.documents.LabDocumentSource.provenance`.
+    """
+
 
 class _DocumentLabRepository(abc.ABC):
     """Serve labs from one source's lab documents: the core every file-backed source shares.
@@ -380,12 +390,12 @@ class _DocumentLabRepository(abc.ABC):
         links = link_inputs_of(read, view=view, profiles=self.profiles)
 
         declared: LabEntrySpec | None = None
-        members: list[tuple[ElementSpec, Path]] = []  # (element, source file)
+        members: list[tuple[ElementSpec, LabDocument]] = []  # (element, its document)
         for doc in docs:
             if name in doc.entries:
                 # Unique per source: the read refuses a repeat.
                 declared = doc.entries[name]
-            members.extend((el, doc.path) for el in doc.elements if el.matches(name))
+            members.extend((el, doc) for el in doc.elements if el.matches(name))
 
         if declared is None and not members:
             searched = "\n  ".join(str(p) for p in self.search_paths)
@@ -406,10 +416,10 @@ class _DocumentLabRepository(abc.ABC):
             lab.resources = set(declared.resources)
             lab.metadata[name] = dict(declared.metadata)
 
-        for element, path in members:
+        for element, doc in members:
             runtime = element.to_element()
             for idx, host_data in enumerate(element.hosts):
-                _add_host(lab, host_data, runtime, idx, path, preferences, view, self.profiles)
+                _add_host(lab, host_data, runtime, idx, doc, preferences, view, self.profiles)
         logger.debug(f"Loaded lab '{name}' with {len(lab.hosts)} hosts")
         return LabContribution(lab=lab, not_found=None, links=links)
 
@@ -418,12 +428,17 @@ class _DocumentLabRepository(abc.ABC):
 
         The :class:`~otto.labs.protocol.SupportsDeclaredLinks` capability:
         :func:`declared_link_entries` over a best-effort read, so a malformed
-        file is left out and a source without lab files has none.
+        file is left out, recorded as a drop as every best-effort read's
+        problems are (:func:`~otto.labs.documents.accepted_documents`), and a
+        source without lab files has none.
         """
+        from .documents import accepted_documents
+
         try:
             read = self._read_source(best_effort=True, view=view)
         except FileNotFoundError:
             return []
+        accepted_documents(read, best_effort=True)  # records the read's problems; never raises
         return declared_link_entries(read)
 
     def list_host_summaries(self, *, inventory: "Inventory | None" = None) -> list[HostSummary]:
@@ -578,17 +593,7 @@ class _DocumentLabRepository(abc.ABC):
             docs = self._load_documents(best_effort=True, view=view)
         except FileNotFoundError:
             return []
-        statuses = [
-            LabStatus(
-                name=name,
-                unavailable=None
-                if entry.unavailable is None
-                else Diagnostic(where=f"{doc.path}: lab {name!r}", reason=entry.unavailable),
-            )
-            for doc in docs
-            for name, entry in doc.entries.items()
-        ]
-        return sorted(statuses, key=lambda status: status.name)
+        return lab_statuses_of(docs)
 
     def _load_documents(self, *, best_effort: bool, view: "InventoryView") -> list[LabDocument]:
         """Return the source's lab documents, each with its path, labs table, elements and links.
@@ -689,6 +694,26 @@ class _JsonFileLabRepository(_DocumentLabRepository):
         return found
 
 
+def _anchored_entries(
+    value: "tuple[Path, ...]", info: ValidationInfo, *, backend: str
+) -> "tuple[Path, ...]":
+    """Anchor each relative entry of a path-list option to the declaring project's root.
+
+    The one anchoring of a lab source's paths, a source config model's
+    ``mode="after"`` validator: the root is the
+    :class:`~otto.labs.sources.LabSourceEnv` in the validation context, and
+    ``~`` is expanded (:func:`~otto.utils.anchor_path`). *backend* names the
+    source in the error raised when no env is given.
+    """
+    env = (info.context or {}).get("env")
+    if env is None:
+        raise ValueError(
+            f"a {backend} lab source is validated with its LabSourceEnv in the validation "
+            'context (context={"env": env}); otto passes it when it prepares the source'
+        )
+    return tuple(anchor_path(p, env.project_root, quote=False) for p in value)
+
+
 class JsonLabSourceConfig(OttoModel):
     """A ``backend = "json"`` source's options: the ``paths`` it reads lab files from.
 
@@ -706,25 +731,37 @@ class JsonLabSourceConfig(OttoModel):
     @classmethod
     def _no_empty_entry(cls, value: object) -> object:
         """Refuse an empty string, which would otherwise read as the project root."""
-        if isinstance(value, (list, tuple)) and any(entry == "" for entry in value):
-            raise ValueError("an entry is empty; name a directory, a .json file or a glob")
-        return value
+        return refuse_empty_entry(value, expected="a directory, a .json file or a glob")
 
     @field_validator("paths", mode="after")
     @classmethod
     def _anchor(cls, value: tuple[Path, ...], info: ValidationInfo) -> tuple[Path, ...]:
         """Anchor every relative entry to the root of the project that declares the source."""
-        env = (info.context or {}).get("env")
-        if env is None:
-            raise ValueError(
-                "a json lab source is validated with its LabSourceEnv in the validation "
-                'context (context={"env": env}); otto passes it when it prepares the source'
-            )
-        return tuple(anchor_path(p, env.project_root, quote=False) for p in value)
+        return _anchored_entries(value, info, backend="json")
 
     def prepared_facts(self) -> LabSourceFacts:
         """Return the entries this source reads; otto fingerprints their files for the cache."""
         return LabSourceFacts(file_inputs=self.paths)
+
+
+def lab_statuses_of(docs: "list[LabDocument]") -> list[LabStatus]:
+    """Return the status of every lab *docs* declare, sorted by name.
+
+    A lab whose ``labs`` entry sets ``unavailable`` carries that reason, where
+    ``<file>: lab '<name>'``; every other lab is available. The one reading of
+    a document's statuses, for every file-backed source.
+    """
+    statuses = [
+        LabStatus(
+            name=name,
+            unavailable=None
+            if entry.unavailable is None
+            else Diagnostic(where=f"{doc.path}: lab {name!r}", reason=entry.unavailable),
+        )
+        for doc in docs
+        for name, entry in doc.entries.items()
+    ]
+    return sorted(statuses, key=lambda status: status.name)
 
 
 def _json_lab_source(c: "Configured[JsonLabSourceConfig, LabSourceEnv]") -> _JsonFileLabRepository:
@@ -779,7 +816,7 @@ def _identified_entries(
     """
     from ..inventory.errors import InventoryError  # lazy: see the note above
     from ..inventory.resolve import resolve_view_entry
-    from .drops import is_refusal, record_drop
+    from .drops import record_drop, skip_failure
 
     for doc in docs:
         for element in doc.elements:
@@ -801,15 +838,15 @@ def _identified_entries(
                     # completion (see otto.labs.drops). A ValidationError is
                     # rendered without its input, as the loader renders it.
                     # A refused bare reference already recorded its drop.
-                    if not is_refusal(e):
-                        reason = (
+                    skip_failure(
+                        where=_entry_where(origin=doc.path, element=element, index=index),
+                        error=e,
+                        reason=(
                             compact_validation_error(e)
                             if isinstance(e, ValidationError)
                             else str(e)
-                        )
-                        record_drop(
-                            _entry_where(origin=doc.path, element=element, index=index), reason
-                        )
+                        ),
+                    )
                     continue
                 yield IdentifiedEntry(
                     origin=doc.path,
@@ -957,12 +994,12 @@ def _add_host(
     host_data: dict[str, Any],
     element: "Element",
     idx: int,
-    path: Path,
+    doc: LabDocument,
     preferences: dict[str, dict[str, Any]] | None,
     view: "InventoryView",
     profiles: ProfileContext,
 ) -> None:
-    """Build one host entry of *element* and add it to *lab*.
+    """Build one host entry of *element*, from the lab file *doc*, and add it to *lab*.
 
     A free function rather than the loop body it is called from: the
     ``try``/``except`` belongs outside the loop (``PERF203``), and the error
@@ -984,21 +1021,33 @@ def _add_host(
     carrying that context, with the original chained as ``__cause__`` — an
     :class:`~otto.inventory.errors.InventoryError` included, which is what
     puts the file, the element and the index in front of "key not found".
+
+    In a recorded build (``otto lab explain``), the resolution and the build
+    run in the entry's :func:`~otto.host.provenance.entry_scope`, so each
+    value the merges decide is attributed to this entry, and the recording
+    is told which fields the join supplied. Otherwise nothing is done for it.
     """
     from ..inventory.resolve import (
         resolve_view_entry,  # lazy: see the note at the top of this module
     )
 
+    path = doc.path
+    recorded = recording_fields()
     try:
-        entry = resolve_view_entry(host_data, view=view, element=element)
-        host = create_host_from_dict(
-            entry.host_data,
-            preferences=preferences,
-            lab_name=lab.name,
-            element=element,
-            inventory_ref=entry.ref,
-            profiles=profiles,
-        )
+        with _entry_scope(doc=doc, element=element, index=idx) if recorded else NOT_RECORDING:
+            entry = resolve_view_entry(host_data, view=view, element=element)
+            if recorded:
+                _joined(supplied=entry.supplied)
+            host = create_host_from_dict(
+                entry.host_data,
+                preferences=preferences,
+                lab_name=lab.name,
+                element=element,
+                inventory_ref=entry.ref,
+                profiles=profiles,
+            )
+            if recorded:
+                _built(host_id=host.id)
     except ValidationError as e:
         # A resolved host dict can carry a referenced host's STORE creds
         # (spec 2026-09-06 creds-store §6.2), appended last when the entry
@@ -1033,12 +1082,47 @@ def _add_host(
             ) from e
 
 
+def _entry_scope(
+    *, doc: LabDocument, element: "Element", index: int
+) -> "AbstractContextManager[None]":
+    """Return the recorded entry scope of *element*'s *index*-th host in *doc*.
+
+    Only a live recording (:func:`~otto.host.inventory_ref.recording_fields`)
+    calls it, so a build that explains nothing imports, keys and reads
+    nothing for it. The scope carries the element's entry in *doc*'s rendered
+    provenance table.
+    """
+    from ..host import provenance
+
+    table = doc.provenance
+    found = None if table is None else table.get(element.name)
+    key = provenance.EntryKey(
+        source=provenance.current_source(), origin=doc.path, element=element.name, index=index
+    )
+    return provenance.entry_scope(key, provenance=found if isinstance(found, Mapping) else None)
+
+
+def _joined(*, supplied: "frozenset[str]") -> None:
+    """Tell the recording which host fields the inventory join decided (recorded builds only)."""
+    from ..host import provenance
+
+    provenance.joined(supplied=supplied)
+
+
+def _built(*, host_id: str) -> None:
+    """Tell the recording which host the entry built (recorded builds only)."""
+    from ..host import provenance
+
+    provenance.built(host_id=host_id)
+
+
 def parse_lab_document(
     sections: dict[str, Any],
     lab_file: Path,
     *,
     seen_labs: dict[str, Path],
     seen_elements: "dict[str, SeenElement]",
+    provenance: "Mapping[str, Any] | None" = None,
 ) -> LabDocument:
     """Parse one lab file's validated *sections* into its document.
 
@@ -1046,7 +1130,8 @@ def parse_lab_document(
     rules run against the source's *seen_labs* / *seen_elements* (which this
     updates). The one source read (:func:`otto.labs.documents.read_source`)
     runs this for the runtime loader and the ``otto init`` doctor alike, so what
-    one accepts the other accepts.
+    one accepts the other accepts. *provenance* is a rendered document's
+    origin data, kept on the document as :attr:`LabDocument.provenance`.
 
     Raises:
         LabRepositoryError: a malformed entry, or a duplicate within the source.
@@ -1056,7 +1141,7 @@ def parse_lab_document(
     check_in_source_duplicates(
         entries, elements, lab_file, seen_labs=seen_labs, seen_elements=seen_elements
     )
-    return LabDocument(lab_file, entries, elements, sections["links"])
+    return LabDocument(lab_file, entries, elements, sections["links"], provenance)
 
 
 def check_in_source_duplicates(

@@ -172,7 +172,8 @@ async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init fla
             answers = await _ask(config, candidates, name_given=bool(name))
             config, candidates = answers.config, answers.areas
         report = scaffold(config, areas=candidates)
-        doctor = check_project(config.root, catalog=_active_catalog(config.root))
+        catalog = _active_catalog(config.root)
+        doctor = check_project(config.root, catalog=catalog)
     except InitInputError as e:
         raise usage_error_from(e, flags=_FLAGS) from e
     _print_report(report, config.root)
@@ -186,6 +187,7 @@ async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init fla
         width=console.width,
         kmodcov_dir=config.kmodcov_dir,
         embedded_gcov_dir=config.embedded_gcov_dir,
+        view=catalog,
     )
     console.print(steps.renderable, soft_wrap=steps.soft_wrap)
     if not doctor.ok:
@@ -195,19 +197,22 @@ async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init fla
 def _active_catalog(root: Path) -> "InventoryView | None":
     """Return the active projects' inventory view when *root* is one of them, else ``None``.
 
-    The doctor takes every name the project references but does not declare
-    from it (:func:`~otto.init.check_project`). It is deferred
-    (:func:`~otto.inventory.deferred_inventory_view`): building it reads and
-    constructs nothing, so whatever a name's build raises is the doctor's to
-    report.
+    Membership is :func:`~otto.config.project.project_at`'s, the one
+    predicate the doctor's templating rows use too. The doctor takes every
+    name the project references but does not declare from this view
+    (:func:`~otto.init.check_project`), lists and loads its templated labs
+    through it, and the Next steps panel asks it which labs the project
+    declares, so the whole command is one operation over one view. It is
+    deferred (:func:`~otto.inventory.deferred_inventory_view`): building it
+    reads and constructs nothing, so whatever a name's build raises is the
+    doctor's to report.
     """
+    from ..config.project import project_at
     from ..declared import get_projects
     from ..inventory.config import deferred_inventory_view
-    from ..utils import root_key
 
     projects = get_projects()
-    key = root_key(str(root))
-    if not any(root_key(str(project.root)) == key for project in projects):
+    if project_at(projects, root=root) is None:
         return None
     return deferred_inventory_view(projects=projects)
 
@@ -396,7 +401,12 @@ class NextSteps:
 
 
 def _next_steps_lines(
-    root: Path, roots: str, kmodcov_dir: str, embedded_gcov_dir: str
+    root: Path,
+    roots: str,
+    kmodcov_dir: str,
+    embedded_gcov_dir: str,
+    *,
+    view: "InventoryView | None",
 ) -> list[_Line]:
     export = [] if _already_active(root, roots) else [f"export {_ottopath_var()}={root}"]
     source = f"source {_COMPLETION_SCRIPT}"
@@ -418,9 +428,9 @@ def _next_steps_lines(
 
     from ..init.next_steps import PROBE_STEP_LEAD, probe_step_command, try_it_commands
 
-    tried = try_it_commands(root, kmodcov_dir, embedded_gcov_dir, cwd=Path.cwd())
+    tried = try_it_commands(root, kmodcov_dir, embedded_gcov_dir, cwd=Path.cwd(), view=view)
     try_it = [blank, heading("3. Try it:"), blank, *commands(*tried)] if tried else []
-    probe = probe_step_command(root)
+    probe = probe_step_command(root, view=view)
     probe_step = (
         [
             blank,
@@ -470,6 +480,7 @@ def next_steps_panel(
     width: int,
     kmodcov_dir: str | None = None,
     embedded_gcov_dir: str | None = None,
+    view: "InventoryView | None" = None,
 ) -> NextSteps:
     """Build the Next steps block ``otto init`` prints last, for a *width*-column console.
 
@@ -484,6 +495,8 @@ def next_steps_panel(
     (``None``: the default directory for each). When *root* declares the
     example lab, a last step asks for a probe of each Unix host once the lab
     names real ones (:func:`otto.init.next_steps.probe_step_command`).
+    *view* is the active catalog ``otto init`` checked *root* with, through
+    which a templated lab counts as declared; ``None`` outside one.
 
     Boxed when every command fits inside the box. Otherwise the same lines
     print unboxed under a rule, soft-wrapped: rich folds or crops a line that
@@ -501,6 +514,7 @@ def next_steps_panel(
         roots,
         DEFAULT_KMODCOV_DIR if kmodcov_dir is None else kmodcov_dir,
         DEFAULT_EMBEDDED_GCOV_DIR if embedded_gcov_dir is None else embedded_gcov_dir,
+        view=view,
     )
     widest = max(len(line.text) for line in lines if line.command)
     if widest + _COMMAND_INDENT + _BOX_OVERHEAD <= width:

@@ -171,6 +171,12 @@ from otto.session import (
 from otto.suite._retry import RetryAttemptTimeoutError
 from otto.suite.run import NoTestsMatchedError
 from otto.suite.selection import UnknownSelectionError
+from otto.templating.errors import (
+    RenderCancelled,
+    RenderError,
+    TemplatingError,
+    TemplatingUnavailableError,
+)
 from otto.tunnel.discovery import TunnelNotMeasuredError
 from otto.tunnel.records import TunnelScanFailedError
 from otto.tunnel.socat import NoFreePortError
@@ -283,6 +289,10 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (InventoryUnreachableError, Exception),
     (BareReferenceRefused, Exception),
     (InventoryConstructionError, ValueError),
+    (TemplatingError, Exception),
+    (TemplatingUnavailableError, Exception),
+    (RenderError, Exception),
+    (RenderCancelled, Exception),
     (PowerControlError, Exception),
     (PowerConstructionError, ValueError),
     (ArchiveLockedError, RuntimeError),
@@ -414,6 +424,14 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         # the same "otto's own concept" as the inventory pair above — no
         # stdlib type otto ever raised for this before the store existed.
         CredsError,
+        # A Jsonnet template that cannot be rendered (no binding on this
+        # platform, a render that failed, or one its operation cancelled
+        # before the evaluator ran) is otto's own concept too: no
+        # stdlib type otto raised for it before templating existed.
+        TemplatingError,
+        TemplatingUnavailableError,
+        RenderError,
+        RenderCancelled,
         ReservationBackendError,
         MissingReservationError,
         # A host's power control that could not be set up or could not act:
@@ -468,6 +486,12 @@ _SWEEP_EXCLUSIONS = frozenset(
         # import nothing of otto (the per-TAB import budget), so OttoError is
         # unreachable there by design. Caught in-module; never escapes.
         "Handover",
+        # read_json_file's decode signal. otto.models.base is the leaf that
+        # imports no other otto module, so OttoError is unreachable there by
+        # design. Both callers (JsonFileSource.read and the lab reader in
+        # otto.labs.documents) re-raise it as their domain error; it never
+        # escapes.
+        "JsonFileError",
     }
 )
 

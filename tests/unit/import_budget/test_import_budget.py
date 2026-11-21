@@ -94,11 +94,13 @@ def test_surfaces_table_well_formed():
                 "cov",
                 "reservation",
                 "inventory",
+                "lab",
                 "schema",
             ]
         ),
         "tracked_host_probe",
         "tracked_host_power",
+        "tracked_tab_warm_templated",
     }
     assert set(keys) == gated | tracked
     assert {s.key for s in harness.SURFACES if s.tracked} == tracked

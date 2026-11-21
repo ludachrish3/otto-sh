@@ -137,7 +137,15 @@ def test_the_cli_context_holds_the_result_ensure_lab_context_read(monkeypatch, r
     from tests._fixtures.rootoptions import make_root_options
 
     calls = _first_then_later(monkeypatch)
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: Lab(name="rig"))
+    from otto.inventory import InventoryView
+    from otto.session.lab import BuiltLab
+
+    monkeypatch.setattr(
+        "otto.session.lab.build_lab_and_view",
+        lambda projects, labs: BuiltLab(
+            lab=Lab(name="rig"), view=InventoryView.of_default(inventory=None)
+        ),
+    )
     monkeypatch.setattr(
         "otto.reservations.factory.build_reservation_gate",
         lambda *args, **kwargs: SimpleNamespace(identity=None),

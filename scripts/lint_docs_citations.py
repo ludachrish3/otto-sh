@@ -216,6 +216,7 @@ MAINTAINER_TARGETS = frozenset(
         "check-api-keywords",
         "check-api-snapshot",
         "check-api-teaching",
+        "check-jsonnet-markers",
         "check-breaking",
         "check-python",
         "check-ts",

@@ -1,0 +1,61 @@
+{
+  "_otto": {
+    "provenance": {
+      "east-dut0": {
+        "host": "dut",
+        "instance": {
+          "site": "east"
+        },
+        "role": "dut"
+      },
+      "east-tgen0": {
+        "host": "tgen",
+        "instance": {
+          "site": "east"
+        },
+        "role": "tgen"
+      }
+    }
+  },
+  "elements": [
+    {
+      "hosts": [
+        {
+          "inventory": {
+            "key": "east-r1",
+            "name": "physical"
+          },
+          "os_type": "router"
+        }
+      ],
+      "labs": [
+        "router\\-lab\\.east"
+      ],
+      "name": "east-dut0"
+    },
+    {
+      "hosts": [
+        {
+          "inventory": {
+            "key": "east-tgen",
+            "name": "virtual"
+          },
+          "os_type": "unix",
+          "valid_terms": [
+            "ssh"
+          ]
+        }
+      ],
+      "labs": [
+        "router\\-lab\\.east"
+      ],
+      "name": "east-tgen0"
+    }
+  ],
+  "labs": {
+    "router-lab.east": {},
+    "router-lab.west": {
+      "unavailable": "tgen: expected 1, found 0 (none)"
+    }
+  }
+}

@@ -35,16 +35,28 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from typing_extensions import final
 
 from .composition import SourceContribution, compose_links, contribution_part
-from .drops import Diagnostic
+from .drops import Diagnostic, is_timeout
 from .errors import LabNotFoundError, LabRepositoryError, LabUnavailableError
-from .protocol import HostSummary, LabScope, LabStatus, SourceRef, SupportsLabStatus
+from .protocol import (
+    HostSummary,
+    LabScope,
+    LabStatus,
+    SourceRef,
+    SupportsDeclaredLinks,
+    SupportsLabStatus,
+    SupportsOverridePolicy,
+)
 from .views import lab_scope_of, lab_statuses, load_contribution_through, load_lab_through
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
 
+    from ..host.inventory_ref import MachineIdentity
     from ..inventory.protocol import Inventory
     from ..inventory.view import InventoryView
+    from ..link.derive import DeclaredLinkEntry
+    from ..templating.errors import RenderCancelled
     from .loader import Lab
     from .protocol import LabRepository
 
@@ -87,6 +99,70 @@ class SourceUnavailable:
     diagnostic: Diagnostic
     """The source's label and its error text."""
 
+    timed_out: bool = False
+    """Whether the status call was cancelled (``otto.labs.drops.is_timeout``), not a fault.
+
+    Kept rather than the error itself: a report outlives the call, and an
+    error's traceback frames can hold a backend's client and its credential.
+    :meth:`cancellation` rebuilds the deadline from it, so a consumer tells a
+    deadline from a fault through the chain rather than by the diagnostic's
+    words."""
+
+    def cancellation(self) -> "RenderCancelled | None":
+        """Return a fresh cancellation for an outage that :attr:`timed_out`; ``None`` for a fault.
+
+        The one rebuild of the deadline from the flag:
+        :meth:`LabStatusReport.refusal` chains it as its error's ``__cause__``,
+        and a consumer that reports outages (the ``otto init`` doctor) raises
+        it rather than showing the deadline as the source's failure.
+        """
+        if not self.timed_out:
+            return None
+        from ..templating.errors import RenderCancelled  # lazy: a deadline only
+
+        return RenderCancelled(self.diagnostic.reason)
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class SourceLinks:
+    """One source's declared links, unresolved, and its scope.
+
+    A row of :meth:`CompositeLabRepository.declared_links_in_view`. Rows
+    compare by value; a row is not hashable: it holds a list.
+    """
+
+    __hash__ = None  # type: ignore[assignment]  # value equality over a mutable field; never a key
+
+    source: SourceRef
+    """The source."""
+
+    entries: "list[DeclaredLinkEntry] | None"
+    """Its ``links`` entries, or ``None`` for a source without the capability to list them.
+
+    ``[]`` for a source whose listing failed (a drop records why)."""
+
+    scope: LabScope | None
+    """The source's declared lab scope (:func:`~otto.labs.lab_scope_of`), or ``None``."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class HostListing:
+    """Every host a composite's sources summarize, and every lab they declare, from one pass.
+
+    Built by :meth:`CompositeLabRepository.host_listing_in_view`, best-effort.
+    Two listings compare by value. A listing is not hashable: it holds lists.
+    """
+
+    __hash__ = None  # type: ignore[assignment]  # value equality over mutable fields; never a key
+
+    names: list[str]
+    """Every lab some source declares now, sorted; a source that failed declares none."""
+
+    summaries: list[HostSummary]
+    """Every host summary, by id, its memberships resolved against :attr:`names`."""
+
 
 @final
 @dataclass(frozen=True, kw_only=True)
@@ -121,11 +197,15 @@ class LabStatusReport:
         """Return the error that loading lab *name* must raise now, or ``None``.
 
         A failed source whose scope contains *name* comes first (a
-        declaration cannot clear an outage), then the lab's own status.
+        declaration cannot clear an outage), then the lab's own status. A
+        cancelled outage's refusal is raised from its
+        :meth:`SourceUnavailable.cancellation`.
         """
         outage = _outage_for(name=name, outages=self.unavailable_sources)
         if outage is not None:
-            return LabUnavailableError(name=name, diagnostic=outage.diagnostic, declared=False)
+            refusal = LabUnavailableError(name=name, diagnostic=outage.diagnostic, declared=False)
+            refusal.__cause__ = outage.cancellation()
+            return refusal
         status = self.status(name=name)
         if status is not None and status.unavailable is not None:
             return LabUnavailableError(name=name, diagnostic=status.unavailable, declared=True)
@@ -242,16 +322,22 @@ class CompositeLabRepository:
         (:func:`~otto.labs.load_contribution_through`, else
         :func:`~otto.labs.load_lab_through`) and merged in order — elements
         replaced wholesale by slug, the ``labs`` entry replaced wholesale by
-        the last declaring source. The declared links are then composed once,
+        the last declaring source. An element from a source with an override
+        policy (:class:`~otto.labs.SupportsOverridePolicy`) replaces another
+        source's element only when the two hold the same machines
+        (:func:`~otto.host.inventory_ref.same_machines`) or the policy
+        declares the element. The declared links are then composed once,
         over the merged hosts (:func:`~otto.labs.composition.compose_links`),
         so a link may name a host another source declares; a source that
-        holds only links still contributes them.
+        holds only links still contributes them. A scoped source's link
+        resolution fails as its load does: the lab is unavailable.
 
         Raises
         ------
         LabUnavailableError
             If *report* refuses *name*, or a scoped source fails while
-            loading it (``declared=False``; *report* is not rewritten).
+            loading it or resolving its links (``declared=False``; *report*
+            is not rewritten).
         LabNotFoundError
             If no source declares *name* (message names every source), no
             source provides it, or no sources are configured at all. The first
@@ -259,7 +345,9 @@ class CompositeLabRepository:
             apiece — for the json backend, the search paths it looked in.
         LabRepositoryError
             If *name* is declared but no element anywhere matches it, if two
-            surviving elements produce the same host id, if a declared link
+            surviving elements produce the same host id, if an element from a
+            source with an override policy would replace different machines
+            the policy does not declare, if a declared link
             touching the lab does not resolve, or propagated from the first
             failing unscoped source — a broken backend is never silently
             dropped from the merge.
@@ -267,9 +355,12 @@ class CompositeLabRepository:
         self._admit(name, report=report)
         declared_by = [ref.label for ref in report.declared_by.get(name, [])]
         loaded: "list[tuple[str, Lab]]" = []
-        # Each source's part in the lab's links, in source order; composed once
-        # the hosts are merged, so no source's links resolve against it alone.
-        contributions: list[SourceContribution] = []
+        # Each source's answer, in source order: its part in the lab's links,
+        # composed once the hosts are merged so no source's links resolve
+        # against it alone, and the source's error rules they resolve under.
+        answers: list[_Loaded] = []
+        # The declared overrides of each source with an override policy.
+        policies: dict[str, frozenset[str]] = {}
         # Each source's own not-found text, kept for the failure messages below.
         # Since R15 every load goes through this class, so a reason discarded
         # here is a reason the user never sees — and for the json backend that
@@ -277,9 +368,15 @@ class CompositeLabRepository:
         # `paths` entry would otherwise be answered with "add a 'labs' table",
         # pointing at a file otto never found.
         reasons: list[str] = []
+        # Where this load's recorded entries begin, when ``otto lab explain``
+        # records the build: only the entries of winning elements are kept.
+        since = _trace_position()
+        from ..host.inventory_ref import NOT_RECORDING  # lazy: keep the composite import-light
+
         for source in self.sources:
             try:
-                got = _load_from(source=source, name=name, preferences=preferences, view=view)
+                with NOT_RECORDING if since is None else _source_scope(source.label):
+                    got = _load_from(source=source, name=name, preferences=preferences, view=view)
             except LabNotFoundError as e:  # a per-source protocol signal, not a failure
                 reasons.append(f"{source.label}: {e}")
                 continue
@@ -289,7 +386,9 @@ class CompositeLabRepository:
                 reasons.append(f"{source.label}: {got.not_found}")
             else:
                 loaded.append((source.label, got.lab))
-            contributions.append(got.part)
+            answers.append(got)
+            if isinstance(source.repository, SupportsOverridePolicy):
+                policies[source.label] = source.repository.declared_overrides()
         if not declared_by:
             # Loading first buys the second sentence: "your elements DO match
             # this name, you just never declared it" is the actual mistake in
@@ -309,8 +408,6 @@ class CompositeLabRepository:
                 + _reason_block(reasons)
             )
 
-        from ..host.remote_host import RemoteHost  # lazy: mirror Lab.add_host
-
         first_label, merged = loaded[0]
         # Two indexes over the SAME merge state: which element each surviving
         # host id came from, and which source currently owns each element.
@@ -322,33 +419,15 @@ class CompositeLabRepository:
             won_by[key] = first_label
         lab_entry_from = first_label if first_label in declared_by else None
         for label, lab in loaded[1:]:
-            for host in lab.hosts.values():
-                if isinstance(host, RemoteHost):
-                    host._lab = merged  # noqa: SLF001 — same backlink repair Lab.__add__ performs
-            incoming: "dict[_ElementKey, dict[str, Any]]" = {}
-            for host_id, host in lab.hosts.items():
-                incoming.setdefault(_element_key(host), {})[host_id] = host
-            for key, hosts in incoming.items():
-                if key in won_by:
-                    logger.warning(
-                        "element %r in lab %r: %s overrides %s", key, name, label, won_by[key]
-                    )
-                    # The whole element goes, not just the ids being restated:
-                    # a four-board chassis overridden by a one-board entry is
-                    # one board, not three stale ones plus the new one.
-                    for hid in [h for h, k in element_of.items() if k == key]:
-                        merged._replace_host(host_id=hid, other=None)  # noqa: SLF001 — the merge owns this lab
-                        del element_of[hid]
-                for host_id in hosts:
-                    if host_id in merged.hosts:
-                        raise LabRepositoryError(
-                            f"host id {host_id!r} in lab {name!r}: element "
-                            f"{element_of[host_id]!r} from {won_by[element_of[host_id]]} "
-                            f"collides with element {key!r} from {label}"
-                        )
-                    merged._replace_host(host_id=host_id, other=lab)  # noqa: SLF001 — host and history together
-                    element_of[host_id] = key
-                won_by[key] = label
+            _merge_elements(
+                name=name,
+                merged=merged,
+                lab=lab,
+                label=label,
+                element_of=element_of,
+                won_by=won_by,
+                policy=policies.get(label),
+            )
             if label in declared_by:
                 if lab_entry_from is not None:
                     logger.warning("labs entry %r: %s overrides %s", name, label, lab_entry_from)
@@ -362,7 +441,17 @@ class CompositeLabRepository:
                 f"Lab {name!r} is declared by {', '.join(declared_by)} but no element in any "
                 f"source matches it — add a 'labs' pattern to an element or remove the declaration"
             )
-        merged.links = compose_links(lab=merged, contributions=contributions)
+        merged.links = compose_links(
+            lab=merged, contributions=[a.part for a in answers], guard=_GuardOfPart(answers)
+        )
+        if since is not None:
+            # Attribution follows the winning element: a host's values are the
+            # winning source's, so a losing source's entries explain nothing.
+            from ..host import provenance
+
+            provenance.retain_winners(
+                since=since, owners={hid: won_by[element_of[hid]] for hid in merged.hosts}
+            )
         return merged
 
     def _admit(self, name: str, *, report: LabStatusReport) -> None:
@@ -402,7 +491,8 @@ class CompositeLabRepository:
                 source=source,
                 scope=scope,
                 call=lambda source=source: lab_statuses(
-                    repository=source.repository, view=_source_view(view=view, source=source)
+                    repository=source.repository,
+                    view=project_view(view=view, project_root=source.project_root),
                 ),
             )
             if isinstance(reported, _SourceFailure):
@@ -411,6 +501,7 @@ class CompositeLabRepository:
                         source=_source_ref(source),
                         scope=reported.scope,
                         diagnostic=reported.diagnostic,
+                        timed_out=is_timeout(reported.error),
                     )
                 )
                 # The names it still lists are known, so they are shown, each
@@ -433,10 +524,13 @@ class CompositeLabRepository:
         return self.lab_status_report(view=view).labs
 
     def list_labs(self) -> list[str]:
-        """Sorted union across sources; a backend error propagates (spec §6.2).
+        """Sorted union of every source's ``list_labs()``; a backend error propagates (spec §6.2).
 
-        Never asks a source for a status: the ``--lab`` completer calls this
-        outside the host deadline.
+        The required :class:`~otto.labs.LabRepository` method, which never asks
+        a source for a status. otto itself reads the labs a composite declares
+        through a view instead (:meth:`lab_status_report`, and completion's
+        :meth:`host_listing_in_view`), so a ``jsonnet`` source's recorded
+        names (diagnostics, see its ``list_labs``) reach no listing of otto's.
         """
         names: set[str] = set()
         for source in self.sources:
@@ -452,43 +546,94 @@ class CompositeLabRepository:
     def list_host_summaries_in_view(self, *, view: "InventoryView") -> list[HostSummary]:
         """Union by host id, later source wins, memberships unioned (spec §6.3).
 
-        Memberships are also RE-RESOLVED: a summary carries the membership
-        patterns of its element, and a pattern declared in one source reaches a
-        lab declared only in another, so the union of every source's
-        ``list_labs()`` is the set they are matched against here. Resolving
-        per source (as each backend must, seeing only its own declarations)
-        would leave a host out of exactly the cross-source labs this class
-        exists to compose.
+        :attr:`HostListing.summaries` of :meth:`host_listing_in_view`.
+        """
+        return self.host_listing_in_view(view=view).summaries
 
-        Each source is summarized through :func:`~otto.labs.host_summaries_in_view`
-        under the view of its own project.
+    def host_listing_in_view(self, *, view: "InventoryView") -> HostListing:
+        """Every source's host summaries and declared labs, through *view*, in one pass.
+
+        Each source is asked through the view of its own project for the labs
+        it declares (:func:`~otto.labs.lab_statuses`, so every source's
+        status read, its render included, is the one a listing makes) and for
+        its host summaries (:func:`~otto.labs.host_summaries_in_view`).
+        Summaries union by host id, the later source winning, and their
+        memberships are RE-RESOLVED: a summary carries the membership
+        patterns of its element, and a pattern declared in one source reaches
+        a lab declared only in another, so the union of every source's names
+        is the set they are matched against here. Resolving per source (as
+        each backend must, seeing only its own declarations) would leave a
+        host out of exactly the cross-source labs this class exists to
+        compose.
 
         Best-effort by contract: this feeds shell completion, which must never
-        crash or warn into the user's TAB — a failing source is skipped with a
-        debug log, unlike ``load_lab``/``list_labs`` which stay loud.
+        crash or warn into the user's TAB. Each source's two calls are
+        contained apart: a call that fails is skipped with a debug log and
+        recorded as a drop (``otto.labs.drops.record_drop``; a refusal
+        recorded its own), and never costs another source its names or its
+        hosts, unlike :meth:`load_lab` and :meth:`lab_status_report`, which
+        stay loud. A cancelled operation's error
+        (``otto.labs.drops.is_timeout``) is not a source's failure: it
+        propagates, so the operation stops here.
         """
-        from .summaries import host_summaries_in_view  # function-scope: only completion summarizes
-
-        declared: set[str] = set()
-        for source in self.sources:
-            declared.update(_declared_names(source))
-        names = sorted(declared)
+        names = self.declared_names_in_view(view=view)
         by_id: dict[str, HostSummary] = {}
         for source in self.sources:
-            try:
-                summaries = host_summaries_in_view(
-                    repository=source.repository, view=_source_view(view=view, source=source)
-                )
-            except Exception as e:  # noqa: BLE001 — completion path, best-effort by contract
-                from .drops import is_refusal, record_drop
-
-                logger.debug(f"skipping source {source.label} while summarizing hosts: {e}")
-                if not is_refusal(e):  # a refusal recorded its own drop
-                    record_drop(f"source {source.label}", str(e))
-                continue
-            for s in summaries:
+            for s in _source_summaries(source, view=view):
                 by_id[s.id] = _merged_summary(s, by_id.get(s.id), names)
-        return sorted(by_id.values(), key=lambda s: s.id)
+        return HostListing(names=names, summaries=sorted(by_id.values(), key=lambda s: s.id))
+
+    def declared_names_in_view(self, *, view: "InventoryView") -> list[str]:
+        """Every lab some source declares now, through *view*, sorted: the names alone.
+
+        The one names read: each source's status read
+        (:func:`~otto.labs.lab_statuses`, a template's render included)
+        through the view of its own project, and nothing else, so no host
+        is summarized and no legacy backend's lab is loaded.
+        :meth:`host_listing_in_view` matches its summaries against these, and
+        ``--lab`` completion offers them. Best-effort as it is: a source whose
+        status call fails declares none (``_skip``), and a cancelled
+        operation's error propagates.
+        """
+        declared: set[str] = set()
+        for source in self.sources:
+            declared.update(_declared_names(source, view=view))
+        return sorted(declared)
+
+    def declared_links_in_view(self, *, view: "InventoryView") -> list[SourceLinks]:
+        """Every source's declared links, unresolved, through *view*, in source order.
+
+        A source with the :class:`~otto.labs.SupportsDeclaredLinks` capability
+        is asked through the view of its own project (:func:`project_view`),
+        as :meth:`host_listing_in_view` asks it for its labs; any other source
+        lists ``None``, its links being in no form the composite can read.
+        Each row carries its source's lab scope. Best-effort, as
+        :meth:`host_listing_in_view` is, and each source is contained apart:
+        a failed listing is skipped (``_skip``) and lists ``[]``.
+        """
+        return [_source_links(source, view=view) for source in self.sources]
+
+
+def _trace_position() -> "int | None":
+    """Return where a live recording's entries stand (``otto lab explain``), else ``None``.
+
+    Asks :func:`~otto.host.inventory_ref.recording_fields` first, so a load
+    that records nothing never imports :mod:`otto.host.provenance`.
+    """
+    from ..host.inventory_ref import recording_fields  # lazy: keep the composite import-light
+
+    if not recording_fields():
+        return None
+    from ..host import provenance
+
+    return provenance.trace_position()
+
+
+def _source_scope(label: str) -> "AbstractContextManager[None]":
+    """Return the recorded scope that names source *label* (recorded loads only)."""
+    from ..host import provenance
+
+    return provenance.source_scope(label)
 
 
 def _source_ref(source: LabSource) -> SourceRef:
@@ -496,18 +641,21 @@ def _source_ref(source: LabSource) -> SourceRef:
     return SourceRef(label=source.label, project_root=source.project_root)
 
 
-def _source_view(*, view: "InventoryView", source: LabSource) -> "InventoryView":
-    """Return *view* as *source*'s project sees it.
+def project_view(*, view: "InventoryView", project_root: "Path | None") -> "InventoryView":
+    """Return *view* as the project at *project_root* sees it: THE view a source is called through.
 
-    *view* itself for a source with no project, and for a
-    :attr:`~otto.inventory.InventoryView.default_only` view: a legacy
+    *view* itself for a source with no project (*project_root* ``None``), and
+    for a :attr:`~otto.inventory.InventoryView.default_only` view: a legacy
     ``inventory=`` argument means one thing for every source, and re-pointing
     the view a :class:`~otto.inventory.RefusedDefault` stands for at another
-    root would lose its refusal (lab templating D1).
+    root would lose its refusal (lab templating D1). The composite calls each
+    of its sources through it, with the source's
+    :attr:`LabSource.project_root`, and ``otto lab render`` renders an entry
+    through it, so a render and a load of one entry share one evaluation.
     """
-    if source.project_root is None or view.default_only:
+    if project_root is None or view.default_only:
         return view
-    return view.for_project(root=source.project_root)
+    return view.for_project(root=project_root)
 
 
 @final
@@ -524,6 +672,9 @@ class _Loaded:
     part: SourceContribution
     """The source's declared links, unresolved, or its own resolved ones."""
 
+    guard: "_SourceGuard"
+    """The source's error rules, which its links resolve under as its load did."""
+
 
 def _load_from(
     *,
@@ -537,7 +688,8 @@ def _load_from(
     A source with the contribution capability
     (:func:`~otto.labs.load_contribution_through`) hands back its links
     unresolved; any other is loaded through :func:`~otto.labs.load_lab_through`
-    and keeps the links it resolved itself.
+    and keeps the links it resolved itself. The load runs under the source's
+    :class:`_SourceGuard`, which the answer keeps for its links.
 
     Raises
     ------
@@ -551,17 +703,13 @@ def _load_from(
     scope = lab_scope_of(repository=source.repository)
     if scope is not None and not scope.contains(name=name):
         return None
-    source_view = _source_view(view=view, source=source)
-    got = _scoped_call(
-        source=source,
-        scope=scope,
-        call=lambda: _answer(source=source, name=name, preferences=preferences, view=source_view),
+    source_view = project_view(view=view, project_root=source.project_root)
+    guard = _SourceGuard(source=source, scope=scope, name=name)
+    return guard.run(
+        lambda: _answer(
+            source=source, name=name, preferences=preferences, view=source_view, guard=guard
+        )
     )
-    if isinstance(got, _SourceFailure):
-        raise LabUnavailableError(
-            name=name, diagnostic=got.diagnostic, declared=False
-        ) from got.error
-    return got
 
 
 def _answer(
@@ -570,6 +718,7 @@ def _answer(
     name: str,
     preferences: dict[str, dict[str, Any]] | None,
     view: "InventoryView",
+    guard: "_SourceGuard",
 ) -> _Loaded:
     """Return *source*'s answer for lab *name* through *view*, as its capabilities route it."""
     contribution = load_contribution_through(
@@ -580,6 +729,7 @@ def _answer(
             lab=contribution.lab,
             not_found=contribution.not_found,
             part=contribution_part(label=source.label, contribution=contribution),
+            guard=guard,
         )
     lab = load_lab_through(
         repository=source.repository, name=name, preferences=preferences, view=view
@@ -593,6 +743,7 @@ def _answer(
             resolved_links=list(lab.links),
             host_ids=frozenset(lab.hosts),
         ),
+        guard=guard,
     )
 
 
@@ -617,18 +768,20 @@ def _scoped_call(
 ) -> "_T | _SourceFailure":
     """Return *call*'s result, or the failure of a source that declares a scope.
 
-    The one decision of what a source failure is, for the status call and the
-    load alike: a :class:`LabRepositoryError` or an ``InventoryError`` raised
-    by a source that declares a *scope*. A :class:`LabNotFoundError` (a
-    per-source protocol signal) and any failure of an unscoped source
-    propagate, as today. The failure's diagnostic names the source by its
-    label and states the error text.
+    The one decision of what a source failure is, for the status call, the
+    load and the load's link resolution alike: a :class:`LabRepositoryError`
+    or an ``InventoryError`` raised by a source that declares a *scope*. A
+    :class:`LabNotFoundError` (a per-source protocol signal), a
+    :class:`LabUnavailableError` (a failure already classified, as another
+    source's whose addressing this call read) and any failure of an unscoped
+    source propagate. The failure's diagnostic names the source by its label
+    and states the error text.
     """
     from ..inventory.errors import InventoryError  # lazy: keep the composite import-light
 
     try:
         return call()
-    except LabNotFoundError:
+    except (LabNotFoundError, LabUnavailableError):
         raise
     except (LabRepositoryError, InventoryError) as e:
         if scope is None:
@@ -636,6 +789,154 @@ def _scoped_call(
         return _SourceFailure(
             scope=scope, diagnostic=Diagnostic(where=source.label, reason=str(e)), error=e
         )
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class _SourceGuard:
+    """One source's error rules while it contributes to lab :attr:`name`."""
+
+    source: LabSource
+    """The source."""
+
+    scope: LabScope | None
+    """Its declared scope, or ``None`` for an unscoped source."""
+
+    name: str
+    """The lab being loaded, which a failure makes unavailable."""
+
+    def run(self, call: "Callable[[], _T]") -> _T:
+        """Return *call*'s result; a scoped source's failure is the lab's unavailability.
+
+        Raises
+        ------
+        LabUnavailableError
+            :func:`_scoped_call` classified the failure as the scoped
+            source's (``declared=False``), raised from the error itself.
+        """
+        got = _scoped_call(source=self.source, scope=self.scope, call=call)
+        if isinstance(got, _SourceFailure):
+            raise LabUnavailableError(
+                name=self.name, diagnostic=got.diagnostic, declared=False
+            ) from got.error
+        return got
+
+
+@final
+class _GuardOfPart:
+    """The :class:`~otto.labs.composition.ContributionGuard` of a load: each part's source's."""
+
+    def __init__(self, answers: "list[_Loaded]") -> None:
+        self._guards = {id(answer.part): answer.guard for answer in answers}
+
+    def __call__(self, contribution: SourceContribution, call: "Callable[[], _T]", /) -> _T:
+        """Return *call*'s result under the guard of the source *contribution* came from."""
+        return self._guards[id(contribution)].run(call)
+
+
+def _merge_elements(
+    *,
+    name: str,
+    merged: "Lab",
+    lab: "Lab",
+    label: str,
+    element_of: "dict[str, _ElementKey]",
+    won_by: "dict[_ElementKey, str]",
+    policy: "frozenset[str] | None",
+) -> None:
+    """Merge source *label*'s *lab* into *merged*, lab *name*, element by element, *label* winning.
+
+    *element_of* (which element each surviving host id came from) and
+    *won_by* (which source owns each element) are the merge state, updated
+    here. *policy* is the source's declared overrides when it has an override
+    policy (:class:`~otto.labs.SupportsOverridePolicy`), else ``None``.
+
+    Raises
+    ------
+    LabRepositoryError
+        Two surviving elements compose one host id, or an element of a source
+        with a policy would replace different machines the policy does not
+        declare.
+    """
+    from ..host.remote_host import RemoteHost  # lazy: mirror Lab.add_host
+
+    for host in lab.hosts.values():
+        if isinstance(host, RemoteHost):
+            host._lab = merged  # noqa: SLF001 — same backlink repair Lab.__add__ performs
+    incoming: "dict[_ElementKey, dict[str, Any]]" = {}
+    for host_id, host in lab.hosts.items():
+        incoming.setdefault(_element_key(host), {})[host_id] = host
+    for key, hosts in incoming.items():
+        if key in won_by:
+            replaced = [h for h, k in element_of.items() if k == key]
+            if policy is not None and key not in policy:
+                _refuse_different_machines(
+                    key=key,
+                    name=name,
+                    label=label,
+                    owner=won_by[key],
+                    replaced=_identities(merged, host_ids=replaced),
+                    incoming=_identities(lab, host_ids=list(hosts)),
+                )
+            logger.warning("element %r in lab %r: %s overrides %s", key, name, label, won_by[key])
+            # The whole element goes, not just the ids being restated:
+            # a four-board chassis overridden by a one-board entry is
+            # one board, not three stale ones plus the new one.
+            for hid in replaced:
+                merged._replace_host(host_id=hid, other=None)  # noqa: SLF001 — the merge owns this lab
+                del element_of[hid]
+        for host_id in hosts:
+            if host_id in merged.hosts:
+                raise LabRepositoryError(
+                    f"host id {host_id!r} in lab {name!r}: element "
+                    f"{element_of[host_id]!r} from {won_by[element_of[host_id]]} "
+                    f"collides with element {key!r} from {label}"
+                )
+            merged._replace_host(host_id=host_id, other=lab)  # noqa: SLF001 — host and history together
+            element_of[host_id] = key
+        won_by[key] = label
+
+
+def _identities(lab: "Lab", *, host_ids: "list[str]") -> "list[MachineIdentity]":
+    """Return every machine identity *lab* holds under *host_ids*, in their order."""
+    return [
+        identity
+        for host_id in host_ids
+        for identity in lab._identity_history(host_id=host_id)  # noqa: SLF001 — the merge reads its labs
+    ]
+
+
+def _refuse_different_machines(
+    *,
+    key: str,
+    name: str,
+    label: str,
+    owner: str,
+    replaced: "list[MachineIdentity]",
+    incoming: "list[MachineIdentity]",
+) -> None:
+    """Raise unless *incoming* holds the machines *replaced* did.
+
+    *label*'s element *key* replaces *owner*'s in lab *name*, and *label*'s
+    override policy does not declare *key*.
+
+    Raises
+    ------
+    LabRepositoryError
+        The two elements hold different machines
+        (:func:`~otto.host.inventory_ref.same_machines`), naming both sources
+        and both sets of machines, and how to declare the override.
+    """
+    from ..host.inventory_ref import same_machines, spell_machine
+
+    if same_machines(replaced=replaced, incoming=incoming):
+        return
+    old = ", ".join(spell_machine(identity=i) for i in replaced)
+    new = ", ".join(spell_machine(identity=i) for i in incoming)
+    raise LabRepositoryError(
+        f"element {key!r} in lab {name!r}: {label} would replace the machines of {owner} "
+        f"({old}) with ({new}); declare overrides = [{key!r}] on {label} to mean it"
+    )
 
 
 def _names_of_down_source(*, source: LabSource, scope: LabScope) -> list[LabStatus]:
@@ -688,18 +989,65 @@ def _reason_block(reasons: list[str]) -> str:
     return "\n" + "\n".join(f"  {r}" for r in reasons)
 
 
-def _declared_names(source: LabSource) -> list[str]:
-    """Return the labs *source* declares, or ``[]`` if it fails.
+def _declared_names(source: LabSource, *, view: "InventoryView") -> list[str]:
+    """Return the labs *source* declares now through *view*, or ``[]`` if its status call fails.
 
-    A free function rather than the loop body it is called from: the
-    ``try``/``except`` belongs outside the loop (``PERF203``). Best-effort like
-    its caller — this feeds completion, never ``load_lab``, which stays loud.
+    :func:`~otto.labs.lab_statuses` under the view of the source's project,
+    best-effort as its caller (:meth:`CompositeLabRepository.host_listing_in_view`)
+    is: a failure is skipped (``_skip``).
     """
+    source_view = project_view(view=view, project_root=source.project_root)
     try:
-        return list(source.repository.list_labs())
+        return [s.name for s in lab_statuses(repository=source.repository, view=source_view)]
     except Exception as e:  # noqa: BLE001 — completion path, best-effort by contract
-        logger.debug(f"skipping source {source.label} while listing labs: {e}")
+        _skip(source, doing="listing labs", error=e)
         return []
+
+
+def _source_summaries(source: LabSource, *, view: "InventoryView") -> list[HostSummary]:
+    """Return *source*'s host summaries through *view*, or ``[]`` if they fail (``_skip``)."""
+    from .summaries import host_summaries_in_view  # function-scope: only completion summarizes
+
+    source_view = project_view(view=view, project_root=source.project_root)
+    try:
+        return host_summaries_in_view(repository=source.repository, view=source_view)
+    except Exception as e:  # noqa: BLE001 — completion path, best-effort by contract
+        _skip(source, doing="summarizing hosts", error=e)
+        return []
+
+
+def _source_links(source: LabSource, *, view: "InventoryView") -> SourceLinks:
+    """Return *source*'s declared links through *view* (``None`` without the capability).
+
+    A failed listing is skipped (``_skip``) and lists ``[]``.
+    """
+    entries: "list[DeclaredLinkEntry] | None" = None
+    if isinstance(source.repository, SupportsDeclaredLinks):
+        source_view = project_view(view=view, project_root=source.project_root)
+        try:
+            entries = source.repository.declared_link_entries(view=source_view)
+        except Exception as e:  # noqa: BLE001 — completion path, best-effort by contract
+            _skip(source, doing="listing links", error=e)
+            entries = []
+    return SourceLinks(
+        source=_source_ref(source),
+        entries=entries,
+        scope=lab_scope_of(repository=source.repository),
+    )
+
+
+def _skip(source: LabSource, *, doing: str, error: Exception) -> None:
+    """Skip *source*'s failed best-effort call, *doing*: a debug log and the skip rule.
+
+    Free functions rather than loop bodies: the ``try``/``except`` belongs
+    outside the loop (``PERF203``). ``otto.labs.drops.skip_failure``
+    decides the rest: a cancelled operation's error is re-raised, a refusal
+    recorded its own drop, anything else is one drop naming the source.
+    """
+    from .drops import skip_failure
+
+    logger.debug(f"skipping source {source.label} while {doing}: {error}")
+    skip_failure(where=f"source {source.label}", error=error)
 
 
 def _element_key(host: Any) -> "_ElementKey":

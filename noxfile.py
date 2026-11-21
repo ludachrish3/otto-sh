@@ -11,15 +11,19 @@ List available sessions:
 """
 
 import atexit
+import hashlib
 import os
+import platform
 import re
 import shutil
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import nox
 import nox_uv
+from packaging.tags import sys_tags
 from packaging.utils import canonicalize_name
 
 PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
@@ -1107,21 +1111,151 @@ _SCRATCH_ROOTS: "dict[str, Path]" = {}
 """Each session's scratch root in this nox invocation (:func:`_scratch`)."""
 
 
-def _smoke_wheel(session: nox.Session, runtime: Path) -> None:
-    """Install ``dist/*.whl`` with ``--no-deps`` over the *runtime* requirements, then smoke it.
+def _built_wheel(session: nox.Session) -> Path:
+    """Return the one built wheel, ``dist/*.whl``, resolved; any other count is an error.
 
-    The one installed-otto smoke (scripts/wheel_smoke.py), for each runtime
-    resolution a session hands it. It runs from a scratch directory, so
-    neither ``src/`` nor the checkout's tests are importable.
+    The one wheel selection, for every session that installs the build
+    (:func:`_smoke_wheel`, :func:`packaging_offline`), so no two proofs can
+    pick different files. ``make wheel-check`` builds it.
     """
     wheels = sorted(Path("dist").glob("*.whl"))
     if len(wheels) != 1:
-        session.error(f"expected one wheel in dist/, found {len(wheels)}: run `make wheel-smoke`")
+        session.error(
+            f"expected one wheel in dist/, found {len(wheels)}: build it with `make wheel-check`"
+        )
+    return wheels[0].resolve()
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@dataclass(frozen=True, kw_only=True)
+class OfflineCell:
+    """One platform the offline install is proved on: how its host looks, what Step 1 fetches.
+
+    A host is the cell whose *sys_platform*, *machine* (``platform.machine()``,
+    as the dependency markers spell it) and C library match its own.
+    *target* is the uv ``--python-platform`` target
+    ``scripts/check_jsonnet_markers.py`` pins the binding of (``EXPECTED``),
+    so the binding a cell asserts is read there, never restated here.
+    *platforms* are the ``pip download --platform`` tags docs/installation.md's
+    Step 1 names for the platform, in order; pip takes any of them.
+    """
+
+    sys_platform: str
+    machine: str
+    musl: bool
+    target: str
+    platforms: "tuple[str, ...]"
+
+
+# The platforms the offline install is proved on, each by nightly's
+# `packaging-offline` jobs (one runner per cell) and the docs' Step 1 platform
+# tags (docs/installation.md, "Common platform tags"). A new platform is one
+# row here, one runner there and one tag line in the docs.
+OFFLINE_CELLS: "tuple[OfflineCell, ...]" = (
+    OfflineCell(
+        sys_platform="linux",
+        machine="x86_64",
+        musl=False,
+        target="x86_64-manylinux_2_28",
+        platforms=("manylinux_2_28_x86_64", "manylinux2014_x86_64"),
+    ),
+    OfflineCell(
+        sys_platform="linux",
+        machine="x86_64",
+        musl=True,
+        target="x86_64-unknown-linux-musl",
+        platforms=("musllinux_1_2_x86_64", "musllinux_1_1_x86_64"),
+    ),
+    OfflineCell(
+        sys_platform="linux",
+        machine="aarch64",
+        musl=False,
+        target="aarch64-manylinux2014",
+        platforms=("manylinux2014_aarch64",),
+    ),
+    OfflineCell(
+        sys_platform="darwin",
+        machine="arm64",
+        musl=False,
+        target="aarch64-apple-darwin",
+        platforms=("macosx_11_0_arm64",),
+    ),
+    OfflineCell(
+        sys_platform="win32",
+        machine="AMD64",
+        musl=False,
+        target="x86_64-pc-windows-msvc",
+        platforms=("win_amd64",),
+    ),
+)
+
+
+def _host_cell(session: nox.Session) -> OfflineCell:
+    """Return the :data:`OFFLINE_CELLS` row this host is; a host none describes is an error."""
+    musl = any(tag.platform.startswith("musllinux") for tag in sys_tags())
+    machine = platform.machine()
+    found = [
+        cell
+        for cell in OFFLINE_CELLS
+        if cell.sys_platform == sys.platform and cell.machine == machine and cell.musl == musl
+    ]
+    if len(found) != 1:
+        libc = "musl" if musl else "not musl"
+        session.error(
+            f"{len(found)} OFFLINE_CELLS rows describe this host ({sys.platform}, {machine}, "
+            f"{libc}): otto proves an installed wheel only on the platforms it lists, once each"
+        )
+    return found[0]
+
+
+# `python -c` puts the checkout on sys.path, as for LOCKED_VERSION below, so
+# scripts/check_jsonnet_markers.py, the one table of which binding each target
+# installs, imports. EXPECTED_BINDING prints the binding a target's marker
+# installs on every supported Python; CANARY_RESOLVE
+# checks a target's binary-only resolve on the next Python (EXPECTED_315),
+# which has no interpreter to install on.
+EXPECTED_BINDING = (
+    "import sys; from scripts.check_jsonnet_markers import EXPECTED; print(EXPECTED[sys.argv[1]])"
+)
+CANARY_RESOLVE = (
+    "import sys; from scripts.check_jsonnet_markers import EXPECTED_315, NIGHTLY, Case, "
+    "canary_python, check; target = sys.argv[1]; minor = canary_python(NIGHTLY.read_text()); "
+    "problem = check(Case(target, minor, EXPECTED_315[target])) if target in EXPECTED_315 "
+    "else None; print(problem or f'{target} on Python {minor}: ' + "
+    "('resolves as EXPECTED_315 pins' if target in EXPECTED_315 else 'no EXPECTED_315 pin')); "
+    "sys.exit(problem is not None)"
+)
+
+
+def _expected_binding(session: nox.Session, cell: OfflineCell) -> str:
+    """Return the binding *cell*'s marker installs (``jsonnet`` or ``gojsonnet``)."""
+    said = session.run(
+        sys.executable, "-c", EXPECTED_BINDING, cell.target, silent=True, external=True
+    )
+    if not isinstance(said, str) or not said.strip():
+        session.error(f"scripts/check_jsonnet_markers.py pins no binding for {cell.target}")
+    return said.strip()
+
+
+def _smoke_wheel(session: nox.Session, runtime: Path) -> None:
+    """Install the built wheel with ``--no-deps`` over the *runtime* requirements, then smoke it.
+
+    The one installed-otto smoke (scripts/wheel_smoke.py), for each runtime
+    resolution a session hands it, including the identity check against the
+    wheel and the installed ``otto.libsonnet`` render under this host's
+    binding. It runs from a scratch directory, so neither ``src/`` nor the
+    checkout's tests are importable.
+    """
+    wheel = _built_wheel(session)
+    binding = _expected_binding(session, _host_cell(session))
     session.install("-r", str(runtime))
-    session.install("--no-deps", str(wheels[0].resolve()))
+    session.install("--no-deps", str(wheel))
     script = Path("scripts/wheel_smoke.py").resolve()
     session.chdir(_scratch(session, "smoke"))
-    session.run("python", str(script))
+    session.run("python", str(script), str(wheel), f"--binding={binding}")
 
 
 @nox.session(python=[PRIMARY_PYTHON])
@@ -1213,6 +1347,105 @@ def wheel_smoke_floors(session: nox.Session) -> None:
     :func:`tests_unit_floors` runs the unit suite there nightly.
     """
     _smoke_wheel(session, _floor_requirements(session))
+
+
+# pip run by these sessions reads no pip configuration file, so a developer's
+# index or find-links setting can neither feed nor starve the offline proof.
+_PIP_ENV = {"PIP_CONFIG_FILE": os.devnull, "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+
+
+@nox.session(python=PYTHON_VERSIONS)
+def packaging_offline(session: nox.Session) -> None:
+    """Prove the documented air-gapped install of the built wheel on this host and Python.
+
+    docs/installation.md's Step 1, run as it is documented, for this host's
+    :data:`OFFLINE_CELLS` row: ``pip download <wheel path>`` under this
+    session's Python with its ``--python-version``, the cell's ``--platform``
+    tags and ``--only-binary :all:``, into a wheel directory. pip never looks
+    on the index for a pathname requirement, so the directory holds this
+    build and the dependencies it declares; the copy pip placed there must
+    have the built wheel's sha256. Then a fresh venv of this Python installs
+    the wheel by pathname with ``--no-index --find-links`` that directory,
+    and, from a scratch directory outside the checkout,
+    ``scripts/wheel_smoke.py --installed-only`` checks that the installed
+    otto is the wheel, file for file, and that the installed
+    ``otto.libsonnet`` renders under the binding the cell's marker installs.
+    The fresh venv's ``site-packages`` size is printed. On the primary Python the
+    cell's target is also resolved, binary-only, for the next Python
+    (``EXPECTED_315``), which no interpreter here can install on.
+
+    Nightly's `packaging-offline` jobs run it on every cell and Python. Like
+    :func:`wheel_smoke`, it needs a built wheel (``make wheel-check``).
+    """
+    wheel = _built_wheel(session)
+    digest = _sha256(wheel)
+    cell = _host_cell(session)
+    binding = _expected_binding(session, cell)
+    session.log(f"cell {cell.target}: {wheel.name} sha256 {digest}, binding {binding}")
+    if session.python == PRIMARY_PYTHON:
+        session.run(sys.executable, "-c", CANARY_RESOLVE, cell.target, external=True)
+    root = _scratch(session, "offline")
+    wheels = root / "wheels"
+    session.install("pip")
+    session.run(
+        "python",
+        "-m",
+        "pip",
+        "download",
+        str(wheel),
+        "--dest",
+        str(wheels),
+        "--python-version",
+        str(session.python),
+        *(f"--platform={tag}" for tag in cell.platforms),
+        "--only-binary",
+        ":all:",
+        env=_PIP_ENV,
+    )
+    staged = wheels / wheel.name
+    if not staged.is_file() or _sha256(staged) != digest:
+        found = _sha256(staged) if staged.is_file() else "no file"
+        session.error(f"pip download staged {staged} as {found}, not the built wheel's {digest}")
+    venv = root / "venv"
+    session.run("python", "-m", "venv", str(venv))
+    # The interpreter otto itself finds in a venv, on either layout; the
+    # process running nox has otto (the dev venv, or the nightly job's tool env).
+    from otto.env.backends import venv_python
+
+    python = venv_python(venv)
+    session.run(
+        str(python),
+        "-m",
+        "pip",
+        "install",
+        "--no-index",
+        "--find-links",
+        str(wheels),
+        str(wheel),
+        env=_PIP_ENV,
+        external=True,
+    )
+    purelib = session.run(
+        str(python),
+        "-c",
+        "import sysconfig; print(sysconfig.get_paths()['purelib'])",
+        silent=True,
+        external=True,
+    )
+    if isinstance(purelib, str):
+        site = Path(purelib.strip())
+        size = sum(f.stat().st_size for f in site.rglob("*") if f.is_file())
+        session.log(f"fresh venv site-packages: {size} bytes ({size / 2**20:.1f} MiB) in {site}")
+    script = Path("scripts/wheel_smoke.py").resolve()
+    session.chdir(_scratch(session, "installed"))
+    session.run(
+        str(python),
+        str(script),
+        str(wheel),
+        f"--binding={binding}",
+        "--installed-only",
+        external=True,
+    )
 
 
 @nox.session(python=[PRIMARY_PYTHON])
@@ -1410,6 +1643,77 @@ def tests_uv_floor(session: nox.Session) -> None:
         "--no-cov",
         _junitxml(session, "nox-uv-floor"),
         *session.posargs,
+    )
+
+
+# The Jsonnet template tests under the Go binding. Every path that renders a
+# real template is listed here, so both bindings run it.
+TEMPLATING_GO_PATHS = (
+    "tests/unit/templating",
+    "tests/unit/init/test_init_doctor.py",
+    "tests/unit/init/test_next_steps.py",
+    "tests/unit/cli/test_lab_cli.py",
+    "tests/unit/config/test_completion_templated.py",
+    "tests/unit/docs/test_templating_example.py",
+)
+# `python -c` puts the checkout on sys.path, so the lock's one version reader
+# imports; the `nox` entry point itself never has it there.
+LOCKED_VERSION = (
+    "import sys; from pathlib import Path; "
+    "from scripts.playwright_version import locked_version; "
+    "print(locked_version(Path('uv.lock'), sys.argv[1]))"
+)
+
+
+def _locked_version(session: nox.Session, package: str) -> str:
+    """Return *package*'s version in uv.lock, read by ``scripts/playwright_version.py``."""
+    argv = (sys.executable, "-c", LOCKED_VERSION, package)
+    # run_install, so it is also read under `--install-only`; it returns None
+    # under `--no-install`/`-R`, where `run` reads it instead.
+    said = session.run_install(*argv, silent=True, external=True) or session.run(
+        *argv, silent=True, external=True
+    )
+    if not isinstance(said, str) or not said.strip():
+        session.error(f"uv.lock names no {package} version")
+    return said.strip()
+
+
+@nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
+def templating_go(session: nox.Session) -> None:
+    """Run the Jsonnet template tests under the Go binding, ``gojsonnet``.
+
+    The markers in pyproject.toml install one binding per platform: the C++
+    ``jsonnet`` on an x86_64 CI runner, ``gojsonnet`` on Linux aarch64. This
+    session swaps the C++ binding out for the ``gojsonnet`` uv.lock pins (it
+    ships manylinux2014 x86_64 wheels for every Python otto supports), so every pull request
+    exercises both. ``OTTO_TEST_JSONNET_BINDING`` makes the templating
+    conftest assert the swap took. Where ``jsonnet`` is not installed (the
+    aarch64 dev VM), the uninstall is a no-op and the same suite runs.
+
+    ``pytest`` runs directly, never ``uv run pytest``, which would re-sync the
+    project and undo the swap. The selection is ``HOSTLESS_CLAUSES``, run
+    single-process (``-n0``) in one leg, so ``serial_timing`` is NOT excluded:
+    the paths hold no such test today, and the lane-leg membership pin forbids
+    a serial leg that selects nothing. One ``-n0`` leg keeps a templating test
+    marked ``serial_timing`` running, alone, the day one lands, for ~10 s more
+    than ``-n auto`` over these ~540 tests.
+    """
+    session.run_install(
+        "uv", "pip", "uninstall", "--python", session.virtualenv.location, "jsonnet", external=True
+    )
+    # The locked gojsonnet, so a bump of the lock moves the swap with it.
+    session.install(f"gojsonnet=={_locked_version(session, 'gojsonnet')}")
+    env = {"OTTO_TEST_JSONNET_BINDING": "gojsonnet"}
+    session.run(
+        "pytest",
+        *TEMPLATING_GO_PATHS,
+        "-m",
+        HOSTLESS_CLAUSES,
+        "-n0",
+        "--no-cov",
+        _junitxml(session, "nox-templating-go"),
+        *session.posargs,
+        env=env,
     )
 
 

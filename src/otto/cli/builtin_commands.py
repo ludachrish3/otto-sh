@@ -1,7 +1,7 @@
 """First-party top-level command registrations — otto's own composition list.
 
 The direct analog of the backend registries' ``_register_builtin_*``
-functions: otto's fourteen subcommand groups travel the same public
+functions: otto's fifteen subcommand groups travel the same public
 :func:`~otto.cli.registry.register_cli_command` path a third-party plugin
 uses, with lazy ``"module:attr"`` loaders so nothing imports until dispatch.
 
@@ -153,6 +153,18 @@ def register_builtin_commands() -> None:
         # inventory from the active projects' [inventory] tables and the user
         # settings file, never from a lab, and no verb touches a host or
         # writes to the inventory.
+        lab_free=True,
+        output_dir=False,
+        gate=False,
+    )
+    register_cli_command(
+        "lab",
+        "otto.cli.lab:lab_app",
+        help="Inspect what the lab sources make of their files.",
+        # Settings-only, like inventory: `render` names a file, never a lab,
+        # renders in memory and touches no host, so it needs no --lab, no
+        # reservation gate and no output directory. A verb that reads a lab
+        # takes it from the root -l option.
         lab_free=True,
         output_dir=False,
         gate=False,

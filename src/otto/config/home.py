@@ -46,6 +46,9 @@ costs legibility only."""
 SNAPSHOT_CACHE_DIRNAME = "inventory-cache"
 """Directory holding the inventory snapshot cache (host-inventory spec §9.5)."""
 
+LAB_NAMES_CACHE_DIRNAME = "lab-names"
+"""Directory of each scoped ``jsonnet`` source's last known lab names (``otto.labs.last_good``)."""
+
 PYCACHE_DIRNAME = "pycache"
 """Workspace directory where every pytest session otto starts writes its bytecode.
 
@@ -160,6 +163,22 @@ def snapshot_cache_dir() -> Path:
     PURE -- never creates the directory, same as :func:`otto_home`.
     """
     return otto_home() / SNAPSHOT_CACHE_DIRNAME
+
+
+def lab_names_cache_dir() -> Path:
+    """Return ``<otto home>/lab-names``: each scoped ``jsonnet`` source's last known lab names.
+
+    ``otto.labs.last_good`` keeps one file per source there, holding lab
+    names only, so a source that fails later can still show which labs it
+    declared (each unavailable). Not under a workspace key, as
+    :func:`snapshot_cache_dir` is not: a record is identified by its
+    source's project root, label and configuration, which already separate
+    two workspaces' sources. Derived state like the rest of the home: deleted,
+    a failed source lists no names until its next complete read.
+
+    PURE -- never creates the directory, same as :func:`otto_home`.
+    """
+    return otto_home() / LAB_NAMES_CACHE_DIRNAME
 
 
 def _normalized(roots: "list[Path]") -> "list[Path]":

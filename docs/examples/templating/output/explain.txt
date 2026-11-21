@@ -1,0 +1,18 @@
+╭─────────────────────────────┬──────────────────┬─────────╮
+│ field                       │ layer            │ detail  │
+├─────────────────────────────┼──────────────────┼─────────┤
+│ creds.password              │ creds store      │ admin   │
+│ ip                          │ inventory record │         │
+│ os_type                     │ template         │         │
+│ site                        │ inventory record │         │
+│ ssh_options.connect_timeout │ host preferences │ .*-dut0 │
+│ valid_terms                 │ os profile       │ router  │
+╰─────────────────────────────┴──────────────────┴─────────╯
+host: east-dut0
+source: routers/jsonnet#1
+entry: /home/me/routers/lab_data/layouts/router-lab.jsonnet (element 'east-dut0', hosts[0])
+instance: {"site": "east"}
+role: dut
+host label: dut
+inventory physical: live
+inventory virtual: live

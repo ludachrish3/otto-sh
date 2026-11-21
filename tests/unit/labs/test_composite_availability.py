@@ -242,8 +242,9 @@ def test_each_source_sees_its_own_projects_policy() -> None:
     assert b.views["summaries"][0].project_root == _ROOT_B
     report = comp.lab_status_report(view=view)
     assert report.labs_declared_in(project_root=_ROOT_A) == ["site"]
-    assert [v.project_root for v in a.views["status"]] == [_ROOT_A]
-    assert [v.project_root for v in b.views["status"]] == [_ROOT_B]
+    # Twice each: the summaries' listing reads the labs through the status call, then the report.
+    assert [v.project_root for v in a.views["status"]] == [_ROOT_A, _ROOT_A]
+    assert [v.project_root for v in b.views["status"]] == [_ROOT_B, _ROOT_B]
     with pytest.raises(BareReferenceRefused):
         comp.load_lab_in_view("site", view=view)
 

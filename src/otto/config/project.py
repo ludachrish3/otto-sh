@@ -31,6 +31,7 @@ from .scope import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from importlib.machinery import ModuleSpec
 
     import pytest
@@ -425,7 +426,7 @@ class Project:
     def get_lab_panel(
         self,
         *,
-        report: "LabStatusReport | None" = None,
+        report: "LabStatusReport | Exception | None" = None,
         view: "InventoryView | None" = None,
     ) -> "Panel":
         """Build a Rich panel listing the labs this project's host sources declare.
@@ -436,36 +437,31 @@ class Project:
         ``• name — unavailable: reason`` otherwise, then one
         ``⚠ source X unavailable: reason`` row for each of this project's
         sources that failed. Without one, the project's own sources are built
-        alone (:func:`~otto.labs.sources.build_lab_sources`) and asked for
-        their own report through *view* (by default a deferred view of this
-        project alone); a failure of either shows ``⚠ host source
-        unavailable: <error>`` in place of the labs. *view* is not used when
-        *report* is given. Listing promises a lab's status only: loading it
-        can still fail.
+        alone and asked for their own report through *view*
+        (:func:`~otto.labs.sources.project_lab_outcome`; by default a deferred
+        view of this project alone); a failure of either shows ``⚠ host
+        source unavailable: <error>`` in place of the labs. *report* may also
+        be that error, as :meth:`~otto.labs.sources.LabListing.outcome`
+        returns it, and shows the same row. *view* is not used when *report*
+        is given. Listing promises a lab's status only: loading it can still
+        fail.
         """
         from rich.panel import Panel
         from rich.text import Text
 
         if not self.lab_sources:
             lab_name_text = Text("no [[lab.sources]] declared", style="dim")
-        elif report is not None:
-            lab_name_text = _lab_rows(report=report, project_root=self.root)
         else:
-            from ..inventory.config import deferred_inventory_view
-            from ..labs.sources import build_lab_sources
-            from ..labs.views import LISTING_ERRORS
+            if report is None:
+                from ..labs.sources import project_lab_outcome
 
-            try:
-                repository = build_lab_sources(projects=[self])
-                own = repository.lab_status_report(
-                    view=view if view is not None else deferred_inventory_view(projects=[self])
-                )
-            except LISTING_ERRORS as e:
+                report = project_lab_outcome(self, view=view)
+            if isinstance(report, Exception):
                 # Panel rendering must never crash on a misconfigured/unreachable
                 # host source; surface the reason in-panel instead of a traceback.
-                lab_name_text = Text(f"⚠ host source unavailable: {e}", style="red")
+                lab_name_text = Text(f"⚠ host source unavailable: {report}", style="red")
             else:
-                lab_name_text = _lab_rows(report=own, project_root=self.root)
+                lab_name_text = _lab_rows(report=report, project_root=self.root)
 
         return Panel(
             lab_name_text,
@@ -727,6 +723,19 @@ def _duplicate_root_errors(projects: "list[Project]") -> "list[DuplicateProjectE
         if len(group) > 1
         for project in group
     ]
+
+
+def project_at(projects: "Sequence[Project]", *, root: Path) -> "Project | None":
+    """Return the project of *projects* rooted at *root*, or ``None``: THE membership predicate.
+
+    Roots compare by :func:`~otto.utils.root_key`, so a symlink spelling of a
+    project's root finds it. The project returned is the one *projects*
+    holds, carrying its own spelling of the root.
+    """
+    from ..utils import root_key
+
+    key = root_key(str(root))
+    return next((project for project in projects if root_key(str(project.root)) == key), None)
 
 
 def discover() -> DiscoveryResult:

@@ -82,8 +82,29 @@ def _lab_states(root: Path) -> "list[LabSourceState] | None":
     return prepare_lab_sources(pending, profiles=ProfileContext.empty())
 
 
-def lab_file_groups(root: Path) -> list[list[Path]]:
-    """Every lab file the project's file-backed ``[[lab.sources]]`` name, ONE LIST PER SOURCE.
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class SourceFiles:
+    """One file-backed lab source of a project and the lab files it names."""
+
+    state: "LabSourceState | None"
+    """The source, prepared; ``None`` for the conventional ``lab_data/lab.json`` fallback."""
+    files: tuple[Path, ...]
+    """The lab files the source names, by its own rule, in order."""
+
+    @property
+    def is_jsonnet(self) -> bool:
+        """Whether the source renders Jsonnet entries, its file rule being the jsonnet backend's.
+
+        Told by :data:`~otto.labs.sources.JSONNET_FILE_RULE`, the rule a
+        source's facts carry, never by a file's name.
+        """
+        from ..labs.sources import JSONNET_FILE_RULE
+
+        return self.state is not None and self.state.file_rule() == JSONNET_FILE_RULE
+
+
+def lab_file_groups(root: Path) -> list[SourceFiles]:
+    """Every lab file the project's file-backed ``[[lab.sources]]`` name, ONE GROUP PER SOURCE.
 
     THE single reader of a project's host-data declaration inside ``otto init``:
     detection and validation both go through it (via :func:`lab_files`), so
@@ -95,7 +116,9 @@ def lab_file_groups(root: Path) -> list[list[Path]]:
     (:meth:`~otto.labs.sources.LabSourceState.lab_files`: for a json source,
     a directory entry contributes its ``lab.json``, a ``.json`` entry IS the
     file, a glob contributes every match). A source whose backend is not registered yet is left to
-    :func:`deferred_lab_sources`.
+    :func:`deferred_lab_sources`. Each group carries its source
+    (:class:`SourceFiles`), so a reader can tell a ``jsonnet`` source's
+    entries (:attr:`SourceFiles.is_jsonnet`) from hand-written files.
 
     The grouping is load-bearing for the duplicate rules, which are per SOURCE:
     two files of ONE source declaring the same lab is a typo, the same
@@ -114,8 +137,12 @@ def lab_file_groups(root: Path) -> list[list[Path]]:
 
     states = _lab_states(root)
     if states is None:
-        return [[root / "lab_data" / JSON_FILE_RULE.directory_file]]
-    return [state.lab_files() for state in states if state.is_known() and state.is_file_backed()]
+        return [SourceFiles(state=None, files=(root / "lab_data" / JSON_FILE_RULE.directory_file,))]
+    return [
+        SourceFiles(state=state, files=tuple(state.lab_files()))
+        for state in states
+        if state.is_known() and state.is_file_backed()
+    ]
 
 
 def deferred_lab_sources(root: Path) -> list[str]:
@@ -141,7 +168,7 @@ def lab_files(root: Path) -> list[Path]:
     :func:`lab_file_groups` for the per-source view the duplicate rules need,
     and for the ``ValueError`` both raise when the lab sources do not prepare.
     """
-    return [lab_file for group in lab_file_groups(root) for lab_file in group]
+    return [lab_file for group in lab_file_groups(root) for lab_file in group.files]
 
 
 def instruction_libs(root: Path) -> list[Path]:

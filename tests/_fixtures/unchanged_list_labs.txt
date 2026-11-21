@@ -51,7 +51,7 @@
  │                                                                            │  │ 'unchanged-unregistered' (not registered; configured in                    │ 
  ╰────────────────────────────────────────────────────────────────────────────╯  │ /nonexistent/otto-fake-project/b/.otto/settings.toml): lookup failed:      │ 
                                                                                  │ Unknown lab repository backend 'unchanged-unregistered'. Registered:       │ 
-                                                                                 │ json. Custom entries can be added via                                      │ 
+                                                                                 │ json, jsonnet. Custom entries can be added via                             │ 
                                                                                  │ otto.labs.register_lab_repository().                                       │ 
                                                                                  │                                                                            │ 
                                                                                  ╰────────────────────────────────────────────────────────────────────────────╯ 

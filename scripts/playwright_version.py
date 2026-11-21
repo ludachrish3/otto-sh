@@ -23,16 +23,20 @@ IMAGE_SUFFIX = "noble"
 _NUMERIC_VERSION = re.compile(r"\d+\.\d+\.\d+")
 
 
-def locked_version(lock_path: Path) -> str:
-    """Return the single ``playwright`` version in ``lock_path``, or exit saying why not."""
+def locked_version(lock_path: Path, package: str = "playwright") -> str:
+    """Return the single *package* version in ``lock_path``, or exit saying why not.
+
+    The one reader of a locked version: the browser jobs' Playwright image here,
+    and ``noxfile.py``'s ``templating_go``, which installs the locked ``gojsonnet``.
+    """
     packages = tomli.loads(lock_path.read_text())["package"]
-    versions = sorted({p["version"] for p in packages if p["name"] == "playwright"})
+    versions = sorted({p["version"] for p in packages if p["name"] == package})
     if not versions:
-        raise SystemExit(f"{lock_path}: no playwright package is locked")
+        raise SystemExit(f"{lock_path}: no {package} package is locked")
     if len(versions) > 1:
-        raise SystemExit(f"{lock_path}: more than one playwright version is locked: {versions}")
+        raise SystemExit(f"{lock_path}: more than one {package} version is locked: {versions}")
     if not _NUMERIC_VERSION.fullmatch(versions[0]):
-        raise SystemExit(f"{lock_path}: playwright version {versions[0]!r} is not N.N.N")
+        raise SystemExit(f"{lock_path}: {package} version {versions[0]!r} is not N.N.N")
     return versions[0]
 
 

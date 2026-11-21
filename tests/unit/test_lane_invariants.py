@@ -2577,6 +2577,8 @@ HOSTLESS_TARGETS = [
     "gate-scope",
     "gate-status",
     "lock-check",
+    # reaches PyPI, not the bed: CI's lint-python runs it
+    "check-jsonnet-markers",
     "lint",
     "lint-arch",
     "lint-python",

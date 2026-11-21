@@ -1,6 +1,6 @@
 # CLI Reference
 
-`otto` is one command with fourteen subcommand groups. This page covers what is
+`otto` is one command with fifteen subcommand groups. This page covers what is
 true of all of them — how an invocation is shaped, the options the top-level
 command owns, the environment variables that back them, and where each run
 writes its output. Each group then has its own page, and every subcommand of
@@ -565,6 +565,7 @@ verdicts instead: see {doc}`check-verdicts`.
 | [`otto cov`](cov/index.md) | Collect coverage from the lab and render reports |
 | [`otto reservation`](reservation/index.md) | Inspect and verify lab reservations |
 | [`otto inventory`](inventory/index.md) | Inspect, export and diff the configured host inventory |
+| [`otto lab`](lab/index.md) | Inspect what the lab sources make of their files: print a Jsonnet entry's rendered document |
 | [`otto schema`](schema/index.md) | Export JSON Schema for `lab.json`, `settings.toml`, reservations and the inventory file |
 
 Reach for `otto link` to shape a path that already exists, and `otto tunnel`
@@ -597,5 +598,6 @@ monitor/index
 cov/index
 reservation/index
 inventory/index
+lab/index
 schema/index
 ```

@@ -35,6 +35,7 @@ host internals
    element
    mount
    inventory_ref
+   provenance
    daemon
    address
    shell_quote

@@ -8,6 +8,10 @@ from otto.init.config import InitConfig
 from otto.init.next_steps import probe_step_command, try_it_commands
 from otto.init.scaffolder import scaffold
 from otto.init.templates import EXAMPLE_HOST_ID, EXAMPLE_LAB_NAME, EXAMPLE_PROBE_COMMAND
+from tests.unit.templating import conftest as _templating
+
+# The binding proof every templated test file carries (tests/unit/templating/conftest.py).
+jsonnet_binding_under_test = _templating.jsonnet_binding_under_test
 
 
 def test_a_full_project_tries_the_example_lab_tests_and_instruction(tmp_path: Path) -> None:
@@ -179,3 +183,27 @@ def test_the_probe_is_its_own_step_offered_only_when_the_lab_is_declared(tmp_pat
     labless.mkdir()
     scaffold(InitConfig(labless, "widget", "0.1.0"), areas=["settings", "tests"])
     assert probe_step_command(labless) is None
+
+
+def test_next_steps_see_a_templated_example_lab(tmp_path: Path, monkeypatch) -> None:
+    """A jsonnet source rendering ``example_lab`` counts through the CLI's view, and only then."""
+    from otto.cli.init import _active_catalog
+    from tests.unit.templating._doctor_project import catalog, sites_entry, templated
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    entry = sites_entry().replace("'site-' + i.id.site", f"'{EXAMPLE_LAB_NAME}'")
+    sut = templated(tmp_path / "proj", entry=entry)
+    monkeypatch.setattr("otto.declared.get_projects", lambda: [sut])
+    view = _active_catalog(sut.root)
+    assert view is not None
+    args = (sut.root, "third_party/otto_kmodcov", "third_party/embedded-gcov-patch")
+    assert try_it_commands(*args, cwd=sut.root, view=view) == [
+        f"otto --lab {EXAMPLE_LAB_NAME} --list-hosts"
+    ]
+    assert probe_step_command(sut.root, view=view) == EXAMPLE_PROBE_COMMAND
+    # Without the view, or outside the active projects, the entry declares nothing.
+    assert try_it_commands(*args, cwd=sut.root) == []
+    assert probe_step_command(sut.root) is None
+    other = templated(tmp_path / "other", name="other", entry=entry)
+    elsewhere = catalog(other)
+    assert try_it_commands(*args, cwd=sut.root, view=elsewhere) == []

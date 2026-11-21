@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+from otto.creds import CredsError
+from otto.creds.json_store import _JsonCredsStore
 from otto.inventory import (
     InventoryEnv,
     InventoryError,
@@ -14,6 +16,10 @@ from otto.inventory import (
 from otto.inventory.registry import INVENTORY_BACKENDS
 from otto.models.inventory import FILLABLE_INVENTORY_FIELDS
 from otto.testing import assert_inventory_conforms
+from tests._fixtures.paths import TESTS_ROOT
+
+_LATIN1 = TESTS_ROOT / "_fixtures" / "reader_cases" / "latin1.json"
+"""A file whose bytes the (UTF-8) test locale cannot decode; the lab reader's case too."""
 
 _DOC = {
     "$schema": "~/.otto/schemas/inventory.schema.json",
@@ -89,6 +95,25 @@ def test_fingerprint_moves_on_rewrite(tmp_path):
     assert str(path) in before
     path.write_text(json.dumps(_DOC) + " ")  # size changes even if mtime granularity does not
     assert inv.fingerprint() != before
+
+
+@pytest.mark.parametrize(
+    ("source", "refused"),
+    [
+        (lambda path: JsonInventory(path).list_keys(), InventoryError),
+        (lambda path: _JsonCredsStore(path).lookup("k"), CredsError),
+    ],
+    ids=["inventory", "creds-store"],
+)
+def test_undecodable_bytes_are_the_sources_error_naming_the_file(source, refused, tmp_path):
+    """Bytes the locale cannot decode are refused as an unreadable file, never a bare
+    ``UnicodeDecodeError``: the one decoding rule the lab reader follows too."""
+    path = tmp_path / "latin1.json"
+    path.write_bytes(_LATIN1.read_bytes())
+    with pytest.raises(refused) as caught:
+        source(path)
+    assert str(caught.value).startswith(f"{path}: ")
+    assert isinstance(caught.value.__cause__, UnicodeDecodeError)
 
 
 def test_bad_record_names_file_key_and_field(tmp_path):

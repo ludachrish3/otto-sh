@@ -20,14 +20,18 @@ in ``tach.toml``; only the *timing* is deferred.
 """
 
 import dataclasses
-from collections.abc import Generator, Iterator, Mapping, Sequence
+import functools
+import os
+import threading
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from pathlib import Path, PurePath
+from typing import TYPE_CHECKING, Any, Final
 
 from pydantic import (
+    BaseModel,
     ConfigDict,
     SerializerFunctionWrapHandler,
     ValidationError,
@@ -39,7 +43,7 @@ from typing_extensions import final, override
 
 from ..host.inventory_ref import DEFAULT_INVENTORY
 from ..models.base import OttoModel
-from ..utils import anchor_path, parse_cache_ttl
+from ..utils import anchor_path, parse_cache_ttl, refuse_empty_entry, resolved_path
 from .creds import CredsOverlay
 from .errors import InventoryConstructionError, InventoryError
 from .protocol import Inventory
@@ -61,7 +65,13 @@ def _anchored(value: Path, info: ValidationInfo) -> Path:
 
 @final
 class JsonInventoryConfig(OttoModel):
-    """The json inventory's table: an anchored file path, and the fields it supplies."""
+    """The json inventory's table: an anchored file path, and the fields it supplies.
+
+    A ``path`` that resolves to a ``.jsonnet`` file names a Jsonnet file that
+    renders the inventory document
+    (:attr:`~otto.inventory.JsonInventory.templated`, decided on the resolved
+    path); its imports resolve under ``import_paths``.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -71,6 +81,13 @@ class JsonInventoryConfig(OttoModel):
     supplies: list[str] | None = None
     """The record fields this inventory supplies; ``None`` means every fillable field."""
 
+    import_paths: tuple[Path, ...] = ()
+    """The directories a ``.jsonnet`` path's imports resolve under, in order; none by default.
+
+    Each is anchored like ``path``. A root that does not exist is legal:
+    nothing resolves there. The Jsonnet file's own directory is never a root.
+    Only a ``.jsonnet`` path reads them."""
+
     @field_validator("path", mode="before")
     @classmethod
     def _not_empty(cls, value: object) -> object:
@@ -79,11 +96,25 @@ class JsonInventoryConfig(OttoModel):
             raise ValueError("must name the inventory file")
         return value
 
+    @field_validator("import_paths", mode="before")
+    @classmethod
+    def _no_empty_import_path(cls, value: object) -> object:
+        """Refuse an empty entry, which would otherwise make the project root a root."""
+        return refuse_empty_entry(value, expected="a directory")
+
     @field_validator("path", mode="after")
     @classmethod
     def _anchor(cls, value: Path, info: ValidationInfo) -> Path:
         """Anchor a relative path to the directory the table was declared in."""
         return _anchored(value, info)
+
+    @field_validator("import_paths", mode="after")
+    @classmethod
+    def _anchor_import_paths(
+        cls, value: tuple[Path, ...], info: ValidationInfo
+    ) -> tuple[Path, ...]:
+        """Anchor each relative import root as ``path`` is anchored."""
+        return tuple(_anchored(root, info) for root in value)
 
 
 @final
@@ -260,6 +291,265 @@ class BuiltBinding:
     """The constructed ``default`` inventory, or ``None``."""
 
 
+@final
+@dataclass(frozen=True, kw_only=True, repr=False)
+class ProtectedPaths:
+    """The files no template may read: settings files, and every path their tables name.
+
+    A frozen, hashable value, so a memo key can hold the catalog it was
+    rendered under; equality and hashing are over :attr:`files` and
+    :attr:`refusal`. Every path in :attr:`files` is resolved, symlinks
+    collapsed, so an alias of a protected file is the same entry. The repr
+    shows only how many files it holds: the paths are built from table
+    strings, which may be tokens.
+    """
+
+    files: frozenset[Path]
+    """The protected files, each resolved (``strict=False``)."""
+    refusal: "str | None" = None
+    """Why no template may render under this catalog; ``None`` for a catalog a render runs under.
+
+    Set on a catalog that could not be established: :data:`NO_CATALOG`, and
+    the catalog of a view whose user settings file cannot be read
+    (:func:`unreadable_user_catalog`). The renderer asks this field, so the
+    answer is the catalog's own: it survives a copy or a pickle, and "no
+    catalog" never equals an empty one. The text names files, never a table
+    value."""
+
+    @override
+    def __repr__(self) -> str:
+        if self.refusal is not None:
+            return "ProtectedPaths(<no catalog>)"
+        count = len(self.files)
+        return f"ProtectedPaths(<{count} file{'' if count == 1 else 's'}>)"
+
+    def contains(self, path: Path) -> bool:
+        """Return whether *path*, once resolved, is a protected file.
+
+        A spelling match first. Failing that, an existing *path* is protected
+        when it is the same file as an existing catalog entry (equal device and
+        inode), so a hardlink, or another spelling on a case-insensitive
+        filesystem, is caught. A path that cannot be resolved (a NUL byte, a
+        symlink loop) or does not exist names no protected file.
+        """
+        resolved = resolved_path(path)
+        if resolved is None:
+            return False
+        if resolved in self.files:
+            return True
+        identity = _identity(resolved)
+        return identity is not None and identity in self._identities
+
+    def contains_stat(self, st: os.stat_result) -> bool:
+        """Return whether the file *st* describes is a protected file, by device and inode.
+
+        For a caller that holds an open file rather than a path: its
+        ``fstat`` is the identity, so the answer cannot be about a different
+        file than the one being read. The same identities :meth:`contains`
+        matches against.
+        """
+        return (st.st_dev, st.st_ino) in self._identities
+
+    @functools.cached_property
+    def _identities(self) -> frozenset[tuple[int, int]]:
+        """Return ``(st_dev, st_ino)`` of every catalog file that exists, statted once.
+
+        Computed on the first identity check, never at construction, and only
+        ever by a stat (:func:`_identity`): nothing is opened. A file that
+        cannot be statted (gone, unreadable directory) matches nothing. Not a
+        field, so neither equality, hashing nor the repr sees it. The set is
+        computed once per catalog value, so in a long-lived process a
+        protected file that appears later, or is atomically replaced (a new
+        inode), keeps only its spelling match, and an inode the filesystem
+        reuses after a delete can deny an unrelated file.
+        """
+        return frozenset(i for file in self.files if (i := _identity(file)) is not None)
+
+    def union(self, other: "ProtectedPaths") -> "ProtectedPaths":
+        """Return the catalog protecting every file of this one and of *other*.
+
+        It refuses to render when either does, with the first refusal.
+        """
+        return ProtectedPaths(
+            files=self.files | other.files,
+            refusal=self.refusal if self.refusal is not None else other.refusal,
+        )
+
+
+NO_CATALOG: Final = ProtectedPaths(
+    files=frozenset(),
+    refusal=(
+        "no protected-file catalog: this inventory view or inventory was not built "
+        "from settings (otto.inventory.build_inventory_view), so no template is "
+        "rendered through it"
+    ),
+)
+"""THE one spelling of "no catalog", which a view or inventory no builder made carries.
+
+A hand-built :class:`~otto.inventory.InventoryView` and a
+:class:`~otto.inventory.json_backend.JsonInventory` with no ``env`` carry it.
+Its :attr:`~ProtectedPaths.refusal` is set, so no render runs under it
+(:class:`~otto.templating.imports.ImportPolicy` refuses it), and a template is
+never rendered unprotected by accident. A hand-written lab or inventory file
+reads under it exactly as before, because only a render consults a catalog."""
+
+
+def unreadable_user_catalog(
+    partial: ProtectedPaths, *, user_settings_file: "Path | None"
+) -> ProtectedPaths:
+    """Return the catalog of a view whose user settings file cannot be read: it renders nothing.
+
+    The files that user file names cannot be known, so no complete catalog can
+    be established, and the *partial* one (every other file) would let a
+    template read them: it keeps *partial*'s files, and refuses to render.
+    The refusal names the file only, never the read error, which may quote a
+    value of the file.
+    """
+    path = _user_file(user_settings_file)
+    return ProtectedPaths(
+        files=partial.files,
+        refusal=(
+            f"no protected-file catalog: the user settings file {path} cannot be read, "
+            "so the files it names cannot be protected; no template is rendered until it reads"
+        ),
+    )
+
+
+def _identity(path: Path) -> tuple[int, int] | None:
+    """Return *path*'s ``(st_dev, st_ino)``; ``None`` when it is absent or cannot be statted.
+
+    The stat is :func:`~otto.config.corpus_snapshot.classify`'s, the one stat
+    classification, so an unreadable path reads as no identity here exactly
+    as it reads as unreadable there.
+    """
+    from ..config.corpus_snapshot import classify  # deferred: see module docstring
+
+    found = classify(path)
+    if not isinstance(found, os.stat_result):
+        return None
+    return (found.st_dev, found.st_ino)
+
+
+def _as_protected_path(value: str, anchor: Path) -> Path | None:
+    """Return the file the table string *value* names, anchored at *anchor* and resolved.
+
+    The anchoring rule is :func:`~otto.utils.anchor_path`'s, the one every
+    path in a settings table follows. ``None`` when *value* cannot name a
+    file: empty, a ``~user`` that does not expand, a NUL byte, a symlink
+    loop. Such a string is skipped silently, and no error carries it,
+    because an arbitrary table string may be a token.
+    """
+    if not value:
+        return None
+    try:
+        anchored = anchor_path(Path(value), anchor, quote=False)
+    except ValueError:
+        return None
+    return resolved_path(anchored)
+
+
+def _strings(value: object) -> Iterator[str]:
+    """Yield every string value in *value*, at any depth; mapping keys are not values.
+
+    A model is walked through its dump, so a parsed table yields what its raw
+    form would; a path value yields its spelling.
+    """
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="python", warnings=False)
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, PurePath):
+        yield str(value)
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for item in value:
+            yield from _strings(item)
+
+
+def _anchored_strings(values: Iterable[str], anchor: Path) -> Iterator[Path]:
+    """Yield the protected path each of *values* names at *anchor*, skipping the rest."""
+    for value in values:
+        path = _as_protected_path(value, anchor)
+        if path is not None:
+            yield path
+
+
+def _declared_file(decl: InventoryDeclaration) -> Path:
+    """Return the settings file *decl* was read from: its ``origin``, which names that file."""
+    return Path(decl.origin)
+
+
+def protected_paths(
+    *,
+    settings_files: Sequence[Path],
+    declarations: Sequence[InventoryDeclaration],
+    user_settings: "UserSettingsModel | None",
+    user_settings_file: Path | None,
+) -> ProtectedPaths:
+    """Return the catalog of files no template may read, from already-read tables.
+
+    It holds every file of *settings_files* (every active project's, with an
+    inventory table or not), the user settings file (*user_settings_file*,
+    else the default path), each declaration's own file, and every string,
+    at any depth, of each declaration's ``[inventory]``, ``[creds]`` and
+    ``[[inventories]]`` tables and of *user_settings*' (the snapshot its
+    owner read). Each string is anchored like any table path, at its
+    declaration's root or the user file's directory, then resolved.
+
+    Raw strings rather than parsed configurations: nothing is prepared, so a
+    broken declaration no operation uses fails nothing here, and a backend's
+    path nested at any depth is covered. A string that is not a path names a
+    file nobody has, or is skipped. Nothing is opened.
+    """
+    files: set[Path] = set()
+    for path in (*settings_files, _user_file(user_settings_file)):
+        resolved = resolved_path(path)
+        if resolved is not None:
+            files.add(resolved)
+    for decl in declarations:
+        declared = resolved_path(_declared_file(decl))
+        if declared is not None:
+            files.add(declared)
+        tables = (decl.table, decl.creds_table, decl.inventories)
+        files.update(_anchored_strings(_strings(tables), decl.anchor_dir))
+    if user_settings is not None:
+        tables = (user_settings.inventory, user_settings.creds, user_settings.inventories)
+        anchor = _user_file(user_settings_file).parent
+        files.update(_anchored_strings(_strings(tables), anchor))
+    return ProtectedPaths(files=frozenset(files))
+
+
+def standalone_protection(env: InventoryEnv) -> ProtectedPaths:
+    """Return what a table compiled on its own protects: its settings file and its own paths.
+
+    The rule for an :class:`~otto.inventory.registry.InventoryEnv` whose
+    ``protected`` is ``None``, which no view built: the declaring file
+    (``settings_file``, resolved, when one is known) and every string of the
+    table itself (``own_table``), anchored at ``anchor_dir`` as
+    :func:`protected_paths` anchors them. ``origin`` is a label and is never
+    read as a path.
+    """
+    files = set(_anchored_strings(env.own_table, env.anchor_dir))
+    declared = None if env.settings_file is None else resolved_path(env.settings_file)
+    if declared is not None:
+        files.add(declared)
+    return ProtectedPaths(files=frozenset(files))
+
+
+def env_protection(env: InventoryEnv) -> ProtectedPaths:
+    """Return the catalog a template rendered for *env*'s table runs under: THE one choice.
+
+    The view's catalog (``env.protected()``) when a view built the table, so
+    a template can read no file any active project or the user file
+    protects; :func:`standalone_protection` when ``env.protected`` is
+    ``None`` (a table compiled on its own). Never a view's empty default: the
+    catalog comes with the table, wherever the inventory is later read from.
+    """
+    return env.protected() if env.protected is not None else standalone_protection(env)
+
+
 def compile_inventory(
     *, cfg: "InventoryConfigSpec | NamedInventorySpec", anchor_dir: Path, origin: str
 ) -> CompiledInventory:
@@ -281,16 +571,54 @@ def compile_inventory(
     happens later, in the backend's factory, where the path reaches the
     object whose ``fingerprint()`` the spec says is the resolved one (§9.1).
 
+    The env's ``own_table`` holds every string of *cfg*, and its
+    ``protected`` is ``None``: a table compiled on its own protects what
+    :func:`standalone_protection` says. Its ``settings_file`` is *origin*
+    when *origin* names an existing file, else ``None``: *origin* is a label,
+    so only a file that is there is taken for the declaring one. The view
+    builders compile through the same path with their catalog and the
+    declaring file instead.
+
     Raises:
         otto.inventory.errors.InventoryConstructionError: The backend is not
             registered, or its keys do not parse.
+    """
+    named = Path(origin)
+    return _compile_inventory(
+        cfg=cfg,
+        anchor_dir=anchor_dir,
+        origin=origin,
+        protected=None,
+        # Resolved now, so a later change of working directory cannot move it.
+        settings_file=resolved_path(named) if named.is_file() else None,
+    )
+
+
+def _compile_inventory(
+    *,
+    cfg: "InventoryConfigSpec | NamedInventorySpec",
+    anchor_dir: Path,
+    origin: str,
+    protected: "Callable[[], ProtectedPaths] | None",
+    settings_file: "Path | None",
+) -> CompiledInventory:
+    """Compile *cfg* as :func:`compile_inventory` does, its env carrying *protected*.
+
+    *settings_file* is the declaring file, which the env carries for
+    :func:`standalone_protection`.
     """
     from ..models.settings import NamedInventorySpec  # deferred: see module docstring
 
     prepared = INVENTORY_BACKENDS.prepare(
         name=cfg.backend,
         raw=dict(cfg.model_extra or {}),
-        env=InventoryEnv(anchor_dir, origin),
+        env=InventoryEnv(
+            anchor_dir,
+            origin,
+            protected=protected,
+            own_table=tuple(_strings(cfg)),
+            settings_file=settings_file,
+        ),
         source=origin,
     )
     return CompiledInventory(
@@ -475,20 +803,23 @@ def inventory_declaration(
     )
 
 
-def _project_declarations(projects: "Sequence[Project]") -> list[InventoryDeclaration]:
-    """Read each project's inventory declaration through :func:`inventory_declaration`."""
+def _settings_files(projects: "Sequence[Project]") -> tuple[Path, ...]:
+    """Return each project's settings file, whether or not it declares an inventory."""
     # Deferred: see the module docstring. TOML_SETTINGS_PATH rather than a
     # hand-spelled ".otto"/"settings.toml" — one owner for where a project's
     # settings live, so a relocation cannot leave this error text lying.
     from ..config.scope import TOML_SETTINGS_PATH
 
+    return tuple(project.root / TOML_SETTINGS_PATH for project in projects)
+
+
+def _project_declarations(projects: "Sequence[Project]") -> list[InventoryDeclaration]:
+    """Read each project's inventory declaration through :func:`inventory_declaration`."""
     declarations = []
-    for project in projects:
+    for project, settings_file in zip(projects, _settings_files(projects), strict=True):
         try:
             declaration = inventory_declaration(
-                data=project.settings,
-                root=project.root,
-                origin=str(project.root / TOML_SETTINGS_PATH),
+                data=project.settings, root=project.root, origin=str(settings_file)
             )
         except ValueError as e:
             raise InventoryError(str(e)) from e
@@ -638,7 +969,9 @@ def _default_tables(declarations: list[InventoryDeclaration]) -> list[_DefaultTa
     ]
 
 
-def _compile_declaration(tables: _DefaultTables) -> CompiledInventory | None:
+def _compile_declaration(
+    tables: _DefaultTables, *, protected: "Callable[[], ProtectedPaths] | None"
+) -> CompiledInventory | None:
     """Compile one file's ``default``: its ``[inventory]``, else its ``default`` entry."""
     decl = tables.decl
     if decl.table:
@@ -648,12 +981,20 @@ def _compile_declaration(tables: _DefaultTables) -> CompiledInventory | None:
             cfg = InventoryConfigSpec.model_validate(decl.table)
         except ValidationError as e:
             raise InventoryError(f"{decl.origin}: [inventory] {e}") from e
-        return compile_inventory(cfg=cfg, anchor_dir=decl.anchor_dir, origin=decl.origin)
+        return _compile_inventory(
+            cfg=cfg,
+            anchor_dir=decl.anchor_dir,
+            origin=decl.origin,
+            protected=protected,
+            settings_file=_declared_file(decl),
+        )
     if tables.entry is not None:
-        return compile_inventory(
+        return _compile_inventory(
             cfg=tables.entry,
             anchor_dir=decl.anchor_dir,
             origin=_entry_origin(decl.origin, DEFAULT_INVENTORY),
+            protected=protected,
+            settings_file=_declared_file(decl),
         )
     return None
 
@@ -717,6 +1058,7 @@ def build_binding_from_declarations(
     declarations: list[InventoryDeclaration],
     user_settings: "UserSettingsModel | None",
     user_settings_file: "Path | None" = None,
+    protected: "Callable[[], ProtectedPaths] | None" = None,
 ) -> BuiltBinding:
     """Run the §8 walk for ``default`` over already-read tables: the one place that decides it.
 
@@ -727,6 +1069,8 @@ def build_binding_from_declarations(
     ``creds`` sub-table as its ``[creds]``. *user_settings_file* names the
     file *user_settings* came from (for error text and anchoring); it
     defaults to :func:`~otto.config.user_settings.user_settings_path`.
+    *protected* is the view's protected-file catalog, which the compiled
+    table's env carries; ``None`` outside a view.
 
     Raises:
         otto.inventory.errors.InventoryError: A table does not compile, two
@@ -735,7 +1079,8 @@ def build_binding_from_declarations(
     """
     tables = _default_tables(declarations)
     compiled = _agreed(
-        [c for t in tables if (c := _compile_declaration(t)) is not None], what="[inventory] tables"
+        [c for t in tables if (c := _compile_declaration(t, protected=protected)) is not None],
+        what="[inventory] tables",
     )
     creds = _resolve_creds(
         tables, user_settings=user_settings, user_settings_file=user_settings_file
@@ -750,7 +1095,13 @@ def build_binding_from_declarations(
                 if user_settings.inventory is not None
                 else _entry_origin(str(path), DEFAULT_INVENTORY)
             )
-            compiled = compile_inventory(cfg=cfg, anchor_dir=path.parent, origin=origin)
+            compiled = _compile_inventory(
+                cfg=cfg,
+                anchor_dir=path.parent,
+                origin=origin,
+                protected=protected,
+                settings_file=path,
+            )
     if compiled is None:
         if creds is not None:
             raise InventoryError(
@@ -765,10 +1116,21 @@ def build_binding_from_declarations(
 
 
 def _compile_named(
-    spec: "NamedInventorySpec", *, anchor_dir: Path, origin: str
+    spec: "NamedInventorySpec",
+    *,
+    anchor_dir: Path,
+    origin: str,
+    protected: "Callable[[], ProtectedPaths] | None",
+    settings_file: Path,
 ) -> CompiledInventory:
     """Compile one ``[[inventories]]`` entry, its own ``creds`` sub-table attached (spec 7.5)."""
-    compiled = compile_inventory(cfg=spec, anchor_dir=anchor_dir, origin=origin)
+    compiled = _compile_inventory(
+        cfg=spec,
+        anchor_dir=anchor_dir,
+        origin=origin,
+        protected=protected,
+        settings_file=settings_file,
+    )
     if spec.creds is None:
         return compiled
     from ..creds.config import compile_creds  # deferred: bootstrap path
@@ -784,11 +1146,16 @@ def _named_compiled(
     declarations: list[InventoryDeclaration],
     user_settings: "UserSettingsModel | None",
     user_settings_file: "Path | None",
+    protected: "Callable[[], ProtectedPaths] | None",
 ) -> CompiledInventory | None:
     """Run the walk for one name but ``default``: the declaring projects, else the user file."""
     candidates = [
         _compile_named(
-            _file_entries(d)[name], anchor_dir=d.anchor_dir, origin=_entry_origin(d.origin, name)
+            _file_entries(d)[name],
+            anchor_dir=d.anchor_dir,
+            origin=_entry_origin(d.origin, name),
+            protected=protected,
+            settings_file=_declared_file(d),
         )
         for d in declarations
         if name in _entry_names(d.inventories)
@@ -802,7 +1169,13 @@ def _named_compiled(
     if entry is None:
         return None
     path = _user_file(user_settings_file)
-    return _compile_named(entry, anchor_dir=path.parent, origin=_entry_origin(str(path), name))
+    return _compile_named(
+        entry,
+        anchor_dir=path.parent,
+        origin=_entry_origin(str(path), name),
+        protected=protected,
+        settings_file=path,
+    )
 
 
 def _key_of(compiled: CompiledInventory, inventory: Inventory) -> BindingKey:
@@ -835,6 +1208,7 @@ def _built_named(
     declarations: list[InventoryDeclaration],
     user_settings: "UserSettingsModel | None",
     user_settings_file: "Path | None",
+    protected: "Callable[[], ProtectedPaths] | None",
 ) -> "_BuiltMember | None":
     """Build one name but ``default`` by its own walk, with its key; ``None`` when undeclared."""
     compiled = _named_compiled(
@@ -842,6 +1216,7 @@ def _built_named(
         declarations=declarations,
         user_settings=user_settings,
         user_settings_file=user_settings_file,
+        protected=protected,
     )
     if compiled is None:
         return None
@@ -874,6 +1249,7 @@ def build_named_inventory_from_declarations(
         declarations=declarations,
         user_settings=user_settings,
         user_settings_file=user_settings_file,
+        protected=None,
     )
     return None if built is None else built.inventory
 
@@ -929,11 +1305,55 @@ def _bare_refused_by(declarations: list[InventoryDeclaration]) -> dict[Path, str
     }
 
 
+@final
+@dataclass(frozen=True, kw_only=True)
+class _EagerBuild:
+    """What :func:`_build_eagerly` built: ``default``'s binding and every other name."""
+
+    binding: BuiltBinding
+    """The ``default`` walk's binding, built unconditionally."""
+    named: Mapping[str, _BuiltMember]
+    """Every other declared name's inventory and key, in sorted name order."""
+
+
+def _build_eagerly(
+    *,
+    declarations: list[InventoryDeclaration],
+    user_settings: "Callable[[], UserSettingsModel | None]",
+    binding: Callable[[], BuiltBinding],
+    named: "Callable[[str], _BuiltMember | None]",
+) -> _EagerBuild:
+    """Build every inventory a view holds, in the one eager order: THE eager-validation core.
+
+    First the user settings must have read (*user_settings* raises for a
+    broken file); then ``default``'s binding is resolved, unconditionally;
+    then every other name the files declare, in sorted order. The first
+    failure raises, so two broken names always report the same one, whichever
+    route asks. The builders are the caller's: a view built now passes its
+    direct builders (:func:`build_inventory_view_from_declarations`), a
+    deferred view its own memoized ones (:func:`require_eager`).
+
+    Raises:
+        otto.inventory.errors.InventoryError: The user file cannot be read, or
+            a name fails to build.
+    """
+    user = user_settings()
+    bound = binding()
+    members: dict[str, _BuiltMember] = {}
+    for name in sorted(_named_inventories(declarations, user)):
+        member = named(name)
+        if member is None:  # pragma: no cover - every listed name is declared somewhere
+            continue
+        members[name] = member
+    return _EagerBuild(binding=bound, named=members)
+
+
 def build_inventory_view_from_declarations(
     *,
     declarations: list[InventoryDeclaration],
     user_settings: "UserSettingsModel | None",
     user_settings_file: "Path | None" = None,
+    settings_files: Sequence[Path] = (),
 ) -> InventoryView:
     """Build every inventory the files declare, by name, over already-read tables.
 
@@ -944,15 +1364,43 @@ def build_inventory_view_from_declarations(
     :func:`~otto.models.settings.check_inventory_declarations` (D6 included)
     as it is walked.
 
+    The view's :attr:`~otto.inventory.InventoryView.protected` is
+    :func:`protected_paths` over these tables and *settings_files* (the
+    active projects' settings files, those declaring nothing included),
+    computed on first call; every inventory's env carries the same one.
+
     Raises:
         otto.inventory.errors.InventoryError: Any name fails to build, or a
             project file contradicts itself.
     """
-    binding = build_binding_from_declarations(
-        declarations=declarations,
-        user_settings=user_settings,
-        user_settings_file=user_settings_file,
+    protected = functools.cache(
+        functools.partial(
+            protected_paths,
+            settings_files=tuple(settings_files),
+            declarations=tuple(declarations),
+            user_settings=user_settings,
+            user_settings_file=user_settings_file,
+        )
     )
+    built = _build_eagerly(
+        declarations=declarations,
+        user_settings=lambda: user_settings,
+        binding=functools.partial(
+            build_binding_from_declarations,
+            declarations=declarations,
+            user_settings=user_settings,
+            user_settings_file=user_settings_file,
+            protected=protected,
+        ),
+        named=functools.partial(
+            _built_named,
+            declarations=declarations,
+            user_settings=user_settings,
+            user_settings_file=user_settings_file,
+            protected=protected,
+        ),
+    )
+    binding = built.binding
     inventories: dict[str, Inventory] = {}
     keys: dict[str, BindingKey] = {}
     if binding.inventory is not None:
@@ -961,19 +1409,14 @@ def build_inventory_view_from_declarations(
         # memo_identity() refuses the view rather than inventing an identity.
         if binding.compiled is not None:
             keys[DEFAULT_INVENTORY] = _key_of(binding.compiled, binding.inventory)
-    for name in sorted(_named_inventories(declarations, user_settings)):
-        built = _built_named(
-            name,
-            declarations=declarations,
-            user_settings=user_settings,
-            user_settings_file=user_settings_file,
-        )
-        if built is None:  # pragma: no cover - every listed name is declared somewhere
-            continue
-        inventories[name] = built.inventory
-        keys[name] = built.key
+    for name, member in built.named.items():
+        inventories[name] = member.inventory
+        keys[name] = member.key
     return InventoryView(
-        inventories=inventories, keys=keys, bare_refused_by=_bare_refused_by(declarations)
+        inventories=inventories,
+        keys=keys,
+        bare_refused_by=_bare_refused_by(declarations),
+        protected=protected,
     )
 
 
@@ -991,6 +1434,7 @@ def build_inventory_view(
         declarations=declarations,
         user_settings=_read_user_settings(user_settings_path),
         user_settings_file=user_settings_path,
+        settings_files=_settings_files(projects),
     )
 
 
@@ -1008,28 +1452,85 @@ class _DeferredCatalog(Mapping[str, Inventory]):
     the user file could have supplied, is "contained" and raises it too, so a
     reference names the broken file rather than "no inventory is configured".
     Listing (``iter``) shows the projects' names alone.
+
+    The read is single-flight: a caller that arrives while it runs waits on
+    the lock and receives its result, so no consumer (the protected-file
+    catalog least of all, which keeps what it saw) ever reads a snapshot
+    that is not there yet. It is a short local file read, and every
+    consumer needs its result, so waiting is the contract.
+
+    The catalog keeps every active project it was built over
+    (:attr:`projects`), those declaring no inventory included, and derives
+    the settings files it protects from them; keeping them reads nothing.
     """
 
     def __init__(
-        self, *, declarations: list[InventoryDeclaration], user_settings_path: "Path | None"
+        self,
+        *,
+        projects: "Sequence[Project]",
+        declarations: list[InventoryDeclaration],
+        user_settings_path: "Path | None",
     ) -> None:
+        self.projects: "tuple[Project, ...]" = tuple(projects)
+        """Every active project the catalog was built over, in the order given."""
         self._declarations = declarations
         self._user_settings_path = user_settings_path
+        self._settings_files = _settings_files(self.projects)
+        self._lock = threading.Lock()
         self._user: "UserSettingsModel | InventoryError | None" = None
         self._user_read = False
+        self._protected: ProtectedPaths | None = None
+        self._binding: "BuiltBinding | Exception | None" = None
         self._built: dict[str, "_BuiltMember | Exception"] = {}
 
     def _user_settings(self) -> "UserSettingsModel | None":
-        """Return the one user-file snapshot, reading it on the first call."""
+        """Return the one user-file snapshot, reading it on the first call.
+
+        The snapshot (or the error) is assigned before ``_user_read`` is set,
+        under the lock, so the unlocked check never sees a flag without its
+        result.
+        """
         if not self._user_read:
-            self._user_read = True
-            try:
-                self._user = _read_user_settings(self._user_settings_path)
-            except InventoryError as e:
-                self._user = e
+            with self._lock:
+                if not self._user_read:
+                    try:
+                        self._user = _read_user_settings(self._user_settings_path)
+                    except InventoryError as e:
+                        self._user = e
+                    self._user_read = True
         if isinstance(self._user, InventoryError):
             raise self._user
         return self._user
+
+    def protected(self) -> ProtectedPaths:
+        """Return the view's protected-file catalog, computed on the first call.
+
+        From the one user-file snapshot. A user file that cannot be read
+        gives :func:`unreadable_user_catalog`, under which nothing renders:
+        the files it names cannot be protected, so no partial catalog stands
+        in for the complete one. A view that renders nothing (a hand-written
+        lab, a ``.json`` inventory) works on as before. Two first callers
+        racing compute the same value from that one snapshot, so the memo
+        needs no lock.
+        """
+        if self._protected is None:
+            try:
+                user = self._user_settings()
+                unreadable = False
+            except InventoryError:
+                user, unreadable = None, True
+            catalog = protected_paths(
+                settings_files=self._settings_files,
+                declarations=self._declarations,
+                user_settings=user,
+                user_settings_file=self._user_settings_path,
+            )
+            self._protected = (
+                unreadable_user_catalog(catalog, user_settings_file=self._user_settings_path)
+                if unreadable
+                else catalog
+            )
+        return self._protected
 
     def _user_error(self) -> "InventoryError | None":
         """Return the error reading the user file, or ``None`` when it read."""
@@ -1050,6 +1551,41 @@ class _DeferredCatalog(Mapping[str, Inventory]):
             names.add(DEFAULT_INVENTORY)
         return sorted(names)
 
+    def default_binding(self) -> BuiltBinding:
+        """Return ``default``'s binding, walked once (:func:`build_binding_from_declarations`).
+
+        The walk's result, or its error, is kept and re-raised on every call,
+        so ``default``'s built member and an eager check of the view hold
+        the same instances.
+        """
+        if self._binding is None:
+            try:
+                self._binding = build_binding_from_declarations(
+                    declarations=self._declarations,
+                    user_settings=self._user_settings(),
+                    user_settings_file=self._user_settings_path,
+                    protected=self.protected,
+                )
+            except Exception as e:  # noqa: BLE001 - memoized, then re-raised below
+                self._binding = e
+        if isinstance(self._binding, Exception):
+            raise self._binding
+        return self._binding
+
+    def build_eagerly(self) -> None:
+        """Build every name now, in the eager order (:func:`_build_eagerly`), keeping each result.
+
+        Over this catalog's own single-flight user snapshot, its memoized
+        ``default`` walk and its memoized names, so a later lookup returns
+        the instances built here. Raises what the eager core raises.
+        """
+        _build_eagerly(
+            declarations=self._declarations,
+            user_settings=self._user_settings,
+            binding=self.default_binding,
+            named=self.built,
+        )
+
     def built(self, name: str) -> _BuiltMember:
         """Return *name*'s inventory and key, building it on first access."""
         if name not in self._built:
@@ -1065,11 +1601,7 @@ class _DeferredCatalog(Mapping[str, Inventory]):
     def _build(self, name: str) -> _BuiltMember:
         user = self._user_settings()
         if name == DEFAULT_INVENTORY:
-            binding = build_binding_from_declarations(
-                declarations=self._declarations,
-                user_settings=user,
-                user_settings_file=self._user_settings_path,
-            )
+            binding = self.default_binding()
             if binding.compiled is None or binding.inventory is None:
                 raise KeyError(name)
             return _BuiltMember(
@@ -1080,6 +1612,7 @@ class _DeferredCatalog(Mapping[str, Inventory]):
             declarations=self._declarations,
             user_settings=user,
             user_settings_file=self._user_settings_path,
+            protected=self.protected,
         )
         if built is None:
             raise KeyError(name)
@@ -1143,14 +1676,52 @@ def deferred_inventory_view(
     declarations, on first access, and its result or error is kept: a broken
     or disagreeing ``default`` fails only where ``default`` is used. ``default``
     is built by :func:`build_binding_from_declarations`.
+
+    The view's :attr:`~otto.inventory.InventoryView.protected` catalog is
+    computed on its first call, from the same user-file snapshot.
     """
     declarations = _project_declarations(projects)
-    catalog = _DeferredCatalog(declarations=declarations, user_settings_path=user_settings_path)
+    catalog = _DeferredCatalog(
+        projects=projects, declarations=declarations, user_settings_path=user_settings_path
+    )
     return InventoryView(
         inventories=catalog,
         keys=_DeferredKeys(catalog),
         bare_refused_by=_bare_refused_by(declarations),
+        protected=catalog.protected,
     )
+
+
+def deferred_catalog_projects(view: InventoryView) -> "list[Project] | None":
+    """Return the active projects a deferred view was built over, or ``None`` for another view.
+
+    The projects :func:`deferred_inventory_view` was given, those declaring
+    no inventory included, in their order, as a fresh list on every call; a
+    copy of the view (:meth:`~otto.inventory.InventoryView.for_project`)
+    answers the same. Reads nothing.
+    """
+    catalog = view.inventories
+    return list(catalog.projects) if isinstance(catalog, _DeferredCatalog) else None
+
+
+def require_eager(view: InventoryView) -> None:
+    """Hold a supplied view to the eager validation a view built now gets.
+
+    For a deferred view (:func:`deferred_inventory_view`), the eager core
+    (``_build_eagerly``) runs over the view's own catalog: its one
+    user-file snapshot, its memoized ``default`` walk and its memoized names,
+    so the instances it checks are the ones every later lookup returns, and
+    the user file is not read again. Any other view was built eagerly, or by
+    its caller, and is left alone.
+
+    Raises:
+        otto.inventory.errors.InventoryError: The user file cannot be read, or
+            a name fails to build; the error an eager build reports first.
+    """
+    catalog = view.inventories
+    if not isinstance(catalog, _DeferredCatalog):
+        return
+    catalog.build_eagerly()
 
 
 def build_inventory_from_declarations(

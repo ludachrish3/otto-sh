@@ -243,6 +243,12 @@ class Surface:
     measures one refused attempt rather than whatever a stray listener says.
     """
 
+    templated_lab: bool = False
+    """Generate the project with a ``jsonnet`` lab source as well.
+
+    See ``generate_project``'s ``templated_lab``: an entry, a library under its
+    import root and the json inventory it renders hosts from."""
+
     headroom: float = HEADROOM
     """How far above its baseline this surface's counters may grow (see :func:`ceiling`).
 
@@ -607,6 +613,27 @@ SURFACES: list[Surface] = [
     # host measures the machine it runs on, not otto.
     _verb_surface("tracked_host_probe", ["otto", "host", "local", "probe", "--help"], tracked=True),
     _verb_surface("tracked_host_power", ["otto", "host", "local", "power", "--help"], tracked=True),
+    # A WARM TAB IN A TEMPLATED PROJECT: `otto host <TAB>` with a jsonnet lab
+    # source beside the json one. Warm, so the measured run is the shim's stat
+    # pass over the stored key paths (the entry, its import root and what is
+    # under it, the inventory file) plus one cache read: it evaluates nothing
+    # and reads no template, library or inventory. Tracked until someone pins
+    # the number.
+    Surface(
+        "tracked_tab_warm_templated",
+        ["otto"],
+        project_files=50,
+        project_dirs_count=5,
+        real_entry=True,
+        warm=True,
+        templated_lab=True,
+        tracked=True,
+        env_extra=(
+            ("_OTTO_COMPLETE", "complete_bash"),
+            ("COMP_WORDS", "otto host "),
+            ("COMP_CWORD", "2"),
+        ),
+    ),
 ]
 
 # The payload still carries the module inventory (`modules`, `otto_modules`,
@@ -1652,7 +1679,13 @@ def _quiet_cwd() -> Path:
 
 
 @functools.cache
-def _generated_repo_for(key: str, files: int, dirs: int, ssh_lab_port: int | None = None) -> Path:
+def _generated_repo_for(
+    key: str,
+    files: int,
+    dirs: int,
+    ssh_lab_port: int | None = None,
+    templated_lab: bool = False,
+) -> Path:
     """Build (once per surface) a generated project and return its path.
 
     Keyed on the surface's NAME and shape rather than on the ``Surface`` itself:
@@ -1677,7 +1710,14 @@ def _generated_repo_for(key: str, files: int, dirs: int, ssh_lab_port: int | Non
     # lab source is declared — so every project-bearing surface's count shows
     # what a real project actually costs, rather than an empty init module nobody
     # ships.
-    return generate_project(root, files=files, dirs=dirs, realistic=True, ssh_lab_port=ssh_lab_port)
+    return generate_project(
+        root,
+        files=files,
+        dirs=dirs,
+        realistic=True,
+        ssh_lab_port=ssh_lab_port,
+        templated_lab=templated_lab,
+    )
 
 
 @functools.cache
@@ -1714,7 +1754,13 @@ def _surface_repo(surface: Surface) -> Path:
     if surface.project_files is None:
         raise ValueError(f"surface {surface.key!r} carries no generated project")
     port = _budget_ssh_port() if surface.ssh_lab else None
-    return _generated_repo_for(surface.key, surface.project_files, surface.project_dirs_count, port)
+    return _generated_repo_for(
+        surface.key,
+        surface.project_files,
+        surface.project_dirs_count,
+        port,
+        surface.templated_lab,
+    )
 
 
 def fixture_root(surface: Surface) -> Path:

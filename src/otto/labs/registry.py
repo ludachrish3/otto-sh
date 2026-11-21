@@ -4,8 +4,10 @@ A backend registers a name, a configuration model and a factory from an
 ``init`` module, and a ``[[lab.sources]]`` entry's ``backend = "<name>"``
 selects it. Otto parses the entry's other keys with the configuration model
 after every project's init modules have run, then builds the source with the
-factory. The built-in ``json`` backend is registered by
-:class:`~otto.registry.Ref`, so naming it imports nothing.
+factory. The built-in ``json`` and ``jsonnet`` backends are registered by
+:class:`~otto.registry.Ref`, so naming either imports nothing. ``jsonnet``
+yields its name: a team's own registration of ``jsonnet`` replaces it, with a
+warning, rather than failing as a duplicate.
 """
 
 from collections.abc import Callable
@@ -93,7 +95,11 @@ def register_lab_repository(
 
 
 def _register_builtins() -> None:
-    """Register the built-in lab repositories by reference."""
+    """Register the built-in lab repositories by reference.
+
+    ``jsonnet`` yields its name, so a team that registered its own
+    ``jsonnet`` lab source before otto shipped one keeps it.
+    """
     LAB_REPOSITORIES.register(
         name="json",
         entry=configured_backend(
@@ -101,6 +107,15 @@ def _register_builtins() -> None:
             factory=Ref(target="otto.labs.json_repository:_json_lab_source"),
             metadata=None,
         ),
+    )
+    LAB_REPOSITORIES.register(
+        name="jsonnet",
+        entry=configured_backend(
+            config=Ref(target="otto.labs.jsonnet_source:JsonnetLabSourceConfig"),
+            factory=Ref(target="otto.labs.jsonnet_source:_jsonnet_lab_source"),
+            metadata=None,
+        ),
+        yielding=True,
     )
 
 

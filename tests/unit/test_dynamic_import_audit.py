@@ -128,6 +128,7 @@ COMPUTED_SITES: list[tuple[str, str, str]] = [
     ("otto/reservations/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/session/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/suite/__init__.py", "__getattr__", FACADE_RESOLVER),
+    ("otto/templating/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/testing/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/tunnel/__init__.py", "__getattr__", FACADE_RESOLVER),
 ]
@@ -967,7 +968,8 @@ CURRENT_LANDING = "P9b"
 # otto._terminal (the one usable-terminal decision the shim, the console pin and the
 # host's logins share), makes it 78. otto.home_root (the one reader of OTTO_HOME and
 # the default xdir) and otto.output_dir (the one library output-directory resolver)
-# make it 80.
+# make it 80. otto.templating (Jsonnet templates, a foundation leaf over otto.errors)
+# makes it 81.
 LAYERED_AT = {
     "P1a": 19,
     "P1b": 35,
@@ -979,7 +981,7 @@ LAYERED_AT = {
     "P7": 55,
     "P8": 56,
     "P9a": 62,
-    "P9b": 80,
+    "P9b": 81,
 }
 CYCLE_AT = {
     "P1a": 22,
@@ -1132,7 +1134,9 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/session/__init__.py", "otto.session.errors:LoggingLevelsConflictError", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.errors:ProjectSelectionError", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.errors:ProjectLoadError", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.lab:BuiltLab", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.lab:build_lab", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.lab:build_lab_and_view", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.lab:merge_host_preferences", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.logs:install_logging", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.logs:merge_logging_levels", FACADE_BINDING),
@@ -1467,10 +1471,10 @@ def test_the_landing_anchor_allows_a_landing_in_progress_only() -> None:
     assert landing_problems(43, 13, "P4") == []
     assert "bump CURRENT_LANDING to P5" in landing_problems(48, 11, "P3")[0]
     assert landing_problems(70, 0, "P9a") == []
-    assert "bump CURRENT_LANDING to P9b" in landing_problems(80, 0, "P9a")[0]
-    assert landing_problems(80, 0, "P9b") == []
-    for counts in [[79, 0], [81, 0], [80, 1]]:
-        assert "the last landing, has exactly [80, 0]" in landing_problems(*counts, "P9b")[0]
+    assert "bump CURRENT_LANDING to P9b" in landing_problems(81, 0, "P9a")[0]
+    assert landing_problems(81, 0, "P9b") == []
+    for counts in [[80, 0], [82, 0], [81, 1]]:
+        assert "the last landing, has exactly [81, 0]" in landing_problems(*counts, "P9b")[0]
     assert "'P0' is not one of LANDINGS" in landing_problems(19, 22, "P0")[0]
 
 

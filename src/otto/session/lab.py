@@ -1,11 +1,15 @@
 """The lab a run uses, built from the projects' configuration exactly as the CLI builds it."""
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from typing_extensions import final
 
 from .errors import LabBuildError
 
 if TYPE_CHECKING:
     from ..config.project import Project
+    from ..inventory.view import InventoryView
     from ..labs.loader import Lab
 
 
@@ -28,8 +32,38 @@ def merge_host_preferences(*, projects: "list[Project]") -> dict[str, dict[str, 
     return merged
 
 
-def build_lab(projects: "list[Project]", *, labs: list[str]) -> "Lab":
-    """Build lab(s) *labs* exactly as ``otto --lab`` does.
+@final
+@dataclass(frozen=True, kw_only=True)
+class BuiltLab:
+    """A built lab and the inventory view it was built through."""
+
+    lab: "Lab"
+    """The lab, as :func:`build_lab` returns it."""
+
+    view: "InventoryView"
+    """The operation's inventory view, with every name built, which the lab resolved through."""
+
+
+def build_lab(
+    projects: "list[Project]", *, labs: list[str], view: "InventoryView | None" = None
+) -> "Lab":
+    """Build lab(s) *labs* exactly as ``otto --lab`` does, and return the lab.
+
+    The lab of :func:`build_lab_and_view`, whose description of the build,
+    its arguments and its errors hold here unchanged; call that instead to
+    keep the inventory view the lab was built through.
+    """
+    return build_lab_and_view(projects, labs=labs, view=view).lab
+
+
+def build_lab_and_view(
+    projects: "list[Project]", *, labs: list[str], view: "InventoryView | None" = None
+) -> BuiltLab:
+    """Build lab(s) *labs* exactly as ``otto --lab`` does, and keep the view it read through.
+
+    A caller that reads the inventories again after the build (``otto lab
+    explain`` asks each one how old its snapshot is) reads them through the
+    returned :attr:`BuiltLab.view`, so nothing is built twice.
 
     *labs* are component lab names that are already split: a ``+``-joined
     string such as ``"a+b"`` is not split here (``otto --lab a+b`` and
@@ -44,7 +78,12 @@ def build_lab(projects: "list[Project]", *, labs: list[str]) -> "Lab":
     configured inventory by name) is built here, once, and handed to the
     load, so every source sees the same one. Building it does no I/O, but a
     BROKEN inventory declaration refuses here rather than surfacing later as
-    "no inventory is configured". The load decides every component's
+    "no inventory is configured". *view*, when given, is the view of an
+    operation that loads more than once (the ``otto init`` doctor's pass, one
+    view over every load and its listing): it is used instead, its every name
+    built now in the order a view built here would be
+    (:func:`~otto.inventory.config.require_eager`), so a broken declaration
+    refuses with the same error either way. The load decides every component's
     availability once, in one status report over every source, the same
     report ``otto --list-labs`` shows. Last, each project's declared docker
     services become placeholder hosts, so they list and complete before
@@ -81,11 +120,14 @@ def build_lab(projects: "list[Project]", *, labs: list[str]) -> "Lab":
 
     # Function-local: `otto.inventory` pulls ~77 otto modules onto every
     # caller, and a Lab-object open_context never builds a lab at all.
-    from ..inventory.config import build_inventory_view
+    from ..inventory.config import build_inventory_view, require_eager
     from ..inventory.errors import InventoryError
 
     try:
-        view = build_inventory_view(projects=projects)
+        if view is None:
+            view = build_inventory_view(projects=projects)
+        else:
+            require_eager(view)
     except InventoryError as e:
         raise LabBuildError(
             f"inventory unavailable: {e}", field=None, kind="inventory", detail=str(e)
@@ -106,4 +148,4 @@ def build_lab(projects: "list[Project]", *, labs: list[str]) -> "Lab":
     from ..docker.compose import register_declared_container_hosts
 
     register_declared_container_hosts(lab, projects)
-    return lab
+    return BuiltLab(lab=lab, view=view)

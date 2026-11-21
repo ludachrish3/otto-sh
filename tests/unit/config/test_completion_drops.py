@@ -494,8 +494,8 @@ def test_describe_inventory_says_when_completion_can_never_cache(tmp_path, monke
     unfingerprinted = SimpleNamespace(label="probe:live", fingerprint=lambda: None)
     monkeypatch.setattr(
         "otto.inventory.config.build_binding_from_declarations",
-        lambda *, declarations, user_settings, user_settings_file=None: BuiltBinding(
-            compiled=None, creds=None, inventory=unfingerprinted
+        lambda *, declarations, user_settings, user_settings_file=None, protected=None: (
+            BuiltBinding(compiled=None, creds=None, inventory=unfingerprinted)
         ),
     )
 

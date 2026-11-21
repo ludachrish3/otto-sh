@@ -223,6 +223,73 @@ def test_wheel_gaps_rejects_a_py3_none_wheel_for_another_arch():
 
 
 # --------------------------------------------------------------------------
+# Claim 4 applies only where the dependency markers select the package
+# --------------------------------------------------------------------------
+
+_AARCH64_ONLY = "sys_platform == 'linux' and platform_machine == 'aarch64'"
+
+
+def _marked_lock(marker, wheels, children=()):
+    return {
+        "package": [
+            {"name": "otto-sh", "dependencies": [{"name": "binding", "marker": marker}]},
+            {
+                "name": "binding",
+                "dependencies": [{"name": c} for c in children],
+                "wheels": _wheels(*wheels),
+            },
+            *(
+                {"name": c, "wheels": _wheels(f"{c}-1.0-cp310-cp310-linux_aarch64.whl")}
+                for c in children
+            ),
+        ]
+    }
+
+
+def test_claim_4_skips_a_package_its_marker_deselects_on_the_target():
+    # gojsonnet's shape: Linux aarch64 only, so the x86_64 target owes it no wheel.
+    mod = _load_gate()
+    lock = _marked_lock(_AARCH64_ONLY, ["binding-1.0-cp310-cp310-manylinux2014_aarch64.whl"])
+    assert mod.closure_wheel_gaps(lock, [(3, 10)]) == []
+
+
+def test_claim_4_checks_a_package_its_marker_selects_on_the_target():
+    # INJECTED: the marker selects x86_64 Linux, the wheels serve aarch64 only.
+    mod = _load_gate()
+    lock = _marked_lock(
+        "platform_machine == 'x86_64'", ["binding-1.0-cp310-cp310-manylinux2014_aarch64.whl"]
+    )
+    gaps = mod.closure_wheel_gaps(lock, [(3, 10)])
+    assert len(gaps) == 1
+    assert "binding: no wheel for Python 3.10" in gaps[0]
+
+
+def test_claim_4_reads_a_python_version_marker_per_minor():
+    # Selected below 3.15 only: a missing cp315 wheel is no gap, a missing cp311 one is.
+    mod = _load_gate()
+    lock = _marked_lock(
+        "python_version < '3.15'", ["binding-1.0-cp310-cp310-manylinux_2_17_x86_64.whl"]
+    )
+    gaps = mod.closure_wheel_gaps(lock, [(3, 10), (3, 11), (3, 15)])
+    assert len(gaps) == 1
+    assert "3.11" in gaps[0]
+
+
+def test_claim_4_skips_what_only_a_deselected_package_pulls_in():
+    # The child carries no marker of its own; its only path runs through the parent's.
+    mod = _load_gate()
+    lock = _marked_lock(
+        _AARCH64_ONLY, ["binding-1.0-cp310-cp310-manylinux2014_aarch64.whl"], children=["child"]
+    )
+    assert mod.runtime_closure(lock, mod.target_environment((3, 10))) == {}
+    assert mod.closure_wheel_gaps(lock, [(3, 10)]) == []
+    aarch64 = mod.target_environment((3, 10), arch="aarch64")
+    assert mod.runtime_closure(lock, aarch64).keys() == {"binding", "child"}
+    # With no environment the walk ignores markers: the table claims see every package.
+    assert mod.runtime_closure(lock).keys() == {"binding", "child"}
+
+
+# --------------------------------------------------------------------------
 # Docs parsing
 # --------------------------------------------------------------------------
 

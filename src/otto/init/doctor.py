@@ -18,6 +18,7 @@ from typing_extensions import final, override
 from .area_dirs import DEFAULT_EMBEDDED_GCOV_DIR
 from .areas import (
     AREA_NAMES,
+    SourceFiles,
     deferred_lab_sources,
     detect_areas,
     instruction_libs,
@@ -40,7 +41,9 @@ if TYPE_CHECKING:
     from ..inventory.protocol import Inventory
     from ..inventory.resolve import ResolvedEntry
     from ..inventory.view import InventoryView
+    from ..labs.composite import LabStatusReport
     from ..labs.json_repository import LabDocument
+    from ..labs.protocol import LabStatus
     from ..vendoring import CheckResult
 
 VerdictState = Literal["ok", "failed", "absent", "blocked"]
@@ -128,6 +131,19 @@ def check_project(root: Path, *, catalog: "InventoryView | None" = None) -> Doct
     attributed to its inventory's name once more than ``default`` is
     checked.
 
+    Templating: the doctor's own checks never render a template. An
+    inventory they would check that renders a Jsonnet file
+    (:func:`~otto.inventory.json_backend.is_templated_inventory`) is left
+    unchecked, with one warning naming it, and the host entries that
+    reference it with it. A ``jsonnet`` lab source's entries are not parsed
+    here. When *root* is one of *catalog*'s projects
+    (:func:`catalog_membership`), its jsonnet sources' labs are listed and
+    loaded by dispatch's own functions through *catalog*
+    (:func:`~otto.labs.sources.lab_listing`, as ``otto --list-labs`` lists,
+    and :func:`~otto.session.build_lab`, as ``otto --lab`` loads), each
+    failure one lab problem in dispatch's words; otherwise each entry gets
+    one warning saying why it was not rendered.
+
     settings: the loader's own compile (:func:`otto.config.project.validate_settings`),
     then the check the loader runs on each ``[os_profiles]`` table after init
     (:func:`otto.host.os_profile.check_data_profiles`; this doctor imports no
@@ -180,6 +196,13 @@ def check_project(root: Path, *, catalog: "InventoryView | None" = None) -> Doct
     # declarations are still checked, once, as settings problems: a project
     # that only supplies inventories to its siblings must not pass broken.
     lab_validated = not lab_blocked and not lab_unprepared and "lab" in present
+    templating = (
+        _templating_rows(
+            root, catalog=catalog, sources=parsed.jsonnet, reported=_own_failures(doctor)
+        )
+        if parsed.jsonnet
+        else _TemplatingRows()
+    )
     unbuilt = (
         []
         if lab_validated or lab_blocked
@@ -204,7 +227,8 @@ def check_project(root: Path, *, catalog: "InventoryView | None" = None) -> Doct
         elif name == "lab" and lab_unprepared:
             verdict = _checked(name, lab_unprepared)
         elif name == "lab":
-            verdict = _checked(name, _validate_lab(doctor, parsed, profiles), detail=deferred)
+            problems = [*_validate_lab(doctor, parsed, profiles), *templating.problems]
+            verdict = _checked(name, problems, detail=deferred)
         elif name == "tests":
             verdict = _checked(name, _validate_tests(root))
         else:
@@ -213,6 +237,7 @@ def check_project(root: Path, *, catalog: "InventoryView | None" = None) -> Doct
             verdict = AreaVerdict(name, "absent", detail=f"{_ABSENT[name]}; {deferred}")
         verdicts.append(verdict or AreaVerdict(name, "absent", detail=_ABSENT[name]))
     warnings = [] if lab_blocked or lab_unprepared else _lab_warnings(doctor, parsed)
+    warnings.extend(templating.warnings)
     warnings.extend(_kmodcov_warnings(root))
     warnings.extend(_embedded_gcov_warnings(root))
     inventories = _labels(doctor)
@@ -426,20 +451,47 @@ class _DoctorInventories(Mapping[str, "Inventory"]):
         )
 
     def member(self, name: str) -> "Inventory | Exception | None":
-        """Return *name*'s inventory, ``None`` when undeclared, or why it failed to build."""
+        """Return *name*'s inventory, ``None`` when undeclared, or why it failed to build.
+
+        An inventory that renders a template
+        (:func:`~otto.inventory.json_backend.is_templated_inventory`) is
+        never handed to the doctor's checks: it is a :class:`_NotRendered`
+        naming it, which :meth:`not_rendered` reports and :meth:`failure`
+        does not.
+        """
         from ..inventory.errors import InventoryError
+        from ..inventory.json_backend import is_templated_inventory
 
         if name not in self._members:
             try:
-                self._members[name] = self._build(name)
+                built = self._build(name)
             except (InventoryError, ValueError) as e:
                 self._members[name] = e
+            else:
+                self._members[name] = (
+                    _NotRendered(_NOT_DISCOVERED.format(name=name))
+                    if built is not None and is_templated_inventory(built)
+                    else built
+                )
         return self._members[name]
 
     def failure(self, name: str) -> "Exception | None":
-        """Return why *name* failed to build, or ``None``."""
+        """Return why *name* failed to build, or ``None`` (a templated inventory did not fail)."""
         member = self.member(name)
-        return member if isinstance(member, Exception) else None
+        return member if isinstance(member, Exception) and not _is_not_rendered(member) else None
+
+    def not_rendered(self, name: str) -> "str | None":
+        """Return *name*'s row when it is a templated inventory the checks skip, else ``None``."""
+        member = self.member(name)
+        return str(member) if _is_not_rendered(member) else None
+
+    def skipped(self, names: "list[str]") -> set[str]:
+        """Return the names of *names* the checks do not resolve: failed or templated."""
+        return {
+            name
+            for name in names
+            if self.failure(name) is not None or self.not_rendered(name) is not None
+        }
 
     @property
     def declared(self) -> list[str]:
@@ -471,6 +523,20 @@ class _DoctorInventories(Mapping[str, "Inventory"]):
     @override
     def __len__(self) -> int:
         return sum(1 for _ in self)
+
+
+_NOT_DISCOVERED = "{name}: not rendered by the doctor's own checks; see the templating rows"
+"""The warning of a templated inventory the doctor's own checks leave unchecked."""
+
+
+@final
+class _NotRendered(Exception):  # noqa: N818 - a kept outcome, not an error
+    """A templated inventory the doctor's checks skip, kept in its place; its text is the row."""
+
+
+def _is_not_rendered(member: object) -> bool:
+    """Return whether *member* is a templated inventory the checks skip."""
+    return isinstance(member, _NotRendered)
 
 
 def _catalog_member(catalog: "InventoryView", name: str) -> "Inventory | None":
@@ -568,7 +634,7 @@ def _labels(doctor: _DoctorView) -> list[InventoryLabel]:
 
     labels: list[InventoryLabel] = []
     for name in doctor.view.names():
-        if doctor.inventories.failure(name) is not None:
+        if name in doctor.inventories.skipped([name]):
             continue
         inventory = doctor.inventories[name]
         creds = creds_store_label(inventory=inventory)
@@ -583,6 +649,8 @@ class _ParsedLab:
 
     problems: list[str] = dataclasses.field(default_factory=list)
     documents: "list[LabDocument]" = dataclasses.field(default_factory=list)
+    jsonnet: list[SourceFiles] = dataclasses.field(default_factory=list)
+    """The ``jsonnet`` sources, their entries listed and never read here."""
 
     def references(self) -> "list[InventoryReference]":
         """Return every well-formed inventory reference the documents' host entries state."""
@@ -612,18 +680,334 @@ def _parse_lab_documents(root: Path) -> _ParsedLab:
 
     Only a file otto itself decodes (:func:`otto.labs.documents.otto_decodes`)
     is read: a backend whose file rule names another format reads its own
-    files, so a ``lab.yaml`` is never reported as malformed JSON.
+    files, so a ``lab.yaml`` is never reported as malformed JSON. A
+    ``jsonnet`` source (:attr:`~otto.init.areas.SourceFiles.is_jsonnet`) is
+    listed for the templating rows and never read: its entries render only
+    through dispatch (:func:`_templating_rows`).
     """
     from ..labs import documents as lab_documents
 
     problems: list[str] = []
     documents: list[LabDocument] = []
+    jsonnet: list[SourceFiles] = []
     for group in lab_file_groups(root):
-        decoded = [f for f in group if f.is_file() and lab_documents.otto_decodes(f)]
+        if group.is_jsonnet:
+            jsonnet.append(group)
+            continue
+        decoded = [f for f in group.files if f.is_file() and lab_documents.otto_decodes(f)]
         read = lab_documents.read_source(decoded)
         problems.extend(problem.reason for problem in read.problems)
         documents.extend(read.documents)
-    return _ParsedLab(problems, documents)
+    return _ParsedLab(problems, documents, jsonnet)
+
+
+# ── Templating: the rows dispatch's own functions give ────────────────────────
+
+
+@final
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class CatalogMembership:
+    """Whether a project is one of an active catalog's projects: THE templating eligibility.
+
+    Exactly one of :attr:`projects` and :attr:`refusal` is set.
+    """
+
+    project: "Project | None"
+    """The catalog's own project rooted at the inspected root, in the catalog's spelling."""
+    projects: "list[Project] | None"
+    """Every project the catalog was built over, when the root is one of them."""
+    refusal: "str | None"
+    """Why the root's templates are not rendered, when it is not a member."""
+
+
+def catalog_membership(catalog: "InventoryView | None", *, root: Path) -> CatalogMembership:
+    """Return whether the project at *root* is one of *catalog*'s projects; never raises.
+
+    *catalog* must be otto's active catalog
+    (:func:`~otto.inventory.deferred_inventory_view`), whose projects it
+    keeps (:func:`~otto.inventory.config.deferred_catalog_projects`), every
+    one of them, those declaring no inventory included. Membership is
+    :func:`~otto.config.project.project_at`'s, the predicate ``otto init``
+    picks the catalog with, so a symlink spelling of a member's root is a
+    member. Membership only: whether the root's declarations are the ones
+    the catalog read is not compared.
+    """
+    from ..config.project import project_at
+    from ..inventory.config import deferred_catalog_projects
+
+    if catalog is None:
+        return _refused("the project is not one of the active projects")
+    projects = deferred_catalog_projects(catalog)
+    if projects is None:
+        return _refused("the inventory view is not otto's active catalog")
+    project = project_at(projects, root=root)
+    if project is None:
+        return _refused("the project is not one of the catalog's projects")
+    return CatalogMembership(project=project, projects=projects, refusal=None)
+
+
+def _refused(refusal: str) -> CatalogMembership:
+    return CatalogMembership(project=None, projects=None, refusal=refusal)
+
+
+def templated_statuses(
+    report: "LabStatusReport", *, project_root: Path, sources: "list[SourceFiles]"
+) -> "list[LabStatus]":
+    """Return the status of each lab one of *sources*, a project's jsonnet sources, declares.
+
+    *report* is a listing's (:meth:`~otto.labs.sources.LabListing.outcome`)
+    and *project_root* the project's root as the report's sources carry it.
+    A source is told by its label and its project's root, as the report
+    names the sources declaring each lab.
+    """
+    labels = _source_labels(sources)
+    return [
+        status
+        for status in report.statuses_declared_in(project_root=project_root)
+        if any(
+            ref.project_root == project_root and ref.label in labels
+            for ref in report.declared_by.get(status.name, [])
+        )
+    ]
+
+
+def _source_labels(sources: "list[SourceFiles]") -> set[str]:
+    return {group.state.pending.label for group in sources if group.state is not None}
+
+
+@final
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class TemplatedOutcome:
+    """What dispatch's listing says of a project's jsonnet sources: THE templated read."""
+
+    membership: CatalogMembership
+    """Whether the project is one of the catalog's projects; nothing was listed when not."""
+    outcome: "LabStatusReport | Exception | None"
+    """The report the project is listed from, or why listing failed; ``None`` for a non-member."""
+    statuses: "list[LabStatus]"
+    """The status of each lab one of the project's jsonnet sources declares, by the report."""
+
+
+def templated_outcome(
+    view: "InventoryView | None", *, root: Path, sources: "list[SourceFiles]"
+) -> TemplatedOutcome:
+    """Return how ``otto --list-labs`` lists *sources*, the jsonnet sources of *root*'s project.
+
+    When *root* is a member of *view* (:func:`catalog_membership`), the labs
+    are listed as ``otto --list-labs`` lists them
+    (:func:`~otto.labs.sources.lab_listing` over the catalog's projects,
+    through *view*), the project's report read under the catalog's own
+    spelling of its root (:meth:`~otto.labs.sources.LabListing.outcome`),
+    and the statuses kept are those :func:`templated_statuses` picks. A
+    listing that raises anything is that error, never a traceback: a
+    third-party source may raise whatever it raises. A cancelled render,
+    however a source wrapped it (``otto.labs.drops.is_timeout``), is
+    the operation's, not the listing's, and propagates. Otherwise nothing is
+    listed or evaluated. The doctor's templating rows and the Next steps
+    panel both read this; neither lists on its own.
+    """
+    from ..labs.sources import lab_listing
+
+    membership = catalog_membership(view, root=root)
+    if view is None or membership.project is None or membership.projects is None:
+        return TemplatedOutcome(membership=membership, outcome=None, statuses=[])
+    from ..labs.drops import is_timeout
+
+    project_root = membership.project.root
+    try:
+        listing = lab_listing(projects=membership.projects, view=view)
+    except Exception as e:  # any backend's error is a row, never a traceback
+        if is_timeout(e):
+            raise  # the operation was given up on: never a row
+        return TemplatedOutcome(membership=membership, outcome=e, statuses=[])
+    outcome = listing.outcome(root=project_root)
+    if isinstance(outcome, Exception) and is_timeout(outcome):
+        raise outcome  # the project's read was given up on: never a row
+    statuses = (
+        []
+        if isinstance(outcome, Exception)
+        else templated_statuses(outcome, project_root=project_root, sources=sources)
+    )
+    return TemplatedOutcome(membership=membership, outcome=outcome, statuses=statuses)
+
+
+def _error_text(error: Exception) -> str:
+    """Return *error* as a row states it: otto's own words, or a foreign error's type and text.
+
+    The errors dispatch itself words (``otto.labs.views.LISTING_ERRORS``)
+    read as they are; any other is named by its type, as
+    :func:`_catalog_member` names a backend's.
+    """
+    from ..labs.views import LISTING_ERRORS
+
+    return str(error) if isinstance(error, LISTING_ERRORS) else f"{type(error).__name__}: {error}"
+
+
+_NOT_RENDERED = (
+    "{entry}: not rendered: {refusal}; run otto init from inside an active project, "
+    "or see otto --list-labs"
+)
+"""The warning of a jsonnet entry the doctor cannot have dispatch render."""
+
+_NO_CATALOG = (
+    "{entry}: not rendered: no protected-file catalog could be built, because a settings "
+    "file this report shows a problem with cannot be read"
+)
+"""The warning of a jsonnet entry under a catalog that refuses to render (an unreadable user file).
+
+The doctor's own checks already report the file, so the warning does not
+restate its error."""
+
+
+@final
+@dataclasses.dataclass(frozen=True)
+class _TemplatingRows:
+    """The templating rows: lab problems in dispatch's words, and not-rendered warnings."""
+
+    problems: list[str] = dataclasses.field(default_factory=list)
+    warnings: list[str] = dataclasses.field(default_factory=list)
+
+
+def _templating_rows(
+    root: Path,
+    *,
+    catalog: "InventoryView | None",
+    sources: "list[SourceFiles]",
+    reported: "set[str]",
+) -> _TemplatingRows:
+    """Return the rows of *root*'s jsonnet *sources*, from dispatch's own functions.
+
+    The doctor renders nothing itself. When *root* is a member of *catalog*
+    (:func:`catalog_membership`), the labs are listed as ``otto
+    --list-labs`` lists them (:func:`templated_outcome`), and each lab a
+    jsonnet source of *root* declares and the listing shows available is
+    loaded as ``otto --lab`` loads it (:func:`~otto.session.build_lab`,
+    through the same *catalog*, so the whole pass evaluates each entry
+    once). A lab a declaration marks unavailable is not a problem, as a
+    hand-written one's is not; the report's
+    :meth:`~otto.labs.composite.LabStatusReport.refusal` tells it from one a
+    failed source's scope holds. A failed listing, a failed source, a lab
+    only another failed source's scope holds and a failed load are each one
+    problem, in the words the panel or dispatch uses; a problem is reported
+    once, and never when its cause is an error the doctor's own checks
+    already report (*reported*, a broken user settings file, say). Under a
+    catalog that refuses to render (its
+    :attr:`~otto.inventory.ProtectedPaths.refusal`: the user settings file
+    cannot be read, which the doctor's checks report), each entry is one
+    warning and nothing is listed. A cancelled read is the operation's and
+    propagates, never a row: a load or listing error
+    ``otto.labs.drops.is_timeout`` finds a cancellation in, and an outage
+    that timed out
+    (:meth:`~otto.labs.composite.SourceUnavailable.cancellation`).
+    Otherwise each entry is one warning naming why it was not rendered, and
+    nothing is evaluated.
+    """
+    if not sources:
+        return _TemplatingRows()
+    from ..labs.drops import is_timeout
+
+    read = templated_outcome(catalog, root=root, sources=sources)
+    membership, outcome = read.membership, read.outcome
+    if catalog is None or membership.project is None or membership.projects is None:
+        refusal = membership.refusal or ""
+        return _TemplatingRows(
+            warnings=[
+                _NOT_RENDERED.format(entry=entry, refusal=refusal)
+                for group in sources
+                for entry in group.files
+            ]
+        )
+    if catalog.protected().refusal is not None:
+        return _TemplatingRows(
+            warnings=[_NO_CATALOG.format(entry=entry) for group in sources for entry in group.files]
+        )
+    projects = membership.projects
+    project_root = membership.project.root
+    rows: list[_Row] = []
+    if isinstance(outcome, Exception):
+        text = _error_text(outcome)
+        rows.append(_Row(cause=str(outcome), text=f"host source unavailable: {text}"))
+    elif outcome is not None:
+        labels = _source_labels(sources)
+        outages = [
+            outage
+            for outage in outcome.unavailable_sources
+            if outage.source.project_root == project_root and outage.source.label in labels
+        ]
+        for outage in outages:
+            cancelled = outage.cancellation()
+            if cancelled is not None:
+                raise cancelled  # the operation was given up on: never a row
+        rows.extend(
+            _Row(
+                cause=outage.diagnostic.reason,
+                text=f"source {outage.source.label} unavailable: {outage.diagnostic.reason}",
+            )
+            for outage in outages
+        )
+        reported_outages = [outage.diagnostic for outage in outages]
+        for status in read.statuses:
+            # The report's own decision (refusal): a declaration that marks
+            # the lab unavailable, or a failed source whose scope holds it.
+            refusal = outcome.refusal(name=status.name)
+            if refusal is None:
+                rows.extend(_load_problem(projects, name=status.name, view=catalog))
+            elif refusal.declared:
+                continue  # declared unavailable, as a hand-written lab may be: not a problem
+            elif is_timeout(refusal):
+                raise refusal  # another source's cancelled read: the operation's, never a row
+            elif refusal.diagnostic not in reported_outages:
+                reason = refusal.diagnostic.reason
+                rows.append(_Row(cause=reason, text=f"{status.name} — unavailable: {reason}"))
+    problems = [row.text for row in rows if not row.caused_by(reported)]
+    return _TemplatingRows(problems=list(dict.fromkeys(problems)))
+
+
+@final
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _Row:
+    """One templating problem: its row, and the text of the error that caused it."""
+
+    cause: str
+    text: str
+
+    def caused_by(self, reported: "set[str]") -> bool:
+        """Return whether one of the *reported* errors is this row's cause, or ends it.
+
+        The cause is the reported error itself, or quotes it last after
+        ``": "``: a render whose ``otto`` argument could not be built names
+        its entry and the error's class before the inventory's own error
+        (``<entry>: <Class>: <error>``), which the doctor's checks already
+        report, so that row is the same problem and is not shown twice. A
+        cause that merely contains a reported text elsewhere is a distinct
+        problem, and is shown.
+        """
+        return any(
+            text and (self.cause == text or self.cause.endswith(f": {text}")) for text in reported
+        )
+
+
+def _load_problem(projects: "list[Project]", *, name: str, view: "InventoryView") -> list[_Row]:
+    """Load lab *name* as ``otto --lab`` does, through *view*: ``[]``, or its error's row.
+
+    Any error is one row, never a traceback: dispatch lets a source's own
+    error through (an unscoped source's ``InventoryError``, a third-party
+    backend's anything), and the doctor reports it. A
+    :class:`~otto.session.LabBuildError` reads as dispatch words it; any
+    other as :func:`_error_text` states it.
+    """
+    from ..labs.drops import is_timeout
+    from ..session.lab import LabBuildError, build_lab
+
+    try:
+        build_lab(projects, labs=[name], view=view)
+    except Exception as e:  # any backend's error is a row, never a traceback
+        if is_timeout(e):
+            raise  # the operation was given up on: never a row
+        if isinstance(e, LabBuildError):
+            return [_Row(cause=e.detail or str(e), text=str(e))]
+        return [_Row(cause=str(e), text=_error_text(e))]
+    return []
 
 
 def _item_problem(validate: Callable[[Any], object], item: Any, prefix: str) -> list[str]:
@@ -694,7 +1078,9 @@ def _validate_lab(
     view = doctor.view
     failures = _build_failures(doctor, names=view.names())
     problems = [*parsed.problems, *failures.values()]
-    broken = set(failures)
+    # A templated inventory is reported by its warning: its entries resolve
+    # through dispatch, never against a record set the checks did not read.
+    broken = doctor.inventories.skipped(view.names())
 
     def _validate_entry(host_data: dict[str, Any], *, element: "Element") -> None:
         validate_host_dict(
@@ -738,6 +1124,12 @@ def _build_failures(doctor: _DoctorView, *, names: "list[str]") -> dict[str, str
         if failure is not None:
             rows[name] = f"inventory: {_attributed(view=view, name=name, text=str(failure))}"
     return rows
+
+
+def _own_failures(doctor: _DoctorView) -> set[str]:
+    """Return the text of every checked inventory's build failure, as the checks report it."""
+    failures = (doctor.inventories.failure(name) for name in doctor.view.names())
+    return {str(failure) for failure in failures if failure is not None}
 
 
 def _own_names(doctor: _DoctorView) -> list[str]:
@@ -822,13 +1214,13 @@ def _lab_warnings(doctor: _DoctorView, parsed: _ParsedLab) -> list[str]:
     warnings = lab_warnings([(str(d.path), d.entries, d.elements) for d in documents])
     view = doctor.view
     referenced = referenced_by_name(references=parsed.references(), view=view)
-    for name in doctor.inventories.declared:
-        if doctor.inventories.failure(name) is not None:
-            continue  # the problem is already in the lab verdict
-        findings = _inventory_findings(
-            doctor.inventories[name], referenced=referenced.get(name, set())
-        )
+    inventories = doctor.inventories
+    for name in inventories.declared:
+        if name in inventories.skipped([name]):
+            continue  # a failure is in the lab verdict; a templated one is warned of below
+        findings = _inventory_findings(inventories[name], referenced=referenced.get(name, set()))
         warnings.extend(_attributed(view=view, name=name, text=w) for w in findings)
+    warnings.extend(row for name in view.names() if (row := inventories.not_rendered(name)))
     return warnings
 
 

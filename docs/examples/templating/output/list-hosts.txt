@@ -1,0 +1,3 @@
+• east-dut0
+• east-tgen0
+• local

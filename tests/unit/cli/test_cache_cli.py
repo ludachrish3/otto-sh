@@ -83,6 +83,27 @@ def test_clear_bare_reports_nothing_to_remove_when_empty(tmp_path, monkeypatch):
     assert "nothing to remove" in result.output
 
 
+def test_clear_all_removes_a_recorded_lab_name_record(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+    from otto.config.home import lab_names_cache_dir
+    from otto.labs.last_good import last_good, record_last_good
+
+    _home(monkeypatch, tmp_path)
+    record_last_good(identity="abc", names=["router-lab.east"])
+    record = lab_names_cache_dir() / "abc.json"
+    assert record.is_file()
+
+    bare = runner.invoke(cache_app, ["clear"])  # this workspace only: never the home level
+    assert bare.exit_code == 0
+    assert record.is_file()
+    result = runner.invoke(cache_app, ["clear", "--all"])
+
+    assert result.exit_code == 0
+    assert not record.exists()
+    assert f"removed {record}" in result.output
+    assert last_good(identity="abc") == []
+
+
 def test_clear_all_clears_every_workspace_and_rmdirs_empty(tmp_path, monkeypatch):
     from otto.cli.cache import cache_app
 

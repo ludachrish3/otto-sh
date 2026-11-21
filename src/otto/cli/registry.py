@@ -484,7 +484,7 @@ def collect_cli_commands() -> list[dict[str, Any]]:
 
 
 # otto's own top-level commands, registered beside the registry that holds them
-# like every registry's built-ins: importing this module lists all fourteen,
+# like every registry's built-ins: importing this module lists all fifteen,
 # whether or not anything has imported the command tree (otto.cli.main). Each
 # loader is a "module:attr" string, so listing them imports no verb module.
 register_builtin_commands()

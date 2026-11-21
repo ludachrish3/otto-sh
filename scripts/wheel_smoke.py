@@ -9,28 +9,47 @@ or a plugin pytest auto-loads hides what an installed otto lacks.
 
 It checks, running otto in a scratch directory outside the checkout:
 
-1. ``otto`` is imported from the installed wheel, not ``src/`` (an editable
-   install, or ``src/`` on ``sys.path``);
-2. every ``otto`` module imports, and every third-party import statement in
+1. the installed otto is the built wheel (:func:`check_identity`): its
+   distribution reports the wheel's version, ``import otto`` loads it, and
+   every file under ``otto/`` hashes as the wheel's own ``RECORD`` says;
+2. the installed ``otto.libsonnet`` renders (:func:`check_library`) under the
+   Jsonnet binding the platform's marker selects;
+3. every ``otto`` module imports, and every third-party import statement in
    otto's source runs, a function-local one too (#1181);
-3. the hostless CLI lists, runs (seeded, unseeded, in file order, and
+4. the hostless CLI lists, runs (seeded, unseeded, in file order, and
    failing, with its exit code) and honors an async test and a
    ``@pytest.mark.timeout`` — with pytest's plugin autoload on, and off
    (``PYTEST_DISABLE_PLUGIN_AUTOLOAD``), which otto must not depend on.
 
+``--installed-only`` runs the first two alone: ``nox -s packaging_offline``
+asks them of an otto installed from an offline wheel directory.
+
 The SUT is generated under a temporary directory; its lab names one host that
 nothing contacts. Exits non-zero naming every check that failed.
+
+Usage: python scripts/wheel_smoke.py WHEEL --binding {jsonnet,gojsonnet} [--installed-only]
 """
 
+import argparse
 import ast
+import base64
+import csv
+import email.parser
+import hashlib
 import importlib
+import importlib.metadata
 import importlib.util
+import io
 import json
 import os
 import pkgutil
+import re
 import subprocess
 import sys
 import tempfile
+import zipfile
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
@@ -70,6 +89,146 @@ CHECKS: list[tuple[list[str], int, str]] = [
     (["-l", "smoke", "test", "test_times_out", "--no-cov", "--no-random"], 1, "Timeout"),
     (["-l", "smoke", "test", "test_fails", "--no-cov"], 1, "1 failed"),
 ]
+
+
+DISTRIBUTION = "otto-sh"
+BINDING_CHOICES = ("jsonnet", "gojsonnet")
+
+# Two lines that import the installed library and call into it. The name is
+# one re.escape changes, so the render proves the library's code ran.
+LIBRARY_PROBE_NAME = "smoke.lab-1"
+LIBRARY_TEMPLATE = (
+    "local o = import 'otto.libsonnet';\n{ escaped: o.escapeName('" + LIBRARY_PROBE_NAME + "') }\n"
+)
+
+
+@dataclass(frozen=True)
+class BuiltWheel:
+    """What a wheel says of itself: its version, and each ``otto/`` file's RECORD hash."""
+
+    version: str
+    hashes: "Mapping[str, str]"
+    """``sha256=<digest>`` by RECORD path, for every file under ``otto/``."""
+
+
+def read_wheel(wheel: Path) -> BuiltWheel:
+    """Read *wheel*'s ``METADATA`` version and its ``RECORD`` entries under ``otto/``."""
+    with zipfile.ZipFile(wheel) as archive:
+        info = {
+            name.split("/", 1)[1]: name
+            for name in archive.namelist()
+            if name.count("/") == 1 and name.split("/", 1)[0].endswith(".dist-info")
+        }
+        metadata = email.parser.Parser().parsestr(archive.read(info["METADATA"]).decode("utf-8"))
+        record = archive.read(info["RECORD"]).decode("utf-8")
+    hashes = {
+        row[0]: row[1]
+        for row in csv.reader(io.StringIO(record))
+        if row and row[0].startswith("otto/")
+    }
+    return BuiltWheel(version=str(metadata["Version"]), hashes=hashes)
+
+
+def record_hash(path: Path) -> str:
+    """Spell *path*'s sha256 as a RECORD does: ``sha256=`` and the unpadded urlsafe base64."""
+    digest = hashlib.sha256(path.read_bytes()).digest()
+    return "sha256=" + base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def check_identity(wheel: Path) -> list[str]:
+    """Return a failure line per way the installed otto is not *wheel*; empty when it is.
+
+    The one installed-artifact identity check, for every session that installs
+    a built wheel. The ``otto-sh`` distribution must report the wheel's
+    version, ``import otto`` must load that distribution's files, and every
+    file its RECORD lists under ``otto/`` must be in the wheel's RECORD with
+    the same hash, and hash so on disk. The only entries the wheel's RECORD
+    does not hold are the ``__pycache__`` files pip compiles at install, which
+    it records with no hash; every wheel entry must be installed.
+    """
+    import otto
+
+    built = read_wheel(wheel)
+    dist = importlib.metadata.distribution(DISTRIBUTION)
+    failures = [] if built.hashes else [f"{wheel.name}'s RECORD lists no file under otto/"]
+    if dist.version != built.version:
+        failures.append(
+            f"{DISTRIBUTION} {dist.version} is installed, not the wheel's {built.version}"
+        )
+    installed_init = Path(str(dist.locate_file("otto/__init__.py"))).resolve()
+    if Path(otto.__file__).resolve() != installed_init:
+        failures.append(
+            f"otto imported from {otto.__file__}, not {DISTRIBUTION}'s {installed_init}"
+        )
+    installed = {str(f): f for f in dist.files or () if str(f).startswith("otto/")}
+    failures.extend(
+        f"{path}: in the wheel's RECORD, not the installed one"
+        for path in sorted(built.hashes.keys() - installed.keys())
+    )
+    for path, file in sorted(installed.items()):
+        if file.hash is None:
+            if not ("/__pycache__/" in path and path.endswith(".pyc")):
+                failures.append(f"{path}: the installed RECORD lists it with no hash")
+            continue
+        want = built.hashes.get(path)
+        if want is None:
+            failures.append(f"{path}: installed, but not in the wheel's RECORD")
+            continue
+        recorded = f"{file.hash.mode}={file.hash.value}"
+        try:
+            on_disk = record_hash(Path(str(dist.locate_file(file))))
+        except OSError as e:
+            failures.append(f"{path}: {e}")
+            continue
+        if recorded != want or on_disk != want:
+            failures.append(
+                f"{path}: the wheel records {want}, the install {recorded}, the file is {on_disk}"
+            )
+    if not failures:
+        hashed = sum(1 for file in installed.values() if file.hash is not None)
+        print(
+            f"ok   the installed {DISTRIBUTION} is {wheel.name}: {hashed} files under otto/ match"
+        )
+    return failures
+
+
+def check_library(binding: str) -> list[str]:
+    """Render :data:`LIBRARY_TEMPLATE` with the installed otto; a failure line per problem.
+
+    The template, which imports the installed ``otto.libsonnet``, goes
+    through otto's renderer, and must render under *binding* (``jsonnet`` or
+    ``gojsonnet``), the binding the platform's marker installs, as
+    :func:`~otto.templating.binding.load_binding` names it.
+    """
+    from otto.inventory.config import ProtectedPaths
+    from otto.templating import TemplatingError, load_binding
+    from otto.templating.imports import ImportPolicy
+    from otto.templating.render import RenderRequest, render
+
+    # A real catalog that protects nothing (the template imports only the
+    # library, which the policy always serves); never NO_CATALOG, which renders nothing.
+    policy = ImportPolicy(roots=(), protected=ProtectedPaths(files=frozenset()))
+    with tempfile.TemporaryDirectory(prefix="otto-wheel-smoke-library-") as d:
+        entry = Path(d) / "library.jsonnet"
+        entry.write_text(LIBRARY_TEMPLATE, encoding="utf-8")
+        try:
+            text = render(RenderRequest(entry=entry, tla=None, policy=policy)).text
+        except TemplatingError as e:
+            return [f"rendering the installed otto.libsonnet under the {binding} binding: {e}"]
+    found = load_binding().name
+    if found != binding:
+        return [f"expected the {binding} binding, but the render ran under {found}"]
+    print(f"ok   load_binding().name == {found!r}")
+    want = {"escaped": re.escape(LIBRARY_PROBE_NAME)}
+    if json.loads(text) != want:
+        return [f"the installed otto.libsonnet rendered {text.strip()}, not {json.dumps(want)}"]
+    print(f"ok   the installed otto.libsonnet renders under {found}")
+    return []
+
+
+def installed_checks(wheel: Path, binding: str) -> list[str]:
+    """Return the failures of :func:`check_identity`, then of :func:`check_library`."""
+    return check_identity(wheel) + check_library(binding)
 
 
 def _import_all() -> list[str]:
@@ -281,13 +440,33 @@ def _cli(root: Path, project: Path) -> list[str]:
     return failures
 
 
-def main() -> int:
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Smoke an installed otto.")
+    parser.add_argument("wheel", type=Path, help="the built wheel the installed otto must be")
+    parser.add_argument(
+        "--binding",
+        required=True,
+        choices=BINDING_CHOICES,
+        help="the Jsonnet binding this platform's marker installs",
+    )
+    parser.add_argument(
+        "--installed-only",
+        action="store_true",
+        help="check only the install's identity and the library render",
+    )
+    return parser
+
+
+def main(argv: "list[str] | None" = None) -> int:
     """Run every check; return the exit code (1 when any failed)."""
-    failures = _import_all()
-    failures += _third_party_imports()
-    with tempfile.TemporaryDirectory(prefix="otto-wheel-smoke-") as d:
-        root = Path(d)
-        failures += _cli(root, _sut(root))
+    args = _parser().parse_args(argv)
+    failures = installed_checks(args.wheel, args.binding)
+    if not args.installed_only:
+        failures += _import_all()
+        failures += _third_party_imports()
+        with tempfile.TemporaryDirectory(prefix="otto-wheel-smoke-") as d:
+            root = Path(d)
+            failures += _cli(root, _sut(root))
     for failure in failures:
         print(f"\nFAIL {failure}", file=sys.stderr)
     return 1 if failures else 0

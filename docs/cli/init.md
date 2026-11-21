@@ -197,6 +197,44 @@ When an inventory is configured, its own doctor findings join the same
 [Warnings](../configuration/inventory.md#warnings) section of the inventory
 guide.
 
+(doctor-templated-labs)=
+
+### Templated labs
+
+The doctor's own checks never render a template. For a `jsonnet` source
+({doc}`../configuration/lab/templating`), it asks the functions
+`otto --list-labs` and `--lab` call instead, so it reports what those commands
+would:
+
+- **Inside an active project** (one `OTTOPATH` names), it lists the labs as
+  `--list-labs` does, then loads each lab one of this project's `jsonnet`
+  sources declares, as `--lab` would. Each finding is a *problem*, one of:
+  - `host source unavailable: <reason>` when the listing itself fails, as
+    `--list-labs` shows it ({ref}`listing-labs`);
+  - `source <label> unavailable: <reason>` for one of this project's scoped
+    sources that failed (once, however many of its labs that leaves
+    unavailable);
+  - `<lab> — unavailable: <reason>` for a lab that a failed scoped source
+    holds when no row above reports that source, such as another project's
+    source;
+  - the load's own error for a lab that does not load.
+
+  A lab the rendered document itself declares unavailable
+  (`router-lab.west — unavailable: tgen: expected 1, found 0 (none)` in
+  `--list-labs`) is not a problem, just as a hand-written `lab.json` lab
+  declared unavailable is not one.
+- **Otherwise**, nothing is rendered. Each entry file gets one *warning*,
+  `<entry>: not rendered: <why>`, which says to run `otto init` from inside an
+  active project or to see `otto --list-labs`. A warning never changes the exit
+  code.
+
+<!-- Doctor parity for a project outside the active ones is tracked as #1213. -->
+
+A `.jsonnet` inventory file
+([A Jsonnet inventory file](../configuration/inventory.md#a-jsonnet-inventory-file))
+is not rendered either: the inventory checks leave it unchecked, with one
+warning naming it, and leave the host entries that reference it unchecked too.
+
 Alongside the schemas, `otto init --schemas` writes
 `.vscode/otto.code-snippets` — generated `lab.json` skeletons for a `labs`
 entry, an element, a cred, and each registered host type.  See

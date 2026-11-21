@@ -72,7 +72,7 @@ def _merge_collision(
     It names both addresses and, when they match (two inventories reusing one
     address), both identities as ``name/key``.
     """
-    from ..host.inventory_ref import spell_ref
+    from ..host.inventory_ref import spell_machine
 
     hint = "Give the elements distinct names, or set board/slot."
     if mine.ip != theirs.ip:
@@ -82,8 +82,8 @@ def _merge_collision(
         )
     return (
         f"Duplicate host id {host_id!r} for different machines at one address "
-        f"({mine.ip} as {spell_ref(ref=mine.ref)} in {mine_lab!r} vs {theirs.ip} as "
-        f"{spell_ref(ref=theirs.ref)} in {theirs_lab!r}): two inventories, or two keys of one, "
+        f"({spell_machine(identity=mine)} in {mine_lab!r} vs {spell_machine(identity=theirs)} "
+        f"in {theirs_lab!r}): two inventories, or two keys of one, "
         f"name two machines. {hint}"
     )
 

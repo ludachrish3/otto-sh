@@ -33,8 +33,8 @@ paths = ["lab_data"]
 Every entry takes two otto-owned keys:
 
 `backend`
-: **Required.** The name of a registered backend. `"json"` ships with otto;
-  any other name must be registered by an `init` module — see [Custom backends
+: **Required.** The name of a registered backend. `"json"` and `"jsonnet"`
+  ship with otto; any other name must be registered by an `init` module — see [Custom backends
   as sources](#custom-backends-as-sources).
 
 `name`
@@ -53,13 +53,28 @@ backend registered by any project can serve an entry in any project. A json sour
 A project with no `[lab]` table declares no sources — normal for a project that
 ships only libs and tests. The table itself may hold nothing but `sources`.
 
-Sources are not the host **inventory**, and the two never overlap. Sources
-compose *records*: several of them contribute elements, and a later one
-replaces an earlier one wholesale, one element (or one `labs` table entry) at a
-time. The inventory supplies *fields* **within** a record — the machine facts
-of a host entry that references it — and there is exactly one per process, so
-no precedence question arises there at all. A lab file can come from any
-source and still reference the inventory; see {doc}`inventory`.
+(sources-are-not-inventories)=
+
+Sources are not the host **inventory**, and the two never overlap. A source
+says which hosts a lab has and what otto does with them: sources compose
+*records*, several of them contribute elements, and a later one replaces an
+earlier one wholesale, one element (or one `labs` table entry) at a time. An
+inventory says what is true of each machine (its address, interfaces and
+credentials), keyed by an inventory key: it supplies *fields* **within** a
+record, the machine facts of a host entry that references it. A process holds
+one inventory of each name, so no precedence question arises between
+inventories at all. A lab file can come from any source and still reference an
+inventory; see {doc}`inventory`. The two stay apart when templates are
+involved: a `jsonnet` source *reads* the inventories it declares to decide
+which labs and elements exist, and its hosts still *reference* those
+inventories for their facts ({doc}`lab/templating`), while a `.jsonnet`
+inventory file is an inventory, rendered into records
+([A Jsonnet inventory file](inventory.md#a-jsonnet-inventory-file)).
+
+The built-in `jsonnet` backend renders lab documents from Jsonnet templates
+over the inventories' records. Its keys (`paths`, `inventories`, `scope`,
+`overrides`, `import_paths`) are on {doc}`lab/templating`, under
+{ref}`The source's settings <the-sources-settings>`.
 
 (lab-data-across-files)=
 
@@ -317,8 +332,9 @@ Before it loads a lab, otto asks every source which labs it declares and
 whether each one can be loaded now. What a failing source costs depends on
 whether it declares a **scope**: the lab names it can contribute to at all,
 as exact names and literal prefixes. The built-in `json` backend declares no
-scope. A custom backend declares one through `lab_scope()`
-({doc}`../extend/lab-source-backends`).
+scope. A `jsonnet` source declares one with its `scope` key
+({ref}`Scope <lab-templating-scope>`). A custom backend declares
+one through `lab_scope()` ({doc}`../extend/lab-source-backends`).
 
 - **A source without a scope fails every lab.** It could contribute an
   element to any lab, so no lab is complete without it. Its error propagates

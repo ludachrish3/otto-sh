@@ -1,0 +1,38 @@
+name = "routers"
+version = "0.1.0"
+
+# Two named inventories. Each `path` names a Jsonnet file, which renders the
+# inventory's records. `physical` stands in for NetBox, but states `groups`,
+# which a NetBox record does not carry yet.
+[[inventories]]
+name = "physical"
+backend = "json"
+path = "inventories/physical.jsonnet"
+
+# NetBox holds no credentials, so `physical` has a creds store of its own.
+[inventories.creds]
+backend = "json"
+path = "inventories/creds.json"
+
+[[inventories]]
+name = "virtual"
+backend = "json"
+path = "inventories/virtual.jsonnet"
+
+# One lab source renders the layout over both inventories. Every lab it
+# declares starts with `router-lab.`, so a failure of this source fails only
+# those labs.
+[[lab.sources]]
+backend = "jsonnet"
+paths = ["lab_data/layouts/router-lab.jsonnet"]
+inventories = ["physical", "virtual"]
+scope = { prefixes = ["router-lab."] }
+
+# A data profile the template's DUTs name as their `os_type`.
+[os_profiles.router]
+base = "unix"
+valid_terms = ["ssh"]
+
+# Every DUT the template emits connects with a shorter timeout.
+[host_preferences.".*-dut0"]
+ssh_options = { connect_timeout = 5.0 }

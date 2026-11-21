@@ -11,7 +11,7 @@ working without internet access, or managing otto alongside other Python depende
 ## Requirements
 
 - **Python 3.10 or later** (otto supports CPython 3.10 through 3.14).
-- Linux, macOS, or Windows.
+- Linux, Apple Silicon macOS, or Windows.
 - Internet access to PyPI — or one of the offline sources described under
   [Air-gapped installation](#air-gapped-installation).
 
@@ -409,7 +409,7 @@ for PYVER in 3.10 3.11 3.12 3.13 3.14; do
     uv run --no-project --python "$PYVER" --with pip -- python -m pip download otto-sh \
         --dest ./wheels \
         --python-version "$PYVER" \
-        --platform manylinux2014_x86_64 \
+        --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64 \
         --only-binary :all:
 done
 ```
@@ -431,15 +431,27 @@ To pin an exact otto version, use `pip download otto-sh==%OTTO_VERSION%`.
 dependencies sit on both. `--platform` must match the target host's architecture;
 `--python-version` (plus the matching interpreter, above) must match its Python. The
 {ref}`wheel-matrix table <native-extension-dependencies>` lists which dependency is
-which. Common platform tags:
+which. Common platform tags, each set given as repeated `--platform` flags in one pass
+(pip takes a wheel that matches any of them):
 
-- `manylinux2014_x86_64` — most Linux x86-64 systems
-- `manylinux2014_aarch64` — Linux ARM64
-- `macosx_11_0_arm64` — macOS Apple Silicon
-- `win_amd64` — Windows 64-bit
+- `--platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64` — Linux x86-64
+  with glibc 2.28 or newer (glibc older than 2.28 is a
+  [known gap](#jsonnet-known-gaps))
+- `--platform manylinux2014_aarch64` — Linux ARM64
+- `--platform musllinux_1_2_x86_64 --platform musllinux_1_1_x86_64` — Alpine and
+  other musl Linux on x86-64 (musl on ARM64 is a [known gap](#jsonnet-known-gaps))
+- `--platform macosx_11_0_arm64` — macOS Apple Silicon
+- `--platform win_amd64` — Windows 64-bit
 
-Hosts on more than one architecture need one pass per `--platform` as well, into the
-same directory.
+Run each set's pass on a machine of that platform, never on another one: `--platform`
+changes which wheel files fit, but pip still evaluates the dependency markers, which
+choose the Jsonnet binding, on the machine running the download. A pass staged on
+Linux ARM64 for Linux x86-64 hosts fetches `gojsonnet` instead of `jsonnet`, and the
+install inside the gap fails. Hosts on more than one platform need one pass per
+platform, each on that platform, into the same directory, as
+[Known gaps](#jsonnet-known-gaps) says. otto's nightly CI runs this recipe the same
+way: each set on its own platform, for every Python version above, then an offline
+install of the result.
 ```
 
 **uv-flavored variant.** uv has no `pip download` equivalent, so the lockfile-faithful
@@ -451,7 +463,9 @@ uv export --no-dev --no-hashes > requirements.txt
 for PYVER in 3.10 3.11 3.12 3.13 3.14; do
     uv run --no-project --python "$PYVER" --with pip -- python -m pip download \
         -r requirements.txt --dest ./wheels \
-        --python-version "$PYVER" --platform manylinux2014_x86_64 --only-binary :all:
+        --python-version "$PYVER" \
+        --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64 \
+        --only-binary :all:
 done
 ```
 
@@ -700,6 +714,8 @@ than overriding otto's requirement.
 | `aiosqlite` | 0.21.0 | Async SQLite for persisting monitor metrics |
 | `asyncssh` | 2.24.0 | SSH connections to remote hosts |
 | `fastapi` | 0.135.1 | Monitor dashboard web server |
+| `gojsonnet` | 0.22.0 | Go Jsonnet binding for lab and inventory templates; Linux aarch64 only ([known gaps](#jsonnet-known-gaps)) |
+| `jsonnet` | 0.22.0 | C++ Jsonnet binding for lab and inventory templates; Linux x86_64, Windows and Apple-silicon macOS ([known gaps](#jsonnet-known-gaps)) |
 | `packaging` | 24.0 | Requirement/marker/specifier evaluation for the dependency preflight |
 | `pydantic` | 2.10.4 | Boundary validation models for lab JSON, host records, and settings |
 | `pydantic-settings` | 2.7.0 | Environment-variable settings (`OTTO_*`) |
@@ -730,16 +746,19 @@ than overriding otto's requirement.
 
 The direct dependencies above pull in further packages of their own — about 50 in a
 complete Linux runtime install. Most are pure Python and ship a single
-`py3-none-any` wheel that works everywhere. These seven do not: six carry **native
-(C/Rust) extensions** and `uv` bundles a Rust executable, so their wheels are
+`py3-none-any` wheel that works everywhere. These nine do not: eight carry **native
+(C/C++/Go/Rust) extensions** and `uv` bundles a Rust executable, so their wheels are
 platform-specific, and the "Wheel matrix" column says whether they are *also*
-Python-version-specific.
+Python-version-specific. The two Jsonnet bindings are installed by platform, one
+per host: which one a host gets is under [Known gaps](#jsonnet-known-gaps).
 
 | Package | Pulled in by | Wheel matrix | Notes |
 | ------- | ------------ | ------------ | ----- |
 | `cffi` | cryptography | per-version | C FFI bindings |
 | `charset-normalizer` | requests (direct) | per-version + pure fallback | HTTP body charset detection |
 | `cryptography` | asyncssh | abi3 | SSH encryption; links against OpenSSL |
+| `gojsonnet` | otto (direct) | per-version | Go Jsonnet binding; Linux aarch64 (manylinux2014) only |
+| `jsonnet` | otto (direct) | abi3 | C++ Jsonnet binding; Linux x86_64 (glibc 2.28 or newer, and musl), Windows AMD64 and Apple-silicon macOS |
 | `pydantic-core` | pydantic | per-version | Rust-based data validation |
 | `pyyaml` | otto (direct) | per-version | LibYAML-backed C parser; no pure wheel is published |
 | `tomli` | otto (direct) | per-version + pure fallback | TOML parsing |
@@ -774,6 +793,40 @@ Dev dependencies (pytest plugins for otto's own tests, sphinx, ruff, etc.) are
 declared in the `[dependency-groups] dev` section of `pyproject.toml` and are **not**
 included in the otto wheel.  They are only installed by `uv sync` in a clone of the
 otto repository, for development purposes.
+
+(jsonnet-known-gaps)=
+
+### Known gaps
+
+otto renders lab and inventory templates with a Jsonnet binding, and installs one
+binding per platform: the C++ `jsonnet` where it publishes a wheel, and the Go
+`gojsonnet` on Linux aarch64. The choice is a marker on each dependency, and a marker
+sees the operating system, the machine and the Python version, never the C library.
+So some platforms get no binding, or one with no wheel to install:
+
+- **Alpine and other musl Linux on x86_64 are supported.** `jsonnet` publishes a
+  musllinux wheel.
+- **Linux aarch64 with musl (Alpine on ARM), Python 3.14 and older.** The marker
+  selects `gojsonnet`, which publishes no musllinux wheel. pip builds it from its
+  source distribution, which needs a Go toolchain, or the install fails.
+- **Linux x86_64 with glibc older than 2.28 (RHEL/CentOS 7).** No `jsonnet` wheel
+  fits. pip builds it from its source distribution, which needs a C++ toolchain, or
+  the install fails.
+- **Linux aarch64 on Python 3.15.** No binding yet: `gojsonnet` publishes no wheel
+  for 3.15. otto installs, and a template fails with the "no binding" error below.
+- **Intel macOS is unsupported.** otto makes no claim there and tests nothing on it.
+- **Every other architecture.** Windows on ARM64, and Linux on ppc64le, s390x,
+  armv7 or any other machine, get no binding either: no marker selects one there.
+  otto installs, and a template fails with the same error.
+
+The "no binding" error names the platform and the Python, and suggests installing a
+binding yourself (`pip install jsonnet` builds the C++ one from source) or rendering on
+a supported platform. Everything in otto that does not render a template works
+without a binding.
+
+For an air-gapped bundle, the binding is one more platform-specific wheel: run the
+Step 1 download on every platform your hosts run on, as
+{ref}`creating the project inside the gap <air-gap-create-project>` explains.
 
 ## Air-gapped considerations
 
