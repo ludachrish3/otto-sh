@@ -388,6 +388,18 @@ class UnsupportedOptionError(OttoError, NotImplementedError):
         super().__init__(f"{host}: {option}= is not supported on this host: {reason}")
 
 
+class UntypableCommandError(OttoError, ValueError):
+    """A command holds a character the terminal it would be typed at acts on.
+
+    Raised by ``run()``, and by ``exec()`` where it types into a shell
+    session, before the command is sent: a control character such as Ctrl-C or
+    ESC in the command's text would be taken as a keystroke by the terminal
+    or the shell's line editor, not passed to the command. ``send()`` sends a
+    keystroke on purpose; a byte meant as data is spelled in the command
+    (an octal escape given to ``printf``). A newline and a TAB are never refused.
+    """
+
+
 # Spec: docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
 class UnsupportedOnUserlandError(OttoError, RuntimeError):
     """The host's userland provides no way to do what otto was asked to do.

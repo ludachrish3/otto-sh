@@ -170,6 +170,17 @@ The log is a separate view of the same output: what it shows is in
 `send()` writes to the raw stream and `expect()` reads it raw, with `\r\n`
 kept: the fold applies only to a command's `value`.
 
+A command string is text, not keystrokes. Where otto types it into a shell
+on a terminal (`run()`, and `exec()` wherever it runs on a shell session), a
+TAB and a newline arrive as written (one exception: a BusyBox shell whose
+terminal echo could not be turned off still takes a TAB as its completion
+key). Any other control character, such as
+Ctrl-C, ESC or a carriage return that is not part of a CRLF line ending, raises
+{class}`~otto.host.errors.UntypableCommandError` before the command is sent:
+a terminal would act on it as a keystroke. To send a keystroke, use
+`send()`. To give a command such a byte as data, spell it in the command
+(`printf '\003'`).
+
 ```{note}
 **Upgrading.** Before this, every shell-routed command trimmed blank lines
 from both ends of the output, deleted every `\r`, and left telnet's NUL bytes

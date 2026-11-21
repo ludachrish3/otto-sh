@@ -629,7 +629,7 @@ class TestTheExecLineBudget:
         typed = ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(route))
 
         def longest_typed_line(cmd: str) -> int:
-            payload = render_payload(frame, cmd, m=markers, exec_input=typed)
+            payload = render_payload(frame, cmd, m=markers, exec_input=typed, terminal=True)
             return max(len(line) for line in payload.rstrip("\n").split("\n"))
 
         assert longest_typed_line("x" * budget) == PTY_TYPED_LINE_MAX
@@ -963,7 +963,7 @@ def test_the_synthetic_render_measures_what_a_session_writes():
     ):
 
         def lens(m, exec_input=exec_input):
-            payload = render_payload(AshFrame(), "a\nbb", m=m, exec_input=exec_input)
+            payload = render_payload(AshFrame(), "a\nbb", m=m, exec_input=exec_input, terminal=True)
             return [len(x) for x in payload.split("\n")]
 
         assert lens(real) == lens(synthetic)
