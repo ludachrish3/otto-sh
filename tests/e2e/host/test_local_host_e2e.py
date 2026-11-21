@@ -140,7 +140,7 @@ def test_local_exists_creates_no_output_dir(tmp_path: Path) -> None:
         (["exists", "{tmp}"], 0, "True"),
         (["exists", "{tmp}/does-not-exist"], 1, "False"),
         # `local` declares no products: is_installed() is deliberately False for an
-        # EMPTY selection and is_uninstalled() negates it.
+        # EMPTY selection, and is_uninstalled() is True because none is installed.
         (["is-installed"], 1, "False"),
         (["is-uninstalled"], 0, "True"),
         (["is-clean"], 0, "True"),

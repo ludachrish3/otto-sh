@@ -385,7 +385,7 @@ async def test_is_installed_empty_is_false():
 
 
 @pytest.mark.asyncio
-async def test_is_uninstalled_is_inverse():
+async def test_a_host_whose_one_product_is_absent_is_uninstalled_and_not_installed():
     h = _host_with([_FakeProduct("a", installed=False)])
     assert await h.is_uninstalled() is True
     assert await h.is_installed() is False

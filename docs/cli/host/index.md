@@ -95,7 +95,7 @@ when called from Python with no explicit `user=` of its own.
 | `install` | Stage then install products |
 | `uninstall` | Uninstall products |
 | `is-installed` | Print `True` if all products are installed, else `False`; `False` on a host with no products (exit 0 if `True`, 1 if `False`, see {ref}`exit codes <host-exit-codes>`) |
-| `is-uninstalled` | Print the opposite of `is-installed`: `True` unless every product is installed, so also on a partly installed host or one with no products (exit 0 if `True`, 1 if `False`) |
+| `is-uninstalled` | Print `True` if no product is installed, else `False`; `True` on a host with no products. A partly installed host is neither installed nor uninstalled, so `is-installed` and `is-uninstalled` both print `False` for it (exit 0 if `True`, 1 if `False`) |
 | `cleanup` | Uninstall products, remove their coverage data, then remove dev tools and toolchain tools |
 | `is-clean` | Print `True` if no product, coverage data, dev tool, or toolchain tool is present, else `False` (exit 0 if `True`, 1 if `False`) |
 | `remove-coverage-dirs` | Remove each instrumented product's `.gcda` counters and the directories they leave empty ({ref}`the coverage lifecycle <cov-dir-lifecycle>`) |
