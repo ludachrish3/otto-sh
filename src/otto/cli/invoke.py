@@ -2124,20 +2124,33 @@ def _render_ok_result(value: "Result", success: "str | None", *, literal: bool =
 
 
 def _render_failed_result(value: "Result") -> None:
-    """Print a failed ``Result``'s message(s) and raise its exit code."""
+    """Print a failed ``Result``'s message(s) and raise its exit code.
+
+    The failed entries' messages are printed one per line. The result's own
+    message is printed above them unless it only restates them: a transfer's
+    aggregate message is its entries' messages joined, and printing both said
+    every file's error twice.
+    """
     from ..result import Result, Results
 
-    if value.msg:
-        print_error(value.msg)
     payload = _payload_or_decline(value)
+    entries: list[Result] = []
     if isinstance(payload, dict):
-        for entry in payload.values():
-            if isinstance(entry, Result) and not entry.is_ok and entry.msg:
-                print_error(entry.msg)
+        entries = [e for e in payload.values() if isinstance(e, Result)]
     elif isinstance(value, Results):
-        for entry in value:
-            if not entry.is_ok and entry.msg:
-                print_error(entry.msg)
+        entries = list(value)
+    details = [e.msg for e in entries if not e.is_ok and e.msg]
+    # Restated: nothing is left of the message once the entries' own messages
+    # are taken out of it, but the punctuation that joined them.
+    # Longest first: one entry's message can end with another's.
+    rest = value.msg
+    for detail in sorted(details, key=len, reverse=True):
+        rest = rest.replace(detail, "")
+    restated = bool(details) and not rest.strip(" ;,\n")
+    if value.msg and not restated:
+        print_error(value.msg)
+    for detail in details:
+        print_error(detail)
     raise typer.Exit(value.exit_code)
 
 
