@@ -22,7 +22,7 @@ the three names the other two.
 Not every probe `Userland` issues has a row here, only the ones with a real
 argument-parsing question a BusyBox version could answer differently:
 `timeout`, `base64`, `stat`, `wc`, `nc`. `Userland.elevation`'s `command -v`
-presence checks, `Userland.shell_dialect`'s `$BASH_VERSION` variable read, and
+presence checks, `Userland.command_frame`'s `$BASH_VERSION` variable read, and
 `Userland.checksum`'s single-spelling `md5sum < /dev/null` probe have no such
 question, so they carry no Tier 1 row and only the other two copies exist for
 them -- `checksum`'s PRESENCE and OUTPUT format (not this exact probe

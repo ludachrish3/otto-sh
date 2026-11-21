@@ -16,7 +16,7 @@ from tests._fixtures.argv_stub import hostile_values, recorded, run_sh, stub_env
 
 class _Userland:
     def __init__(self, dialect: str) -> None:
-        self.shell_dialect = dialect
+        self.command_frame = dialect
         self.timeout_style = "none"
 
     def has_applet(self, *, applet: str) -> str:

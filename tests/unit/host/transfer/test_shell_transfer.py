@@ -221,12 +221,12 @@ def _declared_userland(
 ) -> Userland:
     """A resolved ``Userland`` with every capability declared, so ``resolve()`` probes nothing.
 
-    The six named directly (shell_dialect, elevation, base64_flag, stat_size,
-    checksum, timeout_style) are ``UserlandOptions``'s original six
-    CAPABILITIES; ``version`` is metadata only ("Never gates behaviour") and
-    is never probed, so it needs no declaration. The seven ``applet_*`` fields
-    are declared too, defaulting to ``APPLET_PRESENT``, and that is not
-    padding -- ``ShellFileTransfer._select_codec`` reads
+    The six named directly (command_frame, elevation, base64_flag, stat_size,
+    checksum, timeout_style) are the original six CAPABILITIES; ``version``
+    is metadata only ("Never gates behaviour") and is never probed, so it needs
+    no declaration. The seven ``applet_*`` fields are declared too, defaulting
+    to ``APPLET_PRESENT``, and that is not padding --
+    ``ShellFileTransfer._select_codec`` reads
     ``is_settled(applet_capability(...))``, so an UNDECLARED applet is a
     genuinely different input from a declared-present one and a fixture that
     could not express the difference could not test the discipline.
@@ -251,7 +251,6 @@ def _declared_userland(
         declared = {f"applet_{name}": value for name, value in applets.items()}
     return Userland(
         UserlandOptions(
-            shell_dialect="ash",
             elevation="none",
             base64_flag=base64_flag,
             stat_size=stat_size,
@@ -260,6 +259,7 @@ def _declared_userland(
             **declared,
         ),
         _never_probes,
+        command_frame="ash",
     )
 
 
@@ -4075,13 +4075,13 @@ class TestCodecSelection:
         """
         userland = Userland(
             UserlandOptions(
-                shell_dialect="ash",
                 elevation="none",
                 stat_size="stat",
                 checksum="absent",
                 timeout_style="absent",
             ),
             AsyncMock(side_effect=OSError("the device refused the probe channel")),
+            command_frame="ash",
         )
         await userland.resolve()
         assert userland.base64_flag == "absent"

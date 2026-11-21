@@ -165,7 +165,9 @@ def hop_dial_script(
 ) -> str | None:
     """Return the command the hop runs, or ``None`` when the hop offers no dial tool."""
     t = int(max(1, round(timeout)))
-    if userland is None or userland.shell_dialect == "bash":
+    # Every frame but ash dials with bash: a project's own frame over a bash shell
+    # is declared under its own name.
+    if userland is None or userland.command_frame != "ash":
         body = HOP_DIAL_BASH.format(r=_reader_timeout(t), n=_BANNER_BYTES)
         return f"timeout {t} {bash_script(body, ip, str(port))} 2>&1; echo OTTO_RC=$?"
     if userland.has_applet(applet="nc") == "present":

@@ -114,15 +114,17 @@ class _ProbingRunner:
         return [c for c in self.issued if c.startswith("for a in ")]
 
 
-_DECLARED_SIX = {
+_DECLARED_FIVE = {
     "elevation": "sudo",
     "timeout_style": "coreutils",
     "base64_flag": "-d",
     "stat_size": "stat",
     "checksum": "md5sum",
-    "shell_dialect": "bash",
 }
-"""The six non-applet capabilities, pinned so a resolution settles COMPLETELY.
+"""The five non-applet options, pinned so a resolution settles COMPLETELY.
+
+The sixth non-applet capability, the shell, is declared as the host's
+``command_frame``, so the one site that needs a complete round passes it there.
 
 Only needed where a test's claim is about ``resolve()`` being idempotent: a
 round that leaves anything unsettled is instead rate-limited by
@@ -494,7 +496,7 @@ class TestPutArrivesAtTheGuard:
         measuring idempotence at all.
         """
         runner = _ProbingRunner(present={"scp"})
-        userland = Userland(UserlandOptions(**_DECLARED_SIX), runner)
+        userland = Userland(UserlandOptions(**_DECLARED_FIVE), runner, command_frame="bash")
         backend = _backend(userland)
         put, _ = _spy_on_the_protocol(backend)
         files = [Path(f"/tmp/f{i}.bin") for i in range(5)]

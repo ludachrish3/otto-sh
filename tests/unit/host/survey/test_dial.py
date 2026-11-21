@@ -195,7 +195,7 @@ async def test_direct_dial_reset_mid_read_is_open_not_an_escaping_exception():
 
 class _Userland:
     def __init__(self, dialect="bash", nc=True, timeout_style="coreutils"):
-        self.shell_dialect = dialect
+        self.command_frame = dialect
         self.timeout_style = timeout_style
         self._nc = nc
 
@@ -223,6 +223,9 @@ def test_hop_script_prefers_bash_dev_tcp_then_nc_z_then_none():
     no_nc = _Userland(dialect="ash", nc=False)
     assert hop_dial_script("192.0.2.1", 23, timeout=2.0, userland=no_nc) is None
     assert hop_dial_script("192.0.2.1", 23, timeout=2.0, userland=None) == bash_script
+    # A project's own frame over a bash shell is declared under its own name.
+    own = _Userland(dialect="mybash")
+    assert hop_dial_script("192.0.2.1", 23, timeout=2.0, userland=own) == bash_script
 
 
 class _HopRun:

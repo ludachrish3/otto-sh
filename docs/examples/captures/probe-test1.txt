@@ -39,14 +39,14 @@ INFO     Connection closed to <Peer 10.10.200.11 23>
 │ applet_uuencode │ absent    │ probed │
 │ base64_flag     │ -d        │ probed │
 │ checksum        │ md5sum    │ probed │
+│ command_frame   │ bash      │ probed │
 │ elevation       │ sudo      │ probed │
-│ shell_dialect   │ bash      │ probed │
 │ stat_size       │ stat      │ probed │
 │ sudo_form       │ shell     │ probed │
 │ timeout_style   │ coreutils │ probed │
 ╰─────────────────┴───────────┴────────╯
 
-declared = already pinned in this host's userland_options, and never re-probed. probed = the device
+declared = already pinned in this host's lab.json entry, and never re-probed. probed = the device
 answered, so this one is worth pinning. assumed = otto could not ask, so the value is only what otto
 did before it asked anything -- and it is left out of the pin for that reason, because inside a JSON
 payload a guess is indistinguishable from a measurement.
@@ -57,6 +57,7 @@ the other form.
 Every capability settled. Pin these into this host's lab.json entry and the next connection to this
 device issues no probe at all:
 
+"command_frame": "bash",
 "userland_options": {
   "applet_base64": "present",
   "applet_nc": "present",
@@ -68,7 +69,6 @@ device issues no probe at all:
   "base64_flag": "-d",
   "checksum": "md5sum",
   "elevation": "sudo",
-  "shell_dialect": "bash",
   "stat_size": "stat",
   "sudo_form": "shell",
   "timeout_style": "coreutils"

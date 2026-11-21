@@ -28,7 +28,7 @@ cannot do live here. Neither restates the other.
 A gap is what is left over after otto has adapted, and otto adapts to most of
 what BusyBox does differently. {class}`~otto.host.userland.Userland` probes the
 device for the handful of spellings that actually vary — `elevation`,
-`timeout_style`, `stat_size`, `base64_flag`, `checksum`, `shell_dialect` — and
+`timeout_style`, `stat_size`, `base64_flag`, `checksum`, `command_frame` — and
 the answers are the device's, not a guess derived from a version string. A
 BusyBox host with no `sudo` is not a gap: `su` is present on every matrix row,
 `elevation` picks it, and otto refuses only when both answers are no.
@@ -64,7 +64,8 @@ docstring).
 Every `userland_options` field is optional, and *unset* is a third answer
 beside the two a field can declare: it means "probe at connect". That is what
 lets a fresh host entry work before anyone has pinned it — a pin only skips
-probes, it never supplies something the host could not have answered. The
+probes, it never supplies something the host could not have answered. (The
+shell's pin is the host's `command_frame`, which also frames its sessions.) The
 defaults are one set for every Unix host; version differences (BusyBox
 1.16.1 has no `base64` decode flag, `timeout_style` changes at 1.31.0) live in
 each host's pin rather than in per-profile defaults.

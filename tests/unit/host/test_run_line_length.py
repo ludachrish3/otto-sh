@@ -702,6 +702,50 @@ class TestThroughAHostBuiltFromLabData:
             await host.run("echo " + "x" * 5000)
         assert re.search(r"\bbb1\b", str(excinfo.value))
 
+    @pytest.mark.asyncio
+    async def test_host_run_refuses_on_a_unix_host_that_declares_the_ash_frame(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``command_frame: "ash"`` on a plain unix entry reaches the guard, and no probe is asked.
+
+        This is the entry the bed's BusyBox guests carry. The declared frame is
+        the whole answer: the session is framed as ash, and the host's
+        ``Userland`` reads the same declaration, so nothing asks the device.
+        """
+        from otto.host.factory import create_host_from_dict
+
+        host = create_host_from_dict(
+            {
+                "os_type": "unix",
+                "command_frame": "ash",
+                "ip": "192.0.2.1",
+                "creds": [{"login": "v", "password": "v"}],
+            },
+            element=Element(name="bb1"),
+        )
+        assert isinstance(host.command_frame, AshFrame)
+
+        async def _no_connecting() -> None:
+            raise AssertionError("run() opened a session for a command it had to refuse")
+
+        monkeypatch.setattr(host._session_mgr, "_ensure_session", _no_connecting)
+        with pytest.raises(UnsupportedOnUserlandError) as excinfo:
+            await host.run("echo " + "x" * 5000)
+        assert re.search(r"\bbb1\b", str(excinfo.value))
+
+        asked: list[str] = []
+
+        async def _answers_no(cmd: str, **_kw: object) -> CommandResult:
+            asked.append(cmd)
+            return CommandResult(status=Status.Error, value="", retcode=1)
+
+        monkeypatch.setattr(host, "exec", _answers_no)
+        resolver = host._userland()
+        await resolver.resolve()
+        assert resolver.command_frame == "ash"
+        assert asked, "the round issued nothing, so the next line would pass vacuously"
+        assert not [c for c in asked if "BASH_VERSION" in c], asked
+
 
 def test_the_framing_overhead_is_measured_for_a_frame_that_rewrites_the_command():
     """A frame may quote or escape the command (the getting-started REPL frame types

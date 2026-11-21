@@ -42,6 +42,7 @@ of its own when the survey disagrees with the lab record. The userland pin
 looks like this:
 
 ```json
+"command_frame": "bash",
 "userland_options": {
   "elevation": "sudo",
   "sudo_form": "shell",
@@ -50,7 +51,7 @@ looks like this:
 }
 ```
 
-Paste the `userland_options` fragment into the host's entry (see
+Paste both members into the host's entry (see
 [Where the pins go](#where-the-pins-go)), then probe again: the pasted values
 now read `declared`. The survey's menu lines print as `valid_terms = [...]`
 and `valid_transfers = [...]`; in a JSON lab file, write each as a JSON
@@ -77,8 +78,8 @@ among them ({doc}`../host-options`).
 ## When to probe again
 
 After a software or image change on the host, remove the affected
-declarations from its `userland_options` first, because a declared value is
-never measured again. Then probe and paste again.
+declarations from its `userland_options` first, and its `command_frame` if the
+shell changed, because a declared value is never measured again. Then probe and paste again.
 
 ## Hosts that need no userland pin
 

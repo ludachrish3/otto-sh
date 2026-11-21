@@ -294,8 +294,8 @@ class TestUserland:
 
         h = self._host(
             transfer="nc",
+            command_frame="ash",
             userland_options=UserlandOptions(
-                shell_dialect="ash",
                 elevation="su",
                 base64_flag="-d",
                 stat_size="stat",

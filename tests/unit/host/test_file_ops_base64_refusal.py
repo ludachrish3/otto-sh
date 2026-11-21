@@ -679,17 +679,17 @@ class TestWhyTheseTwoPathsAreStillOpen:
 
         The runner answers the way a non-bash ``/bin/sh`` does, so this measures
         the outcome on any machine — including one whose ``/bin/sh`` IS bash,
-        where relying on the ambient shell would make the test inert. Nothing
-        consumes ``shell_dialect`` yet, which is the only thing keeping this
-        latent; ``Userland.resolve``'s debug line already offers the value as a
-        pasteable ``lab.json`` pin.
+        where relying on the ambient shell would make the test inert. This
+        class builds no resolver, which is the only thing keeping this latent;
+        ``Userland.resolve``'s debug line would offer the value as a pasteable
+        ``command_frame`` pin.
         """
         wired = _WiredLocalHost(log=LogMode.QUIET)
         wired.userland = Userland(UserlandOptions(), _applets("sudo", "su"))
         await wired._prepare_elevation()
         assert wired.has_bash is True, "the class declares bash, and it is right: run() uses it"
-        assert wired.userland.shell_dialect == "ash"
-        assert wired.userland.is_settled(name="shell_dialect"), (
+        assert wired.userland.command_frame == "ash"
+        assert wired.userland.is_settled(name="command_frame"), (
             "a MEASURED contradiction, not an unasked default — an assumed value would be "
             "`bash` and there would be nothing to report"
         )

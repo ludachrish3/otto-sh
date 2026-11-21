@@ -685,9 +685,10 @@ def refuse_if_typed_line_would_be_cut(
     ``busybox_*`` for the mirror-image reason -- see
     :class:`~otto.host.options.UserlandOptions`), not ``has_bash=False`` (dash
     and ksh hosts are not ash, and otto has measured the bound only on ash), and not
-    :attr:`~otto.host.userland.Userland.shell_dialect`. That last one is the
-    tempting wrong answer: it is the probe that MEASURES ash-ness, but reading
-    it here would drag a whole userland resolution -- up to
+    :attr:`~otto.host.userland.Userland.command_frame`. That last one is the
+    tempting wrong answer: on a host that declares no frame it is the probe
+    that MEASURES ash-ness, but reading it here would drag a whole userland
+    resolution -- up to
     ``_RESOLVE_BUDGET_S``, 30 seconds against a host that will not answer --
     onto every ``run()`` on every unix host, to decide a question the lab entry
     has already answered. The frame is declared, synchronous, and free, and
@@ -3914,7 +3915,8 @@ def _line_budget_limitation() -> Limitation:
             "`otto host <id> probe` prints the terminal mapping it measured, with "
             "`, echo on` after it where echo stayed on, so the limit there is "
             f"{ASH_ECHOING_LINE_MAX} on a BusyBox shell.\n\n"
-            "On an ash shell `run` counts each line before typing it, and refuses a line "
+            "On a host whose `command_frame` is `ash`, `run` counts each line before typing "
+            "it, and refuses a line "
             "over the limit with an error naming it. Elsewhere the terminal cuts it "
             "without an error.\n\n"
             "Not limited this way: a local host's session, which reads the command from a "

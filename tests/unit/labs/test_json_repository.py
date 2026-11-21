@@ -827,6 +827,22 @@ def test_host_entry_error_names_element_and_index(tmp_path: Path) -> None:
         _JsonFileLabRepository([tmp_path]).load_lab("l")
 
 
+def test_a_shell_dialect_pin_is_refused_naming_the_host_and_its_replacement(
+    tmp_path: Path,
+) -> None:
+    """An old lab file fails with the migration: which host, and what to write instead."""
+    entry = {"ip": "10.0.0.1", "creds": _CREDS, "userland_options": {"shell_dialect": "ash"}}
+    _write(tmp_path, _doc(labs={"l": {}}, elements=[_el("bb1", ["l"], hosts=[entry])]))
+    with pytest.raises(LabRepositoryError) as exc_info:
+        _JsonFileLabRepository([tmp_path]).load_lab("l")
+    message = str(exc_info.value)
+    assert "element 'bb1' hosts[0]" in message
+    assert (
+        "userland_options.shell_dialect was replaced by the host's command_frame: "
+        'remove it and write "command_frame": "ash" on the host instead.'
+    ) in message
+
+
 def test_a_referenced_hosts_store_password_never_reaches_the_error_text(tmp_path: Path) -> None:
     """spec 2026-09-06 creds-store §6.1/§9: LabRepositoryError text is not a leak either.
 

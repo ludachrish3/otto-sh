@@ -431,6 +431,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 self.userland_options,
                 lambda *a, **kw: self.exec(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
                 line_turn=lambda: self._host_entry("exec"),
+                command_frame=self.command_frame.type_name if self.command_frame else None,
             )
         return self._userland_cache
 

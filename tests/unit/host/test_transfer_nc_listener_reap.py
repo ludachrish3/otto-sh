@@ -101,7 +101,6 @@ async def _never_probes(cmd: str, **_kwargs: object) -> CommandResult:
 # Values are what the matrix measured on 1.35.0 (`scp` and `shutdown` absent on
 # every row); nothing here reads them.
 _OTHER_DECLARED_CAPABILITIES = {
-    "shell_dialect": "ash",
     "elevation": "none",
     "sudo_form": "shell",
     "base64_flag": "-d",
@@ -141,7 +140,8 @@ def _fully_declared_options(timeout_style: str) -> UserlandOptions:
 
 def _unresolved_userland(timeout_style: str) -> Userland:
     """A ``Userland`` carrying a declared *timeout_style*, deliberately unresolved."""
-    return Userland(_fully_declared_options(timeout_style), _never_probes)
+    # The shell is declared where a host declares it: as its command frame.
+    return Userland(_fully_declared_options(timeout_style), _never_probes, command_frame="ash")
 
 
 async def _userland_with(timeout_style: str) -> Userland:
