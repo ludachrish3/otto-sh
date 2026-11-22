@@ -77,7 +77,8 @@ just make it a decision rather than an omission.
   builds — in three ways, all checked by `assert_lab_repository_conforms`:
 
   - **Every id you return must be one `load_lab()` produces**, or completion
-    offers names that cannot dispatch. Derive ids with
+    offers names that cannot dispatch (what completion may still over-offer
+    from the composition itself is in {ref}`completion-lab-hosts`). Derive ids with
     `host_identity(record, element=element, profiles=...)` (the same `element` and
     `profiles` you pass to `create_host_from_dict`) rather than formatting
     your records by hand: it
@@ -91,7 +92,7 @@ just make it a decision rather than an omission.
     defaults so the dataclass will let you omit them, but each one drives a
     surface: `labs` scopes `otto host -l <lab> <TAB>` (and must be exactly the
     labs that contain the host — claiming one it is not in offers an id that
-    cannot dispatch there), `docker_capable` gates `otto docker --parent`,
+    cannot dispatch there, and leaving one out hides it there), `docker_capable` gates `otto docker --parent`,
     `docker_priority` picks the default docker parent (highest wins), `ip`
     drives tunnel narrowing, `os_type` decides which verbs
     `otto host <id> <TAB>` offers (left `None`, it offers every class's), and

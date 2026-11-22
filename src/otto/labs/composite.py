@@ -49,7 +49,7 @@ from .protocol import (
 from .views import lab_scope_of, lab_statuses, load_contribution_through, load_lab_through
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from contextlib import AbstractContextManager
 
     from ..host.inventory_ref import MachineIdentity
@@ -1063,6 +1063,29 @@ def _element_key(host: Any) -> "_ElementKey":
     return "" if element is None else element.slug
 
 
+def names_matching_patterns(*, patterns: "Sequence[str]", names: "Sequence[str]") -> list[str]:
+    """Return the *names* that any of *patterns* fullmatches, in *names* order.
+
+    The one place a host's lab patterns are resolved against declared lab
+    names: the composite's summary merge and completion's process-wide view
+    both call it. Completion must never raise into the user's TAB, and a
+    custom backend's pattern is open to any string (the json one rejects an
+    uncompilable pattern at parse), so a pattern that cannot be compiled is
+    logged and matches nothing, and the others still resolve.
+    """
+    usable = [c for c in map(_compiled_or_none, patterns) if c is not None]
+    return [n for n in names if any(p.fullmatch(n) for p in usable)]
+
+
+def _compiled_or_none(pattern: str) -> "re.Pattern[str] | None":
+    """Compile *pattern*, or log it at debug and return ``None`` when it cannot be compiled."""
+    try:
+        return re.compile(pattern)
+    except (re.error, OverflowError, RecursionError) as e:
+        logger.debug(f"skipping unusable lab pattern {pattern!r}: {e}")
+        return None
+
+
 def _merged_summary(s: HostSummary, existing: HostSummary | None, names: list[str]) -> HostSummary:
     """Fold summary *s* onto *existing* (same id), re-resolving memberships.
 
@@ -1081,11 +1104,5 @@ def _merged_summary(s: HostSummary, existing: HostSummary | None, names: list[st
         if existing is None
         else existing.labs + [n for n in s.labs if n not in existing.labs]
     )
-    try:
-        labs += [n for n in names if n not in labs and any(re.fullmatch(p, n) for p in patterns)]
-    except re.error as e:
-        # A custom backend's pattern — the json one rejects an uncompilable
-        # pattern at parse, but this field is open to any backend and this path
-        # is completion, which must never raise into the user's TAB.
-        logger.debug(f"skipping unusable lab patterns {patterns!r} for host {s.id!r}: {e}")
+    labs += [n for n in names_matching_patterns(patterns=patterns, names=names) if n not in labs]
     return dataclasses.replace(s, labs=labs, lab_patterns=patterns, logins=list(s.logins))

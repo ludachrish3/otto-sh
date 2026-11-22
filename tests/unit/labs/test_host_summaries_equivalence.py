@@ -206,8 +206,8 @@ def test_two_elements_composing_one_id_record_a_drop_naming_both(
     Every portion of an id joins with ``-`` (spec 2026-10-03 §3), so two
     different elements can land on one id. Across LABS that is not a refusal
     (``load_lab`` of each lab succeeds), but the summary list carries one
-    record per id: the first wins, and the other host — a different address —
-    must not vanish silently (see otto.labs.drops). The drop names BOTH
+    record per id: the first record's fields win, and the other host — a different address —
+    must not vanish silently (see otto.labs.drops). Its lab joins the summary. The drop names BOTH
     declarations by the fields that tell them apart (element, board, slot,
     ip), as ``Lab.add_host``'s refusal does. Run in both file orders so the
     KEPT side's board and slot are asserted too, not only the dropped side's.
@@ -221,7 +221,9 @@ def test_two_elements_composing_one_id_record_a_drop_naming_both(
     with collecting_drops() as drops:
         (summary,) = repository.list_host_summaries()
 
-    assert (summary.id, summary.ip, summary.labs) == ("x-cpu-1", first["ip"], ["e"])
+    assert (summary.id, summary.ip, summary.labs) == ("x-cpu-1", first["ip"], ["e", "w"]), (
+        "the other machine's lab joins the kept summary; its other fields are the first record's"
+    )
     (drop,) = drops
     assert drop.where == f"{tmp_path / 'b' / 'lab.json'}: element {second['element']!r} hosts[0]"
     assert "host id 'x-cpu-1'" in drop.reason, "names the id"
@@ -376,3 +378,84 @@ def test_an_element_the_runtime_refuses_is_dropped_and_said_not_raised(tmp_path,
     (drop,) = drops
     assert drop.where == f"{tmp_path / 'lab.json'}: element 'bad'"
     assert "injected" in drop.reason
+
+
+def _three_machine_repository(tmp_path, records: list[dict]) -> _JsonFileLabRepository:
+    """One source holding one lab file per record (``f0/``, ``f1/``, ...)."""
+    paths = []
+    for index, record in enumerate(records):
+        directory = tmp_path / f"f{index}"
+        directory.mkdir()
+        write_lab_json(directory / "lab.json", [record])
+        paths.append(directory)
+    return _JsonFileLabRepository(search_paths=paths)
+
+
+# Three spellings of the id ``x-cpu-1``: a bare element, an element + board, and a
+# shorter element + board. Each is a different declaration of that id.
+def _x_cpu_1(ip: str, spelling: int, labs: list[str]) -> dict:
+    spelled = (
+        {"element": "x-cpu-1"},
+        {"element": "x", "board": "cpu", "slot": 1},
+        {"element": "x-cpu", "board": "1"},
+    )[spelling]
+    return {"ip": ip, **spelled, "labs": labs, "creds": _CREDS}
+
+
+def test_a_different_machine_under_one_id_adds_its_labs_and_patterns_to_the_summary(tmp_path):
+    """The kept summary's labs and patterns are the union; its other fields stay the first's."""
+    from otto.labs.drops import collecting_drops
+
+    repository = _two_file_repository(
+        tmp_path,
+        _x_cpu_1("10.0.0.1", 0, ["bench"]),
+        _x_cpu_1("10.0.0.2", 1, ["spare", "b*"]),
+    )
+    with collecting_drops() as drops:
+        (summary,) = repository.list_host_summaries()
+
+    assert summary.ip == "10.0.0.1", "every other field is the first record's"
+    assert summary.labs == ["bench", "spare"]
+    assert summary.lab_patterns == ["bench", "spare", "b*"]
+    assert "x-cpu-1" in repository.load_lab("spare").hosts, "dispatch loads it there"
+    (drop,) = drops
+    assert "host id 'x-cpu-1'" in drop.reason
+
+
+def test_restating_the_second_machine_is_said_each_time(tmp_path):
+    """Only the same machine joins the identities kept, so each differing record is one drop."""
+    from otto.labs.drops import collecting_drops
+
+    repository = _three_machine_repository(
+        tmp_path,
+        [
+            _x_cpu_1("10.0.0.1", 0, ["a"]),
+            _x_cpu_1("10.0.0.2", 1, ["b"]),
+            _x_cpu_1("10.0.0.2", 2, ["c"]),
+        ],
+    )
+
+    with collecting_drops() as drops:
+        (summary,) = repository.list_host_summaries()
+
+    assert summary.labs == ["a", "b", "c"]
+    assert len(drops) == 2
+
+
+def test_a_third_machine_under_one_id_is_said_and_its_labs_join(tmp_path):
+    from otto.labs.drops import collecting_drops
+
+    repository = _three_machine_repository(
+        tmp_path,
+        [
+            _x_cpu_1("10.0.0.1", 0, ["a"]),
+            _x_cpu_1("10.0.0.2", 1, ["b"]),
+            _x_cpu_1("10.0.0.3", 2, ["c"]),
+        ],
+    )
+
+    with collecting_drops() as drops:
+        (summary,) = repository.list_host_summaries()
+
+    assert (summary.ip, summary.labs) == ("10.0.0.1", ["a", "b", "c"])
+    assert len(drops) == 2, "one drop per differing record: the second and the third"

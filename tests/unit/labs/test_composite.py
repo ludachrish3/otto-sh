@@ -651,3 +651,27 @@ def test_element_resources_survive_replacement_and_vanish_when_the_later_source_
     lab = _composite_over(tmp_path, [base, later]).load_lab("rig")
     assert lab.hosts["chassis"].element.resources == frozenset()
     assert lab.hosts["chassis"].ip == "10.0.0.2"
+
+
+def test_names_matching_patterns_keeps_declared_order_and_skips_nothing_else() -> None:
+    """The declared names the patterns fullmatch, in the declared order."""
+    from otto.labs.composite import names_matching_patterns
+
+    declared = ["bench", "bench2", "spare", "lab-a"]
+    assert names_matching_patterns(patterns=["bench.*", "spare"], names=declared) == [
+        "bench",
+        "bench2",
+        "spare",
+    ]
+    assert names_matching_patterns(patterns=["bench"], names=declared) == ["bench"], "fullmatch"
+    assert names_matching_patterns(patterns=[], names=declared) == []
+
+
+@pytest.mark.parametrize("unusable", ["(", "a{99999999999999999999}"])
+def test_names_matching_patterns_skips_only_the_unusable_pattern(unusable: str) -> None:
+    """An unusable pattern (a custom backend's) never raises, and the others still resolve."""
+    from otto.labs.composite import names_matching_patterns
+
+    declared = ["bench", "spare"]
+    assert names_matching_patterns(patterns=[unusable, "spare"], names=declared) == ["spare"]
+    assert names_matching_patterns(patterns=[unusable], names=declared) == []

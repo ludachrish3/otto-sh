@@ -249,6 +249,53 @@ trade. How stat-based validation behaves when several machines share one
 `$OTTO_HOME` is covered in {doc}`../startup-performance`
 ("Shared-home safety").
 
+(completion-lab-hosts)=
+## Which hosts a lab offers
+
+`--lab X` composes the sources of every active project into one lab, so a lab's
+hosts are decided across projects. Completion decides them from host summaries,
+and the rule it keeps is:
+
+> Completion may offer a lab or a host that `--lab` then refuses. It must not
+> leave a host out of a lab that `--lab` loads it in.
+
+Dispatch is the only judge; completion is a hint that errs towards offering.
+So an unavailable lab, a lab whose scoped source failed, a lab pair whose merge
+dispatch refuses and a lab a backend's own summaries mis-state are still
+offered, and `--lab` answers with its reason.
+
+One process-wide view of the summaries (`_process_host_summaries`) holds the
+rule for the three by-lab readers: the `hosts_by_lab` buckets, the live
+`collect_host_ids` lab filter and the docker default parent per lab. It makes
+one summary per host id. Its labs and lab patterns are the union of every
+project's summary of that id, and every pattern is then resolved against the
+lab names every project declares (the same function the composite's summary
+merge calls), so a pattern reaches a lab only another project declares. A host
+with no lab stays in the unscoped answer only. The cache bump to schema 33
+exists because the payload's shape did not change but its buckets are now
+wider: a file from schema 32 is a miss.
+
+Inside one JSON source, two records that compose one id but are different
+machines (two addresses, or two inventories) are still recorded as a drop
+naming both. Both records' labs now reach the one summary, so the id is offered
+under each.
+
+Three things are not part of that promise about host ids:
+
+- **A summary's other fields for an id that names two machines** (`ip`,
+  `docker_capable`, `docker_priority`, `os_type`, `logins`) are one record's,
+  whichever each reader already took. They feed suggestions only: the `/24`
+  neighbour narrowing of `otto tunnel`, the default docker parent and its
+  container ids, and `--user`. For such an id a suggestion can be narrower or
+  wider than what dispatch uses.
+- **A lab's container ids follow its default docker parent.** A host that now
+  joins a lab can tie with the parent that lab had, and a lab with no single
+  default parent offers no container ids, as `--lab` decides it.
+- **A names read that times out** leaves that project's labs, and other
+  projects' hosts under them, out until the next rebuild. That is the
+  deadline's own limit
+  ([Freshness](#freshness)).
+
 ## Reserved namespaces
 
 Three top-level keys sit beside `"sections"`. A rebuild writes none of them,

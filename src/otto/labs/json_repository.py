@@ -460,8 +460,8 @@ class _DocumentLabRepository(abc.ABC):
         The :class:`~otto.labs.protocol.SupportsHostSummariesInView` fast path.
         Each id comes from :func:`~otto.host.factory.host_identity`, which
         applies the same profile merge and validation
-        :func:`~otto.host.factory.create_host_from_dict` applies — so an id
-        offered by completion is one that dispatches. Deriving ids by
+        :func:`~otto.host.factory.create_host_from_dict` applies, so the id is
+        the one the constructed host has. Deriving ids by
         formatting the raw JSON instead would silently diverge (a profile that
         defaults ``board``/``slot`` supplies id parts the JSON never mentions).
 
@@ -484,11 +484,13 @@ class _DocumentLabRepository(abc.ABC):
 
         Two records deriving one id resolve by machine, the rule ``Lab.__add__``
         applies when labs merge (:func:`~otto.host.inventory_ref.first_conflict`
-        over every identity already folded into that id). The same machine —
-        one address, and one inventory when both are referenced — folds the
-        later record's labs into the first summary. A different machine is
-        dropped, naming both declarations: two addresses, or two inventories
-        (or two qualified keys of one) reusing one address.
+        against every identity already folded into that id). Either way the
+        later record's labs and lab patterns fold into the first summary, whose
+        other fields (``ip`` among them) stay the first record's, because
+        ``load_lab`` of each lab loads its own machine. A different machine —
+        two addresses, or two inventories (or two qualified keys of one)
+        reusing one address — is also recorded as a drop naming both
+        declarations, each time such a record is read.
 
         One shape folds here yet is refused by :meth:`load_lab`: two records
         that compose one id at the SAME ip and share a LAB name (element
@@ -526,21 +528,20 @@ class _DocumentLabRepository(abc.ABC):
             if first is not None:
                 # Every portion of an id joins with ``-``, so two records can
                 # compose one id (``a-b`` vs ``a`` + board ``b``, or one
-                # element restated across labs). The same machine: its labs
-                # fold into the kept summary. A different machine would vanish
-                # from completion: dropped, naming both.
+                # element restated across labs). Either way the record's labs
+                # fold into the kept summary, since ``load_lab`` of each lab
+                # loads its own machine. A different machine is also said,
+                # naming both; only the same machine joins the identities kept.
                 clash = _first_clash(incoming=incoming, seen=folded[identity.id])
                 if clash is None:
                     folded[identity.id].append(incoming)
-                    first.labs.extend(n for n in labs if n not in first.labs)
-                    first.lab_patterns.extend(
-                        p for p in element.labs if p not in first.lab_patterns
-                    )
                 else:
                     record_drop(
                         found.where(),
                         _summary_collision(host_id=identity.id, kept=clash, lost=incoming),
                     )
+                first.labs.extend(n for n in labs if n not in first.labs)
+                first.lab_patterns.extend(p for p in element.labs if p not in first.lab_patterns)
                 continue
             folded[identity.id] = [incoming]
             by_id[identity.id] = HostSummary(

@@ -45,7 +45,7 @@ from typing import Any
 from .home_root import HOME_ENV_VAR, home_dir
 
 CACHE_FILENAME = "completion_cache.json"
-SCHEMA = 32
+SCHEMA = 33
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
 WINDOW_SECONDS = 60
 """How long the ``names`` marker vouches for the ``names`` key set."""
