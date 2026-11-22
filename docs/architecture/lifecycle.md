@@ -132,8 +132,8 @@ reservation gate. Each first-party command declares what it needs on its
 | {doc}`test <subsystems/execution>` | yes | yes | yes |
 | {doc}`host <subsystems/hosts>` | yes | yes | yes |
 | {doc}`monitor <subsystems/monitoring>` | no (`lab_free`) — `--live` loads the lab itself; reviewing a saved source doesn't | yes | self-gated per branch: `--live` collection gates, reviewing a saved source doesn't |
-| {doc}`docker <subsystems/docker-hosts>` | yes | yes | no — containers ride the parent's reservation |
-| {doc}`cov <subsystems/coverage/index>` | yes | no — reads existing run dirs | no |
+| {doc}`docker <subsystems/docker-hosts>` | yes | yes | yes, except `use-cases` (it reads configuration); see {doc}`../cli/reservation/index` |
+| {doc}`cov <subsystems/coverage/index>` | yes | no — reads existing run dirs | `get` and `clean` yes; `report` and the offline groups no; see {doc}`../cli/reservation/index` |
 | {doc}`reservation <subsystems/reservations>` | no (`lab_free`) — `check` loads lab data itself | no | no — it *is* the gate, made inspectable |
 | {doc}`schema <subsystems/data-boundary>` | no (`lab_free`) | no | no |
 | {doc}`init <subsystems/bootstrap>` | no (`lab_free`) | no | no |

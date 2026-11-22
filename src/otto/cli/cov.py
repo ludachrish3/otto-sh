@@ -441,6 +441,9 @@ def report(
         logger.info("Ticket export: %s", tickets_json)
 
 
+report.__cli_gate__ = False  # ty: ignore[missing-attribute]
+
+
 # ---------------------------------------------------------------------------
 # get — retrieve the lab's coverage now (get_coverage)
 # ---------------------------------------------------------------------------

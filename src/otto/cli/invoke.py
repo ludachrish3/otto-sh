@@ -1193,9 +1193,9 @@ def present_reservation_gate(ctx: typer.Context) -> None:
     dependency); this function OWNS the presentation of that text — it is
     the single place that styles it bold red (as a literal ``Text``, so a
     holder name in it prints as written).
-    Both CLI call sites (``command_preamble`` here and the live branch of
-    ``otto monitor``) delegate to this one function rather than styling it
-    themselves.
+    Its one caller is :func:`open_live_lab`, which both ``command_preamble``
+    and the live branch of ``otto monitor`` go through, so the gate is
+    evaluated and styled in exactly one place.
 
     ``MissingReservationError`` (raised by ``evaluate()`` when a required
     resource isn't held) is not caught here — it propagates to the caller
@@ -1215,18 +1215,16 @@ def present_reservation_gate(ctx: typer.Context) -> None:
 def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
     """Run the lab-requiring slice of the leaf-invoke preamble: session, lab, output dir.
 
-    Shared by :func:`command_preamble` (every ordinary, non-``lab_free``
-    command) and any ``lab_free``-registered command whose ONE branch still
-    needs a lab — e.g. ``otto monitor --live`` (:mod:`otto.cli.monitor`),
-    which pulls this in itself the same loud way ``otto reservation check``
-    pulls in :func:`ensure_lab_context`, mirroring the per-branch
-    ``spec.gate`` pattern those commands already use for the reservation
-    gate. Idempotent (``ensure_cli_session``/``ensure_lab_context`` each
-    guard their own re-entry), except for the output-dir creation, which a
-    caller should therefore invoke at most once per command invocation.
+    Called only by :func:`open_live_lab`, the one live-lab opening that
+    :func:`command_preamble` (every ordinary, non-``lab_free`` command) and the
+    live branch of ``otto monitor`` (:mod:`otto.cli.monitor`, a ``lab_free``
+    command whose ONE branch needs a lab) both run. Idempotent
+    (``ensure_cli_session``/``ensure_lab_context`` each guard their own
+    re-entry), except for the output-dir creation, which a caller should
+    therefore invoke at most once per command invocation.
 
-    Does not touch the reservation gate itself — callers decide when (or
-    whether) to call :func:`present_reservation_gate`.
+    Does not touch the refusals or the reservation gate; :func:`open_live_lab`
+    owns their order.
     """
     ensure_cli_session(ctx)
     with lab_context_refusals():
@@ -1246,6 +1244,30 @@ def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
         leaf_name = ctx.command.name
         sub = None if leaf_name == spec.name else (leaf_name or spec.name)
         get_context().policy.output_dir = management.create_output_dir(spec.name, sub)
+
+
+def open_live_lab(ctx: typer.Context, spec: "CommandSpec", *, gate: bool) -> None:
+    """Open a live lab for one command: session and lab, the refusals, the gate.
+
+    The ONE sequence every command that reaches lab hosts runs, in this order:
+    :func:`ensure_lab_session` (the lab verdicts it installs are the input to
+    what follows), :func:`refuse_inactive_instruction`,
+    :func:`refuse_unsatisfied_dependencies`, then, when *gate* is true,
+    :func:`present_reservation_gate`. A run that is being refused must not
+    first be warned about the reservations it would have needed, so the gate
+    is last.
+
+    *gate* is the caller's decision, because the two callers reach it
+    differently: :func:`command_preamble` asks :func:`leaf_is_gated`, while
+    ``otto monitor --live`` (registered ``gate=False`` so its review branch,
+    a local file, is exempt) always gates. The dry-run seam is not part of
+    this sequence; :func:`command_preamble` runs it after, for every command.
+    """
+    ensure_lab_session(ctx, spec)
+    refuse_inactive_instruction(ctx)
+    refuse_unsatisfied_dependencies()
+    if gate:
+        present_reservation_gate(ctx)
 
 
 def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
@@ -1368,9 +1390,11 @@ def refuse_unsatisfied_dependencies() -> None:
       otherwise fail mid-run with hosts already touched -- is what this gate
       exists to pre-empt.
 
-    Called only from ``command_preamble``'s non-``lab_free`` branch, which is
-    also what keeps ``otto env sync`` -- the verb the refusal names -- outside
-    the gate that would otherwise refuse to let you run the fix.
+    Called only by :func:`open_live_lab`, the one live-lab opening that
+    :func:`command_preamble` runs for every non-``lab_free`` leaf and the live
+    branch of ``otto monitor`` runs for itself. That is also what keeps
+    ``otto env sync`` -- the verb the refusal names -- outside the gate that
+    would otherwise refuse to let you run the fix.
     """
     from ..run_context import get_context
     from ..session.dependencies import check_dependencies
@@ -1437,6 +1461,31 @@ LAB_FREE_ATTR = "__cli_lab_free__"
 lab-bound group that needs no lab (``otto cov kmodcov export``). Read the same
 way as ``__cli_output_dir__``; the dry-run seam still applies."""
 
+GATE_ATTR = "__cli_gate__"
+"""Per-leaf opt-out from the reservation gate, for a leaf under a gated group
+that loads a lab but contacts no host (``otto cov report``, ``otto docker
+use-cases``). ``False`` exempts the leaf; absent means gated. Read the same way
+as ``__cli_output_dir__``, by :func:`leaf_is_gated`."""
+
+
+def leaf_is_lab_free(spec: "CommandSpec", callback: object) -> bool:
+    """Whether the preamble skips the lab slice (and so the gate) for this leaf."""
+    return spec.lab_free or bool(getattr(callback, LAB_FREE_ATTR, False))
+
+
+def leaf_is_gated(spec: "CommandSpec", callback: object) -> bool:
+    """Decide whether the reservation gate runs before this leaf touches anything.
+
+    A lab-free leaf never loads a lab, so it has no reservation to evaluate; a
+    group registered ``gate=False`` and a leaf marked ``__cli_gate__ = False``
+    opt out explicitly. Everything else is gated.
+    """
+    return (
+        not leaf_is_lab_free(spec, callback)
+        and spec.gate
+        and bool(getattr(callback, GATE_ATTR, True))
+    )
+
 
 def command_preamble(ctx: typer.Context) -> None:
     """Run once when a real (non-help) command invocation starts.
@@ -1472,19 +1521,9 @@ def command_preamble(ctx: typer.Context) -> None:
     # A leaf under a lab-bound group may opt out of the lab slice with the
     # same per-leaf mechanism ``ensure_lab_session`` reads for the output dir:
     # ``otto cov kmodcov export`` writes a local directory and touches no host.
-    leaf_lab_free = bool(getattr(ctx.command.callback, LAB_FREE_ATTR, False))
-    if not spec.lab_free and not leaf_lab_free:
-        ensure_lab_session(ctx, spec)
-        # After the session (the lab verdicts it installs ARE the input) and
-        # before the gate: a run that is being refused must not first be
-        # warned about the reservations it would have needed.
-        refuse_inactive_instruction(ctx)
-        # After the ownership gate, which refuses the thing the operator TYPED
-        # and so owns the more specific sentence; before the reservation gate,
-        # for the reason stated one line up.
-        refuse_unsatisfied_dependencies()
-        if spec.gate:
-            present_reservation_gate(ctx)
+    callback = ctx.command.callback
+    if not leaf_is_lab_free(spec, callback):
+        open_live_lab(ctx, spec, gate=leaf_is_gated(spec, callback))
 
     stop_at_dry_run_seam(ctx, spec)
 

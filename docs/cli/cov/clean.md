@@ -8,6 +8,9 @@ previous capture has already been retrieved:
 otto cov clean
 ```
 
+Like `otto cov get`, it runs the [reservation gate](../reservation/index.md)
+first.
+
 It calls {func}`~otto.coverage.collect.clean_coverage`, which resets every
 instrumented product on every host `[coverage].hosts` matches — containers
 included, the otto runner itself excluded — one product at a time, so a

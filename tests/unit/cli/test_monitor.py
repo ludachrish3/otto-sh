@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import typer
 
 from otto.cli.monitor import monitor_app
 from otto.monitor.live import LiveReport
@@ -42,6 +43,9 @@ def preamble(monkeypatch):
     )
     monkeypatch.setattr(
         "otto.cli.invoke.ensure_cli_session", lambda *a, **k: calls.append("cli_session")
+    )
+    monkeypatch.setattr(
+        "otto.cli.invoke.refuse_unsatisfied_dependencies", lambda: calls.append("dependencies")
     )
     monkeypatch.setattr("otto.declared.get_projects", list)
     return calls
@@ -127,7 +131,7 @@ class TestPreamblePerMode:
     def test_live_runs_the_lab_session_slice(self, preamble, run_live):
         result = _invoke(["--live"])
         assert result.exit_code == 0, result.output
-        assert preamble == ["lab_session"]
+        assert preamble == ["lab_session", "dependencies"]
 
 
 # ── Parsing that reaches the library ─────────────────────────────────────────
@@ -242,3 +246,29 @@ class TestGatePerMode:
         result = _invoke(["--live"])
         assert result.exit_code == 0, result.output
         assert result.output == ""
+
+
+class TestLiveOpensTheLabLikeEveryLiveCommand:
+    """``--live`` runs the shared live-lab opening, so a refusal there stops it too."""
+
+    def test_an_unsatisfied_dependency_refuses_before_the_gate_and_the_run(
+        self, monkeypatch, reservation, run_live
+    ):
+        def refuse():
+            raise typer.Exit(1)
+
+        monkeypatch.setattr("otto.cli.invoke.refuse_unsatisfied_dependencies", refuse)
+        result = _invoke(["--live"])
+        assert result.exit_code == 1
+        reservation.evaluate.assert_not_called()
+        run_live.assert_not_awaited()
+
+    def test_review_loads_no_lab_and_runs_no_refusal_or_gate(
+        self, tmp_path, preamble, reservation, serve_review
+    ):
+        src = tmp_path / "m.json"
+        src.write_text("{}")
+        result = _invoke([str(src)])
+        assert result.exit_code == 0, result.output
+        assert preamble == ["cli_session"]
+        reservation.evaluate.assert_not_called()

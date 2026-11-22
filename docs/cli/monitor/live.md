@@ -58,6 +58,11 @@ refuses before it builds a fleet at all, naming the project and the file to edit
 A dependency's declaration never refuses: a lab that another project narrowed
 out is still this one's to watch.
 
+`--live` also refuses, as `otto run` does, when an active project declares a
+Python requirement this environment lacks
+([the dependency preflight](../env/index.md#the-dependency-preflight)); reviewing
+a saved source never loads a lab and is not checked.
+
 ### When nothing gets monitored
 
 Four different emptinesses, four different messages, each pointing at a

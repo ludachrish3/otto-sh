@@ -30,6 +30,7 @@ from otto.config.env import is_otto_env_var
 from otto.config.project import Project
 from otto.result import CommandResult, Results
 from otto.utils import Status
+from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.project_scaffold import make_project
 from tests._fixtures.run_projects import (  # noqa: F401 — fixtures, shared with tests/unit/suite
@@ -480,3 +481,30 @@ def capture_cov(otto_test_cli, monkeypatch):
         return result.exit_code, captured, result.output
 
     return _capture
+
+
+@pytest.fixture
+def preamble_gate(monkeypatch, no_logger_output_dir):
+    """Isolate ``command_preamble`` down to its reservation-gate branch.
+
+    Stubs bootstrap (no errors), session/lab setup, and output-dir creation so
+    the only observable effect is whatever the reservation-gate block does.
+    Drive it with :class:`tests._fixtures.preamble_ctx.FakeLeafCtx`.
+    """
+    from otto.cli import invoke
+
+    def _noop(ctx: Any) -> None:
+        pass
+
+    monkeypatch.setattr(invoke, "ensure_cli_session", _noop)
+    monkeypatch.setattr(invoke, "ensure_lab_context", _noop)
+    monkeypatch.setattr("otto.bootstrap.bootstrap", bootstrap_stub)
+    # create_output_dir is already the conftest's Mock (no_logger_output_dir);
+    # shape it there rather than monkeypatching over it — see that fixture.
+    no_logger_output_dir.return_value = None
+    from otto.context import OttoContext
+    from otto.labs.loader import Lab
+
+    # A real context: the preamble writes the run's directory to its policy.
+    ctx = OttoContext(lab=Lab(name="preamble"))
+    monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)

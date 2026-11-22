@@ -11,6 +11,9 @@ discovered toolchain, and written as one `capture.json` per host per product
 `cov/<host_id>/<product>/` under the command's output directory
 ({ref}`the run tree <run-tree>`).
 
+`otto cov get` runs the [reservation gate](../reservation/index.md) before it
+contacts a host.
+
 By default `otto cov get` targets the lab's sole `e2e`-kind tier and
 writes a capture that is **not** committed anywhere — it lives in the
 output directory, the same as a run's other artifacts.  Selecting a

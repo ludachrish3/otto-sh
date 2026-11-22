@@ -10,6 +10,10 @@ fragments to; `compose build`, `compose up`, `compose down`, `compose ps` and
 {doc}`use-cases` is the workflow home for that model; read it after
 {ref}`First deploy <docker-first-deploy>` for the cross-project side.
 
+Every `otto docker` command that contacts a host runs the
+[reservation gate](../reservation/index.md) first; `use-cases` reads only
+configuration and is not gated.
+
 ```{raw} html
 :file: ../../_static/generated/termynal/help-docker.html
 ```

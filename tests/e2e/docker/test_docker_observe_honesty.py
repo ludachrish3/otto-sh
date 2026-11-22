@@ -11,7 +11,7 @@ import uuid
 
 import pytest
 
-from ._cli import _PROJECT1_USE_CASE, _WIDE, _run_otto
+from ._cli import _PROJECT1_USE_CASE, _WIDE, _own_output, _run_otto, _split_gate_preamble
 from ._honesty import (
     DAEMON_IMAGE_PAIRS_COMMAND,
     DAEMON_PS_PAIRS_COMMAND,
@@ -64,8 +64,11 @@ def test_ps_prints_only_container_ids_the_daemon_holds(teardown_after, docker_ho
     # host's daemon, which another session may be changing under this one.
     ps = _run_otto("docker", "ps", "-a", "--parent", docker_host, xdir=tmp_path, env=_WIDE)
     assert ps.returncode == 0, ps.stdout + ps.stderr
-    assert _first_line(ps.stdout) == f"== {docker_host} ==", ps.stdout
-    printed = parse_ps_ids(ps.stdout)
+    preamble, own = _split_gate_preamble(ps.stdout)
+    # `docker` commands run the reservation gate (#1057): `-R` makes it skip, and says so.
+    assert "Reservation check SKIPPED" in preamble, ps.stdout
+    assert _first_line(own) == f"== {docker_host} ==", ps.stdout
+    printed = parse_ps_ids(own)
     assert printed.get(docker_host), ps.stdout
     daemon = _daemon_container_ids(docker_host, tmp_path)
     for short in printed[docker_host]:
@@ -135,8 +138,9 @@ def test_compose_ps_names_only_containers_of_the_project_the_daemon_holds(
         env=_WIDE,
     )
     assert ps.returncode == 0, ps.stdout + ps.stderr
-    assert _first_line(ps.stdout) == f"== {docker_host} ==", ps.stdout
-    printed = parse_compose_ps_names(ps.stdout)
+    own = _own_output(ps.stdout)
+    assert _first_line(own) == f"== {docker_host} ==", ps.stdout
+    printed = parse_compose_ps_names(own)
     assert printed.get(docker_host), ps.stdout
     daemon = _daemon_container_names(docker_host, tmp_path)
     for name in printed[docker_host]:
@@ -177,10 +181,11 @@ def test_compose_logs_prints_the_services_log_lines_the_daemon_holds(
     )
     assert logs.returncode == 0, logs.stdout + logs.stderr
     header = f"== {docker_host} =="
-    assert _first_line(logs.stdout) == header, logs.stdout
+    own = _own_output(logs.stdout)
+    assert _first_line(own) == header, logs.stdout
     # The planted line is what makes the comparison below non-vacuous.
-    assert marker in logs.stdout, logs.stdout
-    body = logs.stdout.split(header, 1)[1]
+    assert marker in own, logs.stdout
+    body = own.split(header, 1)[1]
     printed = [line for line in body.splitlines() if line.strip()]
     # The daemon's whole log (no --tail) is a superset of any earlier tail window, so a
     # line written between the two calls cannot make the comparison flaky. Its output
@@ -275,11 +280,12 @@ def test_logs_with_no_parent_prints_what_docker_logs_prints(
         env=_WIDE,
     )
     assert logs.returncode == 0, logs.stdout + logs.stderr
-    assert not logs.stdout.startswith("=="), logs.stdout  # one container, no host header
+    own = _own_output(logs.stdout)
+    assert not own.startswith("=="), logs.stdout  # one container, no host header
     # The planted line is what makes the comparison below non-vacuous.
-    assert marker in logs.stdout, logs.stdout
+    assert marker in own, logs.stdout
     cid = _project_container_id(default_parent_host, project, tmp_path)
-    _assert_lines_are_the_daemons(logs.stdout, default_parent_host, cid, tmp_path)
+    _assert_lines_are_the_daemons(own, default_parent_host, cid, tmp_path)
 
 
 def test_logs_of_a_stopped_container_are_still_dockers_to_print(
@@ -311,8 +317,9 @@ def test_logs_of_a_stopped_container_are_still_dockers_to_print(
         env=_WIDE,
     )
     assert logs.returncode == 0, logs.stdout + logs.stderr
-    assert marker in logs.stdout, logs.stdout
-    _assert_lines_are_the_daemons(logs.stdout, default_parent_host, cid, tmp_path)
+    own = _own_output(logs.stdout)
+    assert marker in own, logs.stdout
+    _assert_lines_are_the_daemons(own, default_parent_host, cid, tmp_path)
 
 
 def test_logs_with_parent_of_an_unknown_name_is_dockers_error(docker_host, tmp_path):

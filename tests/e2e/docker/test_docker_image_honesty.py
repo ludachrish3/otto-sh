@@ -21,7 +21,7 @@ import pytest
 
 from tests._fixtures.docker_reap import E2E_IMAGE_LABEL, remove_labelled_images_command
 
-from ._cli import _WIDE, _flat, _run_otto
+from ._cli import _WIDE, _flat, _own_output, _run_otto
 from ._honesty import (
     DAEMON_IMAGE_PAIRS_COMMAND,
     MARK,
@@ -125,8 +125,9 @@ def test_image_ls_and_its_alias_print_the_daemons_references_and_ids(throwaway):
     for argv in (["image", "ls"], ["images"]):
         out = _run_otto("docker", *argv, "--parent", throwaway.host, xdir=throwaway.xdir, env=_WIDE)
         assert out.returncode == 0, out.stdout + out.stderr
-        assert out.stdout.startswith(f"== {throwaway.host} ==\n"), out.stdout
-        listed[" ".join(argv)] = parse_images_rows(out.stdout)[throwaway.host]
+        own = _own_output(out.stdout)
+        assert own.startswith(f"== {throwaway.host} ==\n"), out.stdout
+        listed[" ".join(argv)] = parse_images_rows(own)[throwaway.host]
     # The throwaway is what makes the comparison non-vacuous.
     assert listed["image ls"].get(ref) == full.removeprefix("sha256:")[:12], listed["image ls"]
     daemon = parse_daemon_rows(throwaway.exec(DAEMON_IMAGE_PAIRS_COMMAND))
@@ -161,9 +162,10 @@ def test_image_rm_prints_what_docker_did_and_the_daemon_no_longer_holds_it(throw
         "docker", "image", "rm", ref, "--parent", throwaway.host, xdir=throwaway.xdir, env=_WIDE
     )
     assert out.returncode == 0, out.stdout + out.stderr
-    assert out.stdout.startswith(f"== {throwaway.host} ==\n"), out.stdout
-    assert f"Untagged: {ref}\n" in out.stdout, out.stdout
-    assert f"Deleted: {full}\n" in out.stdout, out.stdout
+    own = _own_output(out.stdout)
+    assert own.startswith(f"== {throwaway.host} ==\n"), out.stdout
+    assert f"Untagged: {ref}\n" in own, out.stdout
+    assert f"Deleted: {full}\n" in own, out.stdout
     assert throwaway.held_ids() == set()
 
 
@@ -180,8 +182,9 @@ def test_image_rm_of_an_image_the_daemon_lacks_is_dockers_own_error(throwaway):
         env=_WIDE,
     )
     assert out.returncode == 1, out.stdout + out.stderr
-    assert out.stdout.startswith(f"== {throwaway.host} ==\n"), out.stdout
-    assert "No such image" in out.stdout, out.stdout
+    own = _own_output(out.stdout)
+    assert own.startswith(f"== {throwaway.host} ==\n"), out.stdout
+    assert "No such image" in own, out.stdout
 
 
 def test_image_prune_removes_exactly_the_dangling_images_its_filter_names(throwaway):
@@ -221,8 +224,9 @@ def test_image_prune_removes_exactly_the_dangling_images_its_filter_names(throwa
         env=_WIDE,
     )
     assert out.returncode == 0, out.stdout + out.stderr
-    assert out.stdout.startswith(f"== {throwaway.host} ==\n"), out.stdout
-    assert f"deleted: {first}" in out.stdout, out.stdout
+    own = _own_output(out.stdout)
+    assert own.startswith(f"== {throwaway.host} ==\n"), out.stdout
+    assert f"deleted: {first}" in own, out.stdout
     assert second not in out.stdout, out.stdout
     assert throwaway.held_ids() == {second}
     assert outside not in out.stdout, out.stdout

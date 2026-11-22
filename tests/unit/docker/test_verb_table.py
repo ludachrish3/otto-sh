@@ -33,6 +33,7 @@ def test_every_row_stamps_the_markers_it_declares():
     for verb in _VERBS:
         assert getattr(verb.leaf, "__cli_output_dir__", True) is verb.output_dir, verb
         assert getattr(verb.leaf, "__cli_dry_run_preview__", False) is verb.dry_run_preview, verb
+        assert getattr(verb.leaf, "__cli_gate__", True) is verb.gate, verb
 
 
 def test_every_rows_markers_survive_resolution_to_the_command_callback():

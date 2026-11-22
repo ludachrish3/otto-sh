@@ -389,9 +389,10 @@ registered into, with that lab's declared `resources` — so concurrent test
 runs that both want `test3.project1.api` serialize
 through the existing reservation backend. There's no separate
 container-reservation concept — the parent's reservation transitively
-covers its containers. That's also why the `otto docker` command itself
-carries no independent reservation gate (`gate=False` on its `CommandSpec`,
-{doc}`../lifecycle`): gating the parent host is the whole story.
+covers its containers. The `otto docker` command is gated like any other
+command that contacts a lab host: every verb but `use-cases` runs the
+reservation gate first, so a docker verb needs the same reservation the
+parent host does ({doc}`../../cli/reservation/index`).
 
 ## Persistent shell sessions
 
