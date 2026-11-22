@@ -135,8 +135,23 @@ source zephyr/zephyr-env.sh
 #    output regardless of order-only input timestamps. Cheap: a copy + the strip
 #    below, not a full Zephyr rebuild.
 rm -f "$BUILD_DIR/llext/cov_ext_debug.elf" "$BUILD_DIR/zephyr/cov_ext.llext"
+# `west build` re-runs the CMake configure whenever it is given CMake arguments
+# (anything after `--`), even for a directory already configured with the same
+# values: tens of seconds of Kconfig parsing per run for a build that is otherwise
+# an incremental ninja. So the argument is passed only when the directory does not
+# already hold this starter directory. (Ninja still re-configures by itself when a
+# CMakeLists or Kconfig input changed.)
+starter_configured() {  # <build-dir> <starter-dir>
+    # Whatever type the cache recorded the entry with; the value compared whole.
+    sed -n 's/^COV_STARTER_DIR:[A-Z]*=//p' "$1/CMakeCache.txt" 2>/dev/null | grep -qxF -- "$2"
+}
+
+cmake_args=()
+if ! starter_configured "$BUILD_DIR" "$COV_STARTER_DIR"; then
+    cmake_args=(-- -DCOV_STARTER_DIR="$COV_STARTER_DIR")
+fi
 echo "=== west build ($BOARD) -> $BUILD_DIR ==="
-if ! west build -b "$BOARD" -d "$BUILD_DIR" "$PRODUCT_DIR" -- -DCOV_STARTER_DIR="$COV_STARTER_DIR"; then
+if ! west build -b "$BOARD" -d "$BUILD_DIR" "$PRODUCT_DIR" ${cmake_args[@]+"${cmake_args[@]}"}; then
     echo "=== incremental build rejected the existing dir; retrying pristine ==="
     west build -p always -b "$BOARD" -d "$BUILD_DIR" "$PRODUCT_DIR" -- -DCOV_STARTER_DIR="$COV_STARTER_DIR"
 fi

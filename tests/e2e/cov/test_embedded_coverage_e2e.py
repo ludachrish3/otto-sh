@@ -20,12 +20,14 @@ path; only the real CLI does, and only over the real multi-hop transport:
 Requirements (else the test FAILS LOUD, naming what is missing — G12: a
 bed-certifying lane never skips):
     - the zephyr VM up with ``zephyr37_llext`` running (``zephyr-qemu-cov.service``);
-    - the project3 coverage product built into ``[coverage.embedded].build_dir``
-      (see ``tests/project3/product/README.md``).
+    - the zephyr toolchains the product builds with (``tests/project3/product/README.md``):
+      the ``built_extensions`` fixture builds every declared version before the
+      timed test body, so a rebuild after a worktree switch is setup time.
 """
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from pathlib import Path
 
@@ -35,6 +37,7 @@ import tomli
 from otto import layout
 from otto.coverage.capture.model import Capture
 from otto.logger.mode import LogMode
+from scripts import bed_reap
 from tests._fixtures.labdata import element_for
 from tests.e2e._otto_subprocess import (
     CHECKOUT_ROOT,
@@ -74,6 +77,31 @@ def _extension_artifacts() -> list[Path]:
     names = {e["name"] for e in entries}
     assert names == {PRODUCT}, f"expected one product name {PRODUCT!r}, got {sorted(names)}"
     return [Path(e["artifact"]) for e in entries]
+
+
+@pytest.fixture(scope="module")
+def built_extensions() -> list[Path]:
+    """Build every declared version's extension, then return the artifacts.
+
+    The suite's own first step builds the same extension through the same
+    function (``product_builds.build_extension``); built here first, that step
+    is an incremental no-op, and a pristine rebuild (another checkout built the
+    shared build dirs last) lands in fixture setup, which the per-test timeout
+    does not count. Each build is bounded by ``build_extension``'s own timeout.
+    """
+    builds = bed_reap._builds()
+    _extension_artifacts()  # the declaration is checked before any build time is spent
+    for build in builds.declared_builds():
+        # A failed build raises with the build's output, failing every test using this.
+        asyncio.run(builds.build_extension(build.build_dir, build.zver))
+    artifacts = _extension_artifacts()
+    # `--cov` resolves on a local instrumentation scan of each declared artifact,
+    # and a missing file scans as "unknown", which refuses the run: so an artifact
+    # the build did not leave (the [[products]] path disagreeing with the build's
+    # output) fails here, naming it.
+    missing = [a for a in artifacts if not a.exists()]
+    assert not missing, f"the build left no declared artifact: {missing}"
+    return artifacts
 
 
 @pytest.fixture
@@ -222,20 +250,8 @@ def _board_info(cov_dir: Path, host_id: str) -> Path:
     return info
 
 
-def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
+def test_embedded_coverage_cli_e2e(built_extensions, clean_zephyr37_llext, tmp_path):
     """`otto test --cov` + report against the live zephyr37_llext yields product coverage."""
-    # Every version's artifact must exist BEFORE otto starts, not just by the
-    # time the suite's build step has run: `--cov` now resolves on a local
-    # instrumentation scan of each declared artifact, and a missing file scans
-    # as "unknown" — which refuses the run rather than collecting nothing.
-    for artifact in _extension_artifacts():
-        if not artifact.exists():
-            pytest.fail(
-                f"embedded-coverage product not built: {artifact} — build it per "
-                "tests/project3/product/README.md; this lane fails loud rather than "
-                "skipping (G12), a skip here certified nothing."
-            )
-
     report_dir = tmp_path / "report"
     run_dir = tmp_path / "e2e"
     cov_dir = layout.cov_dir(run_dir)
@@ -347,7 +363,7 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
     assert_output_dir(tmp_path, "test")
 
 
-def test_embedded_cov_clean_zeroes_the_board_e2e(clean_zephyr37_llext, tmp_path):
+def test_embedded_cov_clean_zeroes_the_board_e2e(built_extensions, clean_zephyr37_llext, tmp_path):
     """Exercise, ``otto cov clean``, dump: the board's product counters read zero.
 
     The project3 ``TestEmbeddedCounterReset`` class runs every product operation
@@ -359,13 +375,6 @@ def test_embedded_cov_clean_zeroes_the_board_e2e(clean_zephyr37_llext, tmp_path)
     every product function the exercise ran — counted non-zero by the test
     above — reads zero hits on both boards.
     """
-    for artifact in _extension_artifacts():
-        if not artifact.exists():
-            pytest.fail(
-                f"embedded-coverage product not built: {artifact} — build it per "
-                "tests/project3/product/README.md; this lane fails loud rather than "
-                "skipping (G12)."
-            )
     run_dir = tmp_path / "e2e"
     cov_dir = layout.cov_dir(run_dir)
 
