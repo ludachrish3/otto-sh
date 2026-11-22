@@ -116,12 +116,15 @@ def test_expand_follows_the_matrix_and_never_falls_back_to_the_id_of_a_named_job
     ]
     assert _expand("x", {"name": "fixed"}) == ["fixed"]
     assert _expand("x", {}) == ["x"]
-    assert _expand("tests", CI["jobs"]["tests"]) == [
-        f"tests_hostless-{v}" for v in CI["jobs"]["tests"]["strategy"]["matrix"]["python"]
+    interior = CI["jobs"]["tests"]["strategy"]["matrix"]["python"]
+    assert _expand("tests", CI["jobs"]["tests"]) == [f"tests_hostless_unit-{v}" for v in interior]
+    assert _expand("hostless-interior", CI["jobs"]["hostless-interior"]) == [
+        f"tests_hostless-{v}" for v in interior
     ]
     required = _required()
     # a required context spelt as an id would never turn green
     assert "tests" not in required
+    assert "hostless-interior" not in required
     assert "dashboard" not in required
 
 
@@ -202,29 +205,69 @@ def test_expand_renders_include_entries_and_unnamed_matrix_values_as_github_does
     assert _expand("j", {"name": "solo"}) == ["solo"]
 
 
-LEG_JOBS = ["tests-primary", "tests-canary", "tests"]
+LEG_JOBS = [
+    "tests-primary",
+    "tests-canary",
+    "tests",
+    "repeat-primary",
+    "repeat-canary",
+    "repeat-interior",
+]
+# certificate -> (its contexts, the needs that must succeed, the repeat that may be skipped)
 CERTIFICATES = {
     "hostless-primary": (
-        "tests_hostless-3.10",
+        ["tests_hostless-3.10"],
         ["gate-admission", "tests-primary", "coverage-hostless"],
+        "repeat-primary",
     ),
-    "hostless-canary": ("tests_hostless-3.14", ["gate-admission", "tests-canary"]),
+    "hostless-canary": (
+        ["tests_hostless-3.14"],
+        ["gate-admission", "tests-canary"],
+        "repeat-canary",
+    ),
+    "hostless-interior": (
+        ["tests_hostless-3.11", "tests_hostless-3.12", "tests_hostless-3.13"],
+        ["gate-admission", "tests"],
+        "repeat-interior",
+    ),
 }
 
 
 @pytest.mark.parametrize("job_id", sorted(CERTIFICATES))
-def test_the_bookend_certificates_keep_their_context_names_and_accept_only_success(job_id):
+def test_a_hostless_certificate_keeps_its_names_and_accepts_success_or_a_skipped_repeat(job_id):
     """A skipped required check counts as passing, so the certificate must run
-    (``always()``) and turn red on any need that is not ``success``."""
-    name, needs = CERTIFICATES[job_id]
+    (``always()``) and turn red on any need that is not ``success``.
+
+    The repeat alone may be ``skipped``: its own ``if:`` skips it on a push to
+    ``main``, and the only other way it is skipped is a refused admission, which
+    the first clause fails.
+    """
+    names, needs, repeat = CERTIFICATES[job_id]
     job = CI["jobs"][job_id]
-    assert job["name"] == name
-    assert job["needs"] == needs
+    assert _expand(job_id, job) == names
+    assert job["needs"] == [*needs, repeat]
     assert job["if"] == "always()"
+    assert CI["jobs"][repeat]["if"] == "github.event_name == 'pull_request'"
     (step,) = job["steps"]
-    clauses = [c.strip() for c in step["run"].split("&&")]
-    assert clauses == [f'test "${{{{ needs.{n}.result }}}}" = success' for n in needs]
-    assert name in _required()
+    result = f'"${{{{ needs.{repeat}.result }}}}"'
+    assert step["run"] == " && ".join(
+        [
+            *(f'test "${{{{ needs.{n}.result }}}}" = success' for n in needs),
+            f"{{ test {result} = success || test {result} = skipped; }}",
+        ]
+    )
+    assert set(names) <= set(_required())
+
+
+def test_the_interior_pythons_are_one_list_for_the_lane_its_repeat_and_its_certificate():
+    """A ``needs:`` names a whole matrix job, never one row, so each of the three jobs
+    carries the list: they must carry the same one, or a Python's lane or repeat would
+    run with no context certifying it."""
+    lists = [
+        CI["jobs"][job_id]["strategy"]["matrix"]["python"]
+        for job_id in ("tests", "repeat-interior", "hostless-interior")
+    ]
+    assert all(each == lists[0] for each in lists), lists
 
 
 def _fold_sessions() -> "list[str]":

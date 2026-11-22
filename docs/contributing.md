@@ -561,14 +561,14 @@ A landing is a pull request, and its checks are split by who can run them.
 `.github/workflows/ci.yml`, the hostless matrix (the `tests_hostless-3.10` …
 `3.14` contexts: `tests/unit` and the no-VM e2e, one nox session per tier,
 each on the Pythons [the session table](architecture/testing.md#other-axes-typescript-doctests-cross-python)
-gives it; the two bookend contexts are certificates over
-the primary's and the canary's sessions, and the 3.10 one also needs the
-coverage fold, see [the quality-gates table](architecture/quality-gates.md#what-binds-each-gate)), the
+gives it; each context is a certificate over its Python's lane jobs and their
+changed-test repeat jobs, and the 3.10 one also needs the coverage fold, see
+[the quality-gates table](architecture/quality-gates.md#what-binds-each-gate)), the
 docs build and the TypeScript gates among them; the CI column of [the
 quality-gates table](architecture/quality-gates.md#what-binds-each-gate) names
 them, and only the issue-filing job waits for a failed run on `main`, as
 nightly's does: a failed pull request never files an issue. On a pull request
-the test jobs also run [the changed-test repeat](#the-changed-test-repeat).
+each hostless lane also has [the changed-test repeat](#the-changed-test-repeat).
 **The
 local tip adds what CI cannot run, and the cheap static lanes beside it**:
 `make check-breaking` over the landing range; `make check-python` and `make
@@ -1793,8 +1793,17 @@ the cross-Python axis that `make all` doesn't.
 A test that fails one run in fifty passes its own pull request and then fails
 on `main`, under a landing that never touched it. To catch it where it is
 written, a pull request's CI repeats every test file the pull request adds or
-modifies. The test jobs do it in a step after their own run, so there is no
-new check to wait for.
+modifies.
+
+Each hostless lane's repeat is a job of its own, beside the lane, named after
+its session (`tests_changed_repeat_unit-3.12`) and with the same 60-minute
+budget as the lane. As a step after the lane, it shared the lane's budget, and
+a pull request that touched a slow test file timed out a leg whose every test
+had passed ([#1252](https://github.com/ludachrish3/otto-sh/issues/1252)). The
+required `tests_hostless-<python>` context needs both jobs, so the required
+checks are unchanged and each still covers the repeat. The browser repeat stays
+a step after each engine's run in its `dashboard-e2e` job: it needs the
+dashboard that job builds, and the job sets no timeout of its own.
 
 Selection is by file: any `test_*.py` the pull request's diff adds or
 modifies (a renamed file counts under its new name; a deleted one is not
@@ -1804,10 +1813,10 @@ so a test is repeated in the lanes that ordinarily run it:
 
 | Session | Files under | Repeats | Runs in |
 |---|---|---|---|
-| `tests_changed_repeat_unit` | `tests/unit` | 20 | every Python's unit leg |
-| `tests_changed_repeat_guards` | `tests/unit` (the `interpreter_agnostic` family) | 5 | the 3.10 guards leg |
-| `tests_changed_repeat_e2e` | `tests/e2e` | 20 | the 3.10 and 3.14 e2e legs |
-| `tests_changed_repeat_browser` | the two browser suites | 10 | each engine's `dashboard-e2e` job |
+| `tests_changed_repeat_unit` | `tests/unit` | 20 | a job beside every Python's unit leg |
+| `tests_changed_repeat_guards` | `tests/unit` (the `interpreter_agnostic` family) | 5 | a job beside the 3.10 guards leg |
+| `tests_changed_repeat_e2e` | `tests/e2e` | 20 | a job beside the 3.10 and 3.14 e2e legs |
+| `tests_changed_repeat_browser` | the two browser suites | 10 | a step of each engine's `dashboard-e2e` job |
 
 One failure in any repeat fails the job. Nothing is retried, and the fix is
 the test's cause ([When main goes red](#when-main-goes-red) says why). A

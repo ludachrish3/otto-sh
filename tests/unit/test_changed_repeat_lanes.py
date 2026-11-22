@@ -11,12 +11,14 @@ The sessions are driven with a recording double, as
 ``tests/unit/test_doctest_lane_hermeticity.py`` does: no pytest is spawned.
 """
 
+import re
 import sys
 
 import pytest
 import yaml
 
-from tests._fixtures.gha_matrix import matrix_rows, render
+from scripts.local_gate_status import REQUIRED_CONTEXTS_FILE, required_contexts
+from tests._fixtures.gha_matrix import expand_names, matrix_rows, render
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -25,12 +27,19 @@ _COVERAGE_FLAGS = ("--cov-append", "--cov-fail-under=", "--no-cov")
 _ENGINES = ("chromium", "firefox", "webkit")
 _CI = yaml.safe_load((CHECKOUT_ROOT / ".github" / "workflows" / "ci.yml").read_text())
 _REPEAT_STEP = "Repeat the"
-# job -> the lane session each row runs, as a template over the row.
+_ON_A_PULL_REQUEST = "github.event_name == 'pull_request'"
+# lane job -> the lane session each row runs, as a template over the row.
 _CI_JOBS = {
     "tests-primary": "uv run nox -s ${{ matrix.session }}-3.10",
     "tests-canary": "uv run nox -s ${{ matrix.session }}-3.14",
     "tests": "uv run nox -s tests_hostless_unit-${{ matrix.python }}",
     "dashboard": "uv run nox -k ${{ matrix.browser }}",
+}
+# hostless family's repeat job -> its lane job (#1252: a job of its own, not a step).
+_REPEAT_JOBS = {
+    "repeat-primary": "tests-primary",
+    "repeat-canary": "tests-canary",
+    "repeat-interior": "tests",
 }
 _LANE_OF = {
     "tests_hostless_unit": "tests_changed_repeat_unit",
@@ -236,17 +245,53 @@ def _repeat_step(job: dict) -> dict:
     return step
 
 
-@pytest.mark.parametrize("job_id", list(_CI_JOBS))
-def test_ci_repeats_only_on_a_pull_request_and_after_the_lanes_own_run(job_id: str) -> None:
-    """On a push to ``main`` the first parent is the previous landing, not a pull request's base."""
-    job = _CI["jobs"][job_id]
+def _repeat_runs() -> "list[str]":
+    """Every rendered repeat command CI runs: each hostless repeat job's rows and the browser's."""
+    return [
+        render(_repeat_step(_CI["jobs"][job_id])["run"], row)
+        for job_id in [*_REPEAT_JOBS, "dashboard"]
+        for row in matrix_rows(_CI["jobs"][job_id])
+    ]
+
+
+@pytest.mark.parametrize("job_id", list(_REPEAT_JOBS))
+def test_a_hostless_repeat_is_a_job_of_its_own_that_runs_only_on_a_pull_request(
+    job_id: str,
+) -> None:
+    """On a push to ``main`` the first parent is the previous landing, not a pull request's base.
+
+    A job, not a step after the lane, so the lane and the repeat each have a full
+    budget (#1252): as a step, a slow changed file timed out a green lane.
+    """
+    job, lane = _CI["jobs"][job_id], _CI["jobs"][_REPEAT_JOBS[job_id]]
+    assert job["if"] == _ON_A_PULL_REQUEST
+    assert "if" not in _repeat_step(job)
+    assert job["needs"] == ["gate-admission"], "it runs beside its lane, not after it"
+    assert job["timeout-minutes"] == lane["timeout-minutes"]
+    assert not [s for s in lane["steps"] if s.get("name", "").startswith(_REPEAT_STEP)]
+
+
+@pytest.mark.parametrize("job_id", list(_REPEAT_JOBS))
+def test_a_hostless_repeat_runs_on_its_lanes_python_with_its_lanes_setup_and_env(
+    job_id: str,
+) -> None:
+    """The repeat needs what its lane's step had: the setup action on the Python, and the env."""
+    job, lane = _CI["jobs"][job_id], _CI["jobs"][_REPEAT_JOBS[job_id]]
+    [setup] = [s for s in job["steps"] if s.get("uses") == "./.github/actions/hostless-setup"]
+    [lane_setup] = [s for s in lane["steps"] if s.get("uses") == "./.github/actions/hostless-setup"]
+    assert setup["with"] == lane_setup["with"]
+    assert job.get("env") == lane.get("env")
+
+
+def test_the_browser_repeat_is_a_step_after_each_engines_run_only_on_a_pull_request() -> None:
+    job = _CI["jobs"]["dashboard"]
     step = _repeat_step(job)
-    assert step["if"] == "github.event_name == 'pull_request'"
+    assert step["if"] == _ON_A_PULL_REQUEST
     runs = [s.get("run") for s in job["steps"]]
-    assert runs.index(_CI_JOBS[job_id]) < runs.index(step["run"])
+    assert runs.index(_CI_JOBS["dashboard"]) < runs.index(step["run"])
 
 
-@pytest.mark.parametrize("job_id", list(_CI_JOBS))
+@pytest.mark.parametrize("job_id", [*_REPEAT_JOBS, "dashboard"])
 def test_ci_checks_out_the_parent_the_repeat_diffs_against(job_id: str) -> None:
     """A depth-1 checkout has no ``HEAD^1``; the session would fail on every pull request."""
     [checkout] = [
@@ -255,26 +300,34 @@ def test_ci_checks_out_the_parent_the_repeat_diffs_against(job_id: str) -> None:
     assert checkout["with"]["fetch-depth"] >= 2
 
 
-@pytest.mark.parametrize("job_id", ["tests-primary", "tests-canary", "tests"])
-def test_each_hostless_row_repeats_its_own_lane_on_its_own_python(job_id: str) -> None:
+@pytest.mark.parametrize("job_id", list(_REPEAT_JOBS))
+def test_each_hostless_lane_row_has_one_repeat_row_that_repeats_it_on_its_python(
+    job_id: str,
+) -> None:
+    """The repeat job's rows are the lane job's rows, each paired with its lane's repeat."""
+    lane_id = _REPEAT_JOBS[job_id]
     job = _CI["jobs"][job_id]
     step = _repeat_step(job)
+    lane_runs = []
     for row in matrix_rows(job):
-        lane_run = render(_CI_JOBS[job_id], row)
+        lane_run = render(_CI_JOBS[lane_id], row)
         lane, python = lane_run.removeprefix("uv run nox -s ").rsplit("-", 1)
         assert render(step["run"], row) == f"uv run nox -s {_LANE_OF[lane]}-{python}"
+        lane_runs.append(lane_run)
+    assert lane_runs == [
+        render(_CI_JOBS[lane_id], row) for row in matrix_rows(_CI["jobs"][lane_id])
+    ]
 
 
 def test_every_repeat_session_ci_names_exists_for_that_python() -> None:
     """nox exits non-zero on a session it does not know, but only once a pull request runs it."""
     noxfile = _noxfile()
-    for job_id in _CI_JOBS:
-        job = _CI["jobs"][job_id]
-        for row in matrix_rows(job):
-            command = render(_repeat_step(job)["run"], row).split(" -- ")[0]
-            name, python = command.removeprefix("uv run nox -s ").rsplit("-", 1)
-            # The session's own list: a session declared for no Python has no `-<python>` name.
-            assert python in getattr(noxfile, name).python, command
+    runs = _repeat_runs()
+    assert runs
+    for command in runs:
+        name, python = command.split(" -- ")[0].removeprefix("uv run nox -s ").rsplit("-", 1)
+        # The session's own list: a session declared for no Python has no `-<python>` name.
+        assert python in getattr(noxfile, name).python, command
 
 
 def test_the_browser_repeat_runs_on_the_jobs_engine_with_the_lanes_sharding() -> None:
@@ -286,3 +339,50 @@ def test_the_browser_repeat_runs_on_the_jobs_engine_with_the_lanes_sharding() ->
     names = [s.get("name", "") for s in job["steps"]]
     [upload] = [n for n in names if n.startswith("Upload failed tests' Playwright traces")]
     assert names.index(step["name"]) < names.index(upload)
+
+
+_HOSTLESS_CONTEXT = "tests_hostless-"
+
+
+def _job_sessions(job_id: str) -> "set[str]":
+    """The ``nox -s`` sessions (``<name>-<python>``) every row of *job_id* runs."""
+    job = _CI["jobs"][job_id]
+    rendered = [
+        render(str(step["run"]), row)
+        for row in matrix_rows(job) or [{}]
+        for step in job["steps"]
+        if "run" in step
+    ]
+    return {m for run in rendered for m in re.findall(r"nox -s (\S+-3\.\d+)", run)}
+
+
+def test_every_required_hostless_context_certifies_its_pythons_lanes_and_repeats() -> None:
+    """The required names stay the same, and each still covers both the lane and its repeat.
+
+    For every required ``tests_hostless-<python>`` context: the job that produces it
+    needs every job that runs a hostless lane on that Python and every job that
+    repeats one there, and between them they run every lane and every repeat.
+    """
+    required = required_contexts(CHECKOUT_ROOT / REQUIRED_CONTEXTS_FILE)
+    contexts = [c for c in required if c.startswith(_HOSTLESS_CONTEXT)]
+    assert contexts
+    producers = {
+        name: job_id for job_id, job in _CI["jobs"].items() for name in expand_names(job_id, job)
+    }
+    for context in contexts:
+        python = context.removeprefix(_HOSTLESS_CONTEXT)
+        needs = _CI["jobs"][producers[context]]["needs"]
+        sessions = {s for job_id in needs for s in _job_sessions(job_id)}
+        here = {s.rsplit("-", 1)[0] for s in sessions if s.endswith(f"-{python}")}
+        lanes = {s for s in here if s.startswith("tests_hostless_")}
+        assert lanes, context
+        assert {_LANE_OF[lane] for lane in lanes} <= here, context
+        everywhere = {
+            s.rsplit("-", 1)[0]
+            for job_id in _CI["jobs"]
+            for s in _job_sessions(job_id)
+            if s.endswith(f"-{python}")
+            and s.startswith(("tests_hostless_", "tests_changed_repeat_"))
+            and not s.startswith("tests_changed_repeat_browser")
+        }
+        assert everywhere <= here, (context, everywhere - here)

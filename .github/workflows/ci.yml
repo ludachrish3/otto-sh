@@ -107,21 +107,8 @@ jobs:
       fail-fast: false
       matrix:
         session: [tests_hostless_unit, tests_hostless_e2e, tests_hostless_guards]
-        # Each leg's changed-test repeat session: its lane's selection over
-        # the test files the pull request adds or modifies.
-        include:
-          - session: tests_hostless_unit
-            repeat: tests_changed_repeat_unit
-          - session: tests_hostless_e2e
-            repeat: tests_changed_repeat_e2e
-          - session: tests_hostless_guards
-            repeat: tests_changed_repeat_guards
     steps:
-      # Depth 2: on a pull request the checkout is the merge commit, and the
-      # changed-test repeat below reads its diff against the first parent.
       - uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 2
 
       - uses: ./.github/actions/hostless-setup
         with:
@@ -147,13 +134,53 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
-      # A test that fails only sometimes is caught here, on the pull request
-      # that adds or changes it, not on `main` under someone else's landing
-      # (#1044; docs/contributing.md, "The changed-test repeat"). One failure
-      # in any repeat fails the job: nothing is retried. Last, so the leg's
-      # coverage data is uploaded whatever the repeat finds.
+  # THE CHANGED-TEST REPEAT, one job per hostless family beside its lane job.
+  # A test that fails only sometimes is caught here, on the pull request that
+  # adds or changes it, not on `main` under someone else's landing (#1044;
+  # docs/contributing.md, "The changed-test repeat"). One failure in any repeat
+  # fails the job: nothing is retried.
+  #
+  # A job of its own, not a step after the lane, so each gets a full budget:
+  # as a step it shared the lane's 60 minutes, and a pull request that touched
+  # a slow test file timed out a leg whose every test had passed (#1252). It
+  # runs beside the lane rather than after it, and only on a pull request: on a
+  # push to `main` the first parent is the previous landing, not a pull
+  # request's base. The family's certificate below needs both jobs, so the
+  # required context still covers the repeat.
+  #
+  # Each include row runs one repeat session (`repeat`), which repeats a lane's
+  # selection over the test files the pull request adds or modifies (the
+  # session itself is defined in noxfile.py), and names the lane leg it repeats
+  # (`session`, a row of `tests-primary`). No step reads `session`: it is the
+  # key tests/unit/test_changed_repeat_lanes.py pairs each row with its lane on.
+  # Depth 2: on a pull request the checkout is the merge commit, and the repeat
+  # reads its diff against the first parent. Same timeout as the lanes.
+  repeat-primary:
+    needs: [gate-admission]
+    if: github.event_name == 'pull_request'
+    name: ${{ matrix.repeat }}-3.10
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - session: tests_hostless_unit
+            repeat: tests_changed_repeat_unit
+          - session: tests_hostless_e2e
+            repeat: tests_changed_repeat_e2e
+          - session: tests_hostless_guards
+            repeat: tests_changed_repeat_guards
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
+
+      - uses: ./.github/actions/hostless-setup
+        with:
+          python: "3.10"
+
       - name: Repeat the test files this pull request adds or changes
-        if: github.event_name == 'pull_request'
         run: uv run nox -s ${{ matrix.repeat }}-3.10
 
   # The newest Python, uninstrumented: the sessions whose behaviour can differ
@@ -167,17 +194,8 @@ jobs:
       fail-fast: false
       matrix:
         session: [tests_hostless_unit, tests_hostless_e2e]
-        include:
-          - session: tests_hostless_unit
-            repeat: tests_changed_repeat_unit
-          - session: tests_hostless_e2e
-            repeat: tests_changed_repeat_e2e
     steps:
-      # Depth 2: on a pull request the checkout is the merge commit, and the
-      # changed-test repeat below reads its diff against the first parent.
       - uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 2
 
       - uses: ./.github/actions/hostless-setup
         with:
@@ -186,16 +204,39 @@ jobs:
       - name: Run ${{ matrix.session }} under Python 3.14
         run: uv run nox -s ${{ matrix.session }}-3.14
 
+  # The canary legs' changed-test repeat, shaped as `repeat-primary` is.
+  repeat-canary:
+    needs: [gate-admission]
+    if: github.event_name == 'pull_request'
+    name: ${{ matrix.repeat }}-3.14
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - session: tests_hostless_unit
+            repeat: tests_changed_repeat_unit
+          - session: tests_hostless_e2e
+            repeat: tests_changed_repeat_e2e
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
+
+      - uses: ./.github/actions/hostless-setup
+        with:
+          python: "3.14"
+
       - name: Repeat the test files this pull request adds or changes
-        if: github.event_name == 'pull_request'
         run: uv run nox -s ${{ matrix.repeat }}-3.14
 
-  # The interior Pythons run the unit session alone. They keep the
-  # `tests_hostless-<python>` names because those are required contexts.
-  # Same timeout reasoning as `tests-primary`.
+  # The interior Pythons run the unit session alone. Their required
+  # `tests_hostless-<python>` contexts are `hostless-interior`'s, which needs
+  # this job and its repeat. Same timeout reasoning as `tests-primary`.
   tests:
     needs: [gate-admission]
-    name: tests_hostless-${{ matrix.python }}
+    name: tests_hostless_unit-${{ matrix.python }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -203,11 +244,7 @@ jobs:
       matrix:
         python: ["3.11", "3.12", "3.13"]
     steps:
-      # Depth 2: on a pull request the checkout is the merge commit, and the
-      # changed-test repeat below reads its diff against the first parent.
       - uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 2
 
       - uses: ./.github/actions/hostless-setup
         with:
@@ -216,8 +253,28 @@ jobs:
       - name: Run tests under Python ${{ matrix.python }}
         run: uv run nox -s tests_hostless_unit-${{ matrix.python }}
 
+  # The interior legs' changed-test repeat, shaped as `repeat-primary` is: the
+  # one leg per Python is the unit session, so the row is the Python alone.
+  repeat-interior:
+    needs: [gate-admission]
+    if: github.event_name == 'pull_request'
+    name: tests_changed_repeat_unit-${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 2
+
+      - uses: ./.github/actions/hostless-setup
+        with:
+          python: ${{ matrix.python }}
+
       - name: Repeat the test files this pull request adds or changes
-        if: github.event_name == 'pull_request'
         run: uv run nox -s tests_changed_repeat_unit-${{ matrix.python }}
 
   # Combines the primary legs' data and judges the hostless floor on the fold.
@@ -248,32 +305,54 @@ jobs:
       - name: Fold the legs and judge the floor
         run: make coverage-hostless-fold
 
-  # THE BOOKEND CERTIFICATES keep the required contexts `tests_hostless-3.10`
-  # and `tests_hostless-3.14`. GitHub treats a SKIPPED required check as
-  # passing, so a certificate must never be skipped: `if: always()` makes it
-  # run whatever its needs did, and its one step fails unless every need's
-  # result is `success` (`failure`, `cancelled` and `skipped` all fail it).
-  # A head the admission refuses therefore turns these red within seconds.
+  # THE HOSTLESS CERTIFICATES keep the required contexts `tests_hostless-3.10`
+  # … `tests_hostless-3.14`: each needs its family's lane job and its repeat
+  # job. GitHub treats a SKIPPED required check as passing, so a certificate
+  # must never be skipped: `if: always()` makes it run whatever its needs did,
+  # and its one step fails unless every need's result is `success` (`failure`,
+  # `cancelled` and `skipped` all fail it). The one exception is the repeat,
+  # which is skipped on a push to `main` by its own `if:`; it is accepted as
+  # `skipped` too, because the only other way it is skipped is a refused
+  # admission, which the first clause already fails. A head the admission
+  # refuses therefore turns these red within seconds.
   hostless-primary:
-    needs: [gate-admission, tests-primary, coverage-hostless]
+    needs: [gate-admission, tests-primary, coverage-hostless, repeat-primary]
     name: tests_hostless-3.10
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every primary leg and the fold succeeded
-        run: test "${{ needs.gate-admission.result }}" = success && test "${{ needs.tests-primary.result }}" = success && test "${{ needs.coverage-hostless.result }}" = success
+      - name: Every primary leg, the fold and every repeat succeeded
+        run: test "${{ needs.gate-admission.result }}" = success && test "${{ needs.tests-primary.result }}" = success && test "${{ needs.coverage-hostless.result }}" = success && { test "${{ needs.repeat-primary.result }}" = success || test "${{ needs.repeat-primary.result }}" = skipped; }
 
   # The same certificate over the canary legs.
   hostless-canary:
-    needs: [gate-admission, tests-canary]
+    needs: [gate-admission, tests-canary, repeat-canary]
     name: tests_hostless-3.14
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every canary leg succeeded
-        run: test "${{ needs.gate-admission.result }}" = success && test "${{ needs.tests-canary.result }}" = success
+      - name: Every canary leg and every repeat succeeded
+        run: test "${{ needs.gate-admission.result }}" = success && test "${{ needs.tests-canary.result }}" = success && { test "${{ needs.repeat-canary.result }}" = success || test "${{ needs.repeat-canary.result }}" = skipped; }
+
+  # The same certificate over the interior legs, one context per Python. A
+  # `needs:` names a whole matrix job, so each of the three needs all three
+  # Pythons' legs: a red on one Python reds all three contexts, and the failed
+  # leg's own check names the Python.
+  hostless-interior:
+    needs: [gate-admission, tests, repeat-interior]
+    name: tests_hostless-${{ matrix.python }}
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Every interior leg and every repeat succeeded
+        run: test "${{ needs.gate-admission.result }}" = success && test "${{ needs.tests.result }}" = success && { test "${{ needs.repeat-interior.result }}" = success || test "${{ needs.repeat-interior.result }}" = skipped; }
 
   # The Playwright image the browser jobs run in, named by
   # scripts/playwright_version.py from the playwright version locked in
@@ -383,7 +462,10 @@ jobs:
       # The changed-test repeat's browser lane, on this job's engine. A named
       # session, never `-k`: the engine keyword above must keep selecting the
       # `dashboard` session alone. Before the upload, so a repeat's failure
-      # leaves its trace too.
+      # leaves its trace too. A step here, not a job of its own as the hostless
+      # repeats are (#1252): it needs the dashboard `make web` built in this
+      # container, and this job sets no timeout, so the two share GitHub's
+      # six-hour default rather than a tight budget.
       - name: Repeat the browser test files this pull request adds or changes (${{ matrix.browser }})
         if: github.event_name == 'pull_request'
         env:
@@ -925,7 +1007,7 @@ jobs:
   # the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [gate-admission, playwright-version, lint-python, tests-primary, tests-canary, tests, coverage-hostless, hostless-primary, hostless-canary, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance, uv-floor, budget-scope, import-budget-delta, import-budget]
+    needs: [gate-admission, playwright-version, lint-python, tests-primary, tests-canary, tests, repeat-primary, repeat-canary, repeat-interior, coverage-hostless, hostless-primary, hostless-canary, hostless-interior, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance, uv-floor, budget-scope, import-budget-delta, import-budget]
     if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
