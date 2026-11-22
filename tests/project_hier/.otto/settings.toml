@@ -11,7 +11,7 @@ lab_patterns = ["unix"]
 host_patterns = ["test1"]
 
 [[lab.sources]]
-backend = "json"
+backend = "jsonnet"
 paths = ["../_fixtures/lab_data/tech1"]
 
 # app's runtime library. It is staged, not measured: app's own object list

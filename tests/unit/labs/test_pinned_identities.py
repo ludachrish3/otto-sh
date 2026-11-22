@@ -16,8 +16,7 @@ element→host flattening lost or invented a field.
 import pytest
 
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
-from otto.labs.loader import load_lab
-from tests._fixtures.labdata import lab_data_dir, register_zephyr_inline_frame
+from tests._fixtures.labdata import load_tech_lab, register_zephyr_inline_frame
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 
 ensure_custom_hosts_on_path()
@@ -121,7 +120,7 @@ _PINNED_HOST_RESOURCES: dict[tuple[str, str], dict[str, set[str]]] = {
 @pytest.mark.parametrize(("tech", "lab"), sorted(_PINNED))
 def test_identities_unchanged(tech: str, lab: str) -> None:
     """Every built host keeps the id, element name, and element id it had on v1."""
-    built = load_lab(lab, search_paths=[lab_data_dir() / tech])
+    built = load_tech_lab(lab, tech)
     got = sorted(
         (h.id, h.element.name, h.element.id) for h in built.hosts.values() if h.id != "local"
     )
@@ -131,7 +130,7 @@ def test_identities_unchanged(tech: str, lab: str) -> None:
 @pytest.mark.parametrize(("tech", "lab"), sorted(_PINNED_RESOURCES))
 def test_reservation_sets_match_the_old_host_union(tech: str, lab: str) -> None:
     """The declared ``labs`` entry reserves exactly what the v1 hosts' union did."""
-    built = load_lab(lab, search_paths=[lab_data_dir() / tech])
+    built = load_tech_lab(lab, tech)
     assert built.resources == _PINNED_RESOURCES[(tech, lab)]
 
 
@@ -152,7 +151,7 @@ def _pinned_every_host(built, mapping: dict[str, set[str]]) -> None:
 @pytest.mark.parametrize(("tech", "lab"), sorted(_PINNED_ELEMENT_RESOURCES))
 def test_element_resources_pinned(tech: str, lab: str) -> None:
     """Every built host carries its element's declared ``resources``."""
-    built = load_lab(lab, search_paths=[lab_data_dir() / tech])
+    built = load_tech_lab(lab, tech)
     mapping = _PINNED_ELEMENT_RESOURCES[(tech, lab)]
     _pinned_every_host(built, mapping)
     for host_id, expected in mapping.items():
@@ -162,7 +161,7 @@ def test_element_resources_pinned(tech: str, lab: str) -> None:
 @pytest.mark.parametrize(("tech", "lab"), sorted(_PINNED_HOST_RESOURCES))
 def test_host_resources_pinned(tech: str, lab: str) -> None:
     """Every built host carries the ``resources`` its own host entry declared."""
-    built = load_lab(lab, search_paths=[lab_data_dir() / tech])
+    built = load_tech_lab(lab, tech)
     mapping = _PINNED_HOST_RESOURCES[(tech, lab)]
     _pinned_every_host(built, mapping)
     for host_id, expected in mapping.items():

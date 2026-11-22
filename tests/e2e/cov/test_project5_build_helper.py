@@ -16,6 +16,7 @@ import pytest
 import tomli
 
 from otto.host.product import gcov_prefix_strip
+from tests._fixtures.labdata import tech1_document
 from tests.e2e.cov import _project5_build as helper
 
 pytestmark = pytest.mark.hostless
@@ -341,7 +342,7 @@ def test_the_overlay_redeclares_only_the_two_bed_elements(clang_overlay):
 
 
 def test_the_overlay_copies_every_original_key_of_those_elements(clang_overlay):
-    fixture = json.loads((helper.LAB_DATA / "lab.json").read_text())
+    fixture = tech1_document()
     originals = {e["name"]: e for e in fixture["elements"] if e["name"] in ("test1", "test2")}
     for element in json.loads(clang_overlay.read_text())["elements"]:
         original = originals[element["name"]]
@@ -438,7 +439,7 @@ def test_the_docker3_overlay_copies_test3_and_adds_only_the_lab(tmp_path):
     data = json.loads((tmp_path / "docker3_lab.json").read_text())
     assert data["labs"] == {"docker3": {"resources": ["test3"]}}
     (element,) = data["elements"]
-    fixture = json.loads((helper.LAB_DATA / "lab.json").read_text())
+    fixture = tech1_document()
     (original,) = [e for e in fixture["elements"] if e["name"] == "test3"]
     assert element == {**original, "labs": ["unix", "docker3"]}
 

@@ -7,7 +7,7 @@ second run on the same cell fails fast naming the holder, or waits when
 ``BED_LEASE_WAIT=<seconds>`` is set. The spec is
 docs/superpowers/specs/2026-11-01-bed-lease-design.md.
 
-Verbs (``uv run python scripts/bed_lease.py --lab <lab.json> <verb>``)::
+Verbs (``uv run python scripts/bed_lease.py --lab <lab file> <verb>``)::
 
     acquire --pid PID [--purpose TEXT] [--unless-all-under DIR -- PATHS...]
     release --pid PID [--force]
@@ -15,7 +15,10 @@ Verbs (``uv run python scripts/bed_lease.py --lab <lab.json> <verb>``)::
 
 The cell is the lab file's directory name (``tech1``); the file's ``labs``
 table names the cell's labs, loaded through otto so the resource set is the
-one ``otto reservation check`` computes (lab, element and host levels).
+one ``otto reservation check`` computes (lab, element and host levels). The
+lab file is ``tech1/lab.jsonnet``, rendered by otto
+(:mod:`scripts._lab_document`); only acquire reads it, so status and release
+work whatever state the template or the Jsonnet binding is in.
 
 Two files per cell under the root (``BED_LEASE_ROOT``, default
 ``/tmp/otto-bed-lease``): ``<cell>.json``, the structured record, present
@@ -185,23 +188,30 @@ class Liveness:
 def load_cell(lab_file: Path, root: Path, *, resources: bool = True) -> Cell:
     """Return the cell: its name is the lab file's directory, its labs the file's table.
 
-    With *resources* the labs are loaded through otto and the cell carries the
-    resource set a new record needs; release and status, which only name the cell
-    and read the record's own resources, skip that load (a lab that fails to load
-    must not turn a green lane's release into a red exit).
+    With *resources* (acquire, and the reap, which acquires) the lab file is
+    read through otto (:func:`scripts._lab_document.read_cell_document`,
+    which renders a ``lab.jsonnet`` cell), its labs are loaded and the cell
+    carries the resource set a new record needs. Release and status, which
+    only name the cell and read the record's own resources, read nothing of
+    the lab file: a template that does not render, or a Jsonnet binding that
+    does not load, must not turn a green lane's release into a red exit or
+    hide who holds the bed.
     """
     if root.is_symlink():
         raise UsageError(f"lease root {root} is a symlink; refusing to follow it")
     if not lab_file.is_file():
         raise UsageError(f"no lab file at {lab_file}")
+    if not resources:
+        return Cell(lab_file.parent.name, lab_file, [], [], root)
+    from scripts._lab_document import read_cell_document
+
     try:
-        names = list(json.loads(lab_file.read_text()).get("labs", {}))
-    except (OSError, ValueError) as exc:
+        names = list(read_cell_document(lab_file)["labs"])
+    except Exception as exc:  # any reader refusal (unreadable, unrendered, malformed) is named
         raise UsageError(f"cannot read {lab_file}: {exc}") from exc
     if not names:
         raise UsageError(f"{lab_file} declares no lab in its `labs` table")
-    found = cell_resources(lab_file, names) if resources else []
-    return Cell(lab_file.parent.name, lab_file, names, found, root)
+    return Cell(lab_file.parent.name, lab_file, names, cell_resources(lab_file, names), root)
 
 
 def load_labs(lab_file: Path, names: list[str]) -> "Lab":
@@ -210,9 +220,9 @@ def load_labs(lab_file: Path, names: list[str]) -> "Lab":
         sys.path.insert(0, str(CUSTOM_HOSTS))
     import custom_hosts  # noqa: F401 — registers the frames the cell's hosts name
 
-    import otto
+    from scripts._lab_document import load_cell_lab
 
-    return otto.load_lab("+".join(names), search_paths=[lab_file.parent])
+    return load_cell_lab(lab_file, "+".join(names))
 
 
 def cell_resources(lab_file: Path, names: list[str]) -> list[str]:
@@ -222,9 +232,7 @@ def cell_resources(lab_file: Path, names: list[str]) -> list[str]:
     try:
         lab = load_labs(lab_file, names)
     except Exception as exc:  # any loader refusal is "no lab", named
-        raise UsageError(
-            f"cannot load labs {'+'.join(names)} from {lab_file.parent}: {exc}"
-        ) from exc
+        raise UsageError(f"cannot load labs {'+'.join(names)} from {lab_file}: {exc}") from exc
     return sorted(required_resources(lab=lab))
 
 
@@ -649,7 +657,7 @@ def status(cell: Cell) -> int:
 
 def add_cell_arguments(parser: argparse.ArgumentParser) -> None:
     """``--lab`` and ``--root``: how a lease verb and the reap name the cell and its store."""
-    parser.add_argument("--lab", required=True, type=Path, help="the cell's lab.json")
+    parser.add_argument("--lab", required=True, type=Path, help="the cell's lab file (lab.jsonnet)")
     parser.add_argument(
         "--root",
         type=Path,

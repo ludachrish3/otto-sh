@@ -57,7 +57,7 @@ element then replaces the earlier one whole
 and prints one row per value: the field, the layer it came from and which
 part of that layer
 ([`otto lab explain`](../cli/lab/index.md#otto-lab-explain)). For a host of
-the {ref}`templated-lab example <lab-templating-example>`:
+the {ref}`advanced templated-lab example <lab-templating-advanced>`:
 
 ```{literalinclude} ../examples/templating/output/explain.txt
 :language: text

@@ -67,7 +67,7 @@ The groups that only read configuration or local files (`init`, `env`, `cache`,
 
 ### Three reservable levels
 
-A `lab.json` declares reservation identifiers at three levels.  Every level is
+A lab file declares reservation identifiers at three levels.  Every level is
 optional, they combine freely, and the identifiers themselves are opaque
 strings the backend matches byte-for-byte:
 
@@ -90,22 +90,28 @@ with the release time where the booking has one.  A chassis shared slot by slot 
 only host-level entries.  This `rig` has all three kinds of thing, so it
 declares at all three levels:
 
-```json
+<!-- template: reservation-rig -->
+```jsonnet
+// The chassis's slot n: 10.0.0.(10+n), reserved as chassis-1-slot-<n>.
+local slot(n) = {
+  ip: '10.0.0.' + (10 + n), board: 'slot', slot: n,
+  resources: ['chassis-1-slot-' + n], creds: [{ login: 'admin', password: '…' }],
+};
+
 {
-  "labs": {"rig": {"resources": ["rig-pdu"]}},
-  "elements": [
-    {"name": "chassis", "id": 1, "labs": ["rig"], "resources": ["chassis-1"],
-     "hosts": [
-       {"ip": "10.0.0.11", "board": "slot", "slot": 1,
-        "resources": ["chassis-1-slot-1"], "creds": [{"login": "admin", "password": "…"}]},
-       {"ip": "10.0.0.12", "board": "slot", "slot": 2,
-        "resources": ["chassis-1-slot-2"], "creds": [{"login": "admin", "password": "…"}]}
-     ]},
-    {"name": "gw", "labs": ["rig"],
-     "hosts": [{"ip": "10.0.0.1", "creds": [{"login": "admin", "password": "…"}]}]}
-  ]
+  labs: { rig: { resources: ['rig-pdu'] } },
+  elements: [
+    { name: 'chassis', id: 1, labs: ['rig'], resources: ['chassis-1'],
+      hosts: [slot(1), slot(2)] },
+    { name: 'gw', labs: ['rig'],
+      hosts: [{ ip: '10.0.0.1', creds: [{ login: 'admin', password: '…' }] }] },
+  ],
 }
 ```
+
+The two slots differ only by number, so the lab file is a Jsonnet template,
+`lab_data/lab.jsonnet`, and `slot(n)` writes each slot's host entry
+({ref}`When hosts share a shape <lab-config-shared-shape>`).
 
 Taking the whole rig means holding `rig-pdu`; taking the chassis out of
 service means holding `chassis-1`; one engineer per slot means one identifier

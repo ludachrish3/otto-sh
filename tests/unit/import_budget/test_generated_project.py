@@ -1,5 +1,6 @@
 def test_realistic_project_is_shaped_like_a_real_one(tmp_path):
     from tests._fixtures.generated_project import generate_project
+    from tests._fixtures.paths import TECH1_GOLDEN
 
     project = generate_project(tmp_path, files=4, dirs=2, realistic=True)
     top = (project / "tests" / "test_top0.py").read_text()
@@ -11,8 +12,13 @@ def test_realistic_project_is_shaped_like_a_real_one(tmp_path):
     assert "otto.monitor.parsers" in init
     assert "async def noop" in init
     settings = (project / ".otto" / "settings.toml").read_text()
+    # A JSON lab source over the cell's frozen JSON, read in place, never a
+    # render: the release delta generates this project under the previous
+    # release's otto, and the file sits outside the fixture root (workspace).
     assert 'backend = "json"' in settings
-    assert "lab_data/tech1" in settings
+    assert "jsonnet" not in settings
+    assert f'paths = ["{TECH1_GOLDEN}"]' in settings
+    assert not TECH1_GOLDEN.is_relative_to(tmp_path)
 
 
 def test_generate_project_creates_requested_shape(tmp_path):

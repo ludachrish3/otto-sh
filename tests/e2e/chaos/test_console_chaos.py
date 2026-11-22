@@ -12,9 +12,9 @@ the `test4` SSH hop -> telnet 192.0.2.1:23. The project_e2e SUT's own
 `embedded` lab does NOT load here (its `zephyr27_fat` entry declares
 `command_frame: 'zephyr-inline'`, not a registered frame in this repository), so
 this module generates its OWN minimal SUT scoped to just `test4` + `zephyr37_fat`
-from `tests/_fixtures/lab_data/tech1/lab.json` -- mirrors
+from `tests/_fixtures/lab_data/tech1/lab.jsonnet` -- mirrors
 `tests.integration.chaos._target.make_loopback_target`'s shape (a private
-`labs/<name>/tech1/lab.json` + a matching `settings.toml`), with each host's
+`labdata/console_chaos/lab.json` + a matching `settings.toml`), with each host's
 `labs` list rewritten to the private lab name.
 
 NO BUSYBOX GUEST ARM, even though the guests are also telnet consoles behind
@@ -135,9 +135,9 @@ def _make_console_target(root: Path) -> ChaosTarget:
     (project_e2e's copy fails to load here: `zephyr27_fat` declares
     `command_frame: 'zephyr-inline'`, not a registered frame). Mirrors
     ``tests.integration.chaos._target.make_loopback_target``'s shape
-    (private ``labs/<name>/tech1/lab.json`` + matching ``settings.toml``).
+    (private ``labdata/console_chaos/lab.json`` + matching ``settings.toml``).
     """
-    tech_dir = root / "labdata" / "tech1"
+    tech_dir = root / "labdata" / "console_chaos"
     tech_dir.mkdir(parents=True)
     all_hosts = flat_hosts()
     hosts = []
@@ -150,7 +150,7 @@ def _make_console_target(root: Path) -> ChaosTarget:
         hosts.append(host)
         if host["element"] == "test4":
             test4 = host
-    assert test4 is not None, "tech1/lab.json missing 'test4' -- fixture shape changed"
+    assert test4 is not None, "the tech1 lab lost 'test4' -- fixture shape changed"
     doc = lab_json_v2(hosts)
     # The private lab's reservable set is restated rather than hoisted, and
     # DERIVED rather than spelled out: tech1 names both of these hosts'

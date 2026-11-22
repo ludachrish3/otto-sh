@@ -10,7 +10,7 @@ THE BUSYBOX GUEST ARM BELOW DOES NOT INJECT A DROP -- it pins otto's refusal
 to inject one. The 2026-08-22 TAP move removed the old blocker exactly as
 that day's open item predicted: a guest's ``eth0`` now has a far end that
 lives on a lab host, ``test1:bbeth-1350 <-> bb1350-qemu:eth0`` IS
-declared in ``tech1/lab.json``, and there is finally something for ``otto
+declared in ``tech1/lab.jsonnet``, and there is finally something for ``otto
 link impair`` (whose only argument is a DECLARED LINK id -- there is no
 host-and-netdev verb, by design) to name. Measurement then found the next
 blocker, which is not about naming at all.

@@ -38,6 +38,7 @@ from otto.utils import Status
 from scripts import refresh_docs_captures as rdc
 from scripts.build_example_archives import build
 from tests._fixtures._host_pool import DOCKER_HOST
+from tests._fixtures.labdata import tech1_document
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -183,7 +184,7 @@ def test_the_placeholder_lab_holds_no_bed_facts():
 
 def test_the_bed_overlay_is_the_host_the_docker_lease_guards():
     bed_lab = json.loads((BED / "lab_data" / "lab.json").read_text())
-    tech1 = json.loads((CHECKOUT_ROOT / "tests/_fixtures/lab_data/tech1/lab.json").read_text())
+    tech1 = tech1_document()
     [leased] = [e for e in tech1["elements"] if e["name"] == DOCKER_HOST]
     [bed_host] = [h for e in bed_lab["elements"] for h in e["hosts"]]
     assert bed_host["ip"] == leased["hosts"][0]["ip"]

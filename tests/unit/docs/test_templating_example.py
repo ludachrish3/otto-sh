@@ -1,15 +1,18 @@
-"""The templated-lab worked example is a real project, and the page shows what otto prints for it.
+"""The templated-lab examples are real projects, and the page shows what otto prints for them.
 
-``docs/configuration/lab/templating.md`` literalincludes every file of
-``docs/examples/templating/routers/`` and, for the commands it walks through,
-the output files beside it under ``docs/examples/templating/output/``. Each
-test copies the project to a scratch directory, runs the command through the
-root app over the copy (``OTTOPATH`` naming it, as the page says), and holds
-the result to the file the page shows: the composed lab, its listing, the
+``docs/configuration/lab/templating.md`` literalincludes every file of its two
+examples, the simple ``docs/examples/templating/simple/`` and the advanced
+``docs/examples/templating/routers/``, and, for the commands it walks through,
+the output files under ``docs/examples/templating/output/`` (the simple
+example's under ``output/simple/``). Each test copies a project to a scratch
+directory, runs the command through the root app over the copy (``OTTOPATH``
+naming it, as the page says), and holds the result to the file the page
+shows. For the simple example: its listing, its rendered document and one
+lab's hosts. For the router example: the composed lab, its listing, the
 rendered document, the explanation of one host, and the refusal of a
 generated element that would replace another source's machines (the page's
-``override/`` files added to the copy). The copy's path is shown as
-``/home/me/routers``, as the page writes it.
+``override/`` files added to the copy). A copy's path is shown as
+``/home/me/<project>``, as the page writes it.
 """
 
 import json
@@ -35,20 +38,20 @@ otto_home = _templating.otto_home
 
 EXAMPLE = CHECKOUT_ROOT / "docs" / "examples" / "templating"
 PROJECT = EXAMPLE / "routers"
+SIMPLE = EXAMPLE / "simple"
 OUTPUT = EXAMPLE / "output"
 OVERRIDE = EXAMPLE / "override"
-PAGE_ROOT = "/home/me/routers"
-"""Where the page shows the project, in place of the scratch copy's path."""
+PAGE_HOME = "/home/me"
+"""Where the page shows a project's directory, in place of the scratch copy's parent."""
 ENTRY = "lab_data/layouts/router-lab.jsonnet"
 
 runner = CliRunner()
 
 
-@pytest.fixture
-def routers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, otto_home: Path) -> Path:
-    """A scratch copy of the example, the only project ``OTTOPATH`` names, as the cwd."""
-    root = tmp_path / "routers"
-    shutil.copytree(PROJECT, root)
+def _copy(project: Path, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Copy *project* to ``tmp_path/name``, the only project ``OTTOPATH`` names, as the cwd."""
+    root = tmp_path / name
+    shutil.copytree(project, root)
     monkeypatch.setenv("OTTOPATH", str(root))
     monkeypatch.setenv("COLUMNS", "80")
     monkeypatch.delenv("OTTO_LAB", raising=False)
@@ -56,10 +59,22 @@ def routers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, otto_home: Path) ->
     return root
 
 
+@pytest.fixture
+def routers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, otto_home: Path) -> Path:
+    """A scratch copy of the router example, as ``routers/``."""
+    return _copy(PROJECT, "routers", tmp_path, monkeypatch)
+
+
+@pytest.fixture
+def benches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, otto_home: Path) -> Path:
+    """A scratch copy of the simple example, as ``benches/``."""
+    return _copy(SIMPLE, "benches", tmp_path, monkeypatch)
+
+
 def _page_text(root: Path, text: str) -> str:
     """Return *text* as the page shows it: the copy's path replaced, trailing spaces and
     leading and trailing blank lines dropped."""
-    text = text.replace(str(root), PAGE_ROOT)
+    text = text.replace(str(root), f"{PAGE_HOME}/{root.name}")
     return "\n".join(line.rstrip() for line in text.splitlines()).strip("\n")
 
 
@@ -73,6 +88,46 @@ def _otto(root: Path, *args: str) -> tuple[int, str]:
 def _shown(name: str) -> str:
     """Return the output file *name* the page includes, as :func:`_otto` returns output."""
     return (OUTPUT / name).read_text(encoding="utf-8").strip("\n")
+
+
+def test_the_simple_example_lists_one_lab_per_number(benches: Path) -> None:
+    code, output = _otto(benches, "--list-labs")
+    assert code == 0, output
+    assert output == _shown("simple/list-labs.txt")
+
+
+def test_the_simple_example_derives_names_addresses_and_ports_from_the_number(
+    benches: Path,
+) -> None:
+    code, output = _otto(benches, "lab", "render", "lab_data/lab.jsonnet")
+    assert code == 0, output
+    assert output == _shown("simple/render.json")
+    document = json.loads(output)
+    assert document["labs"] == {"bench1": {}, "bench2": {}, "bench3": {}}
+    assert [
+        (e["name"], e["labs"], e["hosts"][0]["ip"], e["hosts"][0]["ssh_options"]["port"])
+        for e in document["elements"]
+    ] == [
+        (f"bench{n}-{role}", [f"bench{n}"], f"10.20.{n}.{i}", 2200 + 100 * n + i)
+        for n in (1, 2, 3)
+        for role, i in (("dut", 1), ("tgen", 2))
+    ]
+
+
+def test_a_simple_bench_lab_shows_its_hosts_as_the_page_shows(benches: Path) -> None:
+    code, output = _otto(benches, "-l", "bench2", "--show-lab")
+    assert code == 0, output
+    assert output == _shown("simple/show-lab.txt")
+
+
+def test_one_more_number_adds_a_bench_lab_as_the_page_says(benches: Path) -> None:
+    lab = benches / "lab_data" / "lab.jsonnet"
+    text = lab.read_text(encoding="utf-8")
+    assert "local benches = [1, 2, 3];" in text
+    lab.write_text(text.replace("[1, 2, 3]", "[1, 2, 3, 4]"), encoding="utf-8")
+    code, output = _otto(benches, "-l", "bench4", "--list-hosts")
+    assert code == 0, output
+    assert output.split() == ["•", "bench4-dut", "•", "bench4-tgen", "•", "local"]
 
 
 def test_the_layout_lists_one_lab_per_site_and_west_is_unavailable(routers: Path) -> None:

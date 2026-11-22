@@ -7,14 +7,15 @@ module and is registered by name before any lab loads.
 
 ## Becoming another user: a login proxy
 
-`test1`'s third credential is not a password. It names a **proxy** — a
-registered async function that becomes the target account from the `via`
-account:
+`test1`'s third credential, the one its entry adds with `creds+:` to the
+two logins every Ubuntu VM shares ({doc}`defining-hosts/index`), is not a
+password. It names a **proxy** — a registered async function that becomes
+the target account from the `via` account:
 
-```{literalinclude} ../../examples/getting-started/lab_data/lab.json
-:language: json
-:start-after: '"_doc_begin": "test1"'
-:end-before: '"_doc_end": "test1"'
+```{literalinclude} ../../examples/getting-started/lab_data/lab.jsonnet
+:language: jsonnet
+:start-after: "// doc: begin test1"
+:end-before: "// doc: end test1"
 ```
 
 ```{literalinclude} ../../examples/getting-started/libs/gs_example/proxies.py
@@ -53,10 +54,10 @@ registered by name like the proxy above, that runs once on every session
 after the handshake and after every login-proxy hop, with a real session in
 hand. `test1` declares one:
 
-```{literalinclude} ../../examples/getting-started/lab_data/lab.json
-:language: json
-:start-after: '"_doc_begin": "test1"'
-:end-before: '"_doc_end": "test1"'
+```{literalinclude} ../../examples/getting-started/lab_data/lab.jsonnet
+:language: jsonnet
+:start-after: "// doc: begin test1"
+:end-before: "// doc: end test1"
 ```
 
 ```{literalinclude} ../../examples/getting-started/libs/gs_example/setup.py
@@ -101,10 +102,10 @@ is the shell otto lands in; `command_frame` is the application's dialect, a
 frame the project registers exactly as it registered the Zephyr 2.7 frame
 earlier; and the hook is what gets from one to the other:
 
-```{literalinclude} ../../examples/getting-started/lab_data/lab.json
-:language: json
-:start-after: '"_doc_begin": "test1-py"'
-:end-before: '"_doc_end": "test1-py"'
+```{literalinclude} ../../examples/getting-started/lab_data/lab.jsonnet
+:language: jsonnet
+:start-after: "// doc: begin pyrepl"
+:end-before: "// doc: end pyrepl"
 ```
 
 ```{literalinclude} ../../examples/getting-started/libs/gs_example/enter_python.py
@@ -139,10 +140,10 @@ hook works with `send`/`expect` alone until the real shell answers, and frame
 entry confirms it. The Zephyr guest below is reached exactly as before, by
 telnet through the `test4` hop; only the landing changed:
 
-```{literalinclude} ../../examples/getting-started/lab_data/lab.json
-:language: json
-:start-after: '"_doc_begin": "zephyr37_lfs"'
-:end-before: '"_doc_end": "zephyr37_lfs"'
+```{literalinclude} ../../examples/getting-started/lab_data/lab.jsonnet
+:language: jsonnet
+:start-after: "// doc: begin zephyr37_lfs"
+:end-before: "// doc: end zephyr37_lfs"
 ```
 
 ```{literalinclude} ../../examples/getting-started/libs/gs_example/land_on_zephyr.py

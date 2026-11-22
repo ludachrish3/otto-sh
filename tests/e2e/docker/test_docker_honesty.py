@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixtures.labdata import tech1_lab_source
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.project_scaffold import make_project
 
@@ -151,7 +152,6 @@ def test_no_cache_makes_docker_rebuild_every_step(docker_host, tmp_path):
 
 _ARCHIVE_IMAGE = "honesty-archive"
 _ARCHIVE_REPO = "honesty"
-_LAB_DATA = CHECKOUT_ROOT / "tests" / "_fixtures" / "lab_data" / "tech1"
 _PROJECT1_DOCKER = CHECKOUT_ROOT / "tests" / "project1" / "docker"
 
 
@@ -171,10 +171,7 @@ def _archive_project(root: Path, dockerfile: str) -> Path:
         name=_ARCHIVE_REPO,
         known_hosts=root / "known_hosts",
         extra=f"""\
-[[lab.sources]]
-backend = "json"
-paths = ["{_LAB_DATA}"]
-
+{tech1_lab_source()}
 [docker]
 
 [[docker.images]]

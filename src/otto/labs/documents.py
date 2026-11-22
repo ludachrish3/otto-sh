@@ -159,9 +159,7 @@ def expand_lab_files(
             pattern = str(Path(*parts[first_glob:]))
             if visited is not None:
                 visited.add(root)
-            matches = sorted(
-                p for p in root.glob(pattern) if p.is_file() and p.suffix == rule.suffix
-            )
+            matches = sorted(p for p in root.glob(pattern) if p.is_file() and rule.names_file(p))
             if not matches:
                 logger.debug(f"lab path glob {text!r} matched no {rule.suffix} file")
             for match in matches:
@@ -169,7 +167,7 @@ def expand_lab_files(
                 if visited is not None:
                     visited.add(match.parent)
             continue
-        if entry.suffix == rule.suffix:
+        if rule.names_file(entry):
             candidate = entry
             if visited is not None and candidate.parent.is_dir():
                 visited.add(candidate.parent)
@@ -198,7 +196,7 @@ def otto_decodes(path: Path) -> bool:
     """
     from .sources import JSON_FILE_RULE
 
-    return path.suffix == JSON_FILE_RULE.suffix
+    return JSON_FILE_RULE.names_file(path)
 
 
 def render_key(entry: Path, inputs: RenderInputs, *, protected: "ProtectedPaths") -> "RenderKey":
@@ -320,7 +318,7 @@ def read_lab_document(path: Path, *, render: "RenderInputs | None" = None) -> La
     from .sources import JSONNET_FILE_RULE
 
     provenance: Mapping[str, Any] | None = None
-    if path.suffix == JSONNET_FILE_RULE.suffix:
+    if JSONNET_FILE_RULE.names_file(path):
         if render is None:
             raise LabRepositoryError(
                 f"{path}: a Jsonnet entry is read through its jsonnet lab source"

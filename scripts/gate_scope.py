@@ -128,10 +128,12 @@ EXAMPLE_GLOBS = (
     "docs/examples/captures/*",
     "docs/examples/bed/*",
 )
-"""Example projects a reader downloads: `make docs` checks them hostlessly and builds their
-archives; the shared captures manifest and its artifacts are page inputs, as are the bed
-overlays the captures run with. The other `docs/examples` trees stay excluded: tests and
-doctests import them."""
+"""The `quickstart-*` example tracks, which `make docs` checks hostlessly and archives; the
+shared captures manifest and its artifacts are page inputs, as are the bed overlays the
+captures run with. Only these trees are included; every other `docs/examples` tree is
+excluded. That includes the `getting-started` projects, although a reader downloads them as
+a `BUNDLES` archive: tests and doctests import them, and `CAPTURE_INPUTS` sends a change to
+them to the captures drift check."""
 DOCS_HARNESS = frozenset(
     {
         "scripts/refresh_docs_captures.py",
@@ -236,11 +238,12 @@ UNIT_TREES = {
     "init": ["tests/unit/init", "tests/e2e/test_init_e2e.py"],
     "config": ["tests/unit/config", "tests/e2e/config"],
     "fleet": ["tests/unit/fleet", "tests/unit/test_lab_facade.py"],
-    "inventory": ["tests/unit/inventory", "tests/e2e/config"],
-    "labs": ["tests/unit/labs", "tests/e2e/config"],
+    "inventory": ["tests/unit/inventory", "tests/e2e/config", "tests/e2e/labs"],
+    "labs": ["tests/unit/labs", "tests/e2e/config", "tests/e2e/labs"],
     "lab": [
         "tests/unit/labs",
         "tests/e2e/config",
+        "tests/e2e/labs",
         "tests/unit/test_chaos_link_lab_scope.py",
         "tests/unit/test_lab_data_hops.py",
         "tests/unit/test_lab_facade.py",
@@ -250,7 +253,7 @@ UNIT_TREES = {
     "logger": ["tests/unit/logger", "tests/integration/logger"],
     "check": ["tests/unit/check"],
     "creds": ["tests/unit/creds"],
-    "templating": ["tests/unit/templating"],
+    "templating": ["tests/unit/templating", "tests/e2e/labs"],
     "env": [
         "tests/unit/env",
         "tests/unit/test_ci_color_env.py",
@@ -329,6 +332,7 @@ BED_LANES = {
 own lanes exercise."""
 BED_SCRIPTS = frozenset(
     {
+        "scripts/_lab_document.py",
         "scripts/bed_lease.py",
         "scripts/bed_reap.py",
         "scripts/build_busybox_guest_images.py",

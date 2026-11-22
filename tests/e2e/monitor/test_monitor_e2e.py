@@ -382,7 +382,7 @@ def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Pa
     # project1_monitor_uptime.py's register_host_parsers() call keys on the exact
     # host *id* (otto/monitor/factory.py: get_host_parsers(host.id)), not the
     # short pool element --hosts fullmatches (with a trailing wildcard). The
-    # tech1 lab fixture (see tests/_fixtures/lab_data/tech1/lab.json) gives
+    # tech1 lab fixture (see tests/_fixtures/lab_data/tech1/lab.jsonnet) gives
     # every unix-pool host NO board, so RemoteHost._generate_id() composes
     # the bare element — "test1" for the leased element "test1" (verified
     # against UnixHost directly; also assumed elsewhere, e.g.

@@ -45,7 +45,7 @@ GUESTS = _guest_elements()
 # `busybox` memberships (or its hops) would empty this suite and report the bed
 # GREEN. "Never skip on bed-down" applies to a bed that is not there at all.
 assert GUESTS, (
-    "no BusyBox bed guests in tests/_fixtures/lab_data/tech1/lab.json: no host "
+    "no BusyBox bed guests in tests/_fixtures/lab_data/tech1/lab.jsonnet: no host "
     "carries both a 'busybox' lab membership and a hop. This suite is "
     "parametrized over that roster and would empty-param-SKIP rather than fail, "
     "so it is asserted here instead."

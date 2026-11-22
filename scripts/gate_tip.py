@@ -1736,7 +1736,7 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--overridden", action="append", default=[], metavar="NAME")
     parser.add_argument("--remote", default=CANONICAL_REMOTE)
     parser.add_argument(
-        "--lab", type=Path, default=None, metavar="LAB_JSON", help="the cell a bed lane leases"
+        "--lab", type=Path, default=None, metavar="LAB_FILE", help="the cell a bed lane leases"
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")

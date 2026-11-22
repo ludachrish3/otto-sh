@@ -33,19 +33,14 @@ from pathlib import Path
 import pytest
 
 from otto.utils import DRY_RUN_HEADLINE
-from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.labdata import tech1_lab_source
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.hostless
 
-LAB_DATA_DIR = lab_data_dir() / "tech1"
 
-SETTINGS_EXTRA = """\
-[[lab.sources]]
-backend = "json"
-paths = ["{lab_data_dir}"]
-"""
+SETTINGS_EXTRA = tech1_lab_source()
 
 
 def _make_project(root: Path) -> Path:
@@ -55,7 +50,7 @@ def _make_project(root: Path) -> Path:
         name="dryrunrepo",
         version="0.1.0",
         tests=["tests"],
-        extra=SETTINGS_EXTRA.format(lab_data_dir=LAB_DATA_DIR),
+        extra=SETTINGS_EXTRA,
         files={"tests/test_placeholder.py": "def test_placeholder() -> None:\n    assert True\n"},
     )
 

@@ -17,8 +17,8 @@ import pytest
 
 from otto.host.console import strip_ansi
 from tests._fixtures.controlling_pty import set_winsize
+from tests._fixtures.labdata import tech1_lab_source
 from tests._fixtures.literal_text import rejoin_column
-from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import otto_subprocess_env, run_otto
 
@@ -34,10 +34,7 @@ init = ["widthprobe_instructions"]
 [project]
 lab_patterns = [".*"]
 
-[[lab.sources]]
-backend = "json"
-paths = ["{CHECKOUT_ROOT / "tests" / "_fixtures" / "lab_data" / "tech1"}"]
-
+{tech1_lab_source()}
 [[products]]
 name = "telemetry_agent_with_a_long_name"
 kind = "shell"

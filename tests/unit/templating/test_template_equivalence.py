@@ -14,7 +14,17 @@ from typing import Any
 
 from otto.config.project import Project
 
-from ._lab_project import CREDS, inventory, json_source, jsonnet_source, operation, project, write
+from ._lab_project import (
+    CREDS,
+    inventory,
+    json_source,
+    jsonnet_source,
+    lab_facts,
+    listed_labs,
+    operation,
+    project,
+    write,
+)
 
 FLEET_TEMPLATE = """
 local o = import 'otto.libsonnet';
@@ -183,43 +193,11 @@ def project_pair(
     return built[0], built[1]
 
 
-def hand_names(hand: Project) -> list[str]:
-    """Every lab the hand-written project lists."""
-    op = operation([hand])
-    return [status.name for status in op.repository.lab_status_report(view=op.view).labs]
-
-
-def lab_facts(sut: Project, name: str) -> dict[str, Any]:
-    """Lab *name* of *sut*, loaded as ``--lab`` loads it, reduced to what must match."""
-    from otto.session import build_lab
-
-    lab = build_lab([sut], labs=[name])
-    hosts = {
-        host_id: {
-            "ip": host.ip,
-            "element": host.element.name,
-            "valid_terms": list(host.valid_terms),
-            "console": (host.console_options.server, host.console_options.port),
-            "ref": (host.inventory_ref.name, host.inventory_ref.key, host.inventory_ref.qualified),
-            "logins": [c.login for c in host.creds or []],
-        }
-        for host_id, host in lab.hosts.items()
-        if host_id != "local"  # the controller's own host, added to every lab
-    }
-    links = sorted((link.id, link.a.host, link.b.host, link.a.ip, link.b.ip) for link in lab.links)
-    return {
-        "hosts": hosts,
-        "links": links,
-        "resources": sorted(lab.resources),
-        "metadata": lab.metadata,
-    }
-
-
 def test_rendered_fleet_equals_its_hand_expanded_json(tmp_path, otto_home):
     templated, hand = project_pair(tmp_path, FLEET_TEMPLATE, FLEET_EXPANDED_JSON)
-    names = hand_names(hand)
+    names = listed_labs(hand)
     assert names == ["router-lab.east-r7", "router-lab.north-r9", "router-lab.west-r8"]
-    assert hand_names(templated) == names
+    assert listed_labs(templated) == names
     for name in names:
         if name == "router-lab.north-r9":
             continue  # unavailable in both: compared through the status report below

@@ -11,9 +11,13 @@ version = "0.1.0"
 libs = ["../getting-started/libs"]
 init = ["gs_example"]
 
+# doc: begin lab-sources
+# The template reads the records of `default`, the inventory [inventory] declares.
 [[lab.sources]]
-backend = "json"
+backend = "jsonnet"
 paths = ["lab_data"]
+inventories = ["default"]
+# doc: end lab-sources
 
 # doc: begin inventory-config
 [inventory]

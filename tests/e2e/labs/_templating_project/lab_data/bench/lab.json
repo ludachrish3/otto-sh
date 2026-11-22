@@ -1,0 +1,32 @@
+{
+  "labs": {
+    "bench": {}
+  },
+  "elements": [
+    {
+      "name": "test2",
+      "labs": [
+        "bench"
+      ],
+      "hosts": [
+        {
+          "ip": "10.10.200.12",
+          "os_type": "unix",
+          "valid_terms": [
+            "ssh"
+          ],
+          "creds": [
+            {
+              "login": "vagrant",
+              "password": "vagrant"
+            },
+            {
+              "login": "test",
+              "password": "Password1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

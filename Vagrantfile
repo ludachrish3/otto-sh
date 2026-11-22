@@ -525,7 +525,7 @@ Vagrant.configure("2") do |config|
 
         # Zephyr SDK arm-zephyr-eabi toolchains for the embedded (project3) coverage
         # bed: the cross-gcov the coverage *report* runs
-        # (tests/_fixtures/lab_data/tech1/lab.json -> each host's `toolchain`) and the
+        # (tests/_fixtures/lab_data/tech1/lab.jsonnet -> each host's `toolchain`) and the
         # compiler that builds the mps2_an385 coverage product on this VM. The
         # report gcov MUST be the same GCC that compiled the product's .gcno
         # (gcov's on-disk format is a GCC-internal ABI), so each Zephyr version
@@ -1598,7 +1598,7 @@ EOF
     # placement on the netdev carrying the management ip (the self-lockout
     # guard in src/otto/link/placement.py), so the data plane could never be
     # impaired. On its own NIC it can. otto's lab data
-    # (tests/_fixtures/lab_data/tech1/lab.json) declares eth2 = 192.168.1.x
+    # (tests/_fixtures/lab_data/tech1/lab.jsonnet) declares eth2 = 192.168.1.x
     # to match.
     #
     # This provisioner now does two things:
@@ -1703,7 +1703,7 @@ EOF
     # get docker, so the docker e2e suite can lease whichever is free and run
     # against its own daemon — spreading the docker chain off a single host.
     # A host advertises itself as a docker parent via `docker_capable: true` in
-    # tests/_fixtures/lab_data/tech1/lab.json (flipped on for test1+test2
+    # tests/_fixtures/lab_data/tech1/lab.jsonnet (flipped on for test1+test2
     # alongside the docker-e2e pooling test work).
     def provision_docker(vm, name)
         vm.vm.provision "shell", name: "#{name} docker", keep_color: true, inline: <<-SHELL
@@ -1723,7 +1723,7 @@ EOF
 
             # Let the `vagrant` user (the credential otto authenticates as)
             # talk to the docker socket without sudo. Otto authenticates as
-            # `vagrant` per tests/_fixtures/lab_data/tech1/lab.json.
+            # `vagrant` per tests/_fixtures/lab_data/tech1/lab.jsonnet.
             usermod -aG docker vagrant
 
             systemctl enable --now docker

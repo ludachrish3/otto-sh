@@ -1,6 +1,5 @@
 """Every id otto composes from the shipped lab data is kebab-case (spec 2026-10-03 §2)."""
 
-import json
 import re
 from pathlib import Path
 
@@ -11,11 +10,10 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
-from otto.labs.json_repository import _JsonFileLabRepository
-from otto.labs.loader import load_lab
 from otto.logger.mode import LogMode
+from scripts._lab_document import load_cell_lab, read_cell_document
 from tests._fixtures.gs_example import import_gs_example
-from tests._fixtures.labdata import register_zephyr_inline_frame
+from tests._fixtures.labdata import lab_data_path, register_zephyr_inline_frame
 from tests._fixtures.paths import CHECKOUT_ROOT, ensure_custom_hosts_on_path
 
 ensure_custom_hosts_on_path()
@@ -23,8 +21,9 @@ ensure_custom_hosts_on_path()
 _ID = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _CONTAINER_ID = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\.[a-z0-9_-]+\.[a-z0-9._-]+$")
 _LABS = [
-    CHECKOUT_ROOT / "tests/_fixtures/lab_data/tech1/lab.json",
-    CHECKOUT_ROOT / "docs/examples/getting-started/lab_data/lab.json",
+    lab_data_path("tech1"),
+    # The shipped template itself: the cell reader renders a Jsonnet entry.
+    CHECKOUT_ROOT / "docs/examples/getting-started/lab_data/lab.jsonnet",
     CHECKOUT_ROOT / "docs/examples/quickstart-shell/lab_data/lab.json",
     CHECKOUT_ROOT / "docs/examples/bed/quickstart-shell/lab_data/lab.json",
     CHECKOUT_ROOT / "docs/examples/quickstart-kmod/lab_data/lab.json",
@@ -39,8 +38,9 @@ _LABS = [
 # The labs that declare links, named outright: a lab that loses its links must
 # fail the link test, not drop out of it.
 _LINKED_LABS = [
-    CHECKOUT_ROOT / "tests/_fixtures/lab_data/tech1/lab.json",
-    CHECKOUT_ROOT / "docs/examples/getting-started/lab_data/lab.json",
+    lab_data_path("tech1"),
+    # The shipped template itself: the cell reader renders a Jsonnet entry.
+    CHECKOUT_ROOT / "docs/examples/getting-started/lab_data/lab.jsonnet",
 ]
 
 
@@ -53,18 +53,18 @@ def _zephyr_inline_frame() -> None:
 def _composed_ids(path: Path) -> list[str]:
     """The id of every host the REAL loader builds from *path*, across all its labs.
 
-    Through :func:`~otto.labs.loader.load_lab`, so inventory resolution,
+    Through :func:`~otto.labs.loader.load_lab` (as the bed scripts load a cell,
+    :func:`scripts._lab_document.load_cell_lab`, which renders a Jsonnet
+    entry), so inventory resolution,
     ``ElementSpec.to_element`` and the ``os_profile`` merge all run exactly as
     they do for a user. The example project's init module is imported first
     because its hosts name the session setups it registers.
     """
     import_gs_example()
-    search = [path.parent]
-    labs = _JsonFileLabRepository(search_paths=search).list_labs()
     builtins = set(builtin_host_ids())
     ids: set[str] = set()
-    for lab in labs:
-        ids |= set(load_lab(lab, search_paths=search).hosts) - builtins
+    for lab in read_cell_document(path)["labs"]:
+        ids |= set(load_cell_lab(path, lab).hosts) - builtins
     return sorted(ids)
 
 
@@ -80,7 +80,7 @@ def test_every_shipped_lab_id_is_kebab(path):
     "path", _LINKED_LABS, ids=lambda p: p.relative_to(CHECKOUT_ROOT).as_posix()
 )
 def test_every_link_endpoint_names_a_composed_id(path):
-    doc = json.loads(path.read_text())
+    doc = read_cell_document(path)
     ids = set(_composed_ids(path))
     named = {ep["host"] for link in doc.get("links", []) for ep in link["endpoints"]}
     assert named, f"{path} declares no link endpoints — the walker lost the schema"

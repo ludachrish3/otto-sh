@@ -52,6 +52,8 @@ table](#the-labs-table)).  `elements` is the array of element entries, each
 grouping the host entries that address it ([Elements](elements.md#elements)).  `links`
 declares data-plane routes and is covered in {ref}`lab-links`.  All
 three are optional: omitting a section is the same as writing it empty.
+A `jsonnet` source renders a document of the same shape from a template
+({ref}`When hosts share a shape <lab-config-shared-shape>`, {doc}`templating`).
 
 A top-level `$schema` is comment space, and so is any key beginning with `_`
 at **every** level: the document, the `labs` table, a `labs` entry, an

@@ -29,37 +29,20 @@ import otto.config.completion_cache as cc
 from otto.config.project import Project
 from otto.host.os_profile import ProfileContext
 from otto.models.base import OttoModel
+from tests._fixtures.lab_projection import lab_projection
 from tests._fixtures.named_inventory import (
     FakeDiscoveryInventory,
     FakeInventory,
     register_lookup_counting,
 )
 from tests._fixtures.project_scaffold import make_project
-from tests.unit.labs.test_unchanged_loading import _lab
+from tests._fixtures.settings_toml import table
 
 _CREDS = [{"login": "admin", "password": "pw"}]
 
 # --------------------------------------------------------------------------- #
 # Settings on disk.
 # --------------------------------------------------------------------------- #
-
-
-def _toml(value: Any) -> str:
-    """*value* as an inline TOML value: tables inline, strings as basic strings."""
-    if isinstance(value, dict):
-        return "{ " + ", ".join(f"{json.dumps(k)} = {_toml(v)}" for k, v in value.items()) + " }"
-    if isinstance(value, list):
-        return "[" + ", ".join(_toml(v) for v in value) + "]"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    return json.dumps(value)
-
-
-def _table(header: str, **keys: Any) -> str:
-    """A TOML table (``[x]`` or ``[[x]]`` *header*) holding *keys* as inline values."""
-    return header + "\n" + "".join(f"{k} = {_toml(v)}\n" for k, v in keys.items()) + "\n"
 
 
 def _records(path: Path, records: dict[str, dict[str, Any]]) -> str:
@@ -242,10 +225,10 @@ def test_unchanged_third_party_lab_and_inventory_backends(tmp_path, home, monkey
         {"core": [_el("core-sw", {"inventory": {"name": "teamdb", "key": "sw-1"}})]},
     )
     settings = (
-        _table("[inventory]", backend="teamdb", records=_TEAMDB_DEFAULT)
-        + _table("[[inventories]]", name="teamdb", backend="teamdb", records=_TEAMDB_NAMED)
-        + _table("[[lab.sources]]", backend="acceptance-example", labs={"bench": bench})
-        + _table("[[lab.sources]]", backend="json", paths=[core])
+        table("[inventory]", backend="teamdb", records=_TEAMDB_DEFAULT)
+        + table("[[inventories]]", name="teamdb", backend="teamdb", records=_TEAMDB_NAMED)
+        + table("[[lab.sources]]", backend="acceptance-example", labs={"bench": bench})
+        + table("[[lab.sources]]", backend="json", paths=[core])
     )
     project = _project(tmp_path / "sut", settings)
     projects = [project]
@@ -309,7 +292,7 @@ def test_a_registered_legacy_backend_under_d1(tmp_path, home, monkeypatch, route
     from otto.session import build_lab
 
     counting = register_lookup_counting(monkeypatch, records=_EDGE)
-    _write_user(home, _table("[inventory]", backend="fake:counting"))
+    _write_user(home, table("[inventory]", backend="fake:counting"))
     backend = f"acceptance-legacy-{route}"
     (_register_example if route == "summaries" else _register_load_only)(backend)
     physical = _records(tmp_path / "physical.json", {"edge-17": {"ip": "10.5.0.17"}})
@@ -317,7 +300,7 @@ def test_a_registered_legacy_backend_under_d1(tmp_path, home, monkeypatch, route
         _el("edge", {"inventory": "edge-17", "os_type": "unix"}),
         _el("probe", {"ip": "10.9.0.1", "os_type": "unix"}),
     ]
-    settings = _table("[[inventories]]", name="physical", backend="json", path=physical) + _table(
+    settings = table("[[inventories]]", name="physical", backend="json", path=physical) + table(
         "[[lab.sources]]", backend=backend, labs={"edge": edge}
     )
     project = _project(tmp_path / "sut", settings)
@@ -365,9 +348,9 @@ def test_two_inventories_one_lab(tmp_path, home, monkeypatch):
         },
     )
     settings = (
-        _table("[[inventories]]", name="physical", backend="json", path=physical)
-        + _table("[[inventories]]", name="virtual", backend="json", path=virtual)
-        + _table("[[lab.sources]]", backend="json", paths=[lab_dir])
+        table("[[inventories]]", name="physical", backend="json", path=physical)
+        + table("[[inventories]]", name="virtual", backend="json", path=virtual)
+        + table("[[lab.sources]]", backend="json", paths=[lab_dir])
     )
     project = _project(tmp_path / "sut", settings)
     projects = [project]
@@ -410,17 +393,17 @@ def _reordered_project(root: Path, data: Path, *, order: str) -> Project:
     and hosts, so no source restates another's element.
     """
     inventories = [
-        _table("[[inventories]]", name=name, backend="json", path=str(data / f"{name}.json"))
+        table("[[inventories]]", name=name, backend="json", path=str(data / f"{name}.json"))
         for name in ("physical", "virtual")
     ]
     sources = [
-        _table("[[lab.sources]]", backend="json", paths=[str(data / side)])
+        table("[[lab.sources]]", backend="json", paths=[str(data / side)])
         for side in ("west", "east")
     ]
     if order == "reverse":
         inventories.reverse()
         sources.reverse()
-    default = _table("[inventory]", backend="json", path=str(data / "default.json"))
+    default = table("[inventory]", backend="json", path=str(data / "default.json"))
     return _project(root, default + "".join(inventories) + "".join(sources))
 
 
@@ -454,8 +437,10 @@ def test_reordering_declarations_changes_nothing(tmp_path, home):
     built = {}
     for order in ("forward", "reverse"):
         project = _reordered_project(tmp_path / order, data, order=order)
-        built[order] = {name: _lab(build_lab([project], labs=[name])) for name in ("west", "east")}
-        built[order]["both"] = _lab(build_lab([project], labs=["west", "east"]))
+        built[order] = {
+            name: lab_projection(build_lab([project], labs=[name])) for name in ("west", "east")
+        }
+        built[order]["both"] = lab_projection(build_lab([project], labs=["west", "east"]))
     assert built["forward"] == built["reverse"]
     ips = {h: v["ip"] for h, v in built["forward"]["both"]["hosts"].items() if "ip" in v}
     assert ips == {
@@ -492,9 +477,9 @@ def test_a_data_error_never_loads_an_old_address(tmp_path, home, monkeypatch):
         tmp_path / "sut" / "lab" / "lab.json",
         {"bench": [_el("dut", {"inventory": {"name": "remote", "key": "dut-1"}})]},
     )
-    settings = _table(
+    settings = table(
         "[[inventories]]", name="remote", backend="acceptance-remote", cache_ttl="1h"
-    ) + _table("[[lab.sources]]", backend="json", paths=[lab_dir])
+    ) + table("[[lab.sources]]", backend="json", paths=[lab_dir])
     projects = [_project(tmp_path / "sut", settings)]
 
     fetched = datetime(2026, 8, 27, 9, 14, tzinfo=timezone.utc)

@@ -14,7 +14,7 @@ through test1 and nothing hostless was watching which lab they aimed at.
 from pathlib import Path
 
 from otto.labs.loader import load_lab
-from tests._fixtures.labdata import dangling_ends, lab_data_dir, register_zephyr_inline_frame
+from tests._fixtures.labdata import dangling_ends, load_tech_lab, register_zephyr_inline_frame
 from tests.e2e.chaos._bed import (
     CHAOS_GUEST_HOP,
     CHAOS_LAB,
@@ -50,7 +50,7 @@ def test_the_bed_target_is_not_closed_which_is_why_the_scenarios_do_not_use_it()
     from tests.integration.chaos._target import make_bed_target
 
     target = make_bed_target("test1")
-    lab = load_lab(target.lab, search_paths=[lab_data_dir() / "tech1"])
+    lab = load_tech_lab(target.lab)
 
     assert unix_link_id() in {link.id for link in lab.static_links()}
     assert dangling_ends(lab) == ["bb1350-qemu--test1: bb1350-qemu"]

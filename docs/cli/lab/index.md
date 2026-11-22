@@ -15,8 +15,8 @@ otto lab render ENTRY [--source NAME]
 
 `otto lab render` prints the JSON document a Jsonnet entry file renders to.
 ENTRY is a `.jsonnet` file that a `backend = "jsonnet"` lab source names in its
-`paths` ({doc}`../../configuration/lab/templating` covers writing one, with a
-worked example). The
+`paths` ({doc}`../../configuration/lab/templating` covers writing one, starting
+with a {ref}`simple example <lab-templating-simple>`). The
 file renders exactly as that source renders it when a lab loads, with the
 inventories the source declares, and the document prints as indented JSON on
 standard output:

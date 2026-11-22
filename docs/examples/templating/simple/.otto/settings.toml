@@ -1,0 +1,8 @@
+name = "benches"
+version = "0.1.0"
+
+# One lab source renders lab_data/lab.jsonnet. No inventory: the template
+# states every host itself.
+[[lab.sources]]
+backend = "jsonnet"
+paths = ["lab_data"]

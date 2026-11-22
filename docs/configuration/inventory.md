@@ -473,7 +473,7 @@ renders it, in memory, and reads the JSON it renders exactly as it
 reads a written file: flat or `otto.inventory.v2`, with the same `supplies`
 rule and the same errors. A file that stands in for an inventory you do not
 have yet, such as NetBox, is the common case: the
-{ref}`templated-lab example <lab-templating-example>` uses two.
+{ref}`advanced templated-lab example <lab-templating-advanced>` uses two.
 
 ```toml
 [[inventories]]
@@ -509,7 +509,7 @@ references the inventory changes only if the stand-in's keys are the names
 NetBox gives the devices and its records state only what a NetBox record
 carries. A NetBox record carries no `groups` or `labels` yet
 ([Record fields](#record-fields)), so a template that selects by them, as the
-templated-lab example's `inGroup('dut')` does, finds no members once the
+advanced templated-lab example's `inGroup('dut')` does, finds no members once the
 inventory is NetBox.
 
 (credentials-layered)=
@@ -1097,6 +1097,12 @@ Three virtual hosts in a `unix` lab, one of which is also a member of
 `busybox`. The referenced hosts below build **identically** to the same three
 hosts declared inline. (The `_note` keys are comment space — `_`-prefixed keys
 are ignored in every otto JSON file.)
+
+The files are written out entry by entry, because they are the JSON forms
+this page documents. A lab file that repeats one element per inventory record,
+as this one does, can come from a template instead: the bed case study's
+{doc}`inventory twin <../developing/bed-case-study/defining-hosts/inventory>`
+makes one element per record of its inventory ({doc}`lab/templating`).
 
 `~/lab/inventory.json` — facts, no otto vocabulary, no secrets:
 

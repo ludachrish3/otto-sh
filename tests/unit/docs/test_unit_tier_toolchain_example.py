@@ -10,18 +10,15 @@ import re
 import tomli
 
 from otto.models.settings import SettingsModel
+from tests._fixtures.marked_blocks import marked_blocks
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 _PAGE = CHECKOUT_ROOT / "docs" / "cli" / "cov" / "tiers.md"
-_BLOCK = re.compile(
-    r"<!-- pinned by tests/unit/docs/test_unit_tier_toolchain_example.py -->\s*"
-    r"```toml\n(?P<body>.*?)```",
-    re.DOTALL,
-)
+_MARKER = "pinned by tests/unit/docs/test_unit_tier_toolchain_example.py"
 
 
 def _block() -> str:
-    found = [m["body"] for m in _BLOCK.finditer(_PAGE.read_text())]
+    found = [block.body for block in marked_blocks(_PAGE.read_text(), re.escape(_MARKER), "toml")]
     assert len(found) == 1, (
         f"expected one pinned toolchain block on {_PAGE.name}, found {len(found)}"
     )

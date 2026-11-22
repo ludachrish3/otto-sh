@@ -17,29 +17,15 @@ from otto.config.project import Project
 from otto.inventory import InventoryView
 from otto.labs import CompositeLabRepository
 from tests._fixtures.project_scaffold import make_project
+from tests._fixtures.settings_toml import (  # noqa: F401 — re-exported: the tests take them from here
+    json_source,
+    jsonnet_source,
+    table,
+    toml_value,
+)
 
 CREDS = [{"login": "admin", "password": "pw"}]
 """Logins a record or inline host carries, so every host builds."""
-
-
-def toml_value(value: Any) -> str:
-    """*value* as an inline TOML value: tables inline, strings as basic strings."""
-    if isinstance(value, dict):
-        return (
-            "{ " + ", ".join(f"{json.dumps(k)} = {toml_value(v)}" for k, v in value.items()) + " }"
-        )
-    if isinstance(value, (list, tuple)):
-        return "[" + ", ".join(toml_value(v) for v in value) + "]"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    return json.dumps(str(value))
-
-
-def table(header: str, **keys: Any) -> str:
-    """A TOML table (``[x]`` or ``[[x]]`` *header*) holding *keys* as inline values."""
-    return header + "\n" + "".join(f"{k} = {toml_value(v)}\n" for k, v in keys.items()) + "\n"
 
 
 def write(path: Path, content: "str | dict[str, Any] | list[Any]") -> Path:
@@ -53,16 +39,6 @@ def inventory(root: Path, name: str, records: dict[str, dict[str, Any]], **keys:
     """Write *records* as ``root/lab_data/<name>.json``; return its ``[[inventories]]`` table."""
     path = write(root / "lab_data" / f"{name}.json", records)
     return table("[[inventories]]", name=name, backend="json", path=str(path), **keys)
-
-
-def jsonnet_source(**keys: Any) -> str:
-    """Return a ``backend = "jsonnet"`` ``[[lab.sources]]`` table holding *keys*."""
-    return table("[[lab.sources]]", backend="jsonnet", **keys)
-
-
-def json_source(*paths: Path) -> str:
-    """Return a ``backend = "json"`` ``[[lab.sources]]`` table reading *paths*."""
-    return table("[[lab.sources]]", backend="json", paths=[str(p) for p in paths])
 
 
 def project(root: Path, settings: str, *, name: str = "sut") -> Project:
@@ -87,3 +63,47 @@ def operation(projects: "list[Project]") -> Operation:
         repository=build_lab_sources(projects=projects),
         view=build_inventory_view(projects=projects),
     )
+
+
+def lab_facts(sut: Project, name: str) -> dict[str, Any]:
+    """Lab *name* of *sut*, loaded as ``--lab`` loads it, reduced to what must match.
+
+    Each host keeps what it took from its record (address, interfaces, place,
+    the reference and its ``extra``) and from otto's facts (terms, transfers,
+    console, docker, resources, logins), so two spellings of one lab compare
+    equal only when they build the same hosts.
+    """
+    from otto.session import build_lab
+
+    lab = build_lab([sut], labs=[name])
+    hosts = {
+        host_id: {
+            "ip": host.ip,
+            "element": host.element.name,
+            "valid_terms": list(host.valid_terms),
+            "console": (host.console_options.server, host.console_options.port),
+            "ref": (host.inventory_ref.name, host.inventory_ref.key, host.inventory_ref.qualified),
+            "logins": [c.login for c in host.creds or []],
+            "interfaces": {k: (i.ip, i.subnet) for k, i in host.interfaces.items()},
+            "place": (host.site, host.rack, host.shelf, host.is_virtual),
+            "docker": (host.docker_capable, host.docker_priority),
+            "transfers": list(host.valid_transfers),
+            "resources": sorted(host.resources),
+            "extra": host.inventory_ref.extra,
+        }
+        for host_id, host in lab.hosts.items()
+        if host_id != "local"  # the controller's own host, added to every lab
+    }
+    links = sorted((link.id, link.a.host, link.b.host, link.a.ip, link.b.ip) for link in lab.links)
+    return {
+        "hosts": hosts,
+        "links": links,
+        "resources": sorted(lab.resources),
+        "metadata": lab.metadata,
+    }
+
+
+def listed_labs(sut: Project) -> list[str]:
+    """Every lab *sut* lists, through the inventory view, as ``--list-labs`` lists them."""
+    op = operation([sut])
+    return [status.name for status in op.repository.lab_status_report(view=op.view).labs]

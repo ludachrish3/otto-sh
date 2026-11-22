@@ -3958,6 +3958,7 @@ call	otto.labs:LabFileRule	sync	KO:suffix:- KO:directory_file:-
 member	otto.labs:LabFileRule.__eq__	method	sync	PK:other:-
 member	otto.labs:LabFileRule.__hash__	method	sync	-
 member	otto.labs:LabFileRule.directory_file	field
+member	otto.labs:LabFileRule.names_file	method	sync	PK:path:-
 member	otto.labs:LabFileRule.suffix	field
 abstract	otto.labs:LabFileRule	@final @manifest:subclass=false
 name	otto.labs:LabNotFoundError	class

@@ -1,0 +1,38 @@
+{
+    "labs": {"bench": {}},
+    "elements": [
+        {
+            "name": "devbox1",
+            "labs": ["bench"],
+            "hosts": [
+                {
+                    "ip": "10.0.0.5",
+                    "os_type": "unix",
+                    "creds": [{"login": "dev", "password": "secret"}]
+                }
+            ]
+        },
+        {
+            "name": "devbox2",
+            "labs": ["bench"],
+            "hosts": [
+                {
+                    "ip": "10.0.0.6",
+                    "os_type": "unix",
+                    "creds": [{"login": "dev", "password": "secret"}]
+                }
+            ]
+        },
+        {
+            "name": "devbox3",
+            "labs": ["bench"],
+            "hosts": [
+                {
+                    "ip": "10.0.0.7",
+                    "os_type": "unix",
+                    "creds": [{"login": "dev", "password": "secret"}]
+                }
+            ]
+        }
+    ]
+}

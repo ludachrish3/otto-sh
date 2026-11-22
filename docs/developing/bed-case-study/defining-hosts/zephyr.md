@@ -11,13 +11,25 @@ shows how to see one working, and how to define one when none of them fits.
 
 ## Connect with the default class and read the frame
 
-The entry for a Zephyr 3.7 target on the bed — `os_type: "zephyr"`, reached
-through `test4`, addressed over the console:
+The bed's seven Zephyr targets share one shape, so one function in the lab
+file writes them, as one writes the Ubuntu VMs on the {doc}`first page
+<index>`. Every target is `os_type: 'zephyr'`, reached through `test4`, and
+takes files over the console; the smaller functions below it are the
+features only some targets have:
 
-```{literalinclude} ../../../examples/getting-started/lab_data/lab.json
-:language: json
-:start-after: '"_doc_begin": "zephyr37_fat"'
-:end-before: '"_doc_end": "zephyr37_fat"'
+```{literalinclude} ../../../examples/getting-started/lab_data/lab.jsonnet
+:language: jsonnet
+:start-after: "// doc: begin zephyr-target"
+:end-before: "// doc: end zephyr-target"
+```
+
+The entry for a Zephyr 3.7 target on the bed, with a FAT filesystem and an
+SNMP agent:
+
+```{literalinclude} ../../../examples/getting-started/lab_data/lab.jsonnet
+:language: jsonnet
+:start-after: "// doc: begin zephyr37_fat"
+:end-before: "// doc: end zephyr37_fat"
 ```
 
 Run one command at `--log-level DEBUG` and the log shows the frame: the
@@ -40,10 +52,10 @@ Zephyr 2.7 has no `retval`. otto's 2.7 firmware carries a one-line patch that
 prints `retCode = <n>` after every command instead, and the frame reads that.
 The entry names the frame:
 
-```{literalinclude} ../../../examples/getting-started/lab_data/lab.json
-:language: json
-:start-after: '"_doc_begin": "zephyr27_fat"'
-:end-before: '"_doc_end": "zephyr27_fat"'
+```{literalinclude} ../../../examples/getting-started/lab_data/lab.jsonnet
+:language: jsonnet
+:start-after: "// doc: begin zephyr27_fat"
+:end-before: "// doc: end zephyr27_fat"
 ```
 
 The frame is a subclass of the stock one that changes the handshake, the
@@ -55,7 +67,7 @@ framing, and how the exit code and output are read:
 
 Registered from the project's `init` module — the one the {doc}`first page
 <index>` wires up with `libs` and `init` — before any lab loads, so the name
-in `lab.json` resolves:
+in the lab file resolves:
 
 ```{literalinclude} ../../../examples/getting-started/libs/gs_example/__init__.py
 :language: python

@@ -11,16 +11,16 @@ an element, a host — and required for whatever is in play. The labs table,
 then the whole `bb1350` element, whose two `resources` lines sit on the
 element and on its host:
 
-```{literalinclude} ../../examples/getting-started/lab_data/lab.json
-:language: json
-:start-after: '"_doc_begin": "labs"'
-:end-before: '"_doc_end": "labs"'
+```{literalinclude} ../../examples/getting-started/lab_data/lab.jsonnet
+:language: jsonnet
+:start-after: "// doc: begin labs"
+:end-before: "// doc: end labs"
 ```
 
-```{literalinclude} ../../examples/getting-started/lab_data/lab.json
-:language: json
-:start-after: '"_doc_begin": "bb1350"'
-:end-before: '"_doc_end": "bb1350"'
+```{literalinclude} ../../examples/getting-started/lab_data/lab.jsonnet
+:language: jsonnet
+:start-after: "// doc: begin bb1350"
+:end-before: "// doc: end bb1350"
 ```
 
 Holding `bb-bench` is holding the bench; `bb1350-chassis` the element;

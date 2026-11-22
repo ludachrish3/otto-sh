@@ -8,7 +8,7 @@ main:tests/e2e/test_link_tunnels_e2e.py``): host construction via
 teardown, and a single ``xdist_group`` so this fixed 3-host topology never
 runs concurrently with itself.
 
-Topology (see ``tests/_fixtures/lab_data/tech1/lab.json``)
+Topology (see ``tests/_fixtures/lab_data/tech1/lab.jsonnet``)
 ------------------------------------------------------------
 - test1 (test1, 10.10.200.11)
 - test2 (test2, 10.10.200.12)

@@ -10,10 +10,8 @@ import pytest
 
 from otto.config.user_settings import load_user_settings
 from otto.inventory import build_inventory_from_declarations, resolve_host_entry
-from otto.inventory.view import InventoryView
-from otto.labs.json_repository import _JsonFileLabRepository
-from otto.labs.loader import load_lab
-from tests._fixtures.labdata import lab_data_dir
+from otto.labs.loader import lab_source_for_paths, load_lab, search_paths_view
+from tests._fixtures.labdata import lab_data_dir, lab_data_path, load_tech_lab
 
 _UNIX = ["test1", "test2", "test3"]
 _ATTRS = [
@@ -49,12 +47,11 @@ def inventory():
 
 
 def _entries(tech):
-    repository = _JsonFileLabRepository(search_paths=[lab_data_dir() / tech])
     # The fixture's parsed elements, exactly as the loader sees them: the first
-    # host entry of each, paired with the element it belongs to.
-    docs = repository._load_documents(
-        best_effort=False, view=InventoryView.of_default(inventory=None)
-    )
+    # host entry of each, paired with the element it belongs to. tech1's file is
+    # its Jsonnet entry, rendered under the view load_lab renders it under.
+    repository = lab_source_for_paths([lab_data_path(tech)])
+    docs = repository._load_documents(best_effort=False, view=search_paths_view())
     return {
         el.name: (el.hosts[0], el.to_element())
         for doc in docs
@@ -75,7 +72,7 @@ def test_resolved_entries_equal_the_inline_entries(inventory):
 
 
 def test_built_hosts_agree(inventory):
-    inline = load_lab("unix", search_paths=[lab_data_dir() / "tech1"])
+    inline = load_tech_lab("unix")
     referenced = load_lab(
         "unix", search_paths=[lab_data_dir() / "tech1-inventory"], inventory=inventory
     )

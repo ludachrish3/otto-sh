@@ -606,7 +606,7 @@ def test_gate_tip_hands_every_command_line_variable_to_the_runner_as_overridden(
     assert lines[:4] == ["run", "--locked", "python", "scripts/gate_tip.py"]
     assert "--pid" not in lines
     assert lines[lines.index("--remote") + 1] == "origin"
-    assert lines[lines.index("--lab") + 1] == "tests/_fixtures/lab_data/tech1/lab.json"
+    assert lines[lines.index("--lab") + 1] == "tests/_fixtures/lab_data/tech1/lab.jsonnet"
     assert lines[lines.index("--overridden") + 1] == "X"
     assert lines[lines.index("--base") + 1] == "", "the empty default: the runner fetches main"
 
@@ -945,7 +945,7 @@ def _run_release_tail(
         "-f",
         str(CHECKOUT_ROOT / "Makefile"),
         "release",
-        f"LAB_FILE={CHECKOUT_ROOT}/tests/_fixtures/lab_data/tech1/lab.json",
+        f"LAB_FILE={CHECKOUT_ROOT}/tests/_fixtures/lab_data/tech1/lab.jsonnet",
         f"COVERAGE_STAMP={_stub_stamp(run_dir, 0)}",
         f"VENV_BIN={guard}",
         # Merged, not verbatim: the recipe's Python children need the session's PATH and HOME.

@@ -115,6 +115,16 @@ class LabFileRule:
     directory_file: str
     """The file a directory entry contributes."""
 
+    def names_file(self, path: "Path") -> bool:
+        """Return whether *path* names one of this rule's lab files itself, by its suffix.
+
+        THE one test of it: a ``paths`` entry, a glob's match or a recorded
+        origin that ends in :attr:`suffix` is such a file (or a glob of
+        them); any other entry is a directory, which contributes its
+        :attr:`directory_file`.
+        """
+        return path.suffix == self.suffix
+
 
 JSON_FILE_RULE = LabFileRule(suffix=".json", directory_file="lab.json")
 """The json backend's rule, and the rule of every source whose facts name none."""

@@ -689,10 +689,34 @@ class _JsonFileLabRepository(_DocumentLabRepository):
             raise FileNotFoundError(
                 f"No lab data found in any search path (directories are searched "
                 f"for {LAB_FILENAME}; .json entries are read directly; globs are "
-                f"expanded):\n  {searched}"
+                f"expanded):\n  {searched}{_template_hint(self.search_paths)}"
             ) from None
 
         return found
+
+
+def _template_hint(search_paths: "list[Path]") -> str:
+    """Return a line naming each Jsonnet template a json source's paths reach, or ``""`` for none.
+
+    Asked only once no lab file is found, so it costs a found lab nothing. The
+    templates are the files those paths hold under the ``jsonnet`` source's
+    rule (:func:`~otto.labs.documents.expand_lab_files` with
+    :data:`~otto.labs.sources.JSONNET_FILE_RULE`: a directory's
+    ``lab.jsonnet``, a ``.jsonnet`` file named directly), which a json
+    source never reads. A reader who converted the lab file to Jsonnet is
+    told the route that reads it, in both places a json source comes from:
+    a project's ``[[lab.sources]]`` entry and ``load_lab(search_paths=)``.
+    """
+    from .documents import expand_lab_files
+    from .sources import JSONNET_FILE_RULE
+
+    return "".join(
+        f"\n{template} is a Jsonnet template, which a json lab source never reads: in a "
+        f'project, declare a backend = "jsonnet" [[lab.sources]] entry for it (a '
+        f"directory entry there reads its {JSONNET_FILE_RULE.directory_file}); in "
+        f"load_lab(search_paths=), name the {JSONNET_FILE_RULE.suffix} file"
+        for template in expand_lab_files(search_paths, rule=JSONNET_FILE_RULE)
+    )
 
 
 def _anchored_entries(

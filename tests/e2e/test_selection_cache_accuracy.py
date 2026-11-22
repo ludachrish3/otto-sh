@@ -22,7 +22,7 @@ import pytest
 
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import junit_files, run_otto
-from tests.e2e._selection_fixtures import LAB_DATA_DIR, SETTINGS_EXTRA
+from tests.e2e._selection_fixtures import SETTINGS_EXTRA
 
 pytestmark = pytest.mark.hostless
 
@@ -58,7 +58,7 @@ if FLAG:
 
 
 def _project(root: Path, name: str, files: dict[str, str], *, with_lab: bool = True) -> Path:
-    extra = SETTINGS_EXTRA.format(lab_data_dir=LAB_DATA_DIR) if with_lab else ""
+    extra = SETTINGS_EXTRA if with_lab else ""
     files = {"enabled.json": "false", **files}
     return make_project(root / name, name=name, tests=["tests"], extra=extra, files=files)
 

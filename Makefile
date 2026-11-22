@@ -319,8 +319,9 @@ TIMEOUT_CMD := timeout --foreground --kill-after=10s $(LANE_TIMEOUT)
 # `$(MAKE)` re-enters and the outer make's release frees it, and a run killed
 # mid-lane keeps the bed until its workers are gone. LAB_FILE names the cell:
 # its directory is the cell, its `labs` table the labs whose resources the
-# lease renders in otto's reservation format for `otto reservation check`.
-LAB_FILE := tests/_fixtures/lab_data/tech1/lab.json
+# lease renders in otto's reservation format for `otto reservation check`. It is
+# a Jsonnet entry that otto renders (scripts/_lab_document.py), never raw JSON.
+LAB_FILE := tests/_fixtures/lab_data/tech1/lab.jsonnet
 BED_LEASE := uv run python scripts/bed_lease.py --lab $(LAB_FILE)
 bed_acquire = @$(BED_LEASE) acquire --pid $$PPID --purpose "$(1)"
 bed_release = @$(BED_LEASE) release --pid $$PPID $(1)
@@ -1747,27 +1748,23 @@ chaos-embedded: ## Tier-3 chaos lane, zephyr console leg (console-client-death).
 # Informational: which lab VMs answer a ping, so a tier that dies at fixture
 # connect reads as "lab down" and not as a product failure. Its own target so
 # `make stability`'s behaviour test can stub it like a tier (16 hosts × 1 s on
-# a lab-less box is 16 s a test should not pay). Always exits 0. The jq path
-# reads lab.json's real shape (`elements[].hosts[].ip`); the old `.hosts[].ip`
-# errored and reported 0/0 on every run.
+# a lab-less box is 16 s a test should not pay). Always exits 0. The addresses
+# come from scripts/_lab_document.py's `reach`, which renders the cell through
+# otto and prints one management address per line, never the document.
 lab-reachability: ## (Lab) Ping every lab VM in the tech1 lab and say how many answered. Informational; always exits 0.
-	@if command -v jq >/dev/null 2>&1; then \
-	    reachable=0; total=0; \
-	    ips=$$(jq -r '.elements[].hosts[].ip' $(LAB_FILE)) \
-	        || { echo "  lab-reachability: jq could not read $(LAB_FILE)" >&2; exit 0; }; \
-	    for ip in $$ips; do \
-	        total=$$((total+1)); \
-	        if ping -c 1 -W 1 $$ip >/dev/null 2>&1; then \
-	            reachable=$$((reachable+1)); \
-	        fi; \
-	    done; \
-	    if [ $$reachable -eq 0 ]; then \
-	        echo "  WARNING: 0/$$total test VMs responded — run 'vagrant up' in the lab if tests fail at fixture connect."; \
-	    else \
-	        echo "  Reachable: $$reachable/$$total test VM(s)."; \
+	@reachable=0; total=0; \
+	ips=$$(uv run python scripts/_lab_document.py reach $(LAB_FILE)) \
+	    || { echo "  lab-reachability: could not read $(LAB_FILE)" >&2; exit 0; }; \
+	for ip in $$ips; do \
+	    total=$$((total+1)); \
+	    if ping -c 1 -W 1 $$ip >/dev/null 2>&1; then \
+	        reachable=$$((reachable+1)); \
 	    fi; \
+	done; \
+	if [ $$reachable -eq 0 ]; then \
+	    echo "  WARNING: 0/$$total test VMs responded — run 'vagrant up' in the lab if tests fail at fixture connect."; \
 	else \
-	    echo "  jq not installed; skipping ping check (tests will fail fast at fixture connect if VMs are down)."; \
+	    echo "  Reachable: $$reachable/$$total test VM(s)."; \
 	fi
 
 # Every tier runs whatever the earlier ones did, and the target fails at the

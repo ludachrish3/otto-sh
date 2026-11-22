@@ -20,7 +20,6 @@ than the bed's five.
 import asyncio
 import contextlib
 import dataclasses
-import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -51,6 +50,7 @@ from tests._fixtures.labdata import (
     flatten_lab_doc,
     host_data,
     lab_data_path,
+    lab_document,
 )
 from tests._fixtures.run_state import preserved_run_state
 from tests._fixtures.tunnel_bed import assert_reachable, build_bed_host, cli_project_root
@@ -61,7 +61,7 @@ from tests.integration.chaos._target import ChaosTarget, make_bed_target
 @dataclasses.dataclass(frozen=True)
 class ChaosBed:
     element: str  # lab element name, e.g. "test2"
-    ip: str  # management ip from tech1/lab.json
+    ip: str  # management ip from tech1/lab.jsonnet
     target: ChaosTarget  # aim the otto subprocess here
 
 
@@ -129,12 +129,12 @@ def probe_text(element: str, cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> st
 
 
 def declared_link_id(host_a: str, host_b: str) -> str:
-    """The id of the declared ``tech1/lab.json`` link joining *host_a* and *host_b*.
+    """The id of the declared ``tech1/lab.jsonnet`` link joining *host_a* and *host_b*.
 
     Hoisted from three former per-module copies of ``unix_link_id``
     (``test_connection_drop.py``, ``test_tunnel_link_chaos.py``,
     ``test_reboot_chaos.py`` — verified byte-identical before the hoist). The
-    raw ``tech1/lab.json`` has no literal ``"id"`` key on its ``links``
+    raw ``tech1/lab.jsonnet`` has no literal ``"id"`` key on its ``links``
     entries -- ``Link.id`` is auto-derived at load time from the sorted
     endpoint host ids (``otto.link.model.make_static_link_id``), so this
     replicates the SAME load ``otto`` itself does
@@ -149,10 +149,10 @@ def declared_link_id(host_a: str, host_b: str) -> str:
     what every caller actually means.
     """
     path = lab_data_path()
-    data = json.loads(path.read_text())
+    data = lab_document()
     # Skip records this process cannot resolve, mirroring _JsonFileLabRepository:
     # addressing_from_dict validates through the profile/frame registries, and
-    # tech1/lab.json's `zephyr27_fat` declares `command_frame: zephyr-inline`, which
+    # tech1/lab.jsonnet's `zephyr27_fat` declares `command_frame: zephyr-inline`, which
     # only a project's init modules register — never the pytest process.
     hosts = {}
     for h in flatten_lab_doc(data):
@@ -174,7 +174,7 @@ def declared_link_id(host_a: str, host_b: str) -> str:
     want = {host_a, host_b}
     matches = [link for link in links if {link.a.host, link.b.host} == want]
     assert len(matches) == 1, (
-        f"expected exactly one declared {host_a}<->{host_b} link in tech1/lab.json, "
+        f"expected exactly one declared {host_a}<->{host_b} link in tech1/lab.jsonnet, "
         f"found {len(matches)}: {matches!r} -- the declared links changed shape"
     )
     return matches[0].id
@@ -235,7 +235,7 @@ def unix_link_entries(pair: tuple[str, str] = UNIX_PAIR) -> list[dict[str, Any]]
     to fail on. Raw entries, not resolved ``Link``s, because the consumer is
     ``lab_json_v2``, which writes a document for otto to load.
     """
-    data = json.loads(lab_data_path().read_text())
+    data = lab_document()
     want = {host_id_of(element) for element in pair}
     return [e for e in data["links"] if set(raw_endpoint_host_ids(e)) == want]
 
@@ -363,7 +363,7 @@ CHAOS_PAIR = (CHAOS_GUEST_HOP, CHAOS_GUEST_ELEMENT)
 def busybox_link_id() -> str:
     """The declared ``test1:bbeth-1350 <-> bb1350-qemu:eth0`` link's id.
 
-    The guest's ONLY wire, declared in ``tech1/lab.json`` since the bed moved
+    The guest's ONLY wire, declared in ``tech1/lab.jsonnet`` since the bed moved
     onto real TAPs. What otto will and will not do with it is measured in
     ``test_connection_drop.py``'s guest arm — read that before assuming this
     id is impairable.
@@ -383,7 +383,7 @@ def busybox_target() -> ChaosTarget:
     """``ChaosTarget`` aiming an otto subprocess at the bed's BusyBox guest.
 
     The SUT is ``tests/project_e2e`` unchanged — its one ``[[lab.sources]]``
-    entry already compiles ``tech1/lab.json``, which is where the five guest
+    entry already compiles ``tech1/lab.jsonnet``, which is where the five guest
     records and their ``test1`` hop live, so the lab leg is a plain
     ``-l busybox`` and no generated SUT is needed (unlike the hop-routed
     ``chaosdrop`` and console targets, which exist only because they need lab
@@ -597,7 +597,7 @@ def chaos_guest_target() -> ChaosTarget:
     """``ChaosTarget`` aiming an otto subprocess at the reboot guest, lab ``chaos``.
 
     The SUT is ``tests/project_e2e`` unchanged (its lab source compiles
-    ``tech1/lab.json``). The ``ssh_*`` fields are the HOP's, for shape parity
+    ``tech1/lab.jsonnet``). The ``ssh_*`` fields are the HOP's, for shape parity
     with :func:`busybox_target`: ``spawn_otto`` reads ``root``/``lab`` only, and
     the oracle for this target is :func:`chaos_guest_probe_text`.
     """

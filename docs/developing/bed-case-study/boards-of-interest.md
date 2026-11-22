@@ -44,9 +44,10 @@ os.chdir(_old_cwd)
 ```{doctest}
 >>> from pathlib import Path
 >>> from otto.config import Project
->>> from otto.lab import fleet_of_interest, load_lab
+>>> from otto.lab import fleet_of_interest
+>>> from otto.session import build_lab
 >>> project = Project(root=Path.cwd())
->>> lab = load_lab("busybox", search_paths=[Path("lab_data")])
+>>> lab = build_lab([project], labs=["busybox"])
 >>> sorted(lab.hosts)
 ['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu', 'local', 'test1']
 >>> sorted(fleet_of_interest(lab, projects=[project]))
