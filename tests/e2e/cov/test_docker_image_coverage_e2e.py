@@ -166,7 +166,7 @@ class TestDockerImageCoverage:
         # them is ours, the same shape as the container check above.
         assert "otto-cov-demo" not in listings["images"]
         # A presence anchor: the base image the tarball was built FROM stays
-        # in the daemon's cache (only the loaded reference's own rmi runs),
+        # in the daemon's cache (the suite's teardown removes only the loaded image),
         # so an all-absent listing (a broken `docker images` call, a wrong
         # host) reads the same as a genuinely clean one without this.
         assert "alpine:3.20" in listings["images"]

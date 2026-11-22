@@ -153,7 +153,7 @@ def test_reference_instrumented_never_scans_the_cwd(monkeypatch):
 
 def test_defaults_and_declared_params():
     p = _build(image="app:latest")
-    assert (p.pull, p.run_args, p.container_name, p.loaded_ref) == (False, "", "app", None)
+    assert (p.pull, p.run_args, p.container_name) == (False, "", "app")
     q = _build(
         image="app:latest",
         pull=True,
@@ -372,7 +372,6 @@ async def test_tarball_install_stages_loads_then_runs_with_the_bind_mount():
     assert (await p.stage(host)).is_ok
     host.put.assert_awaited_once_with(Path("/project/docker/app.tar"), Path("/tmp"))
     assert (await p.install(host)).is_ok
-    assert p.loaded_ref == "app:1.2"
     assert "docker load -i /tmp/app.tar" in host.exec_calls[1]
     # The staged tarball is removed right after a successful load — it is an
     # intermediate docker load has already consumed, not the product itself.
@@ -388,7 +387,6 @@ async def test_tarball_load_without_a_tag_runs_by_image_id():
     )
     p = _build(host, image="docker/app.tar")
     await p.install(host)
-    assert p.loaded_ref == "sha256:abc123"
     assert host.exec_calls[-1].endswith(" sha256:abc123")
 
 
@@ -539,96 +537,56 @@ async def test_is_installed_means_the_container_is_running():
 
 
 @pytest.mark.asyncio
-async def test_uninstall_removes_the_container_and_only_a_loaded_image():
-    host = _DockerHost(
-        answers={
-            "docker load": (Status.Success, "Loaded image: app:1\n"),
-            _INSPECT: (Status.Success, _inspected()),
-        }
-    )
+async def test_uninstall_removes_the_container_and_no_image():
+    host = _DockerHost(answers={"docker load": (Status.Success, "Loaded image: app:1\n")})
     p = _build(host, image="docker/app.tar")
     await p.install(host)
+    host.exec_calls.clear()
     assert (await p.uninstall(host)).is_ok
-    assert host.exec_calls[-3:] == [
-        _inspect_cmd("app"),
-        "docker rm -f -v app",
-        "docker image rm -- app:1",
-    ]
+    assert host.exec_calls == ["docker rm -f -v app"]
     ref_host = _DockerHost()
     assert (await _build(ref_host, image="app:1").uninstall(ref_host)).is_ok
     assert ref_host.exec_calls == ["docker rm -f -v app"]
 
 
 @pytest.mark.asyncio
-async def test_uninstall_resolves_the_image_from_the_container_not_from_memory():
-    """B2's realistic case: a FRESH instance (never install()-ed itself, so
-    ``loaded_ref`` is None throughout) uninstalls what a separate `otto
-    install` process left running — exactly the shape of `otto install` then
-    `otto uninstall` as two processes. The image must come from the
-    container, never from in-memory state."""
-    host = _DockerHost(answers={_INSPECT: (Status.Success, _inspected())})
-    p = _build(host, image="docker/app.tar")
-    assert p.loaded_ref is None
-    result = await p.uninstall(host)
-    assert result.is_ok
-    assert host.exec_calls == [
-        _inspect_cmd("app"),
-        "docker rm -f -v app",
-        "docker image rm -- app:1",
-    ]
+async def test_a_fresh_instance_uninstalls_what_another_process_left_running():
+    """`otto install` then `otto uninstall` are two processes: one command, no memory needed."""
+    host = _DockerHost()
+    assert (await _build(host, image="docker/app.tar").uninstall(host)).is_ok
+    assert host.exec_calls == ["docker rm -f -v app"]
 
 
 @pytest.mark.asyncio
-async def test_uninstall_skips_rmi_when_the_container_is_already_gone():
-    # Falls back to nothing, not to loaded_ref: an absent container has
-    # nothing to resolve an image from, so docker rm -f's own no-op below
-    # is the end of it — no rmi is attempted.
-    host = _DockerHost(
-        answers={
-            _INSPECT: (Status.Error, "Error: No such container: app"),
-            "docker rm -f": (Status.Error, "Error: No such container: app"),
-        }
-    )
-    result = await _build(host, image="docker/app.tar").uninstall(host)
-    assert result.is_ok
-    assert host.exec_calls == [
-        _inspect_cmd("app"),
-        "docker rm -f -v app",
-    ]
+async def test_a_second_install_after_uninstall_loads_again_with_the_image_present():
+    host = _DockerHost(answers={"docker load": (Status.Success, "Loaded image: app:1\n")})
+    p = _build(host, image="docker/app.tar", cov_dir="/var/cov/app")
+    assert (await p.install(host)).is_ok
+    assert (await p.uninstall(host)).is_ok
+    host.exec_calls.clear()
+    assert (await p.install(host)).is_ok
+    assert host.exec_calls[1] == "docker load -i /tmp/app.tar"
+    assert host.exec_calls[-1] == "docker run -d --name app -v /var/cov/app:/var/cov/app app:1"
 
 
 @pytest.mark.asyncio
-async def test_uninstall_tolerates_an_already_removed_container():
+@pytest.mark.parametrize("image", ["app:1", "docker/app.tar"])
+async def test_uninstall_tolerates_an_already_removed_container(image):
     # Idempotent: the bed lane re-runs uninstall after a failed install, when
     # the container was never created (or a prior run already removed it).
     host = _DockerHost(answers={"docker rm -f": (Status.Error, "Error: No such container: app")})
-    result = await _build(host, image="app:1").uninstall(host)
+    result = await _build(host, image=image).uninstall(host)
     assert result.is_ok
     assert host.exec_calls == ["docker rm -f -v app"]
 
 
 @pytest.mark.asyncio
-async def test_uninstall_rm_failure_names_the_command():
+@pytest.mark.parametrize("image", ["app:1", "docker/app.tar"])
+async def test_uninstall_rm_failure_names_the_command(image):
     host = _DockerHost(answers={"docker rm -f": (Status.Error, "connection refused")})
-    result = await _build(host, image="app:1").uninstall(host)
+    result = await _build(host, image=image).uninstall(host)
     assert not result.is_ok
     assert "app: docker rm -f -v app failed on test3" in result.msg
-
-
-@pytest.mark.asyncio
-async def test_uninstall_rmi_failure_names_the_command():
-    host = _DockerHost(
-        answers={
-            "docker load": (Status.Success, "Loaded image: app:1\n"),
-            _INSPECT: (Status.Success, _inspected()),
-            "docker image rm": (Status.Error, "image is being used by a container"),
-        }
-    )
-    p = _build(host, image="docker/app.tar")
-    await p.install(host)
-    result = await p.uninstall(host)
-    assert not result.is_ok
-    assert "docker image rm -- app:1 failed on test3" in result.msg
 
 
 @pytest.mark.asyncio
@@ -683,31 +641,10 @@ async def test_install_propagates_a_dry_run_decline_at_every_probe(
 
 
 @pytest.mark.asyncio
-async def test_uninstall_propagates_a_dry_run_decline_on_rm():
+@pytest.mark.parametrize("image", ["app:1", "docker/app.tar"])
+async def test_uninstall_propagates_a_dry_run_decline_on_rm(image):
     host = _DockerHost(answers={"docker rm -f": (Status.NotRun, "")})
-    result = await _build(host, image="app:1").uninstall(host)
-    assert result.status is Status.NotRun
-
-
-@pytest.mark.asyncio
-async def test_uninstall_propagates_a_dry_run_decline_on_rmi():
-    host = _DockerHost(
-        answers={
-            "docker load": (Status.Success, "Loaded image: app:1\n"),
-            _INSPECT: (Status.Success, _inspected()),
-            "docker image rm": (Status.NotRun, ""),
-        }
-    )
-    p = _build(host, image="docker/app.tar")
-    await p.install(host)
-    result = await p.uninstall(host)
-    assert result.status is Status.NotRun
-
-
-@pytest.mark.asyncio
-async def test_uninstall_propagates_a_dry_run_decline_on_inspect():
-    host = _DockerHost(answers={_INSPECT: (Status.NotRun, "")})
-    result = await _build(host, image="docker/app.tar").uninstall(host)
+    result = await _build(host, image=image).uninstall(host)
     assert result.status is Status.NotRun
 
 

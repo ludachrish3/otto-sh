@@ -505,9 +505,12 @@ above. These stay on the hosts:
 - whatever a product's own `uninstall` does not remove. A `shell` product
   with no `uninstall` command keeps its staged file, and the directories
   staging created stay;
-- docker images. otto removes no image it built, and a `docker_image` product
-  removes only an image it loaded from a tarball ({ref}`docker-image-kind`).
-  Remove the rest with {doc}`../docker/image/rm`;
+- docker images. otto removes no product image at all: loaded, pulled, built
+  or already there. A tarball names an image without showing that otto placed
+  it, and another product may share it. `uninstall` of a `docker_image`
+  product removes only its container ({ref}`docker-image-kind`). Remove an
+  image with {doc}`../docker/image/rm` (`docker image rm`), and the untagged
+  image an older tarball leaves after a rebuild with `docker image prune`;
 - any file a test or you made on a host.
 
 (teardown-recipe)=

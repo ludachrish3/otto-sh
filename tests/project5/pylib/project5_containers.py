@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from otto.bootstrap import get_projects
+from otto.host.docker_cli import image_rm_command, missing
 from otto.host.unix_host import UnixHost
 
 PRODUCTS = ("cov_container", "cov_container_ref")
@@ -19,6 +20,12 @@ STOP_PRODUCTS = (*PRODUCTS, "cov_container_bind")
 
 ``cov_container_bind`` is declared only by the e2e's opt-in bind overlay
 (``OTTOPATH=<project5>:<bind overlay>``), so only the stop suites see it.
+"""
+
+LOADED_IMAGE = "otto-cov-demo:e2e"
+"""The image the tarball product loads (``docker/build.sh`` tags it).
+
+Uninstall leaves it; :func:`uninstall_products` removes it.
 """
 
 BIND_SRC = "/var/cov/otto-bind-src"
@@ -61,7 +68,10 @@ async def install_products(host: UnixHost, owner: str | None) -> None:
 
 
 async def uninstall_products(host: UnixHost, names: Sequence[str]) -> None:
-    """Haul the product logs, then uninstall *names* in reverse order.
+    """Haul the product logs, uninstall *names* in reverse order, then remove the loaded image.
+
+    Uninstall only removes containers, so the image the tarball loaded is removed
+    here, the way a user would (``docker image rm``), once no container runs off it.
 
     The logs come first, while the containers still exist: ``otto test`` never
     calls ``Host.uninstall()`` itself, so nothing else will haul them, and
@@ -75,3 +85,6 @@ async def uninstall_products(host: UnixHost, names: Sequence[str]) -> None:
         result = await product.uninstall(host)
         if not result.is_ok:
             raise RuntimeError(f"{host.id}: uninstalling {name} failed: {result.msg}")
+    removed = await host.exec(image_rm_command([LOADED_IMAGE]), timeout=120)
+    if not removed.status.is_ok and not missing(removed, "image"):
+        raise RuntimeError(f"{host.id}: removing {LOADED_IMAGE} failed: {removed.value}")

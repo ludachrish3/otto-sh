@@ -1,35 +1,16 @@
 """The docker_image kind's plan is what its hooks do (spec §3)."""
 
-import json
-import shlex
 from pathlib import Path
 
 import pytest
 
 from otto.declared import DeclaredEntry
 from otto.host import docker_image_kind  # noqa: F401 — import registers the kind
-from otto.host.docker_cli import _INSPECT_TEMPLATE
 from otto.host.product import LOGIN_HOME_PLACEHOLDER, PRODUCT_KIND_BUILDER
 
 DOCKER_PROBE = "command -v docker"
-_RAN_WEB1 = json.dumps(
-    {
-        "status": "running",
-        "running": True,
-        "image": "sha256:feed",
-        "ref": "web:1",
-        "user": "",
-        "groups": None,
-    }
-)
-
 
 _ID = "sha256:" + "f" * 64
-
-
-def _inspect(name: str) -> str:
-    """The one container inspect of *name*, as the hook issues it."""
-    return f"docker container inspect --format {shlex.quote(_INSPECT_TEMPLATE)} {name}"
 
 
 def _image(host, image, **params):
@@ -101,12 +82,11 @@ async def test_reference_without_pull_plans_run_and_names_the_presence_read(plan
 
 
 @pytest.mark.asyncio
-async def test_tarball_plans_load_cleanup_run_and_the_image_reads(plan_recorder):
+async def test_tarball_plans_load_cleanup_run_and_one_uninstall_command(plan_recorder):
     host = plan_recorder
     host.default_dest_dir = Path("/opt/stage")
     host.script(DOCKER_PROBE, "/usr/bin/docker")
     host.script("docker load -i /opt/stage/web.tar", "Loaded image: web:1\n")
-    host.script(_inspect("web"), _RAN_WEB1)
     product = _image(host, "images/web.tar")
     plan = product.plan(host)
     assert (await product.stage(host)).is_ok
@@ -127,19 +107,10 @@ async def test_tarball_plans_load_cleanup_run_and_the_image_reads(plan_recorder)
         ]
     )
     assert (await product.uninstall(host)).is_ok
-    inspect = _inspect("web")
-    assert (
-        _actions(host.take(), {inspect})
-        == [line.replace("'<image the container ran>'", "web:1") for line in plan.uninstall]
-        == ["docker rm -f -v web", "docker image rm -- web:1"]
-    )
+    assert _actions(host.take(), set()) == plan.uninstall == ["docker rm -f -v web"]
     assert plan.unchecked == [
         "that docker is on h1's PATH (command -v docker)",
         "the reference `docker load` prints, which `docker run` then names (<loaded image>)",
-        (
-            "the image to remove, read from the container (docker container inspect web); "
-            "no running container means no `docker image rm`"
-        ),
     ]
 
 
@@ -165,18 +136,11 @@ def test_a_tarball_on_a_host_with_no_login_home_is_a_refusal():
     plan = _image(_NoHome(), "images/web.tar").plan(_NoHome())
     assert plan.stage == plan.install == []
     # The refusal is the install's: uninstall needs no stage dir and still runs.
-    assert plan.uninstall == [
-        "docker rm -f -v web",
-        "docker image rm -- '<image the container ran>'",
-    ]
+    assert plan.uninstall == ["docker rm -f -v web"]
     assert plan.unchecked == [
         (
             "product 'web' declares no stage_dir and board1 no default_dest_dir, and board1 "
             "has no login home to fall back on: the install is refused"
-        ),
-        (
-            "the image to remove, read from the container (docker container inspect web); "
-            "no running container means no `docker image rm`"
         ),
     ]
 
@@ -188,7 +152,6 @@ async def test_plan_quotes_exactly_as_the_hooks_do_for_values_that_need_it(plan_
     host.default_dest_dir = Path("/opt/st age")
     host.script(DOCKER_PROBE, "/usr/bin/docker")
     host.script("docker load -i '/opt/st age/my web.tar'", "Loaded image: web:1\n")
-    host.script(_inspect("'we b'"), _RAN_WEB1)
     host.script("docker image inspect --format '{{.Id}}' 'my reg/nginx:1.25'", _ID)
     image = "images/my web.tar" if form == "tarball" else "my reg/nginx:1.25"
     product = _image(
@@ -203,7 +166,6 @@ async def test_plan_quotes_exactly_as_the_hooks_do_for_values_that_need_it(plan_
     reads = {
         DOCKER_PROBE,
         "docker image inspect --format '{{.Id}}' 'my reg/nginx:1.25'",
-        _inspect("'we b'"),
     }
     assert (await product.stage(host)).is_ok
     assert host.take() == plan.stage
@@ -213,7 +175,6 @@ async def test_plan_quotes_exactly_as_the_hooks_do_for_values_that_need_it(plan_
     uninstall = _actions(host.take(), reads)
     if form == "tarball":
         install = [line.replace("web:1", "<loaded image>") for line in install]
-        uninstall = [line.replace("web:1", "'<image the container ran>'") for line in uninstall]
     assert install == plan.install
     assert uninstall == plan.uninstall
     assert "'we b'" in plan.uninstall[0]

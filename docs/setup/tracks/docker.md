@@ -500,9 +500,8 @@ container, and removes the stack's staging; the removal checks again, in
 the same command, that the stack has no containers. The closing `skipped` line
 is the container host it passed over, which the recipe explains.
 
-`cleanup` leaves the two images: otto removes no image it built, and
-`banner`'s uninstall keeps an image it names by reference
-({ref}`docker-image-kind`). Remove them
+`cleanup` leaves the two images: otto removes no product image
+({ref}`what cleanup leaves behind <cleanup-leaves>`). Remove them
 ({doc}`../../cli/docker/image/rm`):
 
 ```bash
