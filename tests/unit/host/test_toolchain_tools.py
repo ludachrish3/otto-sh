@@ -113,6 +113,34 @@ async def test_install_toolchain_tools_chowns_the_installed_path_as_root(recordi
 
 
 @pytest.mark.asyncio
+async def test_install_toolchain_tools_never_makes_the_destination_directory(recording_host):
+    """No command the install sends creates a directory.
+
+    The tool's ``dest`` is therefore never otto's to remove: on a remote host
+    it exists before the install, so ``cleanup`` removes the tool files and
+    leaves the directory (``cleanup-leaves`` in docs/cli/run/defaults.md).
+
+    Kills: an install that ``mkdir -p``s ``dest`` before the transfer, for a
+    tool that keeps its name and for one that is renamed.
+    """
+    host = recording_host
+    host.toolchain = Toolchain(
+        tools=[
+            ToolchainTool(name="gdb", source=Path("/tc/bin/gdb"), dest=Path("/opt/tc/bin")),
+            ToolchainTool(
+                name="gdb-real",
+                source=Path("/tc/bin/gdb-orig"),
+                dest=Path("/opt/tc/other"),
+                user="sqluser",
+            ),
+        ]
+    )
+    assert (await host.install_toolchain_tools()).is_ok
+    assert host.exec_calls, "the install sent no command, so the check below proves nothing"
+    assert [cmd for cmd in host.exec_calls if "mkdir" in cmd] == []
+
+
+@pytest.mark.asyncio
 async def test_install_toolchain_tools_quotes_the_declared_user(recording_host):
     """*user* is lab-declared data, so it is quoted exactly as the path is.
 
