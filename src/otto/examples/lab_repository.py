@@ -208,8 +208,12 @@ class ExampleLabRepository:
         to ``list_labs`` + ``load_lab``, which still works.
 
         Note the ids come from :func:`~otto.host.factory.host_identity`, not
-        from formatting the record by hand — that is what guarantees an id
-        offered by completion is one ``load_lab`` will actually produce. And
+        from formatting the record by hand — that is what makes an id offered
+        by completion the one ``load_lab`` produces. This example merges by id
+        and keeps the first record's address, so for an id that is two machines
+        in two labs completion suggests the first one's (the rule completion
+        keeps, and what it may over-offer, is on the completion-cache
+        architecture page). And
         note the two ``try`` blocks: enumeration feeds tab completion, so one
         bad record must be skipped, never raised — an entry this process's
         *inventory* cannot resolve included.

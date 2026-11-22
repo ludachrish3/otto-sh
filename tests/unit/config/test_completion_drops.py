@@ -504,3 +504,31 @@ def test_describe_inventory_says_when_completion_can_never_cache(tmp_path, monke
     assert described.text.startswith("probe:live")
     assert "never caches" in described.text
     assert described.blocker == "cannot report freshness"
+
+
+_PRE_SUPERSET_SCHEMA = 32
+
+
+def test_a_cache_with_the_narrower_by_lab_buckets_is_not_served(tmp_path, monkeypatch):
+    """Schema 32 stored by-lab buckets that left a host out of a lab ``--lab`` loads it in.
+
+    The payload's shape did not change, so only the bump makes the first TAB
+    after an upgrade rebuild instead of serving the narrower buckets for the
+    rest of their lifetime. Both copies of the stamp move together.
+    """
+    from otto import _shim_complete as shim
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    project = _project(tmp_path, {}, hosts=[])
+    cc.write_cache([project], instructions=[], hosts=["local"])
+    assert cc.read_cache([project]) is not None, "control: a current entry is served"
+
+    path = cc._cache_path()
+    assert path is not None
+    data = json.loads(path.read_text())
+    data["schema"] = _PRE_SUPERSET_SCHEMA
+    path.write_text(json.dumps(data))
+
+    assert cc.SCHEMA_VERSION > _PRE_SUPERSET_SCHEMA
+    assert shim.SCHEMA == cc.SCHEMA_VERSION
+    assert cc.read_cache([project]) is None

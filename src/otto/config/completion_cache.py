@@ -277,7 +277,11 @@ CACHE_FILENAME = "completion_cache.json"
 #      scope, not one per id. The "labs" names come from each source's status
 #      read through the completion view (a jsonnet source's rendered labs). A
 #      v31 entry has no scope to test and no templated labs, so it is dropped.
-SCHEMA_VERSION = 32
+# v33: the by-lab buckets and the live lab filter read one process-wide view of
+#      the host summaries (labs unioned across projects, every pattern resolved
+#      against every project's declared names). The payload's shape is the
+#      same, but a v32 entry holds the narrower buckets, so it is dropped.
+SCHEMA_VERSION = 33
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.
@@ -1800,7 +1804,8 @@ def project_host_summaries(
     source lists into one backend (``build_lab_sources``), so the two agree on
     which sources exist; they differ only in that completion keeps each project's
     hosts separate where dispatch merges them (later sources overriding
-    earlier ones).
+    earlier ones). The readers that need a host's LABS read the merged answer
+    instead (:func:`_process_host_summaries`).
 
     Never raises, and never hangs: an unregistered backend, malformed
     settings, or a backend that explodes yields an empty list, because every
@@ -2326,19 +2331,74 @@ def default_parent_from_summaries(summaries: "list[HostSummary]") -> "str | None
     return ranked[0] if len(ranked) == 1 else None
 
 
+def _process_host_summaries(
+    projects: "Sequence[Project]", resolution: InventoryResolution, profiles: "ProfileContext"
+) -> "list[HostSummary]":
+    """Every host summary of this process, one per id, with its labs resolved process-wide.
+
+    The one answer to "which labs is this host in" for every by-lab reader
+    (:func:`_summaries_by_lab`, :func:`collect_host_ids`,
+    :func:`collect_host_ids_by_lab`). ``--lab`` composes every active project's
+    sources into one lab, so the hosts of a lab are decided across projects;
+    each project's own summaries are decided alone (:func:`project_host_summaries`),
+    which leaves a host out of a lab that loads it:
+
+    - an id two projects both list is one summary: the first project's fields,
+      with the labs and lab patterns of every project's summary of that id
+      unioned in first-seen order;
+    - each summary's patterns are then resolved against the lab names EVERY
+      project declares (:func:`~otto.labs.composite.names_matching_patterns`,
+      the one the composite's merge calls), not only its own project's. A
+      pattern never adds a name nobody declares, and a summary with no labs
+      and no patterns stays as it is.
+
+    Reads only what the collectors already read: each project's summaries and
+    names, bounded and memoized (:func:`project_host_summaries`,
+    :func:`_project_lab_names`). A failed inventory resolution answers
+    nothing, as every collector does, and reads no names.
+    """
+    import dataclasses
+
+    from ..labs.composite import names_matching_patterns
+
+    if resolution.error is not None:
+        return []
+    merged: dict[str, HostSummary] = {}
+    for project in projects:
+        for summary in project_host_summaries(project, resolution, profiles=profiles):
+            kept = merged.get(summary.id)
+            if kept is None:
+                merged[summary.id] = dataclasses.replace(
+                    summary, labs=list(summary.labs), lab_patterns=list(summary.lab_patterns)
+                )
+                continue
+            kept.labs.extend(n for n in summary.labs if n not in kept.labs)
+            kept.lab_patterns.extend(p for p in summary.lab_patterns if p not in kept.lab_patterns)
+    names = list(
+        dict.fromkeys(
+            name
+            for project in projects
+            for name in _project_lab_names(project, resolution, profiles)
+        )
+    )
+    for summary in merged.values():
+        if summary.lab_patterns:
+            summary.labs.extend(
+                n
+                for n in names_matching_patterns(patterns=summary.lab_patterns, names=names)
+                if n not in summary.labs
+            )
+    return list(merged.values())
+
+
 def _summaries_by_lab(
     projects: list["Project"], resolution: InventoryResolution, profiles: "ProfileContext"
 ) -> "dict[str, list[HostSummary]]":
     """Every enumerable host summary grouped by lab, a host once however many projects list it."""
     by_lab: dict[str, list[HostSummary]] = {}
-    seen: set[str] = set()
-    for project in projects:
-        for summary in project_host_summaries(project, resolution, profiles=profiles):
-            if summary.id in seen:
-                continue
-            seen.add(summary.id)
-            for lab in summary.labs:
-                by_lab.setdefault(lab, []).append(summary)
+    for summary in _process_host_summaries(projects, resolution, profiles):
+        for lab in summary.labs:
+            by_lab.setdefault(lab, []).append(summary)
     return by_lab
 
 
@@ -2373,8 +2433,8 @@ def collect_host_ids(projects: list["Project"], lab_names: list[str] | None = No
     are tab-completable before they're actually brought up — under each lab's
     default docker parent only, so a lab the rule refuses offers none.
 
-    When *lab_names* is given, only hosts whose ``labs`` array names one of
-    those labs are enumerated — the completion source for ``otto host <TAB>``
+    When *lab_names* is given, only hosts in one of those labs
+    (:func:`_process_host_summaries`) are enumerated — the completion source for ``otto host <TAB>``
     once a lab is selected via ``-l``/``--lab``/``OTTO_LAB``. Container IDs are
     scoped the same way (only the selected lab's default docker parent).
     The built-in hosts are always seeded regardless of the filter, mirroring
@@ -2396,12 +2456,11 @@ def collect_host_ids(projects: list["Project"], lab_names: list[str] | None = No
     ids: set[str] = set(builtin_host_ids())
     resolution = resolve_process_inventory(projects)
     profiles = _profiles(projects)
-    for project in projects:
-        for summary in project_host_summaries(project, resolution, profiles=profiles):
-            # Lab filter: keep only hosts tagged with a requested lab.
-            if wanted is not None and wanted.isdisjoint(summary.labs):
-                continue
-            ids.add(summary.id)
+    for summary in _process_host_summaries(projects, resolution, profiles):
+        # Lab filter: keep only hosts in a requested lab.
+        if wanted is not None and wanted.isdisjoint(summary.labs):
+            continue
+        ids.add(summary.id)
 
     # Container ids sit under each in-scope lab's default parent only: the
     # lab's hosts are pooled across projects, as the lab itself is, and the one
@@ -2628,12 +2687,11 @@ def collect_host_ids_by_lab(projects: list["Project"]) -> dict[str, list[str]]:
     by_lab: dict[str, set[str]] = {lab: set() for lab in collect_lab_names(projects)}
     resolution = resolve_process_inventory(projects)
     profiles = _profiles(projects)
-    for project in projects:
-        for summary in project_host_summaries(project, resolution, profiles=profiles):
-            if summary.id in builtins:
-                continue
-            for lab in summary.labs:
-                by_lab.setdefault(lab, set()).add(summary.id)
+    for summary in _process_host_summaries(projects, resolution, profiles):
+        if summary.id in builtins:
+            continue
+        for lab in summary.labs:
+            by_lab.setdefault(lab, set()).add(summary.id)
     # The declared container ids belong to the lab whose default parent they sit
     # under, exactly as `collect_host_ids(lab_names=...)` scopes them.
     for lab, parent in _default_parents_by_lab(projects, resolution, profiles).items():

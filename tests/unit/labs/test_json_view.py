@@ -234,8 +234,9 @@ def test_two_inventories_at_one_ip_are_two_machines_in_summaries(tmp_path):
     """``physical/k`` in ``e`` and ``virtual/k`` in ``w`` compose one id at one address.
 
     Today's fold took one address for one machine; two inventories may reuse a
-    private address for two machines, as ``Lab.__add__`` says. The first record
-    is kept and the second is one drop naming both identities.
+    private address for two machines, as ``Lab.__add__`` says. The first record's
+    fields are kept, the second's lab joins the summary (``--lab w`` loads it
+    there), and the second is one drop naming both identities.
     """
     path = _write(
         tmp_path / "lab.json",
@@ -263,7 +264,7 @@ def test_two_inventories_at_one_ip_are_two_machines_in_summaries(tmp_path):
     with collecting_drops() as drops:
         (summary,) = source.list_host_summaries_in_view(view=view)
     assert summary.id == "r-x"
-    assert summary.labs == ["e"]
+    assert summary.labs == ["e", "w"]
     assert summary.inventory_ref.name == "physical"
     (drop,) = drops
     assert drop.where == f"{path}: element 'r' hosts[0]"
