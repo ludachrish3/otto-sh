@@ -21,6 +21,8 @@ from ..host.product import (
     cov_dir_products,
     gcda_remove_dirs,
     gcda_remove_files,
+    planned_stage_dir,
+    staged_file,
 )
 from ..host.toolchain import toolchain_removal_command
 from ..instruction_catalog import PREVIEWABLE_INSTRUCTIONS
@@ -98,10 +100,10 @@ _HOST_VERBS: dict[str, list[str]] = {
     "uninstall": ["uninstall"],
     "install-tools": ["install_dev_tools"],
     "uninstall-tools": ["uninstall_dev_tools"],
-    "cleanup": ["uninstall", "remove_coverage_dirs", "uninstall_dev_tools"],
 }
 """The ``BaseHost`` methods a real run of each instruction dispatches to; an
-override of any of them on the host's class is a gap."""
+override of any of them on the host's class is a gap. ``cleanup`` has no entry:
+:func:`_cleanup_host_plan` checks each of its steps itself."""
 
 
 def _replaced(host: "Host", verb: str) -> str | None:
@@ -250,10 +252,43 @@ def _coverage_sweep_gap(host: "Host", owner: str) -> str | None:
     return f"coverage data: {'; '.join(sweeps)}"
 
 
+def _staged_files_gap(host: "Host", owner: str) -> str | None:
+    """Say what cleanup's staged-file step runs on *host* for *owner*'s entries, or None.
+
+    One ``rm -f`` per covered entry (:func:`~otto.host.staged_files.staged_entries`,
+    the predicate the step asks), at the path the entry's declaration names, then
+    the one quiet ``rmdir`` over the DECLARED stage directories, deepest first. Both
+    spellings are the run's own builders. An entry that falls back to a login home
+    nobody has read shows ``<login home>``, as its staging plan does. A host class
+    that replaces :meth:`~otto.host.host.BaseHost.remove_staged_files` is named instead.
+    """
+    # Lazy: only a previewed cleanup needs the staged-file step's modules.
+    from ..host.shell_quote import rm_f_command, rmdir_if_empty
+    from ..host.staged_files import declared_stage_dirs, staged_entries
+
+    replaced = _replaced(host, "remove_staged_files")
+    if replaced is not None:
+        return f"staged files: {replaced}; its steps are not previewed"
+    covered = staged_entries(host, [*_owned(host.products, owner), *_owned(host.dev_tools, owner)])
+    if not covered:
+        return None
+    removals = []
+    for item in covered:
+        where = planned_stage_dir(
+            stage_dir=item.stage_dir,
+            host=host,
+            who=f"entry {item.name!r}",
+        )
+        removals.append(rm_f_command(staged_file(where.directory, item.artifact)))
+    dirs = declared_stage_dirs(covered)
+    then = f", then {rmdir_if_empty(*dirs, skip_sticky=True)}" if dirs else ""
+    return f"staged files: {'; '.join(removals)}{then}"
+
+
 def _cleanup_host_plan(
     host: "Host", project: "Project", *, uninstall_replaced: bool, product_logs: bool
 ) -> HostPlan:
-    """Plan ``cleanup``'s steps on *host*: *project*'s products, coverage data, dev tools, staging.
+    """Plan ``cleanup``'s steps on *host*: *project*'s products through staging.
 
     The product half is ``self.uninstall(...)``, so a project override of
     ``uninstall`` (*uninstall_replaced*) leaves it unpreviewed and the project
@@ -278,6 +313,9 @@ def _cleanup_host_plan(
         host_plan.gaps.append(replaced)
     else:
         host_plan.gaps += _add_entries(host, _owned(host.dev_tools, owner), host_plan.dev_tools)
+    staged = _staged_files_gap(host, owner)
+    if staged is not None:
+        host_plan.gaps.append(staged)
     staging = _docker_staging_gap(host, project)
     if staging is not None:
         host_plan.gaps.append(staging)

@@ -73,6 +73,46 @@ def path_operand(path: "PurePath | str") -> str:
     return shell_operand(f"./{text}" if text.startswith("-") else text)
 
 
+def rm_f_command(path: "PurePath | str") -> str:
+    """Return ``rm -f <path>``: remove a file, and succeed when it is already gone.
+
+    The one spelling of "remove this file" for a path otto staged or placed
+    (a toolchain tool, a staged tarball or ``.ko``, the file cleanup removes),
+    quoted by :func:`path_operand`.
+
+    >>> from otto.host.shell_quote import rm_f_command
+    >>> print(rm_f_command("/opt/o t/app.bin"))
+    rm -f '/opt/o t/app.bin'
+    """
+    return f"rm -f {path_operand(path)}"
+
+
+def rmdir_if_empty(*paths: "PurePath | str", skip_sticky: bool = False) -> str:
+    """Return the command that removes each of *paths* that is an empty directory; it never fails.
+
+    ``rmdir`` refuses a directory that is absent, not empty, or that the
+    session cannot remove, and each refusal is silent here and leaves the
+    status 0: a directory kept for any of those reasons is not an error. The
+    paths are tried in the order given (a caller lists a child before its
+    parent) and the command is one brace group, so it can follow ``&&`` or
+    stand on a line of its own.
+
+    With *skip_sticky* a directory whose sticky bit is set (``test -k``:
+    ``/var/tmp``, ``/dev/shm``) is not tried either: it is a shared scratch
+    directory, and recreating it plain would lose the bit.
+
+    >>> from otto.host.shell_quote import rmdir_if_empty
+    >>> print(rmdir_if_empty("/a/b", "/a"))
+    { rmdir /a/b /a 2>/dev/null || true; }
+    >>> print(rmdir_if_empty("/a/b", skip_sticky=True))
+    { for d in /a/b; do test -k "$d" || rmdir "$d" 2>/dev/null; done; true; }
+    """
+    operands = " ".join(path_operand(p) for p in paths)
+    if skip_sticky:
+        return f'{{ for d in {operands}; do test -k "$d" || rmdir "$d" 2>/dev/null; done; true; }}'
+    return f"{{ rmdir {operands} 2>/dev/null || true; }}"
+
+
 _SHELL_ACTIVE = re.compile(r"[^A-Za-z0-9_.:@%+=,/-]")
 """Any character outside the shell-inert set: letters, digits and ``_.:@%+=,/-``."""
 

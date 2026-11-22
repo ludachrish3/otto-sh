@@ -1973,9 +1973,10 @@ class _CoverageHost(_FakeHost):
     behind read until cleanup sweeps them.
     """
 
-    def __init__(self, host_id, events, products, *, swept_clean=False):
+    def __init__(self, host_id, events, products, *, swept_clean=False, staged_gone=True):
         super().__init__(host_id, events, products=products)
         self.swept_clean = swept_clean
+        self.staged_gone = staged_gone
 
     async def install(self, owner=None):
         for product in self.products:
@@ -2000,10 +2001,17 @@ class _CoverageHost(_FakeHost):
     async def coverage_dirs_clean(self, owner=None):
         return self._record("coverage_dirs_clean", self.swept_clean)
 
+    async def remove_staged_files(self, owner=None):
+        self.staged_gone = True
+        return self._record("remove_staged_files", Result(status=Status.Success))
 
-def _wire_coverage_lab(monkeypatch, products, *, swept_clean=False):
+    async def staged_files_absent(self, owner=None):
+        return self._record("staged_files_absent", self.staged_gone)
+
+
+def _wire_coverage_lab(monkeypatch, products, *, swept_clean=False, staged_gone=True):
     events = []
-    host = _CoverageHost("h0", events, products, swept_clean=swept_clean)
+    host = _CoverageHost("h0", events, products, swept_clean=swept_clean, staged_gone=staged_gone)
     monkeypatch.setattr(
         "otto.project.actions._dispatch_remove_docker_staging",
         AsyncMock(return_value=Result(status=Status.Success)),
@@ -2040,6 +2048,21 @@ async def test_ensure_clean_skips_a_lab_whose_cov_dirs_are_gone(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ensure_clean_runs_cleanup_when_only_a_staged_file_remains(monkeypatch):
+    """A staged file nothing removed is not clean: cleanup reaches it through each project."""
+    host, events = _wire_coverage_lab(
+        monkeypatch, [_FakeItem("app", installed=False)], swept_clean=True, staged_gone=False
+    )
+
+    result = await project.ensure_clean()
+
+    assert result.status is not Status.Skipped
+    assert ("h0", "remove_staged_files") in events
+    assert host.staged_gone
+    assert await project.is_clean()
+
+
+@pytest.mark.asyncio
 async def test_partial_recovery_keeps_cov_dir(monkeypatch):
     """The ``--ensure`` recovery uninstalls; it never runs cleanup, so coverage data stays."""
     _, events = _wire_coverage_lab(
@@ -2053,6 +2076,7 @@ async def test_partial_recovery_keeps_cov_dir(monkeypatch):
     assert "uninstall" in verbs
     assert "install" in verbs
     assert "remove_coverage_dirs" not in verbs
+    assert "remove_staged_files" not in verbs
 
 
 @pytest.mark.asyncio

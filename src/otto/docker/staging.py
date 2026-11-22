@@ -68,7 +68,7 @@ from ..host.docker_host import (
 )
 from ..host.errors import HostCommandError, HostUnreachableError, StagingRefusedError
 from ..host.host import Host, is_dry_run
-from ..host.shell_quote import path_operand
+from ..host.shell_quote import path_operand, rm_f_command, rmdir_if_empty
 from ..result import CommandNotRunError, CommandResult
 
 if TYPE_CHECKING:
@@ -228,7 +228,7 @@ async def stage_image_context(
         remote_tar = remote_dir / tmp_path.name
         result = await parent.exec(
             f"tar -xf {path_operand(remote_tar)} -C {path_operand(remote_dir)} "
-            f"&& rm -f {path_operand(remote_tar)}",
+            f"&& {rm_f_command(remote_tar)}",
             timeout=float("inf"),
         )
         if not result.status.is_ok:
@@ -375,15 +375,12 @@ def cleanup_outcome(result: CommandResult) -> "str | None":
 def build_input_cleanup_command(root: Path, project: str, path: Path) -> str:
     """Return the removal of one staged build input, then of the dirs it leaves empty.
 
-    The ``rmdir`` is quiet and never fails the command: a dir another input or
-    the compose staging still uses is not empty, and stays. The private *root*
-    itself is never removed.
+    The ``rmdir`` is :func:`~otto.host.shell_quote.rmdir_if_empty`: a dir another
+    input or the compose staging still uses is not empty, and stays. The private
+    *root* itself is never removed.
     """
-    emptied = (
-        f"{path_operand(build_root(root, project))} "
-        f"{path_operand(compose_staging_root(root, project))}"
-    )
-    return f"rm -rf {path_operand(path)} && {{ rmdir {emptied} 2>/dev/null || true; }}"
+    emptied = rmdir_if_empty(build_root(root, project), compose_staging_root(root, project))
+    return f"rm -rf {path_operand(path)} && {emptied}"
 
 
 def present_roots_command(root: Path, projects: "Sequence[str]") -> str:

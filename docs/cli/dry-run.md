@@ -311,7 +311,9 @@ lines, the order a host really uses; `install-tools` keeps each tool's two
 phases together, and `uninstall-tools` lists each dev tool's removal as a
 `remove tool` line (with `--toolchain`, the `rm -f` of each toolchain tool
 under `not checked:`). `cleanup` lists each project's products (`uninstall`)
-and then its dev tools (`remove tool`), and closes with what it does once
+and then its dev tools (`remove tool`). Under `not checked:` it names the
+staged-file step (`staged files:`: the `rm -f` of each staged file, then the
+`rmdir` of the declared stage directories). It closes with what it does once
 after every project, whether or not any project applies:
 
 ```text

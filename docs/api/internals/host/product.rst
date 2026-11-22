@@ -13,11 +13,21 @@ and the reference can link them. The public names are on :doc:`/api/host/product
 
 .. autoclass:: otto.host.product.StageDirPlan
 
+.. autoclass:: otto.host.product.StagedEntry
+
 .. autofunction:: otto.host.product.validate_stage_dir
 
 .. autofunction:: otto.host.product.stage_dir_key
 
 .. autofunction:: otto.host.product.resolve_stage_dir
+
+.. autofunction:: otto.host.product.staged_file
+
+.. autofunction:: otto.host.product.staged_path
+
+.. autofunction:: otto.host.product.has_stage_destination
+
+.. autofunction:: otto.host.product.places_staged_file
 
 .. autofunction:: otto.host.product.cov_dir_of_name
 
@@ -28,6 +38,8 @@ and the reference can link them. The public names are on :doc:`/api/host/product
 .. autofunction:: otto.host.product.cov_dir_products
 
 .. autofunction:: otto.host.product.stamp_cov_dir
+
+.. autofunction:: otto.host.product.is_top_level_dir
 
 .. autofunction:: otto.host.product.validate_cov_dir
 

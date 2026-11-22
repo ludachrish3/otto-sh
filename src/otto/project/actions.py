@@ -422,6 +422,17 @@ async def _dispatch_remove_coverage_dirs(host: "Host", owner: "str | None" = Non
     return await host.remove_coverage_dirs(owner=owner)
 
 
+async def _dispatch_remove_staged_files(host: "Host", owner: "str | None" = None) -> Result:
+    """Remove *host*'s ``owner``-scoped staged files through the host's OWN method.
+
+    Passed over on a stopped container, like the other removals: nothing on
+    it can be asked, and otto never starts one to clean it.
+    """
+    if await _stopped(host):
+        return _passed_over(host, "staged files to remove")
+    return await host.remove_staged_files(owner=owner)
+
+
 async def _dispatch_remove_docker_staging(host: "Host", project: "Project") -> Result:
     """Remove what *project* staged on *host* when it is a docker parent; else nothing.
 
@@ -570,14 +581,18 @@ class ProjectActions:
         dry_run_preview=True,
     )
     async def cleanup(self, opts: CleanupOptions) -> Result:
-        """Uninstall this project's products, remove their coverage data, dev tools, staging.
+        """Uninstall products, remove their coverage data, dev tools, staged files, staging.
 
         Strictly more than :meth:`uninstall`, in that order: products first (a
         dev tool may be what a product's uninstall needs), then the coverage
         counters and emptied ``cov_dir`` trees they left
         (:meth:`~otto.host.host.BaseHost.remove_coverage_dirs`, owner-scoped:
-        uninstall unloads, cleanup removes what otto placed), then the tooling,
-        then the files otto staged for this project on each docker parent
+        uninstall unloads, cleanup removes what otto placed), then the dev
+        tools, then the files the products and tools were staged as, and the
+        declared stage directories they leave empty
+        (:meth:`~otto.host.host.BaseHost.remove_staged_files`, owner-scoped,
+        after the tools so a directory that held a tool's file is empty by
+        then), then the files otto staged for this project on each docker parent
         (:func:`~otto.docker.compose.remove_project_staging`; a stack that still
         has containers keeps its own, because its next ``down`` reads them back).
         Best-effort -- every step runs even when an earlier one failed. The
@@ -623,12 +638,13 @@ class ProjectActions:
             ],
         )
         tools = _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_uninstall_dev_tools))
+        staged = _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_remove_staged_files))
         staging = _reduce_results(
             await self.ctx.do_for_all_hosts(
                 _dispatch_remove_docker_staging, self.project, with_owner=False
             )
         )
-        return _reported(uninstalled, coverage, tools, staging)
+        return _reported(uninstalled, coverage, tools, staged, staging)
 
     ####################
     #  Logs
@@ -834,14 +850,16 @@ class ProjectActions:
         return await self.status(probe) is InstallState.UNINSTALLED
 
     async def is_clean(self) -> bool:
-        """Whether nothing :meth:`cleanup` removes is left: products, coverage, tools, staging.
+        """Whether nothing :meth:`cleanup` removes is left, products through docker staging.
 
         The matching question to :meth:`cleanup`, asked with the same scope:
         another project's leftovers are not this project's uncleanliness. Toolchain
         tools are host-global and are checked by the orchestrator, not here.
         Coverage data is the host's own question
         (:meth:`~otto.host.host.BaseHost.coverage_dirs_clean`, owner-scoped),
-        which refuses under a dry run rather than guess.
+        which refuses under a dry run rather than guess, as does the staged-file
+        question (:meth:`~otto.host.host.BaseHost.staged_files_absent`,
+        owner-scoped: files only, never a stage directory).
 
         The docker staging is asked on every fleet host, in its own pass: a
         docker parent usually carries none of this project's products, and the
@@ -859,6 +877,8 @@ class ProjectActions:
                 if await tool.is_installed(host):
                     return False
             if not await host.coverage_dirs_clean(owner=self.project.name):
+                return False
+            if not await host.staged_files_absent(owner=self.project.name):
                 return False
         for host in self.ctx.all_hosts():
             if await _docker_staging_left(host, self.project):

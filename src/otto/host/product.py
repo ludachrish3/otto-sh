@@ -34,7 +34,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Protocol
 
 from typing_extensions import TypeIs, final, override
 
@@ -324,6 +324,78 @@ async def resolve_stage_dir(stage_dir: Path, host: "Host", who: str = "product")
             "or an absolute 'stage_dir' on the entry."
         )
     return await discover()
+
+
+class StagedEntry(Protocol):
+    """What a product or dev tool that stages a file has: a name, its artifact and its stage dir.
+
+    The shape :func:`staged_path`, :func:`has_stage_destination` and
+    :func:`~otto.host.staged_files.staged_entries` work over: a shell-class
+    product, a tarball ``docker_image`` product, ``kmod``, the kernel-module
+    dev tools. Neither base class has ``artifact``, so a check by shape
+    (:func:`~otto.host.staged_files.staged_entries`) narrows to this.
+    """
+
+    name: str
+    artifact: Path
+    stage_dir: Path
+
+    async def resolved_stage_dir(self, host: "Host") -> Path:
+        """Return :attr:`stage_dir` resolved against *host* (:func:`resolve_stage_dir`)."""
+        ...
+
+
+def staged_file(directory: "Path | str", artifact: "Path | str") -> Path:
+    """Return where *artifact* lands once staged into *directory*: ``<directory>/<basename>``.
+
+    THE ONE answer to "where is this staged file". Every built-in kind stages
+    under the artifact's own basename, so ``put``, ``docker load -i``,
+    ``insmod`` and cleanup's removal all name this path. *directory* is a
+    host directory (already resolved, or a plan's placeholder); *artifact*
+    is the local file, of which only the basename is used.
+    """
+    return Path(directory) / Path(artifact).name
+
+
+async def staged_path(item: StagedEntry, host: "Host") -> Path:
+    """Return where *item*'s staged file is on *host*: its resolved stage directory, then the file.
+
+    :func:`staged_file` over :meth:`Product.resolved_stage_dir` (a dev tool
+    has the same method), so it asks the host for the login home when
+    neither the entry nor the host declares a directory, and raises what
+    :func:`resolve_stage_dir` raises.
+
+    """
+    return staged_file(await item.resolved_stage_dir(host), item.artifact)
+
+
+def places_staged_file(item: object) -> "TypeIs[StagedEntry]":
+    """Whether *item* puts a file in a directory: it stages one, with an artifact and a key.
+
+    ``stages_artifact`` true, an ``artifact``, and a ``stage_key``: the one
+    test of "this entry places a file", asked by
+    :func:`~otto.host.factory.check_stage_collisions` (two entries, one file)
+    and :func:`~otto.host.staged_files.staged_entries` (cleanup's removal).
+    """
+    return (
+        bool(getattr(item, "stages_artifact", False))
+        and getattr(item, "artifact", None) is not None
+        and hasattr(item, "stage_key")
+    )
+
+
+def has_stage_destination(item: StagedEntry, host: "Host") -> bool:
+    """Whether the declaration and *host*'s capabilities give *item* a staging directory at all.
+
+    ``False`` only for an entry with no declared ``stage_dir``, on a host with
+    no ``default_dest_dir`` and no login-home concept: nothing was ever staged
+    there, and :func:`resolve_stage_dir` would refuse. A host that HAS a login
+    home answers ``True`` even when the home is not discovered yet; failing to
+    discover it is a failure of whoever resolves, never "nothing staged".
+    Never contacts *host*.
+    """
+    known = _declared_or_default(item.stage_dir, host, f"entry {item.name!r}")
+    return known is not None or getattr(host, "login_home", None) is not None
 
 
 def _creates_stage_dir(host: object) -> "TypeIs[PosixFileOps]":
@@ -690,6 +762,18 @@ _COV_DIR_MIN_PARTS = 3
 """``/`` plus two components: ``PurePosixPath("/tmp/x").parts`` is ``("/", "tmp", "x")``."""
 
 
+def is_top_level_dir(path: str) -> bool:
+    """Whether the absolute *path* is ``/`` or one component below it (``/tmp``, ``/opt``).
+
+    The one answer to "too shallow to be ours alone", shared by
+    :func:`validate_cov_dir` and the stage directories cleanup tries to remove
+    (:func:`~otto.host.staged_files.declared_stage_dirs`). A relative path is
+    never top level: it is under a login home.
+    """
+    parts = PurePosixPath(path).parts
+    return path.startswith("/") and len(parts) < _COV_DIR_MIN_PARTS
+
+
 def validate_cov_dir(cov_dir: str, who: str) -> None:
     """Refuse a :attr:`Product.cov_dir` that is not absolute, normalized and two components deep.
 
@@ -712,7 +796,7 @@ def validate_cov_dir(cov_dir: str, who: str) -> None:
     if (
         cov_dir != posixpath.normpath(cov_dir)
         or cov_dir.startswith("//")
-        or len(PurePosixPath(cov_dir).parts) < _COV_DIR_MIN_PARTS
+        or is_top_level_dir(cov_dir)
     ):
         raise ValueError(
             f"{who}: 'cov_dir' must be absolute, normalized, at least two components "
@@ -860,7 +944,9 @@ def cov_dir_absent_test(cov_dir: str) -> str:
     variable keeps an ``__otto_`` prefix because it lands in the host's
     session shell, and *cov_dir* is quoted. Shared with the fetch's archive
     guard (:mod:`otto.coverage.fetcher.remote`), so "absent" means the
-    same thing to the reset and the fetch.
+    same thing to the reset and the fetch, and with the staged-file question
+    (:func:`~otto.host.staged_files.probe_script`), which asks it of any
+    absolute path, not only a ``cov_dir``.
 
     Raises:
         ValueError: *cov_dir* is not absolute: the climb ends at ``/``, and

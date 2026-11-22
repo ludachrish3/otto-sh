@@ -44,7 +44,7 @@ import logging
 import shlex
 from collections.abc import Collection
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 from typing_extensions import override
@@ -66,6 +66,8 @@ from .product import (
     is_instrumented,
     planned_stage_dir,
     stage_lines,
+    staged_file,
+    staged_path,
 )
 from .shell_kind import (
     bool_param,
@@ -176,7 +178,7 @@ class DockerImageProduct(ShellProduct):
 
     async def _staged_tarball(self, host: "Host") -> str:
         """Where the tarball is -- the one path ``stage``, ``docker load`` and the cleanup share."""
-        return str(await self.resolved_stage_dir(host) / self.artifact.name)
+        return str(await staged_path(self, host))
 
     # One source per docker command: ``install``/``uninstall`` run these and
     # ``plan`` renders them, so the quoting cannot drift between the two.
@@ -189,9 +191,9 @@ class DockerImageProduct(ShellProduct):
 
     def _cleanup_command(self, staged: str) -> str:
         """Remove the staged tarball at *staged* (quoted here)."""
-        from .shell_quote import path_operand  # function-local: off the host import path
+        from .shell_quote import rm_f_command  # function-local: off the host import path
 
-        return f"rm -f {path_operand(staged)}"
+        return rm_f_command(staged)
 
     def _pull_command(self) -> str:
         """``docker pull`` of :attr:`image`."""
@@ -347,7 +349,7 @@ class DockerImageProduct(ShellProduct):
                 return ProductPlan(uninstall=uninstall, unchecked=[where.refusal])
             if where.unchecked is not None:
                 plan.unchecked.insert(0, where.unchecked)
-            staged = str(PurePosixPath(where.directory) / self.artifact.name)
+            staged = str(staged_file(where.directory, self.artifact))
             plan.stage = stage_lines(host=host, local=self.artifact, directory=where.directory)
             plan.install = [
                 self._load_command(staged),

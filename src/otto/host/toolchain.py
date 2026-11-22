@@ -86,9 +86,9 @@ def toolchain_removal_command(tool: ToolchainTool) -> str:
     """
     # Function-local: every host imports this module, and only a removal or
     # its preview needs the quoting module.
-    from .shell_quote import path_operand
+    from .shell_quote import rm_f_command
 
-    return f"rm -f {path_operand(tool.dest / tool.name)}"
+    return rm_f_command(tool.dest / tool.name)
 
 
 @final

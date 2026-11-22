@@ -1445,6 +1445,14 @@ class Host(Protocol):
         """Return ``True`` iff no ``.gcda`` counter or empty dir is left under any ``cov_dir``."""
         ...
 
+    async def remove_staged_files(self, *, owner: str | None = None) -> Result:
+        """Remove each entry's staged file, then its declared stage dir if empty."""
+        ...
+
+    async def staged_files_absent(self, *, owner: str | None = None) -> bool:
+        """Return ``True`` iff every staged file cleanup removes is confirmed absent."""
+        ...
+
     async def install_toolchain_tools(self) -> Result:
         """Install the toolchain's declared tools (transfer, rename, chown, per tool)."""
         ...
@@ -3572,12 +3580,15 @@ class BaseHost(ABC):
     async def cleanup(
         self, *, get_product_logs: bool = True, get_debug_logs: bool = True
     ) -> Result:
-        """Uninstall, remove coverage data, then dev tools and toolchain tools (best-effort).
+        """Uninstall, remove coverage data, dev tools, staged files, then toolchain tools.
 
         Strictly more than :meth:`uninstall`, in that order: products first (a
         dev tool may be what a product's uninstall needs), then the coverage
         data they left (:meth:`remove_coverage_dirs`: uninstall unloads,
-        cleanup removes what otto placed), then the tooling. The log flags are
+        cleanup removes what otto placed), then the dev tools, then the files
+        staged for products and tools (:meth:`remove_staged_files`: after the
+        tools, so a stage directory that held a tool's file or coverage data
+        is empty by then), then the toolchain tools. The log flags are
         forwarded to :meth:`uninstall`, which owns the log ordering.
         Project-specific remnant removal belongs in an override.
 
@@ -3604,6 +3615,7 @@ class BaseHost(ABC):
         note(await self.uninstall(get_product_logs=get_product_logs, get_debug_logs=get_debug_logs))
         note(await self._remove_coverage_dirs_warned())
         note(await self.uninstall_dev_tools())
+        note(await self.remove_staged_files())
         note(await self.remove_toolchain_tools())
         return first_failure if first_failure is not None else Result(status=Status.Success)
 
@@ -3630,7 +3642,7 @@ class BaseHost(ABC):
 
     @cli_exposed(output_dir=False)
     async def is_clean(self) -> bool:
-        """No products installed, no coverage data, no dev tools, no toolchain tools present.
+        """No products installed, and no coverage data, dev tools, staged files or toolchain tools.
 
         The matching question to :meth:`cleanup`, and it ASKS rather than
         infers: the coverage and toolchain probes refuse under a dry run
@@ -3643,6 +3655,8 @@ class BaseHost(ABC):
             if await tool.is_installed(cast("Host", self)):
                 return False
         if not await self.coverage_dirs_clean():
+            return False
+        if not await self.staged_files_absent():
             return False
         return await self.toolchain_tools_absent()
 
@@ -3931,6 +3945,64 @@ class BaseHost(ABC):
 
         left = await coverage_left(
             cast("Host", self), cov_dir_products(self, self._owned_products(owner))
+        )
+        return not left
+
+    @cli_exposed(
+        help_=(
+            "Remove the file each product and dev tool staged, by its declared path, then each "
+            "declared stage dir that is empty; `--owner PROJECT` limits it to PROJECT's entries."
+        )
+    )
+    async def remove_staged_files(self, *, owner: str | None = None) -> Result:
+        """Remove the file each product and dev tool staged, then its declared stage dir if empty.
+
+        Covers the entries :func:`~otto.host.staged_files.staged_entries` names
+        (``shell``, a tarball ``docker_image``, ``kmod`` and the kernel-module
+        dev tools): ``rm -f`` of ``<stage_dir>/<artifact basename>``, then one
+        ``rmdir`` over each DECLARED ``stage_dir`` (never the host's
+        ``default_dest_dir`` or the login home), deepest first. The file is
+        named by its declaration, not by a record of otto having put it there:
+        on a host where the product was never installed, a same-named file in
+        that directory is removed too. A directory that is absent, not empty
+        or that the session cannot remove is kept and logged, never a failure;
+        a file that exists and cannot be removed is an error naming it. One
+        command per host (a container's runs as root, as its transfer does);
+        nothing is sent for no covered entry, and a dry run declines.
+
+        Scoped by *owner* the way :meth:`uninstall_dev_tools` is.
+        :meth:`cleanup` runs it after the dev tools are uninstalled;
+        ``uninstall`` never does: uninstall unloads, cleanup removes what otto
+        placed.
+        """
+        from .staged_files import remove_staged
+
+        return await remove_staged(
+            cast("Host", self), [*self._owned_products(owner), *self._owned_dev_tools(owner)]
+        )
+
+    @cli_exposed(
+        output_dir=False,
+        help_=(
+            "Report whether every file a product or dev tool staged is gone; "
+            "`--owner PROJECT` limits it to PROJECT's entries."
+        ),
+    )
+    async def staged_files_absent(self, *, owner: str | None = None) -> bool:
+        """Whether every staged file :meth:`remove_staged_files` removes is confirmed absent.
+
+        The matching question, over the same entries and paths, in one command.
+        A final symlink counts as present (``rm -f`` removes it, dangling or
+        not). Only confirmed absence counts: a path behind an unsearchable
+        parent, a probe that did not answer, or a login home that could not be
+        discovered raises rather than guess. Refuses under a dry run. It asks
+        about files only: an empty declared stage directory does not make a
+        host unclean.
+        """
+        from .staged_files import staged_files_left
+
+        left = await staged_files_left(
+            cast("Host", self), [*self._owned_products(owner), *self._owned_dev_tools(owner)]
         )
         return not left
 

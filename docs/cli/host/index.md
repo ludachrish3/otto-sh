@@ -96,10 +96,12 @@ when called from Python with no explicit `user=` of its own.
 | `uninstall` | Uninstall products |
 | `is-installed` | Print `True` if all products are installed, else `False`; `False` on a host with no products (exit 0 if `True`, 1 if `False`, see {ref}`exit codes <host-exit-codes>`) |
 | `is-uninstalled` | Print `True` if no product is installed, else `False`; `True` on a host with no products. A partly installed host is neither installed nor uninstalled, so `is-installed` and `is-uninstalled` both print `False` for it (exit 0 if `True`, 1 if `False`) |
-| `cleanup` | Uninstall products, remove their coverage data, then remove dev tools and toolchain tools |
-| `is-clean` | Print `True` if no product, coverage data, dev tool, or toolchain tool is present, else `False` (exit 0 if `True`, 1 if `False`) |
+| `cleanup` | Uninstall products, remove their coverage data, then remove dev tools, the files staged for products and tools, and toolchain tools |
+| `is-clean` | Print `True` if no product, coverage data, dev tool, staged file, or toolchain tool is present, else `False` (exit 0 if `True`, 1 if `False`) |
 | `remove-coverage-dirs` | Remove each instrumented product's `.gcda` counters and the directories they leave empty ({ref}`the coverage lifecycle <cov-dir-lifecycle>`) |
 | `coverage-dirs-clean` | Print `True` if no instrumented product has a counter or an empty coverage directory left, else `False` (exit 0 if `True`, 1 if `False`) |
+| `remove-staged-files` | Remove the file each product and dev tool staged, then each declared `stage_dir` that is empty ({ref}`the staged-file lifecycle <staged-file-lifecycle>`) |
+| `staged-files-absent` | Print `True` if every staged file `cleanup` removes is gone, else `False`; an empty directory does not count (exit 0 if `True`, 1 if `False`) |
 | `get-logs` | Retrieve product and debug logs into `logs/<host_id>/` ({ref}`the run tree <run-tree>`) |
 | `get-product-logs` | Retrieve each product's logs, and its own `debug_log_globs`, into `logs/<host_id>/<product>/` |
 | `get-debug-logs` | Fetch the host's `debug_log_globs` into `logs/<host_id>/debug/` |
