@@ -85,8 +85,11 @@ the otto running it.
 It is **idempotent**: it applies the shipped gcc 12–14 patch to the embedded-gcov
 submodule if not already done (the submodule itself must be initialized, see
 One-time setup above), runs
-an incremental `west build` for `mps2_an385` (falling back to a pristine rebuild
-if the build dir was previously initialized for a different source tree), then
+an incremental `west build` for `mps2_an385` (which forces a CMake configure only
+when the build dir does not already hold this otto's starter directory; ninja
+still reconfigures by itself when a build input changed; and it falls back
+to a pristine rebuild if the build dir was previously initialized for a different
+source tree), then
 runs `otto cov embedded-gcov finish`, which strips the sections LLEXT 3.7 cannot
 relocate and checks the extension's gcov stamp against its `.gcno`. It runs on
 the machine executing the suite (the dev VM, where `build_dir` lives);

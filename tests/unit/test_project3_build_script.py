@@ -3,6 +3,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 BUILD_SH = CHECKOUT_ROOT / "tests" / "project3" / "product" / "build.sh"
@@ -56,3 +58,38 @@ def test_an_otto_with_no_python_beside_it_is_refused_by_name(tmp_path: Path):
     assert done.returncode == 1
     assert "no python beside" in done.stderr
     assert str(bare) in done.stderr
+
+
+def _starter_configured(build_dir: Path, starter: str) -> bool:
+    """Run build.sh's own ``starter_configured`` function (cut out of the script) on a dir."""
+    text = BUILD_SH.read_text()
+    function = text[
+        text.index("starter_configured() {") : text.index(
+            "\n}\n", text.index("starter_configured() {")
+        )
+        + 3
+    ]
+    done = subprocess.run(
+        ["bash", "-c", f'{function}\nstarter_configured "$1" "$2"', "_", str(build_dir), starter],
+        capture_output=True,
+        check=False,
+    )
+    return done.returncode == 0
+
+
+@pytest.mark.parametrize("cache_type", ["UNINITIALIZED", "PATH", "STRING"])
+def test_a_dir_configured_for_this_starter_is_not_reconfigured(tmp_path: Path, cache_type: str):
+    (tmp_path / "CMakeCache.txt").write_text(
+        f"A:STRING=1\nCOV_STARTER_DIR:{cache_type}=/otto/starter\n"
+    )
+    assert _starter_configured(tmp_path, "/otto/starter")
+
+
+def test_a_dir_configured_for_another_starter_or_none_is_configured(tmp_path: Path):
+    assert not _starter_configured(tmp_path, "/otto/starter")  # no CMakeCache.txt yet
+    (tmp_path / "CMakeCache.txt").write_text("COV_STARTER_DIR:UNINITIALIZED=/other/starter\n")
+    assert not _starter_configured(tmp_path, "/otto/starter")
+    (tmp_path / "CMakeCache.txt").write_text("COV_STARTER_DIR:UNINITIALIZED=/otto/starter2\n")
+    assert not _starter_configured(tmp_path, "/otto/starter")
+    (tmp_path / "CMakeCache.txt").write_text("OTHER_COV_STARTER_DIR:PATH=/otto/starter\n")
+    assert not _starter_configured(tmp_path, "/otto/starter")
