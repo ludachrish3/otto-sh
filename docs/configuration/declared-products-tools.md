@@ -591,17 +591,13 @@ Replacing a stopped container has two side effects: its `docker logs` go with
 it, and for a tarball product the image it ran stays loaded but is no longer
 used by any container: install never removes it.
 
-`uninstall` always runs `docker rm -f -v <container_name>` (idempotent — a
-missing container is not a failure), and follows with `docker image rm` only
-for an image otto itself loaded from a tarball; a pulled or
-already-present reference stays in the daemon's cache. That image is
-resolved from the container itself (its `.Config.Image`, read with
-`docker container inspect <container_name>`), never from in-process state, so
-it is found even when `uninstall` runs in a separate process from the
-`install` that loaded it — the normal shape of `otto install` followed
-later by `otto uninstall`. A container that is already gone has nothing
-to resolve an image from, so nothing beyond the (already-absent)
-container is removed.
+`uninstall` runs `docker rm -f -v <container_name>` and nothing else, for a
+tarball product as for a reference one (idempotent — a missing container is
+not a failure). Uninstall only stops: otto removes no product image, loaded,
+pulled or already there, and `cleanup` does not either;
+{ref}`what cleanup leaves behind <cleanup-leaves>` says how to remove one. A
+second `install` after an `uninstall` loads the tarball again; an image that
+is still there is harmless.
 
 An `image` path ending in one of the tarball suffixes above is always
 `unknown` under the instrumentation scan — those suffixes are a subset of

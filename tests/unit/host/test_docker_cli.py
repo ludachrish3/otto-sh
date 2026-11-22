@@ -277,15 +277,16 @@ async def test_absent_is_dockers_no_such_container_only(status, answer, absent, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("running", [True, False])
-async def test_one_inspect_answer_drives_is_installed_and_uninstall(tmp_path, running):
+async def test_one_inspect_answer_drives_is_installed_and_the_reader(tmp_path, running):
     answer = _inspect_json(running=running, status="running" if running else "exited")
     host = _KindHost(answers={"docker container inspect": (Status.Success, answer)})
     assert await _build(host, image="app:1").is_installed(host) is running
     assert host.exec_calls == [_INSPECT_COMMAND]
 
+    # uninstall asks the daemon nothing: it removes the container and no image
     host = _KindHost(answers={"docker container inspect": (Status.Success, answer)})
     assert (await _build(host, image="docker/app.tar").uninstall(host)).is_ok
-    assert host.exec_calls == [_INSPECT_COMMAND, "docker rm -f -v app", "docker image rm -- img:1"]
+    assert host.exec_calls == ["docker rm -f -v app"]
 
     # the reader: running is scanned in place, exited through a snapshot, keyed by .Image
     cov = _CovHost(_TWO, answers={_INSPECT: _ok(answer)})
@@ -516,6 +517,5 @@ async def test_the_sweep_removes_through_the_shared_builders():
     await sweep_stale_scans(host)
     assert rm_container_command("c-old", force=True) in host.calls
     assert image_rm_command(["sha256:i-old"]) in host.calls
-    # One image-removal builder: the kind's uninstall and the docker verbs share it.
-    assert _build(image="docker/app.tar")._image_rm_command("x") == image_rm_command(["x"])
+    # One image-removal builder: the sweep and the docker verbs share it.
     assert image_verbs.image_rm_command is image_rm_command

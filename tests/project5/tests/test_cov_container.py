@@ -6,9 +6,8 @@ reference form runs), exercises the product inside each container with
 
 ``otto test`` never calls ``Host.uninstall()``/``get_product_logs()`` itself
 — those are project-CLI-only actions (``otto uninstall``/``otto cleanup``),
-so a suite that tears its own products down (as this one must, to uninstall
-in the reverse of install order — the tarball's ``docker rmi`` fails while
-the reference form's container still runs off that image) never gets a
+so a suite that tears its own products down (as this one must: the loaded
+image is removed last, once neither container runs off it) never gets a
 docker container's logs hauled unless it asks for them itself, and it must
 ask BEFORE removing the container: ``docker logs`` needs it to still exist.
 

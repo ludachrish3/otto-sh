@@ -129,7 +129,7 @@ form, its staging and its `instrumented = true`, are under
 ## What is removed
 
 See {doc}`../../../configuration/declared-products-tools` for the exact
-`rm`/`rmi` rule. The staged tarball under the entry's `stage_dir` is removed
+`uninstall` rule. The staged tarball under the entry's `stage_dir` is removed
 right after a successful `docker load`.
 
 ## Logs

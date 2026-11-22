@@ -6,12 +6,8 @@ A docker daemon drives the verbs: ``install`` loads a ``docker save`` tarball
 of the same name (``docker rm -v``, never ``-f``: docker refuses an active one
 and install fails with its message), then ``docker run -d`` starts it with the
 product's ``cov_dir`` bind-mounted at the same path; ``is_installed`` asks
-whether the container is running; ``uninstall`` removes the container and,
-for a tarball-loaded image, resolves that image from the CONTAINER ITSELF
-(its ``.Config.Image``, through ``otto.host.docker_cli.inspect_container``)
-and removes it too — never from
-in-process memory, since the project CLI's normal lifecycle
-(``otto install`` … ``otto uninstall``) runs each verb in its own process.
+whether the container is running; ``uninstall`` removes the container and
+no image, for a tarball product as for a reference one.
 The bind mount is the whole coverage story, and for an instrumented
 product (``is_instrumented``, the predicate cleanup and
 the fetch ask) otto sets both gcov variables on the ``docker run`` it owns:
@@ -58,7 +54,6 @@ from ..result import CommandResult, Result
 from ..utils import Status, anchor_path
 from .docker_cli import (
     image_id_of,
-    image_rm_command,
     inspect_container,
     missing,
     rm_container_command,
@@ -137,12 +132,6 @@ class DockerImageProduct(ShellProduct):
 
     container_name: str = ""
     """``--name``; defaults to the product name."""
-
-    loaded_ref: str | None = None
-    """What ``docker load`` reported for a tarball — :meth:`install`'s own ``docker run`` uses
-    this, same-process. :meth:`uninstall` does NOT read it: a separate ``otto uninstall`` process
-    never saw this instance's ``install()``, so it resolves the image to remove from the running
-    container itself instead (see :meth:`uninstall`)."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -233,10 +222,6 @@ class DockerImageProduct(ShellProduct):
         """Remove the container and its anonymous volumes; *force* also stops an active one."""
         return rm_container_command(self.container_name, force=force)
 
-    def _image_rm_command(self, image: str) -> str:
-        """Remove *image* (unquoted; the shared builder quotes it)."""
-        return image_rm_command([image])
-
     @override
     async def stage(self, host: "Host") -> Result:
         """Put the tarball under :attr:`stage_dir` for ``docker load``.
@@ -271,14 +256,13 @@ class DockerImageProduct(ShellProduct):
             # product) — best-effort cleanup, same as kmod's staged .ko;
             # its own failure must not fail an otherwise-successful install.
             await host.exec(self._cleanup_command(staged), timeout=30)
-            self.loaded_ref = _loaded_reference(loaded.value)
-            if self.loaded_ref is None:
+            ref = _loaded_reference(loaded.value)
+            if ref is None:
                 return Result(
                     status=Status.Error,
                     msg=f"{self.name}: docker load reported no image on {host.id}: "
                     f"{loaded.value.strip()}",
                 )
-            ref = self.loaded_ref
         elif self.pull:
             pulled = await host.exec(self._pull_command(), timeout=_PULL_TIMEOUT)
             if not pulled.status.is_ok:
@@ -325,20 +309,12 @@ class DockerImageProduct(ShellProduct):
 
     @override
     async def uninstall(self, host: "Host") -> Result:
-        image_to_remove: str | None = None
-        if self.is_tarball:
-            # Resolve the image from the CONTAINER, not from `loaded_ref`:
-            # `otto uninstall` is normally its own process, with no memory
-            # of a separate `otto install`'s `loaded_ref`. Whatever image
-            # the container is currently running IS otto's to remove — it
-            # was loaded by install() (a reference never reaches here, see
-            # below). A container that is already gone (or never existed)
-            # has no image to resolve; docker rm -f below is then a no-op.
-            inspected = await inspect_container(host, self.container_name)
-            if inspected.declined:
-                return Result(status=Status.NotRun)
-            if inspected.state is not None and inspected.state.image_ref:
-                image_to_remove = inspected.state.image_ref
+        """Remove the container and its anonymous volumes, and nothing else.
+
+        Uninstall only stops: otto removes no product image, loaded, pulled or
+        already there. A tarball names an image without showing otto placed it,
+        and another product may share it; ``docker image rm`` is the user's.
+        """
         removed = await host.exec(self._rm_command(force=True), timeout=120)
         if removed.status is Status.NotRun:
             return Result(status=Status.NotRun)
@@ -346,15 +322,6 @@ class DockerImageProduct(ShellProduct):
         # by a prior, failed run) is not an uninstall failure.
         if not removed.status.is_ok and not missing(removed, "container"):
             return self._error_from(host, f"{self.name}: {self._rm_command(force=True)}", removed)
-        if image_to_remove is not None:
-            # Only an image otto loaded from a tarball is otto's to remove;
-            # a pulled or pre-existing reference stays in the daemon's cache
-            # (is_tarball guards this branch, never a reference's image).
-            remove = self._image_rm_command(image_to_remove)
-            gone = await host.exec(remove, timeout=120)
-            if not gone.status.is_ok:
-                return self._error_from(host, f"{self.name}: {remove}", gone)
-            self.loaded_ref = None
         return Result(status=Status.Success)
 
     @override
@@ -371,20 +338,13 @@ class DockerImageProduct(ShellProduct):
         host_id = getattr(host, "id", "?")
         plan = ProductPlan(unchecked=[f"that docker is on {host_id}'s PATH (command -v docker)"])
         if self.is_tarball:
-            uninstall = [
-                self._rm_command(force=True),
-                self._image_rm_command("<image the container ran>"),
-            ]
-            image_gap = (
-                "the image to remove, read from the container (docker container inspect "
-                f"{self.container_name}); no running container means no `docker image rm`"
-            )
+            uninstall = [self._rm_command(force=True)]
             where = planned_stage_dir(
                 stage_dir=self.stage_dir, host=host, who=f"product {self.name!r}"
             )
             if where.refusal is not None:
                 # The refusal is the install's: uninstall needs no stage dir.
-                return ProductPlan(uninstall=uninstall, unchecked=[where.refusal, image_gap])
+                return ProductPlan(uninstall=uninstall, unchecked=[where.refusal])
             if where.unchecked is not None:
                 plan.unchecked.insert(0, where.unchecked)
             staged = str(PurePosixPath(where.directory) / self.artifact.name)
@@ -396,13 +356,9 @@ class DockerImageProduct(ShellProduct):
                 self._run_command("<loaded image>"),
             ]
             plan.uninstall = uninstall
-            plan.unchecked += [
-                (
-                    "the reference `docker load` prints, which `docker run` then names "
-                    "(<loaded image>)"
-                ),
-                image_gap,
-            ]
+            plan.unchecked.append(
+                "the reference `docker load` prints, which `docker run` then names (<loaded image>)"
+            )
             return plan
         if self.pull:
             plan.install = [self._pull_command()]
