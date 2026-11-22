@@ -1186,8 +1186,9 @@ class Host(Protocol):
 
         ``recursive`` transfers each directory among the sources as a tree,
         landing under ``dest_dir`` with its own name; without it a directory
-        source is refused. Semantics, the nested per-file ``Result`` and the
-        symlink rule are documented once, in :ref:`recursive-transfers`.
+        source is refused. Without it otto does not create ``dest_dir``: create
+        it first. Semantics, the nested per-file ``Result`` and the symlink rule
+        are documented once, in :ref:`recursive-transfers`.
 
         ``concurrent`` decides only how many files may be in flight at once:
         up to the transfer protocol's ``max_concurrent_transfers`` when
@@ -1253,8 +1254,9 @@ class Host(Protocol):
 
         ``recursive`` transfers each directory among the sources as a tree,
         landing under ``dest_dir`` with its own name; without it a directory
-        source is refused. Semantics, the nested per-file ``Result`` and the
-        symlink rule are documented once, in :ref:`recursive-transfers`.
+        source is refused. Without it otto does not create ``dest_dir``: create
+        it first. Semantics, the nested per-file ``Result`` and the symlink rule
+        are documented once, in :ref:`recursive-transfers`.
 
         ``concurrent`` decides only how many files may be in flight at once:
         up to the transfer protocol's ``max_concurrent_transfers`` when

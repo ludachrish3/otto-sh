@@ -35,6 +35,7 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
+from tests._fixtures.ftp_server import served_ftp
 from tests.conftest import active_context
 from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_host
 from tests.unit.host._sessions import host_session, session_manager
@@ -1842,7 +1843,13 @@ class TestSshFileTransfer:
         await h.close()
 
     @pytest.mark.asyncio
-    async def test_ftp_get_success(self):
+    async def test_ftp_get_success(self, tmp_path: Path):
+        """Through the host's own `get`, against a real in-process ftp server."""
+        served = tmp_path / "served"
+        served.mkdir()
+        (served / "test.txt").write_bytes(b"from the server")
+        dest = tmp_path / "dest"
+        dest.mkdir()
         h = UnixHost(
             ip="10.0.0.1",
             element=Element(name="box"),
@@ -1850,20 +1857,22 @@ class TestSshFileTransfer:
             transfer="ftp",
             log=LogMode.QUIET,
         )
-        mock_ftp = MagicMock()
-        mock_ftp.download = AsyncMock()
-        mock_ftp.quit = AsyncMock()  # called by close()
-        h._connections._ftp_conn = mock_ftp
+        async with served_ftp(served) as client:
+            h._connections._ftp_conn = client
 
-        status, _msg = _sm(
-            await h.get([Path("/home/vagrant/test.txt")], Path("/tmp"), show_progress=False)
-        )
-        assert status == Status.Success
-        mock_ftp.download.assert_called_once()
-        await h.close()
+            status, _msg = _sm(await h.get([Path("/test.txt")], dest, show_progress=False))
+
+            assert status == Status.Success
+            assert (dest / "test.txt").read_bytes() == b"from the server"
+            await h.close()
 
     @pytest.mark.asyncio
     async def test_ftp_put_success(self, tmp_path: Path):
+        """Through the host's own `put`, against a real in-process ftp server."""
+        served = tmp_path / "served"
+        (served / "in").mkdir(parents=True)
+        src = tmp_path / "upload.txt"
+        src.write_text("hello")
         h = UnixHost(
             ip="10.0.0.1",
             element=Element(name="box"),
@@ -1871,17 +1880,14 @@ class TestSshFileTransfer:
             transfer="ftp",
             log=LogMode.QUIET,
         )
-        src = tmp_path / "upload.txt"
-        src.write_text("hello")
-        mock_ftp = MagicMock()
-        mock_ftp.upload = AsyncMock()
-        mock_ftp.quit = AsyncMock()  # called by close()
-        h._connections._ftp_conn = mock_ftp
+        async with served_ftp(served) as client:
+            h._connections._ftp_conn = client
 
-        status, _msg = _sm(await h.put([src], Path("/tmp"), show_progress=False))
-        assert status == Status.Success
-        mock_ftp.upload.assert_called_once()
-        await h.close()
+            status, _msg = _sm(await h.put([src], Path("/in"), show_progress=False))
+
+            assert status == Status.Success
+            assert (served / "in" / "upload.txt").read_text() == "hello"
+            await h.close()
 
 
 # ---------------------------------------------------------------------------
