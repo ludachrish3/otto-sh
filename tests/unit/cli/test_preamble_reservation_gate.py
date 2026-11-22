@@ -9,13 +9,12 @@ and — when the outcome carries a warning — presenting it wrapped in
 That presentation now lives in exactly one place,
 :func:`otto.cli.invoke.present_reservation_gate`, called by both
 ``command_preamble`` (tested here indirectly, through the existing
-``test_gate_*`` cases below) and ``otto monitor``'s live branch
-(``tests/unit/cli/test_monitor.py::TestGatePerBranch``). The
+``test_gate_*`` cases below) and ``otto monitor``'s live branch, both through
+:func:`otto.cli.invoke.open_live_lab` (``tests/unit/cli/test_monitor.py::TestGatePerMode``). The
 ``TestPresentReservationGate*`` classes below test the helper directly.
 """
 
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,67 +22,20 @@ import pytest
 from otto.cli import invoke
 from otto.cli.registry import CommandSpec
 from otto.reservations import MissingReservationError, ReservationGateResult
-from tests._fixtures.bootstrapstub import bootstrap_stub
-from tests._fixtures.clickctx import chain
-from tests._fixtures.rootoptions import make_root_options
-
-
-class _FakeCtx:
-    """Minimal stand-in for a click leaf context the preamble inspects."""
-
-    def __init__(self, spec: CommandSpec, reservation: object | None = None) -> None:
-        callback = SimpleNamespace(__cli_output_dir__=True)
-        self.command = SimpleNamespace(name=spec.name, callback=callback)
-        self.info_name = spec.name
-        # A real leaf context has a parent chain, and the preamble's activation
-        # gate walks it before reaching the reservation gate tested here.
-        self.parent = chain("otto")
-        self.meta: dict[str, Any] = {
-            "_otto_command_spec": spec,
-            # A real RootOptions, not a bare sentinel: the preamble reads the
-            # -I/-E tuples off this object before it reaches the gate.
-            "_otto_root_options": make_root_options(),
-        }
-        if reservation is not None:
-            self.meta["otto_reservation"] = reservation
-
-
-@pytest.fixture
-def preamble_gate(monkeypatch, no_logger_output_dir):
-    """Isolate ``command_preamble`` down to its reservation-gate branch.
-
-    Stubs bootstrap (no errors), session/lab setup, and output-dir creation so
-    the only observable effect is whatever the reservation-gate block does.
-    """
-
-    def _noop(ctx: Any) -> None:
-        pass
-
-    monkeypatch.setattr(invoke, "ensure_cli_session", _noop)
-    monkeypatch.setattr(invoke, "ensure_lab_context", _noop)
-    monkeypatch.setattr("otto.bootstrap.bootstrap", bootstrap_stub)
-    # create_output_dir is already the conftest's Mock (no_logger_output_dir);
-    # shape it there rather than monkeypatching over it — see that fixture.
-    no_logger_output_dir.return_value = None
-    from otto.context import OttoContext
-    from otto.labs.loader import Lab
-
-    # A real context: the preamble writes the run's directory to its policy.
-    ctx = OttoContext(lab=Lab(name="preamble"))
-    monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
+from tests._fixtures.preamble_ctx import FakeLeafCtx
 
 
 def test_gate_noop_when_no_reservation_in_meta(preamble_gate, capsys):
     """gate=True but ensure_lab_context never populated otto_reservation (e.g. a stubbed no-op in tests) -> no crash, nothing printed."""  # noqa: E501 — descriptive docstring
     spec = CommandSpec(name="run", loader=None, gate=True)
-    invoke.command_preamble(_FakeCtx(spec))  # ty: ignore[invalid-argument-type]
+    invoke.command_preamble(FakeLeafCtx(spec))  # ty: ignore[invalid-argument-type]
     assert capsys.readouterr().out == ""
 
 
 def test_gate_false_skips_reservation_lookup_entirely(preamble_gate, capsys):
     spec = CommandSpec(name="run", loader=None, gate=False)
     mock_gate = MagicMock()
-    invoke.command_preamble(_FakeCtx(spec, reservation=mock_gate))  # ty: ignore[invalid-argument-type]
+    invoke.command_preamble(FakeLeafCtx(spec, reservation=mock_gate))  # ty: ignore[invalid-argument-type]
     mock_gate.evaluate.assert_not_called()
 
 
@@ -97,7 +49,7 @@ def test_gate_evaluates_and_prints_warning(preamble_gate, capsys):
     mock_gate.evaluate.return_value = ReservationGateResult(
         checked=False, skipped=True, warning=warning
     )
-    invoke.command_preamble(_FakeCtx(spec, reservation=mock_gate))  # ty: ignore[invalid-argument-type]
+    invoke.command_preamble(FakeLeafCtx(spec, reservation=mock_gate))  # ty: ignore[invalid-argument-type]
     mock_gate.evaluate.assert_called_once()
     out = capsys.readouterr().out
     # rich strips the [bold red] markup itself when rendering to a non-tty
@@ -112,9 +64,25 @@ def test_gate_checked_true_prints_nothing(preamble_gate, capsys):
     mock_gate.evaluate.return_value = ReservationGateResult(
         checked=True, skipped=False, warning=None
     )
-    invoke.command_preamble(_FakeCtx(spec, reservation=mock_gate))  # ty: ignore[invalid-argument-type]
+    invoke.command_preamble(FakeLeafCtx(spec, reservation=mock_gate))  # ty: ignore[invalid-argument-type]
     mock_gate.evaluate.assert_called_once()
     assert capsys.readouterr().out == ""
+
+
+def test_an_unsatisfied_dependency_refuses_before_the_gate(preamble_gate, monkeypatch):
+    """The same input ``otto monitor --live`` is refused on (tests/unit/cli/test_monitor.py)."""
+    import typer
+
+    def refuse() -> None:
+        raise typer.Exit(1)
+
+    monkeypatch.setattr(invoke, "refuse_unsatisfied_dependencies", refuse)
+    spec = CommandSpec(name="run", loader=None, gate=True)
+    mock_gate = MagicMock()
+    with pytest.raises(typer.Exit) as excinfo:
+        invoke.command_preamble(FakeLeafCtx(spec, reservation=mock_gate))  # ty: ignore[invalid-argument-type]
+    assert excinfo.value.exit_code == 1
+    mock_gate.evaluate.assert_not_called()
 
 
 # ── present_reservation_gate: markup pinning + exception propagation ────────

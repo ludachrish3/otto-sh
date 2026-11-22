@@ -207,23 +207,31 @@ The built-ins span the whole matrix — read them as worked examples
 - **`schema`** (`otto schema ...`) sets `lab_free=True, output_dir=False,
   gate=False` — JSON-Schema export never touches a lab, so nothing about lab
   or reservation state applies.
-- **`cov`** and **`reservation`** set `output_dir=False, gate=False` but stay
-  lab-aware (`lab_free` defaults to `False`) — they read lab state but write
-  no per-invocation artifacts and gate nothing.
-- **`monitor`** sets `gate=False` at the spec level, then gates *itself*,
-  per-branch, inside the command body: reviewing a saved `<source>` reads a
-  local file and never touches live hardware, so it's gate-exempt,
-  while `--live` collection still evaluates the gate explicitly. This is the
-  precedent to follow whenever a uniform `gate=True`/`gate=False` would be
-  either too strict or too permissive for some of a command's branches —
-  declare `gate=False` on the spec and, wherever the branch actually needs
-  it, read `ctx.meta["otto_reservation"]` (a
-  {class}`~otto.reservations.check.ReservationGate`, or `None` if none was
-  built) and call its `.evaluate()` yourself — the same inline pattern
-  {func}`~otto.cli.invoke.command_preamble` uses for `gate=True` commands.
-- **`run`, `test`, `host`, `docker`** all keep the defaults (or override just
-  `gate` for `docker`, which is `gate=False`) — everything else takes the full
-  lab-aware, output-dir-creating, gate-checked path.
+- **`reservation`** sets `output_dir=False, gate=False` but stays lab-aware
+  (`lab_free` defaults to `False`): it reads lab state, writes no
+  per-invocation artifacts, and *is* the gate, so it gates nothing.
+- **`cov`** and **`docker`** keep the default `gate=True`: a registered group
+  is gated, and each leaf that contacts a lab host runs the reservation gate
+  first ({doc}`../cli/reservation/index` lists which leaves). A leaf that loads
+  a lab but contacts no host opts out on its own, by setting
+  `__cli_gate__ = False` on its callback right after the function
+  (`otto cov report`, `otto docker use-cases`); the constant is
+  {data}`~otto.cli.invoke.GATE_ATTR`.
+- **`monitor`** sets `gate=False` and `lab_free=True` at the spec level, then
+  opens its lab *itself*, per-branch, inside the command body: reviewing a saved
+  `<source>` reads a local file and never touches live hardware, so it loads no
+  lab and runs no gate, while `--live` calls
+  {func}`~otto.cli.invoke.open_live_lab` (`gate=True`), the same live-lab
+  opening {func}`~otto.cli.invoke.command_preamble` runs for every other
+  command (session, lab, the refusals, the reservation gate, in that order).
+  This is the precedent to follow whenever a lab-free group has one live
+  branch: declare `lab_free=True, gate=False` on the spec and call
+  `open_live_lab(ctx, command_spec(ctx), gate=True)`
+  ({func}`~otto.cli.invoke.command_spec` reads the registered spec) where the
+  branch needs the lab. Do not hand-call the gate's `.evaluate()` instead: that
+  skips the refusals the opening runs before it.
+- **`run`, `test`, `host`** keep the defaults: the full lab-aware,
+  output-dir-creating, gate-checked path.
 
 ## Collisions
 

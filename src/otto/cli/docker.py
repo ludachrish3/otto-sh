@@ -1538,14 +1538,18 @@ class _Verb:
     either way. The ``image`` verbs (and ``images``) preview each host's exact docker
     command. ``ps`` and the other observe verbs keep the safe default.
     """
+    gate: bool = True
+    """False: the leaf contacts no host, so it opts OUT of the reservation gate the
+    group is registered with (``__cli_gate__``, read by ``otto.cli.invoke.leaf_is_gated``).
+    Only ``use-cases`` -- a read-only inventory of declared configuration."""
     help: "str | None" = None
     """The command's help, when not the leaf's docstring (an alias names what it aliases)."""
 
 
 # The single source of truth for which docker verbs exist, which group each registers
-# on, and the two per-leaf policies the leaf-invoke preamble reads off the RESOLVED
-# command's callback (`__cli_output_dir__`, `__cli_dry_run_preview__`, both defaulting
-# False when absent) -- typer's own callback shim functools-wraps the registered
+# on, and the per-leaf policies the leaf-invoke preamble reads off the RESOLVED
+# command's callback (`__cli_output_dir__`, `__cli_dry_run_preview__`, `__cli_gate__`, defaulting
+# False, False and True when absent) -- typer's own callback shim functools-wraps the registered
 # function, carrying the markers through.
 _VERBS: "list[_Verb]" = [
     _Verb("build", "docker", _build, dry_run_preview=True),
@@ -1562,7 +1566,7 @@ _VERBS: "list[_Verb]" = [
         "docker-capable host, as docker printed it.",
     ),
     _Verb("logs", "docker", _logs, output_dir=False),
-    _Verb("use-cases", "docker", _use_cases, output_dir=False, dry_run_preview=True),
+    _Verb("use-cases", "docker", _use_cases, output_dir=False, dry_run_preview=True, gate=False),
     _Verb("build", "compose", _compose_build, dry_run_preview=True),
     _Verb("up", "compose", _compose_up, dry_run_preview=True),
     _Verb("down", "compose", _compose_down, dry_run_preview=True),
@@ -1581,4 +1585,5 @@ _GROUPS: "dict[str, typer.Typer]" = {
 for _verb in _VERBS:
     _verb.leaf.__cli_output_dir__ = _verb.output_dir  # ty: ignore[missing-attribute]
     _verb.leaf.__cli_dry_run_preview__ = _verb.dry_run_preview  # ty: ignore[missing-attribute]
+    _verb.leaf.__cli_gate__ = _verb.gate  # ty: ignore[missing-attribute]
     _GROUPS[_verb.group].command(name=_verb.name, help=_verb.help)(_verb.leaf)

@@ -3,6 +3,7 @@
 Imported by name (the leading underscore keeps pytest from collecting this).
 """
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -41,6 +42,63 @@ _WIDE = {"COLUMNS": "200"}
 def _flat(text: str) -> str:
     """Collapse rich's wrapping so a rendered line can be matched as one string."""
     return " ".join(text.split())
+
+
+# The three records the reservation gate and the fleet scoping print, on stdout,
+# ahead of any docker verb's own output (the same ones `otto host ...` prints):
+# the INFO fleet line, the WARN log record, and the bold ⚠ line `present_reservation_gate`
+# prints. `-R` (every `_run_otto` call) makes the gate SKIP, so the two reservation
+# records say "SKIPPED". Each is matched whole, over rich's wrapping (the log records
+# wrap under a nine-column level gutter, the ⚠ line wraps unindented), so a record is
+# consumed line by line until its flattened text is complete and nothing else is.
+_GATE_RECORDS = (
+    re.compile(
+        r"INFO fleet of interest: \d+ of \d+ lab hosts \(\d+ project\(s\), \d+ excluded\)"
+        r"(?:; outside it: .*)?"
+    ),
+    re.compile(
+        r"WARN(?:ING)? Reservation check skipped for user '[^']*' on lab '[^']*'\. "
+        r"Required: \[[^\]]*\]"
+    ),
+    re.compile(
+        r"\N{WARNING SIGN} Reservation check SKIPPED for user '[^']*' on lab '[^']*'\. "
+        r"Required resources: \[[^\]]*\]"
+    ),
+)
+
+
+def _split_gate_preamble(stdout: str) -> tuple[str, str]:
+    """Split *stdout* into ``(the gate's preamble, the command's own output)``.
+
+    Removes exactly the records in ``_GATE_RECORDS`` from the START of the text, in
+    whatever order they come, and nothing else: a docker verb's output is returned
+    untouched, so a test keeps asserting every line of it.
+    """
+    lines = stdout.splitlines(keepends=True)
+    consumed = 0
+    pending = list(_GATE_RECORDS)
+    while consumed < len(lines) and pending:
+        # Blank lines between records belong to the preamble only if a record follows.
+        start = consumed
+        while start < len(lines) and not lines[start].strip():
+            start += 1
+        taken = ""
+        end = start
+        matched = None
+        while end < len(lines) and matched is None:
+            taken = _flat(taken + " " + lines[end])
+            end += 1
+            matched = next((r for r in pending if r.fullmatch(taken)), None)
+        if matched is None:
+            break
+        pending.remove(matched)
+        consumed = end
+    return "".join(lines[:consumed]), "".join(lines[consumed:])
+
+
+def _own_output(stdout: str) -> str:
+    """The command's own stdout: *stdout* without the reservation gate's preamble."""
+    return _split_gate_preamble(stdout)[1]
 
 
 def _run_otto(

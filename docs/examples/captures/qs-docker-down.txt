@@ -1,4 +1,5 @@
 $ otto --lab example_lab docker compose down quickstart
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
 INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
          /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
          %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&

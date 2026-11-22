@@ -118,8 +118,8 @@ def monitor(
     # runs :func:`~otto.cli.invoke.ensure_cli_session` only: the projects'
     # ``[logging.levels]`` and the console's host filter, with no lab loaded
     # and no output dir. ``--live`` runs
-    # :func:`~otto.cli.invoke.ensure_lab_session` and then
-    # :func:`~otto.cli.invoke.present_reservation_gate`.
+    # :func:`~otto.cli.invoke.open_live_lab`, the same live-lab opening every
+    # other lab command runs (session, lab, the refusals, the reservation gate).
     #
     # The library's refusals are translated at one site. An input refusal
     # (``MonitorInputError``, ``ReviewSourceError``, both in
@@ -171,13 +171,11 @@ def monitor(
             return
 
         from ..monitor.live import run_live
-        from .invoke import command_spec, ensure_lab_session, present_reservation_gate
+        from .invoke import command_spec, open_live_lab
 
-        # monitor's spec is lab_free (review needs no lab), so the shared
-        # preamble skips the lab for both modes; --live loads it here.
-        if not ctx.meta.get("_otto_lab_ready"):
-            ensure_lab_session(ctx, command_spec(ctx))
-        present_reservation_gate(ctx)
+        # monitor's spec is lab_free and gate=False (review needs neither), so
+        # the shared preamble skips the lab for both modes; --live opens it here.
+        open_live_lab(ctx, command_spec(ctx), gate=True)
         report = run_command(
             run_live(hosts=hosts, interval=interval, db=db, label=label, note=note)
         )

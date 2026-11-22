@@ -72,7 +72,9 @@ def register_builtin_commands() -> None:
         "docker",
         "otto.cli.docker:docker_app",
         help="Build images and deploy use-case stacks on docker-capable lab hosts.",
-        gate=False,
+        # Gated like host/run/test: every verb that contacts a docker host runs
+        # the reservation gate first. A verb that reads only configuration
+        # (`use-cases`) opts out per-leaf with `__cli_gate__ = False`.
     )
     register_cli_command(
         "link",
@@ -109,12 +111,12 @@ def register_builtin_commands() -> None:
         "monitor",
         "otto.cli.monitor:monitor_app",
         help="Launch an interactive performance dashboard.",
-        # monitor gates AND loads its lab itself, per-branch: reviewing a saved
-        # `<source>` export reads a local file and never touches live hardware
-        # or a lab, so it is both gate-exempt and lab-free by design, while
-        # `--live` collection still gates and still requires a lab (it pulls
-        # one in itself via otto.cli.invoke.ensure_lab_session, the same loud
-        # way `otto reservation check` does). Uniform gate=True/lab_free=False
+        # monitor opens its lab per-branch: reviewing a saved `<source>` export
+        # reads a local file and never touches live hardware or a lab, so it is
+        # both gate-exempt and lab-free by design, while `--live` collection
+        # still requires a lab and the gate, and runs the one shared live-lab
+        # opening (otto.cli.invoke.open_live_lab: session, lab, refusals, gate)
+        # that command_preamble runs for every other command. Uniform gate=True/lab_free=False
         # here would gate/lab-require the review branch too, which is a
         # behavior regression — and was, in fact, exactly the bug this
         # lab_free=True fixed (review mode hard-required --lab despite never
@@ -128,8 +130,8 @@ def register_builtin_commands() -> None:
         help="Generate coverage reports from otto test --cov output.",
         # Standard per-invocation output dirs apply to `cov get` and `cov
         # report`; `clean` opts out per-leaf via its `__cli_output_dir__`
-        # marker in otto/cli/cov.py.
-        gate=False,
+        # marker in otto/cli/cov.py. `get` and `clean` reach lab hosts and are
+        # gated; `report` is local and opts out via `__cli_gate__ = False`.
     )
     register_cli_command(
         "reservation",

@@ -44,14 +44,26 @@ otto reservation check
 
 The gate runs at the top of every live-lab subcommand:
 
-| Command               | Gated? | Notes                                              |
-|-----------------------|--------|----------------------------------------------------|
-| `otto run ...`        | yes    |                                                    |
-| `otto test ...`       | yes    |                                                    |
-| `otto host ...`       | yes    |                                                    |
-| `otto monitor ...`    | yes    | Only in live collection mode; file replay is free. |
-| `otto cov report ...` | no     | Offline; never touches hardware.                   |
-| `otto reservation ...`| no     | The whoami/check helpers only *report* on state.   |
+| Command                    | Gated? | Notes                                              |
+|----------------------------|--------|----------------------------------------------------|
+| `otto run ...`             | yes    |                                                    |
+| `otto test ...`            | yes    |                                                    |
+| `otto host ...`            | yes    |                                                    |
+| `otto link ...`            | yes    |                                                    |
+| `otto tunnel ...`          | yes    |                                                    |
+| `otto docker ...`          | yes    | Every command that contacts a docker host.         |
+| `otto cov get`, `cov clean`| yes    | They read and reset counters on lab hosts.         |
+| `otto monitor ...`         | yes    | Only in live collection mode; file replay is free. |
+| `otto cov report ...`      | no     | Offline; never touches hardware.                   |
+| `otto reservation ...`     | no     | The whoami/check helpers only *report* on state.   |
+
+The commands that contact no host are exempt, and only those: `otto docker
+use-cases` (it lists configuration), `otto cov report`, `check-stamp` and the
+`kmodcov` and `embedded-gcov` groups (they work on local files).  The dry-run
+flag `-n` is gated like the real command, before it prints its plan: a dry run
+of a gated `docker` or `cov` command is refused without the reservation too.
+The groups that only read configuration or local files (`init`, `env`, `cache`,
+`inventory` and `schema`) never contact a lab host and are not gated.
 
 ### Three reservable levels
 
