@@ -2533,6 +2533,7 @@ async def test_the_pool_is_never_built_on_a_console_term_and_exec_still_succeeds
     mgr._session = SimpleNamespace(
         alive=True,
         echoes=False,
+        reads_a_terminal=True,
         current_user="test",
         run_cmd=run_cmd,
         _refuse_untypable=lambda *, cmd, host: None,

@@ -129,15 +129,25 @@ class _StubSession(ShellSession):
         return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
 
-def _manager(frame, *, term: str = "ssh", name: str = "bb1", echoes: bool = False):
+def _manager(
+    frame,
+    *,
+    term: str = "ssh",
+    name: str = "bb1",
+    echoes: bool = False,
+    terminal: bool = True,
+    manager_terminal: bool | None = None,
+):
     """A SessionManager wired to a recording stub, with *frame* as its dialect.
 
     Its sessions measure echo off at their handshake, or still on with *echoes*.
+    They read a terminal unless *terminal* is false; the manager is told the
+    same unless *manager_terminal* says otherwise.
     """
     sessions: list[_StubSession] = []
 
     def factory() -> _StubSession:
-        session = _StubSession(command_frame=frame, echoes=echoes)
+        session = _StubSession(command_frame=frame, echoes=echoes, terminal=terminal)
         sessions.append(session)
         return session
 
@@ -146,8 +156,37 @@ def _manager(frame, *, term: str = "ssh", name: str = "bb1", echoes: bool = Fals
         name=name,
         command_frame=frame,
         session_factory=factory,
+        types_into_terminal=terminal if manager_terminal is None else manager_terminal,
     )
     return mgr, sessions
+
+
+@pytest.mark.asyncio
+async def test_a_session_that_reads_a_pipe_is_not_refused_a_long_line():
+    """A pipe has no line buffer: an ash host's session without a terminal types any length."""
+    mgr, sessions = _manager(AshFrame(), terminal=False)
+    cmd = "echo " + "x" * 5000
+    await mgr.run_cmd(cmd=cmd)
+    assert [session.ran for session in sessions] == [[cmd]]
+
+
+@pytest.mark.asyncio
+async def test_an_open_pipe_session_answers_for_itself_before_the_manager_does():
+    """Once a session is open, the manager's own mode no longer refuses on its behalf."""
+    mgr, sessions = _manager(AshFrame(), terminal=False, manager_terminal=True)
+    await mgr.run_cmd(cmd="true")
+    cmd = "echo " + "x" * 5000
+    await mgr.run_cmd(cmd=cmd)
+    assert sessions[0].ran == ["true", cmd]
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_after_the_open_asks_the_session_not_the_manager():
+    """A manager told "no terminal" whose session reads one still refuses once it is open."""
+    mgr, sessions = _manager(AshFrame(), terminal=True, manager_terminal=False)
+    with pytest.raises(UnsupportedOnUserlandError):
+        await mgr.run_cmd(cmd="echo " + "x" * 5000)
+    assert [session.ran for session in sessions] == [[]]
 
 
 def _framing_overhead(frame) -> int:

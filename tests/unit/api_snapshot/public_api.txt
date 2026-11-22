@@ -2259,6 +2259,7 @@ member	otto.host:HostSession.enter_frame	method	coroutine	KO:timeout:N
 member	otto.host:HostSession.exec_baseline_lost	property:g--
 member	otto.host:HostSession.expect	method	coroutine	PK:pattern:- KO:timeout:F:0x1.e000000000000p+4
 member	otto.host:HostSession.name	property:g--
+member	otto.host:HostSession.reads_a_terminal	property:g--
 member	otto.host:HostSession.run	method	coroutine	PK:cmds:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
 member	otto.host:HostSession.send	method	coroutine	PK:text:- KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
 member	otto.host:HostSession.switch_user	method	coroutine	KO:user:S:"" KO:password:N
@@ -2865,7 +2866,7 @@ member	otto.host:ShellProduct.uninstall	method	coroutine	PK:host:-
 abstract	otto.host:ShellProduct	install is_installed uninstall
 name	otto.host:ShellSession	class
 mro	otto.host:ShellSession	-
-call	otto.host:ShellSession	sync	KO:command_frame:N KO:init_timeout:N KO:shell_history:B:true KO:failure_context:S:"" KO:console_client:N
+call	otto.host:ShellSession	sync	KO:command_frame:N KO:init_timeout:N KO:shell_history:B:true KO:failure_context:S:"" KO:console_client:N KO:terminal:N
 member	otto.host:ShellSession.alive	property:g--
 member	otto.host:ShellSession.close	method	coroutine	-
 member	otto.host:ShellSession.console_login	method	coroutine	-

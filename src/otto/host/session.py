@@ -178,6 +178,16 @@ _RECOVERY_PROBE_TIMEOUT = 0.5
 # taken the interrupt before it is asked whether it is back.
 _RECOVERY_SETTLE = 0.1
 
+_SESSION_MARK = "OTTO_SESSION"
+"""The environment variable a shell session without a terminal is started with.
+
+Its value is the session's token; every process the shell starts inherits
+it, and that is how a command otto gives up on is found and stopped
+(:func:`otto.host.process_stop.reap_marked_command`). The stop ends the
+session, so it reaches everything the session started and is still running,
+a background job from an earlier command included. A command can read the
+variable; a process started without it is not stopped."""
+
 # Ceiling on the post-open marker handshake (ShellSession._handshake, whose
 # ``timeout`` argument defaults to it and can override it per call — see
 # ShellSession.enter_frame). A Unix host sets it per host through its
@@ -935,8 +945,14 @@ class ShellSession(ABC):
         shell_history: bool = True,
         failure_context: str = "",
         console_client: "ConsoleClient | None" = None,
+        terminal: bool | None = None,
     ) -> None:
         self._session_id = uuid.uuid4().hex[:_SESSION_ID_LEN]
+        # Whether THIS session's shell reads a terminal. ``None`` keeps the
+        # transport's own answer (the class attribute); a transport that can
+        # open either way (ssh) passes what it was asked for.
+        if terminal is not None:
+            self.reads_a_terminal = terminal
         # The console term's client, when this session is a shell on a serial
         # console (TelnetSession's own line, or the login bridge's): it owns
         # the line. ``None`` on every other transport. Held here because it
@@ -1079,7 +1095,13 @@ class ShellSession(ABC):
         return self._exec_baseline_lost
 
     reads_a_terminal: bool = True
-    """Whether this session's shell reads a terminal; ``False`` for a pipe (:class:`LocalSession`).
+    """Whether this session's shell reads a terminal; ``False`` for a pipe.
+
+    The class value is the transport's own answer (``False`` on
+    :class:`LocalSession`); a session built with ``terminal=`` carries its
+    own (:class:`SshSession` opened without a pty). Everything that depends
+    on a line reader asks the session, never its class: the typed spelling of
+    a command, the typed-line refusal, and how a command is interrupted.
 
     A pipe echoes nothing, so its ``stty -echo`` failing (there is no
     terminal to set) is no echo: the session records echo as off."""
@@ -2438,11 +2460,13 @@ class SshSession(_PatternReaderTransport, ShellSession):
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         shell_history: bool = True,
+        terminal: bool = True,
     ) -> None:
         super().__init__(
             command_frame=command_frame,
             init_timeout=init_timeout,
             shell_history=shell_history,
+            terminal=terminal,
         )
         self._conn = conn
         self._process: Any = None
@@ -2451,6 +2475,10 @@ class SshSession(_PatternReaderTransport, ShellSession):
         # When set by a subclass, open_transport passes this as the command to
         # create_process() instead of opening the channel's default shell.
         self._open_cmd: str | None = None
+        # The token a shell without a terminal is started with, which
+        # everything it starts inherits: how _recover_session finds what to
+        # stop. None with a terminal, where Ctrl+C does that.
+        self._mark: str | None = None
 
     @override
     def _connection_lost_errors(self) -> list[type[BaseException]]:
@@ -2470,8 +2498,18 @@ class SshSession(_PatternReaderTransport, ShellSession):
         # session's own and nothing else reads it, so what the reader holds
         # past a match is never another reader's.
         args = [] if self._open_cmd is None else [self._open_cmd]
+        # A terminal is a "dumb" pty. Without one no pty is requested, said
+        # outright so a connection option (``RequestTTY force``) cannot ask
+        # for one: the login shell then reads a pipe.
+        pty: dict[str, Any] = (
+            {"term_type": "dumb"} if self.reads_a_terminal else {"request_pty": False}
+        )
+        if not self.reads_a_terminal and self._open_cmd is None:
+            # The same login shell, started marked (see _recover_session).
+            self._mark = secrets.token_hex(16)
+            args = [process_stop.marked_shell_command(_SESSION_MARK, self._mark)]
         self._process = await self._conn.create_process(
-            *args, term_type="dumb", stderr=asyncssh.STDOUT, encoding=None
+            *args, **pty, stderr=asyncssh.STDOUT, encoding=None
         )
         stdout = self._process.stdout
 
@@ -2489,6 +2527,65 @@ class SshSession(_PatternReaderTransport, ShellSession):
     async def read_transport_until(self, *, pattern: re.Pattern[str]) -> str:
         assert self._reader is not None  # noqa: S101 — internal invariant: open_transport() must run before read_transport_until()
         return await self._reader.read_transport_until(pattern)
+
+    @override
+    async def _recover_session(self, deadline: float | None = None) -> None:
+        """Stop the hung command: Ctrl+C at a terminal, the end of the session without one.
+
+        With a terminal, the base session's Ctrl+C and confirmation. Without
+        one a Ctrl+C byte is only a byte (a pipe has no line reader to turn
+        it into a signal), and closing the channel stops nothing (no
+        terminal, no SIGHUP). The session's shell was started with a token
+        in its environment (:data:`_SESSION_MARK`), so the stop is a second
+        channel on the same connection that kills every process carrying it:
+        the shell, its subshells, the command and whatever the command
+        started. The same on every ssh server, since nothing depends on how
+        the server delivers a signal.
+
+        The shell is NOT kept, and the session is marked dead; its owner
+        opens a fresh one for the next command. A shell that reads a pipe is
+        not interactive, so one that outlived the stop would go on to run the
+        rest of the line otto gave up on: after ``sleep 600; rm -rf build``
+        timed out, the ``rm`` would run.
+
+        The channel's own ``KILL`` request follows, for a host where the
+        sweep found nothing to read (no ``/proc``) or could not run. What it
+        reaches is the server's choice: OpenSSH signals the shell's whole
+        process group, dropbear the shell alone. ``KILL`` because no shell
+        outlives it: bash, alone signalled with ``INT``, waits for its
+        command and carries on.
+        """
+        if self.reads_a_terminal or isinstance(self._frame, RawFrame):
+            await super()._recover_session(deadline)
+            return
+        from ._asyncssh import asyncssh
+
+        assert self._conn is not None  # noqa: S101 — internal invariant: open_transport() ran before any command
+        assert self._process is not None  # noqa: S101 — internal invariant: open_transport() ran before any command
+        gone = (OSError, ValueError, asyncssh.Error, *self._connection_lost_errors())
+        try:
+            if self._mark is not None:
+                await asyncio.wait_for(
+                    self._conn.run(
+                        process_stop.reap_marked_command(_SESSION_MARK, self._mark),
+                        check=False,
+                        request_pty=False,
+                    ),
+                    _RECOVERY_TIMEOUT if deadline is None else deadline,
+                )
+        except (asyncio.TimeoutError, *gone) as exc:
+            logger.debug(f"{self._log_tag}: the marked stop did not run: {exc!r}")
+        finally:
+            # Sent even when the sweep is cut short (its bound, a cancel).
+            # The channel may be gone already, as it is once the sweep ended
+            # the shell.
+            with suppress(*gone):
+                self._process.send_signal("KILL")
+            logger.debug(f"{self._log_tag}: no terminal: stop sent, session marked dead")
+            # The shell is gone with its command: a later open of this
+            # session has nothing left to recover.
+            self._needs_recovery = False
+            self._alive = False
 
     @override
     async def close(self) -> None:
@@ -3183,6 +3280,11 @@ class HostSession:
     def echoes(self) -> bool:
         """Whether this session's terminal may still echo (:attr:`ShellSession.echoes`)."""
         return self._session.echoes
+
+    @property
+    def reads_a_terminal(self) -> bool:
+        """Whether this session's shell reads a terminal (:attr:`ShellSession.reads_a_terminal`)."""
+        return self._session.reads_a_terminal
 
     def _refuse_elevation(self, verb: str, user: str) -> Never:
         """Bind this session's identity to the shared elevation refusal.
@@ -5287,24 +5389,29 @@ class SessionManager:
         """
         exec_input = self._with_restore_for(ExecRoute.DEFAULT_SESSION, exec_input)
         exec_escapes = getattr(self._connections, "term", None) != "console"
-        refuse_if_typed_line_would_be_cut(
-            self._command_frame,
-            cmd,
-            echoes=_BEFORE_ANY_SESSION_ECHOES,
-            host=self._name,
-            exec_escapes=exec_escapes,
-            exec_input=exec_input,
-        )
+        # Before the open the manager's own mode answers; an open session
+        # answers for itself, here as below.
+        opened = self._session if self._session is not None and self._session.alive else None
+        if self._types_into_terminal if opened is None else opened.reads_a_terminal:
+            refuse_if_typed_line_would_be_cut(
+                self._command_frame,
+                cmd,
+                echoes=_BEFORE_ANY_SESSION_ECHOES,
+                host=self._name,
+                exec_escapes=exec_escapes,
+                exec_input=exec_input,
+            )
         await self._ensure_session()
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
-        refuse_if_typed_line_would_be_cut(
-            self._command_frame,
-            cmd,
-            echoes=self._session.echoes,
-            host=self._name,
-            exec_escapes=exec_escapes,
-            exec_input=exec_input,
-        )
+        if self._session.reads_a_terminal:
+            refuse_if_typed_line_would_be_cut(
+                self._command_frame,
+                cmd,
+                echoes=self._session.echoes,
+                host=self._name,
+                exec_escapes=exec_escapes,
+                exec_input=exec_input,
+            )
         # *log* is folded already: the host's `_run_one` folds its standing mode in.
         result = await _log_and_run(
             self._session,
@@ -5630,14 +5737,15 @@ class SessionManager:
         if exec_input is not None and mark is not None:
             exec_input = replace(exec_input, identity=mark)
         try:
-            refuse_if_typed_line_would_be_cut(
-                self._command_frame,
-                cmd,
-                echoes=session.echoes,
-                host=self._name,
-                exec_escapes=False,
-                exec_input=exec_input,
-            )
+            if session.reads_a_terminal:
+                refuse_if_typed_line_would_be_cut(
+                    self._command_frame,
+                    cmd,
+                    echoes=session.echoes,
+                    host=self._name,
+                    exec_escapes=False,
+                    exec_input=exec_input,
+                )
         except UnsupportedOnUserlandError:
             # Nothing was typed: the same keep-or-discard decision as a command's end.
             await self._release_pooled(session, key)

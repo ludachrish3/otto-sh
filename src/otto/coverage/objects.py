@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
+from ..host import process_stop
 from ..host.docker_cli import image_rm_command, missing, rm_container_command, said
 from ..host.host import EXEC_CANCEL_REAP_BOUND
 from ..host.product import ARCHIVE_SUFFIXES
@@ -431,7 +432,7 @@ class ObjectListCache:
             finished = False
             try:
                 scan = await host.exec(
-                    f"docker exec -e OTTO_SCAN_ID={res.token} {shlex.quote(container)} "
+                    f"docker exec -e {_SCAN_MARK}={res.token} {shlex.quote(container)} "
                     f"sh -c {shlex.quote(_SCAN_SCRIPT)}",
                     timeout=_SCAN_TIMEOUT,
                 )
@@ -843,7 +844,7 @@ class ObjectListCache:
         with teardown_step(product.name, f"stop the scan in container {container} on {host.id}"):
             reaped = await host.exec(
                 f"docker exec {shlex.quote(container)} "
-                f"sh -c {shlex.quote(_REAP_SCRIPT)} sh {token}",
+                + process_stop.reap_marked_command(_SCAN_MARK, token),
                 timeout=60,
             )
             if not reaped.status.is_ok:
@@ -1084,17 +1085,12 @@ that matches. ``-exec {} +`` needs BusyBox's ``FEATURE_FIND_EXEC_PLUS``; a ``fin
 it fails, which refuses the scan rather than misreading it. ``timeout -s KILL SECS CMD`` is
 the 1.30+ syntax; an older BusyBox (``timeout -t SECS``) fails the probe and the scan runs
 unbounded."""
-_REAP_SCRIPT = (
-    "n=0; while [ $n -lt 10 ]; do f=; "
-    "for e in /proc/[0-9]*/environ; do "
-    'if grep -q "OTTO_SCAN_ID=$1" "$e" 2>/dev/null; then '
-    'p=${e#/proc/}; kill -KILL "${p%/environ}" 2>/dev/null && f=1; fi; done; '
-    '[ -n "$f" ] || break; n=$((n + 1)); done; :'
-)
+_SCAN_MARK = "OTTO_SCAN_ID"
+"""The environment variable that carries a scan's token into its container processes."""
+_REAP_SCRIPT = process_stop.reap_marked_script(_SCAN_MARK)
 """Kill every process in the container that carries the scan's token (``$1``) in its
 environment: the scan's shell and everything it started, which ``docker exec`` does not
-stop when its client goes away. Repeated until a sweep finds none, so a process started
-mid-sweep is caught by the next."""
+stop when its client goes away (:func:`otto.host.process_stop.reap_marked_script`)."""
 _RC_MARKER = "otto-scan-rc:"
 
 
