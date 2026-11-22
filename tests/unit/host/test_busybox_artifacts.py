@@ -1765,9 +1765,14 @@ _ARTIFACT_CACHE_PATH = "~/.cache/otto/busybox"
 # Matching runs on the RENDERED `run:` text: each `${{ matrix.<key> }}` is
 # substituted from the job's matrix rows first, so these are the literal
 # session names a row executes, never the expression that names them.
+#
+# The changed-test repeats of those two lanes select it too, when a pull
+# request changes it, and run in jobs of their own (#1252).
 _UNIT_TREE_ENTRYPOINTS = (
     "nox -s tests_hostless_unit-",
     "nox -s tests_hostless_guards-",
+    "nox -s tests_changed_repeat_unit-",
+    "nox -s tests_changed_repeat_guards-",
     "nox -s tests_unit_repeat",
 )
 
@@ -1847,6 +1852,9 @@ def test_every_entrypoint_spelling_still_names_a_live_job():
     assert ("ci.yml", "tests-primary") in consumers, consumers
     assert ("ci.yml", "tests-canary") in consumers, consumers
     assert ("ci.yml", "tests") in consumers, consumers
+    assert ("ci.yml", "repeat-primary") in consumers, consumers
+    assert ("ci.yml", "repeat-canary") in consumers, consumers
+    assert ("ci.yml", "repeat-interior") in consumers, consumers
     assert ("nightly.yml", "unit-repeat") in consumers, consumers
     assert ("nightly.yml", "unit-matrix") in consumers, consumers
 
