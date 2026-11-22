@@ -913,7 +913,10 @@ path = "otto.params"
 layer = "foundation"
 # OptionsRegistrationError and OptionsCollisionError root at OttoError, and the
 # options registry is a Registry of Refs. Both are foundation leaves.
-depends_on = ["otto.errors", "otto.registry"]
+# contains_secret_type's class check is otto.utils.annotation_is_subclass, the
+# one check of an annotation against a class (#1249); otto.utils imports only
+# otto.errors, so the edge stays in the layer and makes no cycle.
+depends_on = ["otto.errors", "otto.registry", "otto.utils"]
 
 [[modules]]
 path = "otto.project"

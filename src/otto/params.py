@@ -27,6 +27,7 @@ from typing_extensions import dataclass_transform
 
 from .errors import OttoError
 from .registry import Ref, Registry, registration_boundary
+from .utils import annotation_is_subclass
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -147,12 +148,9 @@ def contains_secret_type(tp: Any) -> bool:
     instance riding along in an ``Annotated`` tuple, say) has no args of its
     own, so the recursion bottoms out at ``False`` for it instead of raising.
 
-    ``get_origin`` is checked FIRST, not ``isinstance(tp, type)``: a
-    ``types.GenericAlias`` -- what ``list[SecretStr]`` actually is -- answers
-    ``isinstance(..., type)`` ``True`` in CPython despite being a container,
-    so checking that first would ``issubclass`` it against ``SecretStr``
-    directly (a silent ``False``, never reached) instead of recursing into
-    its own args.
+    A generic (``list[SecretStr]``) is judged by its origin and then its
+    args; whether the origin, or a bare *tp*, is a secret class is
+    :func:`otto.utils.annotation_is_subclass`'s one class check.
 
     A reference left unresolved (a string, or a ``ForwardRef`` from
     ``_field_types``' fallback) is judged by its text: one naming a secret
@@ -170,12 +168,10 @@ def contains_secret_type(tp: Any) -> bool:
         return _secret_type_name().search(text) is not None
     origin = get_origin(tp)
     if origin is not None:
-        if isinstance(origin, type) and issubclass(origin, secret_types):
+        if annotation_is_subclass(origin, secret_types):
             return True
         return any(contains_secret_type(arg) for arg in get_args(tp))
-    if isinstance(tp, type):
-        return issubclass(tp, secret_types)
-    return False
+    return annotation_is_subclass(tp, secret_types)
 
 
 def _field_types(cls: type) -> "dict[str, Any]":

@@ -36,7 +36,7 @@ from typing_extensions import Self, override
 
 from otto.models.base import OttoModel
 from otto.result import ShellResult
-from otto.utils import Status
+from otto.utils import Status, annotation_is_subclass
 
 from ..errors import OttoError
 from .command_frame import _ANSI_RE
@@ -124,16 +124,15 @@ def _parsed_reader(spec: Any) -> "Callable[[str], Any] | None":
 
     The one decision between the two shapes, for a ``parse=`` spec
     (:func:`apply_parse`) and a field annotation (:func:`_parse_region`)
-    alike; ``None`` for anything else. The list form is checked first: on
-    Python 3.10 ``list[Sub]`` is an instance of ``type``, and pydantic before
-    2.11 raises on ``issubclass(list[Sub], ...)``.
+    alike; ``None`` for anything else, a generic alias such as
+    ``dict[str, int]`` included (:func:`~otto.utils.annotation_is_subclass`).
     """
     if get_origin(spec) is list:
         (element,) = get_args(spec)
-        if isinstance(element, type) and issubclass(element, Parsed):
+        if annotation_is_subclass(element, Parsed):
             return lambda text: parse_all(element, text)
         return None
-    if isinstance(spec, type) and issubclass(spec, Parsed):
+    if annotation_is_subclass(spec, Parsed):
         return lambda text: parse_one(spec, text=text)
     return None
 
