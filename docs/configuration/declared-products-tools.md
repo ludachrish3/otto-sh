@@ -108,7 +108,7 @@ param; everything else is optional:
 | Param | Meaning |
 |---|---|
 | `artifact` | **Required.** Local file, forward slashes, anchored to the project root |
-| `stage_dir` | Staging directory on the *host*, accepted by **every kind that places a file**. Must be an **absolute** path — a relative one (or a `~`, which no transfer backend expands) would mean a different directory to the transfer that puts the artifact and to the command that names it afterwards, so it is refused at lab load. Leave it empty and otto resolves it: the host's `default_dest_dir` when the host record declares one, otherwise the login user's home, read from the host once per host object. A missing directory is created (`mkdir -p`) before the artifact is transferred; only a creation that fails (no permission, a file in the way) fails staging, with the host's reason. The artifact lands at `<stage_dir>/<artifact basename>`; a `shell` product's STAYS there (it is the product), while the transient kinds (`kmod`, `docker_image`, the kernel-module dev tools) delete their copy once it is consumed. Two entries on ONE host — products and dev tools together — that would stage the same basename into the same directory are refused at lab load, naming both. An `embedded` entry has no `stage_dir`: the load is the transfer, so there is no directory to name |
+| `stage_dir` | Staging directory on the *host*, accepted by **every kind that places a file**. Must be an **absolute** path — a relative one (or a `~`, which no transfer backend expands) would mean a different directory to the transfer that puts the artifact and to the command that names it afterwards, so it is refused at lab load. Leave it empty and otto resolves it: the host's `default_dest_dir` when the host record declares one, otherwise the login user's home, read from the host once per host object. A missing directory is created (`mkdir -p`) before the artifact is transferred; only a creation that fails (no permission, a file in the way) fails staging, with the host's reason. The artifact lands at `<stage_dir>/<artifact basename>`; a `shell` product's stays there after `install` (it is the product), while the transient kinds (`kmod`, `docker_image`, the kernel-module dev tools) delete their copy once it is consumed. otto's own `uninstall` step never deletes the staged file of any kind (a `shell` product's `uninstall` is your command and may); `cleanup` removes whatever is left, and then a declared `stage_dir` that is empty ({ref}`the staged-file lifecycle <staged-file-lifecycle>`). Two entries on ONE host — products and dev tools together — that would stage the same basename into the same directory are refused at lab load, naming both. An `embedded` entry has no `stage_dir`: the load is the transfer, so there is no directory to name |
 | `install` / `uninstall` / `check` | optional command strings run on the host |
 | `cov_dir` | host directory the product writes its coverage counters under (its `GCOV_PREFIX`); default `/tmp/<name>`. It must be an absolute, normalized path of at least two components (`/tmp/x`, never `/`, `/tmp`, a `..`, a `//` or a trailing slash), and unique and un-nested per host: two products on one host whose `cov_dir`s are equal or one inside the other are refused at lab load, naming both. The empty string is refused too |
 | `debug_log_globs` | host paths or globs of the product's own debug logs, hauled into `logs/<host_id>/<product>/debug/` ({ref}`the run tree <run-tree>`) |
@@ -176,6 +176,31 @@ embedded product loses its counts when it is unloaded
 ({ref}`coverage-embedded-reset`).
 A process that is still running keeps its counts through a clear
 ({ref}`zeroing a running process <coverage-clean-running-process>`).
+
+(staged-file-lifecycle)=
+
+**Uninstall leaves the staged file; cleanup removes it.** otto's own
+`uninstall` step only stops, exits or unloads, so it never removes the file otto
+staged. A `shell` product's `uninstall` is your command and may remove it, as the
+examples' `rm -f` does. `cleanup` removes it either way, after the dev tools are
+uninstalled, by its declared path
+(`<stage_dir>/<artifact basename>`), then tries one `rmdir` on each `stage_dir`
+an entry declared:
+
+| Kind | Staged file after `install` | `uninstall` | `cleanup` |
+|---|---|---|---|
+| `shell` product or dev tool, and a provider's product built on the `shell` class | stays: it is the product | runs your `uninstall` command | removes the file |
+| `kmod` product, `kmod` and `kmodcov` dev tools | deleted once the module is loaded | `rmmod` | removes a `.ko` a killed load left, or one `otto host stage` put with no install after it |
+| `docker_image`, tarball form | deleted once `docker load` has run | `docker rm -f -v` of the container, nothing else | removes a tarball a failed `docker load` left |
+| `docker_image`, reference form; `embedded` | nothing is staged | | nothing |
+
+A `class =` entry whose class replaces `stage` is not covered: its own code
+decides where the file goes. A path that is absent is success, and a file that
+exists and cannot be removed fails the cleanup, naming it. `is-clean` is false
+while such a file remains, so `ensure("clean")` runs cleanup for it. It asks
+about files only: an empty `stage_dir` does not make a host unclean. What the
+removal leaves, and the one cost of naming a file by its declaration, is in
+{ref}`what cleanup leaves behind <cleanup-leaves>`.
 
 Without `install`/`uninstall` those steps are no-op successes (staging
 placed the artifact). Without `check`, `is_installed` answers False — otto

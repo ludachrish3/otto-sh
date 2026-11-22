@@ -336,7 +336,8 @@ otto --lab example_lab test --no-cov --no-random TestMonitoring
 otto --lab example_lab run cleanup
 ```
 
-This removes the tools from the host, and their coverage counters with them
+This removes the tools from the host, the files otto staged for them, and their
+coverage counters
 ({ref}`the coverage lifecycle <cov-dir-lifecycle>`): collect coverage before
 you clean up. `cleanup` acts
 on the whole lab, not only this project: it also resets every impairment and

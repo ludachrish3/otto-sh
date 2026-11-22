@@ -588,7 +588,7 @@ def _wire_status(monkeypatch, overall, projects=None, report=None, scoping=None)
 
 
 _SECTIONS = (
-    "products, coverage data, dev tools & staging",
+    "products, coverage data, dev tools, staged files & staging",
     "toolchain tools",
     "impairments",
     "tunnels",
@@ -702,7 +702,7 @@ async def test_status_full_prints_a_row_per_thing_and_heads_each_section_once(
     assert "clean" in _row_line(out, "acme")
     assert "dirty" in _row_line(out, "widgets")
     assert (
-        out.count("products, coverage data, dev tools & staging") == 1
+        out.count("products, coverage data, dev tools, staged files & staging") == 1
     )  # heading on the row the kind changes
     assert out.count("tunnels") == 1
     assert "lab is dirty" in out  # the aggregate, which no exit code carries

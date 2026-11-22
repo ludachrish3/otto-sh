@@ -90,6 +90,7 @@ _HOST_VERBS = (
     "install_dev_tools",
     "uninstall_dev_tools",
     "remove_coverage_dirs",
+    "remove_staged_files",
 )
 
 
@@ -116,6 +117,14 @@ class _FakeHost:
         """The coverage question: True (clean) unless scripted; recorded like a verb."""
         self.calls.append(("coverage_dirs_clean", {"owner": owner}))
         outcome = self._scripted.get("coverage_dirs_clean", True)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    async def staged_files_absent(self, owner=None):
+        """The staged-file question: True (gone) unless scripted; recorded like a verb."""
+        self.calls.append(("staged_files_absent", {"owner": owner}))
+        outcome = self._scripted.get("staged_files_absent", True)
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome
@@ -375,6 +384,7 @@ async def test_cleanup_uninstalls_then_removes_owner_scoped_dev_tools():
         ("uninstall", {"get_product_logs": True, "get_debug_logs": False, "owner": "acme"}),
         ("remove_coverage_dirs", {"owner": "acme"}),
         ("uninstall_dev_tools", {"owner": "acme"}),
+        ("remove_staged_files", {"owner": "acme"}),
     ]
     assert mine.calls == []
     assert theirs.calls == []
@@ -394,6 +404,7 @@ async def test_cleanup_forwards_get_product_logs_to_the_uninstall_half():
         ("uninstall", {"get_product_logs": False, "get_debug_logs": False, "owner": "acme"}),
         ("remove_coverage_dirs", {"owner": "acme"}),
         ("uninstall_dev_tools", {"owner": "acme"}),
+        ("remove_staged_files", {"owner": "acme"}),
     ]
 
 
@@ -415,7 +426,7 @@ async def test_cleanup_still_removes_dev_tools_after_a_failed_uninstall():
     result = await _actions(ctx).cleanup(CleanupOptions())
     assert not result.is_ok
     assert "busy" in result.msg  # the FIRST failure is what is reported
-    assert hosts[0].calls[-1] == ("uninstall_dev_tools", {"owner": "acme"})
+    assert ("uninstall_dev_tools", {"owner": "acme"}) in hosts[0].calls
 
 
 @pytest.fixture
@@ -454,6 +465,7 @@ async def test_cleanup_removes_the_project_s_docker_staging_on_every_host_last(s
             "uninstall",
             "remove_coverage_dirs",
             "uninstall_dev_tools",
+            "remove_staged_files",
             "remove_project_staging",
         ]
 
@@ -667,6 +679,7 @@ async def test_cleanup_hands_a_project_override_an_instance_of_its_own_class():
         ("uninstall", {"get_product_logs": False, "get_debug_logs": False, "owner": "acme"}),
         ("remove_coverage_dirs", {"owner": "acme"}),
         ("uninstall_dev_tools", {"owner": "acme"}),
+        ("remove_staged_files", {"owner": "acme"}),
     ]
 
 
@@ -1319,7 +1332,68 @@ async def test_cleanup_sweeps_after_uninstall_and_before_dev_tools():
     ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
     await _actions(ctx).cleanup(CleanupOptions())
     verbs = [verb for verb, _ in hosts[0].calls]
-    assert verbs == ["uninstall", "remove_coverage_dirs", "uninstall_dev_tools"]
+    assert verbs == [
+        "uninstall",
+        "remove_coverage_dirs",
+        "uninstall_dev_tools",
+        "remove_staged_files",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_staged_files_owner_scoped_after_the_dev_tools():
+    ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
+    await _actions(ctx).cleanup(CleanupOptions())
+    assert ("remove_staged_files", {"owner": "acme"}) in hosts[0].calls
+
+
+@pytest.mark.asyncio
+async def test_cleanup_reports_a_failed_staged_removal_and_still_runs_the_staging_step(
+    staging_removals,
+):
+    ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
+    failed = Result(status=Status.Error, msg="h0: cleanup left staged files: /x/a.bin: busy")
+    hosts[0].script("remove_staged_files", failed)
+    result = await _actions(ctx).cleanup(CleanupOptions())
+    assert result.status is Status.Error
+    assert "cleanup left staged files: /x/a.bin: busy" in result.msg
+    assert staging_removals.seen == [("h0", "acme")]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_passes_over_a_stopped_container_s_staged_files(caplog):
+    ctx, stopped, _, _ = _stopped_container_ctx()
+    with caplog.at_level(logging.INFO):
+        assert (await _actions(ctx).cleanup(CleanupOptions())).is_ok
+    assert stopped.calls == []
+    assert any("staged files to remove" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_is_clean_is_false_while_a_staged_file_remains():
+    ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
+    hosts[0].script("staged_files_absent", False)
+    assert await _actions(ctx).is_clean() is False
+    assert ("staged_files_absent", {"owner": "acme"}) in hosts[0].calls
+
+
+@pytest.mark.asyncio
+async def test_is_clean_does_not_ask_a_stopped_container_about_staged_files():
+    ctx, stopped, _, _ = _stopped_container_ctx()
+    assert await _actions(ctx).is_clean() is True
+    assert stopped.calls == []
+
+
+@pytest.mark.asyncio
+async def test_is_clean_refuses_under_a_dry_run_on_the_staged_question():
+    from otto.result import CommandNotRunError
+
+    ctx, hosts = _fake_ctx(n=1, products=[_CovItem("app", "acme")])
+    hosts[0].script(
+        "staged_files_absent", CommandNotRunError("h0.staged_files_absent()", host="h0")
+    )
+    with pytest.raises(CommandNotRunError):
+        await _actions(ctx).is_clean()
 
 
 @pytest.mark.asyncio

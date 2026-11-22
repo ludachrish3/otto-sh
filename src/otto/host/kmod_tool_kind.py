@@ -27,7 +27,7 @@ library, and how it is loaded on demand, is the product kind's side
 
 import shlex
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import override
@@ -45,6 +45,7 @@ from .product import (
     put_line,
     resolve_stage_dir,
     stage_dir_key,
+    staged_file,
     sudo_line,
 )
 from .shell_kind import refuse_unknown_params, stage_dir_param, str_param
@@ -89,15 +90,16 @@ def load_lines(artifact: Path, where: str, params: str, *, elevated: bool) -> li
     directory first (:func:`~otto.host.product.ensure_stage_dir`).
     *elevated* is whether the ``insmod`` runs under ``sudo`` (:func:`elevates`).
     """
-    from .shell_quote import path_operand  # function-local: off the host import path
+    from .shell_quote import path_operand, rm_f_command  # function-local: off the host import path
 
-    staged = path_operand(PurePosixPath(where) / artifact.name)
+    staged_at = staged_file(where, artifact)
+    staged = path_operand(staged_at)
     extra = f" {params.strip()}" if params.strip() else ""
     return [
         mkdir_line(directory=where),
         put_line(local=artifact, remote_dir=where),
         _elevate(f"insmod {staged}{extra}", elevated),
-        f"rm -f {staged}",
+        rm_f_command(staged_at),
     ]
 
 

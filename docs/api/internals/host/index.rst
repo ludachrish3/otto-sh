@@ -39,6 +39,7 @@ host internals
    address
    shell_quote
    cov_sweep
+   staged_files
    toolchain
    userland
    interface

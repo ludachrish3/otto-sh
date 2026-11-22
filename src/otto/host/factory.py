@@ -23,6 +23,7 @@ from .product import (
     apply_declared_products,
     apply_product_providers,
     cov_dir_of,
+    places_staged_file,
     stamp_cov_dir,
     validate_cov_dir,
 )
@@ -421,12 +422,9 @@ def check_stage_collisions(host: "RemoteHost | Any") -> None:
         (t, "dev tool") for t in getattr(host, "dev_tools", [])
     ]
     for item, seam in staged:
-        if not getattr(item, "stages_artifact", False):
+        if not places_staged_file(item):
             continue
-        artifact = getattr(item, "artifact", None)
-        if artifact is None or not hasattr(item, "stage_key"):
-            continue
-        key = (item.stage_key(host=host), Path(artifact).name)
+        key = (item.stage_key(host=host), Path(item.artifact).name)
         first = seen.get(key)
         if first is not None:
             raise ValueError(

@@ -19,8 +19,10 @@ lab_patterns = ["example_lab"]
 
 # doc: begin products
 # Both tools are staged into /tmp/quickstart on dut. Each writes its coverage
-# counters under its own cov_dir, /tmp/<name> by default. uninstall removes
-# only the tool and leaves cov_dir; otto run cleanup removes it.
+# counters under its own cov_dir, /tmp/<name> by default. A tool with something
+# to stop stops it in uninstall; these are only files, so uninstall removes the
+# file and leaves cov_dir. otto run cleanup removes the staged file either way,
+# and cov_dir.
 [[products]]
 name = "wordcount"
 kind = "shell"

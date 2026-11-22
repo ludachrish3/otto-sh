@@ -39,7 +39,11 @@ match = { os_type = "unix" }
 `match` picks the hosts; `install`/`uninstall`/`check` run on each. Leave a
 string out and otto assumes the least: no `install` means staging was the
 install, and no `check` means otto assumes the product is not installed, so
-every `run install` copies the artifact again. Every key is in
+every `run install` copies the artifact again. A product with something to
+stop stops it in `uninstall`. otto's own `uninstall` step does not remove the
+staged file, though your `uninstall` command may: `otto run cleanup` removes it
+either way
+({ref}`the staged-file lifecycle <staged-file-lifecycle>`). Every key is in
 {doc}`../configuration/declared-products-tools`.
 
 Declaring a product makes the `[project]` table required — the project has to say
@@ -138,7 +142,7 @@ against the lab. Each walks every configured project in dependency order:
 | ------- | ------------ |
 | `otto run install` | Installs every project's products, dependencies first, stopping at the first failure. |
 | `otto run uninstall` | Takes the products off, dependents first, best-effort, hauling logs off first. |
-| `otto run cleanup` | Uninstall, plus each project's dev tools, each host's shared toolchain tools, and the lab's own leftovers (network impairments, otto's tunnels). |
+| `otto run cleanup` | Uninstall, plus each project's dev tools, the files staged for them, each host's shared toolchain tools, and the lab's own leftovers (network impairments, otto's tunnels). |
 | `otto run get-logs` | Gathers every project's product logs, then sweeps each host's debug logs once. |
 | `otto run install-tools` | Installs each project's dev tools (and, when asked, each host's shared toolchain tools). |
 | `otto run uninstall-tools` | Removes each project's dev tools, dependents first, best-effort (and, when asked, each host's shared toolchain tools); products stay. |

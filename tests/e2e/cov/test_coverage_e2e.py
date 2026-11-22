@@ -42,6 +42,8 @@ import pytest
 from otto import _webassets, layout
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore, FileRecord
+from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import PROJECT1, output_dirs, run_otto
 
 PRODUCT_DIR = PROJECT1 / "product"
@@ -927,6 +929,13 @@ class TestCleanupRemovesCoverage:
     prefix: a counter in a subdirectory, and an empty subdirectory. The
     ``cov_dir`` itself sits under a root-owned parent the session user cannot
     write, so cleanup may keep it, empty; that is clean too (spec ruling I1).
+
+    ``is-clean`` also asks whether the staged product file
+    (``/opt/coverage_product/product``, declared ``stage_dir``) is gone, but
+    here the answer comes from the suite's own teardown, which ``rm -rf``s
+    ``/opt/coverage_product`` before this class runs: the path is already
+    absent, so cleanup's removal of a staged file is not exercised by this test
+    (``TestCleanupRemovesTheStagedFile`` is).
     """
 
     def test_cleanup_removes_every_cov_dir_and_the_host_is_clean(self, coverage_run, tmp_path):
@@ -963,3 +972,100 @@ class TestCleanupRemovesCoverage:
             clean = otto(["host", host, "is-clean"])
             assert clean.returncode == 0, f"{host}: {said(clean)}"
             assert "True" in clean.stdout, f"{host}: {said(clean)}"
+
+
+# ---------------------------------------------------------------------------
+# Cleanup owns the files otto staged (#837)
+# ---------------------------------------------------------------------------
+
+# A product that is only a staged file: no `uninstall`, so nothing but cleanup
+# can remove it. The stage directory sits under /tmp, whose parent the session
+# user may write, so the empty directory can go too (a directory under a
+# root-owned parent such as /opt is kept, and that is not a failure).
+STAGED_PARENT = "/tmp/otto-staged-837"
+STAGED_DIR = f"{STAGED_PARENT}/stage"
+STAGED_FILE = f"{STAGED_DIR}/staged-837.txt"
+STAGED_HOST = "test1"
+
+_LAB_DATA = lab_data_dir() / "tech1"
+
+_STAGED_SETTINGS = f"""\
+[project]
+lab_patterns = [".*"]
+
+[[lab.sources]]
+backend = "json"
+paths = ["{_LAB_DATA}"]
+
+[[products]]
+name = "staged-837"
+kind = "shell"
+artifact = "staged-837.txt"
+stage_dir = "{STAGED_DIR}"
+match = {{ id = "{STAGED_HOST}" }}
+"""
+
+
+@pytest.mark.integration
+@pytest.mark.xdist_group("coverage_e2e")
+class TestCleanupRemovesTheStagedFile:
+    """``uninstall`` leaves a staged shell artifact; ``cleanup`` removes it and its empty directory.
+
+    The product declares no ``uninstall``, so nothing the user wrote can delete
+    the file: it is present after ``uninstall`` and gone after ``cleanup``, with
+    the declared stage directory it was alone in. ``staged-files-absent`` is the
+    host's own question, and agrees at each point. Only ``test1`` is touched.
+    """
+
+    def test_uninstall_leaves_the_file_and_cleanup_removes_it_and_the_directory(self, tmp_path):
+        project = make_project(
+            tmp_path / "staged837",
+            name="staged837",
+            version="0.1.0",
+            extra=_STAGED_SETTINGS,
+            files={"staged-837.txt": "staged by otto\n"},
+            known_hosts=tmp_path / "known_hosts",
+        )
+        xdir = tmp_path / "xdir"
+        xdir.mkdir()
+
+        def otto(argv: list[str], timeout: int = 300) -> subprocess.CompletedProcess[str]:
+            return run_otto(argv, xdir=xdir, roots=project, lab=_LAB, timeout=timeout)
+
+        def said(result: subprocess.CompletedProcess[str]) -> str:
+            return f"exited {result.returncode}\n{result.stdout}\n{result.stderr}"
+
+        def on_host(command: str) -> subprocess.CompletedProcess[str]:
+            return otto(["host", STAGED_HOST, "exec", command])
+
+        try:
+            assert on_host(f"rm -rf {STAGED_PARENT}").returncode == 0
+
+            staged = otto(["host", STAGED_HOST, "stage"])
+            assert staged.returncode == 0, said(staged)
+            uninstalled = otto(["host", STAGED_HOST, "uninstall"])
+            assert uninstalled.returncode == 0, said(uninstalled)
+
+            present = on_host(f"test -f {STAGED_FILE}")
+            assert present.returncode == 0, f"uninstall removed the staged file: {said(present)}"
+            dirty = otto(["host", STAGED_HOST, "staged-files-absent"])
+            assert dirty.returncode == 1, said(dirty)
+            unclean = otto(["host", STAGED_HOST, "is-clean"])
+            assert unclean.returncode == 1, said(unclean)
+
+            cleaned = otto(["host", STAGED_HOST, "cleanup"], timeout=600)
+            assert cleaned.returncode == 0, said(cleaned)
+
+            gone = on_host(f"test ! -e {STAGED_FILE} && test ! -e {STAGED_DIR}")
+            assert gone.returncode == 0, f"cleanup left the file or its directory: {said(gone)}"
+            parent = on_host(f"test -d {STAGED_PARENT}")
+            assert parent.returncode == 0, (
+                f"cleanup removed a parent it did not create: {said(parent)}"
+            )
+            absent = otto(["host", STAGED_HOST, "staged-files-absent"])
+            assert absent.returncode == 0, said(absent)
+            assert "True" in absent.stdout, said(absent)
+            clean = otto(["host", STAGED_HOST, "is-clean"])
+            assert clean.returncode == 0, said(clean)
+        finally:
+            on_host(f"rm -rf {STAGED_PARENT}")

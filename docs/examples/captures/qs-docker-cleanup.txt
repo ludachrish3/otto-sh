@@ -38,6 +38,8 @@ INFO     @docker-host > | find: '/tmp/quickstart-docker/banner': No such file or
 INFO     @docker-host > | otto-cov-end 0 1 1
 INFO     docker-host.quickstart.tools: the container is not running, so it has no dev tools to
          remove
+INFO     docker-host.quickstart.tools: the container is not running, so it has no staged files to
+         remove
 INFO     @docker-host   | for d in /tmp/otto-docker-vagrant/otto-quickstart-docker-docs
          /tmp/otto-docker-vagrant/example_lab-quickstart-docs; do [ -e "$d" ] && echo "$d"; done;
          true

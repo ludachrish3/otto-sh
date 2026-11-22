@@ -1557,6 +1557,7 @@ member	otto.host:BaseHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:fals
 member	otto.host:BaseHost.reboot_options	field
 member	otto.host:BaseHost.rebuild_connections	method	sync	-
 member	otto.host:BaseHost.remove_coverage_dirs	method	coroutine	KO:owner:N
+member	otto.host:BaseHost.remove_staged_files	method	coroutine	KO:owner:N
 member	otto.host:BaseHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:BaseHost.resources	field
 member	otto.host:BaseHost.run	method	coroutine	PK:cmds:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:sudo:B:false KO:user:N
@@ -1568,6 +1569,7 @@ member	otto.host:BaseHost.shadowed_products	field
 member	otto.host:BaseHost.shutdown	method	coroutine	-
 member	otto.host:BaseHost.source_lab	field
 member	otto.host:BaseHost.stage	method	coroutine	KO:owner:N
+member	otto.host:BaseHost.staged_files_absent	method	coroutine	KO:owner:N
 member	otto.host:BaseHost.switch_user	method	coroutine	KO:user:S:"" KO:password:N
 member	otto.host:BaseHost.terminal_mapping	property:g--
 member	otto.host:BaseHost.toolchain	field
@@ -1838,6 +1840,7 @@ member	otto.host:DockerContainerHost.reboot	method	coroutine	KO:hard:B:false KO:
 member	otto.host:DockerContainerHost.reboot_options	field
 member	otto.host:DockerContainerHost.rebuild_connections	method	sync	-
 member	otto.host:DockerContainerHost.remove_coverage_dirs	method	coroutine	KO:owner:N
+member	otto.host:DockerContainerHost.remove_staged_files	method	coroutine	KO:owner:N
 member	otto.host:DockerContainerHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:DockerContainerHost.resources	field
 member	otto.host:DockerContainerHost.rm	method	coroutine	PK:path:- KO:recursive:B:false KO:force:B:false
@@ -1851,6 +1854,7 @@ member	otto.host:DockerContainerHost.shadowed_products	field
 member	otto.host:DockerContainerHost.shutdown	method	coroutine	-
 member	otto.host:DockerContainerHost.source_lab	field
 member	otto.host:DockerContainerHost.stage	method	coroutine	KO:owner:N
+member	otto.host:DockerContainerHost.staged_files_absent	method	coroutine	KO:owner:N
 member	otto.host:DockerContainerHost.switch_user	method	coroutine	KO:user:S:"" KO:password:N
 member	otto.host:DockerContainerHost.terminal_mapping	property:g--
 member	otto.host:DockerContainerHost.toolchain	field
@@ -1971,6 +1975,7 @@ member	otto.host:EmbeddedHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:
 member	otto.host:EmbeddedHost.reboot_options	field
 member	otto.host:EmbeddedHost.rebuild_connections	method	sync	-
 member	otto.host:EmbeddedHost.remove_coverage_dirs	method	coroutine	KO:owner:N
+member	otto.host:EmbeddedHost.remove_staged_files	method	coroutine	KO:owner:N
 member	otto.host:EmbeddedHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:EmbeddedHost.resources	field
 member	otto.host:EmbeddedHost.rm	method	coroutine	PK:path:- KO:recursive:B:false KO:force:B:false
@@ -1988,6 +1993,7 @@ member	otto.host:EmbeddedHost.slot	field
 member	otto.host:EmbeddedHost.snmp	field
 member	otto.host:EmbeddedHost.source_lab	field
 member	otto.host:EmbeddedHost.stage	method	coroutine	KO:owner:N
+member	otto.host:EmbeddedHost.staged_files_absent	method	coroutine	KO:owner:N
 member	otto.host:EmbeddedHost.sw_version	field
 member	otto.host:EmbeddedHost.switch_user	method	coroutine	KO:user:S:"" KO:password:N
 member	otto.host:EmbeddedHost.telnet_options	field
@@ -2146,6 +2152,7 @@ member	otto.host:Host.products	field
 member	otto.host:Host.put	method	coroutine	PK:src_files:- PK:dest_dir:- KO:mode:N KO:user:N KO:show_progress:B:true KO:recursive:B:false KO:concurrent:B:true
 member	otto.host:Host.reboot	method	coroutine	KO:hard:B:false KO:wait:B:false KO:timeout:N KO:down_timeout:N KO:poll_interval:N
 member	otto.host:Host.remove_coverage_dirs	method	coroutine	KO:owner:N
+member	otto.host:Host.remove_staged_files	method	coroutine	KO:owner:N
 member	otto.host:Host.remove_toolchain_tools	method	coroutine	-
 member	otto.host:Host.resources	field
 member	otto.host:Host.run	method	coroutine	PK:cmds:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:sudo:B:false KO:user:N
@@ -2157,6 +2164,7 @@ member	otto.host:Host.shadowed_products	field
 member	otto.host:Host.shutdown	method	coroutine	-
 member	otto.host:Host.source_lab	field
 member	otto.host:Host.stage	method	coroutine	KO:owner:N
+member	otto.host:Host.staged_files_absent	method	coroutine	KO:owner:N
 member	otto.host:Host.switch_user	method	coroutine	KO:user:S:"" KO:password:N
 member	otto.host:Host.toolchain	field
 member	otto.host:Host.toolchain_tools_absent	method	coroutine	-
@@ -2164,7 +2172,7 @@ member	otto.host:Host.uninstall	method	coroutine	KO:get_product_logs:B:true KO:g
 member	otto.host:Host.uninstall_dev_tools	method	coroutine	KO:owner:N
 member	otto.host:Host.wait_until_down	method	coroutine	PK:timeout:- KO:interval:F:0x1.0000000000000p+1
 member	otto.host:Host.wait_until_up	method	coroutine	PK:timeout:- KO:interval:F:0x1.0000000000000p+1
-requires	otto.host:Host	__aenter__ __aexit__ app_shell as_user cleanup close coverage_dirs_clean current_user debug_log_globs dev_tools element exec expect get get_debug_logs get_logs get_product_logs has_bash id install install_dev_tools install_toolchain_tools install_tools inventory_ref is_clean is_installed is_reachable is_uninstalled lab_info log log_dest login logout name open_session power power_control products put reboot remove_coverage_dirs remove_toolchain_tools resources run run_login run_logout send shadowed_dev_tools shadowed_products shutdown source_lab stage switch_user toolchain toolchain_tools_absent uninstall uninstall_dev_tools wait_until_down wait_until_up
+requires	otto.host:Host	__aenter__ __aexit__ app_shell as_user cleanup close coverage_dirs_clean current_user debug_log_globs dev_tools element exec expect get get_debug_logs get_logs get_product_logs has_bash id install install_dev_tools install_toolchain_tools install_tools inventory_ref is_clean is_installed is_reachable is_uninstalled lab_info log log_dest login logout name open_session power power_control products put reboot remove_coverage_dirs remove_staged_files remove_toolchain_tools resources run run_login run_logout send shadowed_dev_tools shadowed_products shutdown source_lab stage staged_files_absent switch_user toolchain toolchain_tools_absent uninstall uninstall_dev_tools wait_until_down wait_until_up
 name	otto.host:HostBuild	class
 mro	otto.host:HostBuild	-
 call	otto.host:HostBuild	sync	@manifest:construct=false
@@ -2401,6 +2409,7 @@ member	otto.host:LocalHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:fal
 member	otto.host:LocalHost.reboot_options	field
 member	otto.host:LocalHost.rebuild_connections	method	sync	-
 member	otto.host:LocalHost.remove_coverage_dirs	method	coroutine	KO:owner:N
+member	otto.host:LocalHost.remove_staged_files	method	coroutine	KO:owner:N
 member	otto.host:LocalHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:LocalHost.resources	field
 member	otto.host:LocalHost.rm	method	coroutine	PK:path:- KO:recursive:B:false KO:force:B:false
@@ -2413,6 +2422,7 @@ member	otto.host:LocalHost.shadowed_products	field
 member	otto.host:LocalHost.shutdown	method	coroutine	-
 member	otto.host:LocalHost.source_lab	field
 member	otto.host:LocalHost.stage	method	coroutine	KO:owner:N
+member	otto.host:LocalHost.staged_files_absent	method	coroutine	KO:owner:N
 member	otto.host:LocalHost.switch_user	method	coroutine	KO:user:S:"" KO:password:N
 member	otto.host:LocalHost.terminal_mapping	property:g--
 member	otto.host:LocalHost.toolchain	field
@@ -2705,6 +2715,7 @@ member	otto.host:RemoteHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:fa
 member	otto.host:RemoteHost.reboot_options	field
 member	otto.host:RemoteHost.rebuild_connections	method	sync	-
 member	otto.host:RemoteHost.remove_coverage_dirs	method	coroutine	KO:owner:N
+member	otto.host:RemoteHost.remove_staged_files	method	coroutine	KO:owner:N
 member	otto.host:RemoteHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:RemoteHost.resources	field
 member	otto.host:RemoteHost.run	method	coroutine	PK:cmds:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:sudo:B:false KO:user:N
@@ -2721,6 +2732,7 @@ member	otto.host:RemoteHost.slot	field
 member	otto.host:RemoteHost.snmp	field
 member	otto.host:RemoteHost.source_lab	field
 member	otto.host:RemoteHost.stage	method	coroutine	KO:owner:N
+member	otto.host:RemoteHost.staged_files_absent	method	coroutine	KO:owner:N
 member	otto.host:RemoteHost.sw_version	field
 member	otto.host:RemoteHost.switch_user	method	coroutine	KO:user:S:"" KO:password:N
 member	otto.host:RemoteHost.telnet_options	field
@@ -3073,6 +3085,7 @@ member	otto.host:UnixHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:fals
 member	otto.host:UnixHost.reboot_options	field
 member	otto.host:UnixHost.rebuild_connections	method	sync	-
 member	otto.host:UnixHost.remove_coverage_dirs	method	coroutine	KO:owner:N
+member	otto.host:UnixHost.remove_staged_files	method	coroutine	KO:owner:N
 member	otto.host:UnixHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:UnixHost.resources	field
 member	otto.host:UnixHost.rm	method	coroutine	PK:path:- KO:recursive:B:false KO:force:B:false
@@ -3094,6 +3107,7 @@ member	otto.host:UnixHost.snmp	field
 member	otto.host:UnixHost.source_lab	field
 member	otto.host:UnixHost.ssh_options	field
 member	otto.host:UnixHost.stage	method	coroutine	KO:owner:N
+member	otto.host:UnixHost.staged_files_absent	method	coroutine	KO:owner:N
 member	otto.host:UnixHost.sw_version	field
 member	otto.host:UnixHost.switch_user	method	coroutine	KO:user:S:"" KO:password:N
 member	otto.host:UnixHost.telnet_options	field
@@ -3370,6 +3384,7 @@ member	otto.host:ZephyrHost.reboot	method	coroutine	KO:hard:B:false KO:wait:B:fa
 member	otto.host:ZephyrHost.reboot_options	field
 member	otto.host:ZephyrHost.rebuild_connections	method	sync	-
 member	otto.host:ZephyrHost.remove_coverage_dirs	method	coroutine	KO:owner:N
+member	otto.host:ZephyrHost.remove_staged_files	method	coroutine	KO:owner:N
 member	otto.host:ZephyrHost.remove_toolchain_tools	method	coroutine	-
 member	otto.host:ZephyrHost.resources	field
 member	otto.host:ZephyrHost.rm	method	coroutine	PK:path:- KO:recursive:B:false KO:force:B:false
@@ -3387,6 +3402,7 @@ member	otto.host:ZephyrHost.slot	field
 member	otto.host:ZephyrHost.snmp	field
 member	otto.host:ZephyrHost.source_lab	field
 member	otto.host:ZephyrHost.stage	method	coroutine	KO:owner:N
+member	otto.host:ZephyrHost.staged_files_absent	method	coroutine	KO:owner:N
 member	otto.host:ZephyrHost.sw_version	field
 member	otto.host:ZephyrHost.switch_user	method	coroutine	KO:user:S:"" KO:password:N
 member	otto.host:ZephyrHost.telnet_options	field

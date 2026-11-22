@@ -93,8 +93,9 @@ project's products on, switch that project off for the run with `-E`
 takes every product on it off ({doc}`../host/index`).
 
 `cleanup` is strictly more than `uninstall`: each project also gives up its own dev
-tools and its products' coverage counters
-({ref}`the coverage lifecycle <cov-dir-lifecycle>`), the host-global toolchain tools come off, and the lab's own leftovers go
+tools, its products' coverage counters
+({ref}`the coverage lifecycle <cov-dir-lifecycle>`) and the files otto staged for
+them ({ref}`the staged-file lifecycle <staged-file-lifecycle>`), the host-global toolchain tools come off, and the lab's own leftovers go
 with them — netem impairments are reset and every otto tunnel is reaped. See
 [What `cleanup` takes off the lab](#what-cleanup-takes-off-the-lab) for what
 those last two do and do not touch, and `otto --lab my_lab -n run cleanup` to
@@ -483,7 +484,7 @@ is unset; see
 {func}`~otto.docker.compose.get_user_compose_project`), so a deployment made
 under another suffix, or under an explicit compose project name, is not
 found. `--full` and `ensure_clean` ask the same question: a tree `cleanup`
-would remove makes its project's `products, coverage data, dev tools & staging` row dirty,
+would remove makes its project's `products, coverage data, dev tools, staged files & staging` row dirty,
 and a kept stack's tree does not.
 
 Do not run `cleanup` while the same stack is being deployed or built: the same
@@ -499,12 +500,36 @@ label. A distinct suffix per session keeps sessions apart.
 
 ### What `cleanup` leaves behind
 
+`cleanup` removes the file each product and dev tool was staged as, by its
+declared path: `<stage_dir>/<artifact basename>`
+({ref}`the staged-file lifecycle <staged-file-lifecycle>`). otto keeps no record
+of what it staged, so the path comes from the declaration alone. On a host where
+the product was never installed, a file of the same name in the same directory
+is removed too, exactly as an install would have overwritten it. That is most
+likely to matter for the default stage directory, the login home, where other
+files live. The local host, the machine otto runs on, is no exception: an
+entry that declares a `stage_dir` is staged there, and cleanup removes the
+file of that name from that directory, unless that file is the artifact itself
+(the `stage_dir` is the artifact's own directory): the copy onto itself fails,
+so nothing was staged and cleanup leaves the build output alone.
+
 `cleanup`, and the `lab is clean` line of `--full`, cover only the steps
 above. These stay on the hosts:
 
-- whatever a product's own `uninstall` does not remove. A `shell` product
-  with no `uninstall` command keeps its staged file, and the directories
-  staging created stay;
+- a stage directory that still holds something. After the files are gone,
+  cleanup tries one `rmdir` on each `stage_dir` an entry declared, deepest first,
+  and `rmdir` removes only an empty directory. One that is not empty, or whose
+  parent the session cannot write (under `/opt`, say), is kept and logged at
+  INFO, never a failure. A directory one component below `/` (`/tmp`, `/opt`)
+  is never tried, and a sticky directory (`/var/tmp`) is never removed, so a
+  shared system directory survives even when it is empty. A kept or empty
+  directory does not make `is-clean` false: it asks about files only;
+- the default stage directory. An entry that declares no `stage_dir` stages into
+  the host's `default_dest_dir`, or the login user's home, and cleanup never
+  removes either;
+- the parents of a declared stage directory. Staging makes a missing directory
+  with `mkdir -p`; cleanup removes only the directory the entry named;
+- whatever a product's own `install` command placed outside its staged file;
 - docker images. otto removes no product image at all: loaded, pulled, built
   or already there. A tarball names an image without showing that otto placed
   it, and another product may share it. `uninstall` of a `docker_image`
@@ -527,7 +552,7 @@ Take a lab down in this order:
    down, so this comes before it. Steps 1 and 2 come before this one, while
    the products and tools on the stack's containers can still be reached.
 4. `otto --lab my_lab run cleanup` removes the rest: the coverage counters, the
-   toolchain tools, the docker staging, impairments and tunnels.
+   staged files, the toolchain tools, the docker staging, impairments and tunnels.
 
 Without a compose stack, step 4 alone does all of this, since `cleanup` also
 takes the products and dev tools off. Steps 1 and 2 matter only because step 3
@@ -684,13 +709,13 @@ axis — everything [`cleanup` takes off the lab](#what-cleanup-takes-off-the-la
 ```text
 acme     installed
 widgets  uninstalled
-products, coverage data, dev tools & staging  acme     clean
-                                              widgets  dirty
-toolchain tools                               test1    clean
-                                              test2    unknown — the toolchain probe did not answer: …
-impairments                                   core     dirty — a->b
-                                              edge     clean
-tunnels                                       lab      unknown — the scan could not reach test2
+products, coverage data, dev tools, staged files & staging  acme     clean
+                                                            widgets  dirty
+toolchain tools                                             test1    clean
+                                                            test2    unknown — the toolchain probe did not answer: …
+impairments                                                 core     dirty — a->b
+                                                            edge     clean
+tunnels                                                     lab      unknown — the scan could not reach test2
 lab is dirty — otto run cleanup takes it off
 lab is partially installed; otto run install --ensure recovers it
 ```

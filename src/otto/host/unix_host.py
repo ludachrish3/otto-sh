@@ -1419,6 +1419,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ``default_dest_dir`` when it declares one, else the login user's home
         (read once per host object; see :meth:`login_home`).
         """
+        from .product import (
+            resolve_stage_dir,
+            staged_file,
+        )  # local: keeps the product graph off the host import path
+
         resolved = (name or file.stem).replace("-", "_")
         if dest_dir is None:
             # Nobody upstream owns the answer (the CLI verb, a direct call),
@@ -1426,12 +1431,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             # directory has already resolved it and gets it back untouched:
             # applying the rule at both hops is how a fallback answer became
             # `<home>/<home>/x.ko` on a real board.
-            from .product import (
-                resolve_stage_dir,
-            )  # local: keeps the product graph off the host import path
-
             dest_dir = await resolve_stage_dir(Path(), self, who=f"host {self.id}")
-        dest = dest_dir / file.name
+        dest = staged_file(dest_dir, file)
         put_result = await self.put(file, dest_dir, show_progress=show_progress)
         if not put_result.is_ok:
             return Result(status=put_result.status, msg=f"staging {file} failed: {put_result.msg}")

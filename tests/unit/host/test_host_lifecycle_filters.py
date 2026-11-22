@@ -565,6 +565,72 @@ async def test_host_cleanup_sweeps_every_owner_after_uninstall(recording_host, t
 
 
 @pytest.mark.asyncio
+async def test_host_cleanup_removes_staged_files_after_the_tools_and_before_the_toolchain(
+    recording_host, tmp_path
+):
+    """Kills: the step before the tools (their files still there), or after the toolchain."""
+    events = []
+
+    def _step(label):
+        async def _run(owner=None):
+            events.append((label, owner))
+            return Result(status=Status.Success)
+
+        return _run
+
+    recording_host.remove_coverage_dirs = _step("coverage")
+    recording_host.uninstall_dev_tools = _step("tools")
+    recording_host.remove_staged_files = _step("staged")
+    recording_host.remove_toolchain_tools = _step("toolchain")
+    recording_host.products = [_ScriptedProduct("app", events=events)]
+    with active_context(output_dir=tmp_path):
+        assert (await recording_host.cleanup()).is_ok
+    assert events == [
+        "app:uninstall",
+        ("coverage", None),
+        ("tools", None),
+        ("staged", None),
+        ("toolchain", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_host_cleanup_reports_a_failed_staged_removal_and_still_removes_the_toolchain(
+    recording_host, tmp_path
+):
+    removed = []
+
+    async def _staged(owner=None):
+        return Result(status=Status.Error, msg="h1: cleanup left staged files: /x/a.bin: busy")
+
+    async def _toolchain():
+        removed.append("toolchain")
+        return Result(status=Status.Success)
+
+    recording_host.remove_staged_files = _staged
+    recording_host.remove_toolchain_tools = _toolchain
+    with active_context(output_dir=tmp_path):
+        result = await recording_host.cleanup()
+    assert result.msg == "h1: cleanup left staged files: /x/a.bin: busy"
+    assert removed == ["toolchain"]
+
+
+@pytest.mark.asyncio
+async def test_host_is_clean_asks_the_staged_file_question_after_coverage(recording_host):
+    asked = []
+
+    async def _absent(owner=None):
+        asked.append(("staged", owner))
+        return False
+
+    recording_host.staged_files_absent = _absent
+    recording_host.toolchain = Toolchain(tools=[_tool(dest="/d")])
+    assert await recording_host.is_clean() is False
+    assert asked == [("staged", None)]
+    assert recording_host.exec_calls == []  # answered before the toolchain probe
+
+
+@pytest.mark.asyncio
 async def test_host_cleanup_reports_a_failed_sweep_and_still_removes_the_tooling(
     recording_host, tmp_path
 ):

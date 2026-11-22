@@ -501,7 +501,8 @@ def test_the_previewable_names_are_exactly_the_ones_the_planner_walks():
     from otto.instruction_catalog import PREVIEWABLE_INSTRUCTIONS
     from otto.project.plan import _HOST_VERBS
 
-    assert sorted(PREVIEWABLE_INSTRUCTIONS) == sorted(_HOST_VERBS)
+    # ``cleanup`` has no entry: the planner checks each of its steps itself.
+    assert sorted(PREVIEWABLE_INSTRUCTIONS) == sorted([*_HOST_VERBS, "cleanup"])
 
 
 # ── cleanup ──────────────────────────────────────────────────────────────
@@ -815,3 +816,147 @@ def test_only_cleanup_has_a_lab_tail(monkeypatch):
     _wire(monkeypatch, [], ctx)
     for name in ("install", "uninstall", "install-tools", "uninstall-tools"):
         assert plan_lab_tail(name=name, ctx=ctx, kwargs={}) == []
+
+
+# ── staged files: the step, its gap line, and the rendered text (#837) ───────
+
+
+class _Staged(_Planned):
+    """A shell-class entry: stages ``artifact`` into ``stage_dir`` (``Path()`` = not declared)."""
+
+    stages_artifact = True
+
+    def __init__(self, name, owner, artifact, stage_dir):
+        from pathlib import Path
+
+        super().__init__(name, owner, _plan(uninstall=[f"sh uninstall {name}"]))
+        self.artifact, self.stage_dir = Path(artifact), Path(stage_dir)
+
+    def stage_key(self, host):  # pragma: no cover — only its presence marks a staging entry
+        raise AssertionError("a plan never keys a stage directory")
+
+
+def _posix_host_cls(**attrs):
+    from otto.host.file_ops import PosixFileOps
+
+    return type("_PosixHost", (PosixFileOps, _Host), attrs)
+
+
+def test_cleanup_lists_the_staged_files_and_the_declared_dirs_it_would_try(monkeypatch):
+    from pathlib import Path
+
+    host = _posix_host_cls()(
+        "h1",
+        products=[
+            _Staged("app", "r1", "build/app.bin", "/opt/otto/app"),
+            _Staged("theirs", "r2", "build/theirs.bin", "/opt/other"),
+        ],
+        dev_tools=[_Staged("probe", "r1", "build/probe.ko", "")],
+    )
+    host.default_dest_dir = Path("/srv/stage")
+    ctx = _Ctx([host])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction(name="cleanup", ctx=ctx, kwargs={"product_logs": False})
+    assert project.hosts[0].gaps == [
+        (
+            "staged files: rm -f /opt/otto/app/app.bin; rm -f /srv/stage/probe.ko, "
+            'then { for d in /opt/otto/app; do test -k "$d" || rmdir "$d" 2>/dev/null; '
+            "done; true; }"
+        )
+    ]
+
+
+def test_the_staged_files_step_is_built_by_the_runs_own_builders(monkeypatch):
+    from pathlib import Path
+
+    from otto.host.shell_quote import rm_f_command, rmdir_if_empty
+
+    host = _posix_host_cls()("h1", products=[_Staged("app", "r1", "b/app.bin", "/opt/o t")])
+    host.default_dest_dir = Path("/srv/stage")
+    ctx = _Ctx([host])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction(name="cleanup", ctx=ctx, kwargs={"product_logs": False})
+    [line] = project.hosts[0].gaps
+    assert rm_f_command("/opt/o t/app.bin") in line
+    assert rmdir_if_empty("/opt/o t", skip_sticky=True) in line
+
+
+def test_the_staged_files_step_never_tries_a_single_component_directory(monkeypatch):
+    host = _posix_host_cls()(
+        "h1",
+        products=[_Staged("a", "r1", "b/a.bin", "/tmp"), _Staged("b", "r1", "b/b.bin", "/opt")],
+    )
+    ctx = _Ctx([host])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction(name="cleanup", ctx=ctx, kwargs={"product_logs": False})
+    assert project.hosts[0].gaps == ["staged files: rm -f /tmp/a.bin; rm -f /opt/b.bin"]
+
+
+def test_the_staged_files_step_names_the_login_home_it_cannot_read(monkeypatch):
+    async def _home(self):  # pragma: no cover — a plan never asks
+        raise AssertionError("a plan contacted the host")
+
+    host = _posix_host_cls(login_home=_home, cached_login_home=None)(
+        "h1", products=[_Staged("app", "r1", "b/app.bin", "")]
+    )
+    ctx = _Ctx([host])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction(name="cleanup", ctx=ctx, kwargs={"product_logs": False})
+    assert project.hosts[0].gaps == ["staged files: rm -f '<login home>/app.bin'"]
+
+
+def test_cleanup_lists_no_staged_step_when_nothing_is_covered(monkeypatch):
+    ctx = _Ctx([_cleanup_host(), _posix_host_cls()("h2")])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction(name="cleanup", ctx=ctx, kwargs={"product_logs": False})
+    assert [h.gaps for h in project.hosts] == [[], []]
+
+
+def test_a_remove_staged_files_override_is_named_not_previewed(monkeypatch):
+    async def _replacement(self, *a, **k):  # pragma: no cover
+        return Result(status=Status.Success)
+
+    host_cls = type("_OwnStaged", (_posix_host_cls(),), {"remove_staged_files": _replacement})
+    host = host_cls("h1", products=[_Staged("app", "r1", "b/app.bin", "/opt/otto")])
+    ctx = _Ctx([host])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction(name="cleanup", ctx=ctx, kwargs={"product_logs": False})
+    assert project.hosts[0].gaps == [
+        (
+            f"staged files: `{host_cls.__module__}.{host_cls.__qualname__}."
+            "remove_staged_files` replaces the default; its steps are not previewed"
+        )
+    ]
+
+
+def test_a_remove_staged_files_override_is_named_even_when_no_entry_is_covered(monkeypatch):
+    async def _replacement(self, *a, **k):  # pragma: no cover
+        return Result(status=Status.Success)
+
+    host_cls = type("_OwnStaged", (_posix_host_cls(),), {"remove_staged_files": _replacement})
+    ctx = _Ctx([host_cls("h1")])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction(name="cleanup", ctx=ctx, kwargs={"product_logs": False})
+    assert project.hosts[0].gaps == [
+        (
+            f"staged files: `{host_cls.__module__}.{host_cls.__qualname__}."
+            "remove_staged_files` replaces the default; its steps are not previewed"
+        )
+    ]
+
+
+def test_the_staged_files_step_prints_under_not_checked_between_coverage_and_docker_staging():
+    from otto.project.render import render_plan
+
+    gap = (
+        "staged files: rm -f /opt/otto/app.bin, then "
+        '{ for d in /opt/otto; do test -k "$d" || rmdir "$d" 2>/dev/null; done; true; }'
+    )
+    plans = [ProjectPlan("r1", [HostPlan("h1", [], ["coverage data: find x", gap])])]
+    assert render_plan("cleanup", plans).splitlines() == [
+        "r1",
+        "  h1",
+        "  not checked:",
+        "    h1: coverage data: find x",
+        f"    h1: {gap}",
+    ]
