@@ -536,6 +536,24 @@ above. These stay on the hosts:
   product removes only its container ({ref}`docker-image-kind`). Remove an
   image with {doc}`../docker/image/rm` (`docker image rm`), and the untagged
   image an older tarball leaves after a rebuild with `docker image prune`;
+- the docker staging root on the daemon host, `/tmp/otto-docker-<login>`
+  ({ref}`where otto stages files on the parent <docker-staging>`). `cleanup`
+  removes each project's tree under it, and the build inputs staged there, but
+  never the root. Every session that logs in as the same account shares the
+  root, otto creates it with mode 0700 and refuses one with any other mode, so
+  removing it while another session is staging would break that session's
+  host. Remove it on the host, as its owner, when you are done with the
+  account's deployments;
+- a toolchain tool's destination directory (`dest`). `cleanup` removes the
+  tool files otto copied, never the directory: on a remote host otto never
+  creates it, so it is not otto's to remove. A directory that was there before
+  the install is still there, with whatever else it holds. A local host's
+  transfer does create a missing `dest`, and that directory stays too;
+- the parent directories of a containerised product's `cov_dir`. docker, not
+  otto, creates a missing bind-mount source as root when the container
+  starts. `cleanup` removes the emptied `cov_dir` itself
+  ({ref}`the coverage lifecycle <cov-dir-lifecycle>`) and nothing above it.
+  Remove a directory that is left with `rmdir` as root;
 - any file a test or you made on a host.
 
 (teardown-recipe)=
