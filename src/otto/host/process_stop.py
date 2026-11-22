@@ -22,21 +22,80 @@ Where the signal goes is each route's adapter:
 Callers reach :func:`stop_process` through this module (``process_stop.
 stop_process``), never a name imported into their own namespace, so one seam
 replaces it on both routes.
+
+A REMOTE shell otto cannot signal as a group (no terminal to hang up, a server
+that signals one process, a ``docker exec`` whose client went away) is stopped
+by MARK instead: it is started with a token in its environment
+(:func:`marked_shell_command`, or the caller's own ``-e``), every process it
+starts inherits the token, and :func:`reap_marked_command` kills each process
+that carries it.
 """
 
 import asyncio
 import enum
 import logging
 import os
+import shlex
 import signal
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol, TypeVar
 
 from typing_extensions import override
 
+from .command_frame import SESSION_SHELL
 from .host import _EXEC_REAP_TIMEOUT, EXEC_CANCEL_REAP_BOUND
 
 logger = logging.getLogger(__name__)
+
+
+def reap_marked_script(variable: str) -> str:
+    """Return the ``sh`` script that kills every process started with ``variable=$1`` set.
+
+    It reads ``/proc/<pid>/environ``, which holds the environment a process
+    was STARTED with: the marked shell itself, each subshell it forks and
+    each command it runs, however deep, and whatever outlived its parent.
+
+    Every marked process is frozen (``STOP``, two sweeps) before any is
+    killed. A sweep visits ``/proc`` in name order, so it can reach a
+    command before the shell that waits for it; killed first, the command
+    would release that shell to run its next statement before the sweep
+    reached it. A frozen shell runs nothing. The ``KILL`` sweep is then
+    repeated until one finds nothing (ten at most), so a process started
+    mid-sweep is caught by the next. The script's own
+    processes do not carry the token and are never matched. Only what
+    BusyBox ``sh`` and ``grep`` have; where there is no ``/proc`` it matches
+    nothing and ends. It reaches what the user running it may read: another
+    user's process (after ``su`` or ``sudo``) and a process that rewrote its
+    environment area are not matched. Two narrow gaps are accepted: a bash
+    that turned job control on (``set -m``) is handed control when its
+    command is frozen, and may run on if the sweep reaches the command
+    first; and a process forked by one that was itself forked during the
+    two ``STOP`` sweeps is killed without having been frozen.
+    """
+    return (
+        "t=$1; s() { f=; for e in /proc/[0-9]*/environ; do "
+        f'if grep -q "{variable}=$t" "$e" 2>/dev/null; then '
+        'p=${e#/proc/}; kill "$1" "${p%/environ}" 2>/dev/null && f=1; fi; done; }; '
+        "s -STOP; s -STOP; "
+        'n=0; while [ $n -lt 10 ]; do s -KILL; [ -n "$f" ] || break; n=$((n + 1)); done; :'
+    )
+
+
+def reap_marked_command(variable: str, token: str) -> str:
+    """Return the command that runs :func:`reap_marked_script` for *token*."""
+    return f"sh -c {shlex.quote(reap_marked_script(variable))} sh {token}"
+
+
+def marked_shell_command(variable: str, token: str) -> str:
+    """Return the command that starts the user's login shell with ``variable=token`` set.
+
+    For a channel opened with a command, which the server hands to the
+    user's shell: that shell replaces itself with a login shell (``-l``, so
+    the profile is read as a plain shell channel reads it) that reads its
+    commands from the channel. The token is in the new shell's own start
+    environment, where :func:`reap_marked_script` finds it.
+    """
+    return f"{variable}={token} exec {SESSION_SHELL} -l"
 
 
 class StopSignal(enum.Enum):
