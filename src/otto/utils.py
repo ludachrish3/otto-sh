@@ -694,6 +694,30 @@ def _get_literal_values(
     raise ValueError(f"{type_} is {origin}, not a Literal or Union of Literals")
 
 
+def annotation_is_subclass(annotation: object, base: "type | tuple[type, ...]") -> bool:
+    """Return whether *annotation* is a real class deriving from *base* (a class or a tuple).
+
+    The one check of a type annotation against a class. ``get_origin`` is
+    read first, and only an annotation without one is asked
+    ``isinstance(..., type)``: on Python 3.10 a generic alias (``list[X]``,
+    ``dict[str, int]``) answers ``isinstance(..., type)`` ``True`` without
+    being a class, and ``issubclass`` of one raises ``TypeError`` against an
+    ``ABCMeta`` class, which a pydantic model before 2.11 is. A generic
+    alias, a union, ``Annotated[...]`` or anything else that is not a class
+    answers ``False``; a caller that wants a container's element reads
+    ``get_args`` itself.
+
+    >>> from otto.utils import annotation_is_subclass
+    >>> annotation_is_subclass(bool, int), annotation_is_subclass(list[int], list)
+    (True, False)
+    """
+    return (
+        get_origin(annotation) is None
+        and isinstance(annotation, type)
+        and issubclass(annotation, base)
+    )
+
+
 @final
 @dataclass(frozen=True, kw_only=True)
 class Arg:

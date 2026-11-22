@@ -8,13 +8,16 @@ cannot hide behind mocked callers.
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from pathlib import Path, PurePath
+from typing import Annotated, Literal, Optional
 from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic import BaseModel
 
 from otto.utils import (
     _get_literal_values,
+    annotation_is_subclass,
     as_utc,
     complete_separated_list,
     is_literal,
@@ -23,6 +26,7 @@ from otto.utils import (
     split_on,
     utc_instant,
 )
+from tests._fixtures import class_only_issubclass
 
 # Sample Literal aliases used purely as fixtures for the utility functions
 # below. The host term/transfer selectors are now plain ``str`` (the registries
@@ -249,3 +253,36 @@ class TestUtcInstant:
 
     def test_none_stays_none(self) -> None:
         assert utc_instant(None) is None
+
+
+# ── annotation_is_subclass ──────────────────────────────────────────────────
+
+
+class _Model(BaseModel):
+    """A pydantic model: an ``ABCMeta`` class, whose ``issubclass`` raises before 2.11."""
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["builtin", "class-only"])
+@pytest.mark.parametrize(
+    ("annotation", "base", "expected"),
+    [
+        (_Model, BaseModel, True),
+        (Path, PurePath, True),
+        (bool, (str, int), True),
+        (str, BaseModel, False),
+        (list[_Model], BaseModel, False),
+        (dict[str, int], BaseModel, False),
+        (tuple[int, ...], (BaseModel, Path), False),
+        (list[Path], Path, False),
+        (_Model | None, BaseModel, False),
+        (Optional[_Model], BaseModel, False),  # noqa: UP045 -- the typing.Union spelling
+        (Annotated[_Model, "x"], BaseModel, False),
+        ("_Model", BaseModel, False),
+    ],
+)
+def test_annotation_is_subclass_reads_the_origin_first(
+    monkeypatch, annotation, base, expected, strict
+):
+    """A generic alias, union or ``Annotated`` is no class: only a real class is asked."""
+    class_only_issubclass.install(monkeypatch, strict=strict)
+    assert annotation_is_subclass(annotation, base) is expected

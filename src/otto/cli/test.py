@@ -173,7 +173,7 @@ from typer.core import TyperCommand
 from typing_extensions import override
 
 from ..config._typer import UsageError, get_current_context
-from ..utils import MIN_INTERVAL_SECONDS
+from ..utils import MIN_INTERVAL_SECONDS, annotation_is_subclass
 from .completers import completion_source
 
 if TYPE_CHECKING:
@@ -813,7 +813,7 @@ def _is_path_annotation(annotation: object) -> bool:
     if hasattr(annotation, "__metadata__"):
         annotation = getattr(annotation, "__origin__", annotation)  # Annotated[X, ...] -> X
     candidates = get_args(annotation) if get_origin(annotation) is not None else (annotation,)
-    return any(isinstance(t, type) and issubclass(t, Path) for t in candidates)
+    return any(annotation_is_subclass(t, Path) for t in candidates)
 
 
 # The run flags typed as an optional Path (Typer's own leaf wrapper converts

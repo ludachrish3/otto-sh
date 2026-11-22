@@ -50,3 +50,5 @@ and the reference can link them. The public names are on :doc:`/api/utils`.
 .. autodata:: otto.utils.T
 
 .. autofunction:: otto.utils.is_literal
+
+.. autofunction:: otto.utils.annotation_is_subclass

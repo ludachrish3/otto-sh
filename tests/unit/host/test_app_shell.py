@@ -19,6 +19,7 @@ output block.
 
 import asyncio
 import re
+from typing import get_origin
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -31,6 +32,8 @@ from otto.host.app_shell import (
     AppShellTimeoutError,
     Parsed,
     ParseMismatch,
+    _parse_region,
+    _parsed_reader,
     apply_parse,
     parse_all,
     parse_one,
@@ -39,6 +42,7 @@ from otto.host.host import BaseHost
 from otto.host.session import ShellSession
 from otto.result import ShellResult
 from otto.utils import Status
+from tests._fixtures import class_only_issubclass
 
 
 class Kv(Parsed):
@@ -268,6 +272,25 @@ def test_apply_parse_callable_exception_names_its_type():
     with pytest.raises(ParseMismatch, match="KeyError") as excinfo:
         apply_parse(boom, text="anything")
     assert "KeyError" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["builtin", "class-only"])
+@pytest.mark.parametrize("spec", [dict[str, int], tuple[int, ...]], ids=["dict", "tuple"])
+def test_a_generic_parse_spec_is_no_parsed_model(monkeypatch, spec, strict):
+    """A non-list generic alias is no ``Parsed`` spec: it is the callable escape hatch (#1249).
+
+    ``class-only`` holds ``issubclass`` to pydantic-before-2.11's rule, so on
+    Python 3.10 this fails whatever pydantic is installed unless the origin
+    is read first; ``builtin`` is the installed pydantic's own answer.
+    """
+    class_only_issubclass.install(monkeypatch, strict=strict)
+    assert _parsed_reader(spec) is None
+    assert _parse_region(spec, "a") == "a"
+    if get_origin(spec) is dict:
+        with pytest.raises(ParseMismatch, match="ValueError"):
+            apply_parse(spec, text="a")
+    else:
+        assert apply_parse(spec, text="ab") == ("a", "b")
 
 
 def test_apply_parse_list_of_non_parsed_is_type_error():
