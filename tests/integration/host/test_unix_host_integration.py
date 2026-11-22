@@ -736,3 +736,75 @@ class TestFileTransfer:
         assert content in result.value
 
         await transfer_host.run(f"rm -f {remote_path}")
+
+
+_FTP_ONLY = pytest.mark.parametrize("transfer_host", ["ftp"], indirect=True)
+_SHOW_PROGRESS = pytest.mark.parametrize("show_progress", [False, True], ids=["bare", "bar"])
+
+
+@_FTP_ONLY
+@_SHOW_PROGRESS
+class TestFtpNonRecursiveRefusals:
+    """A non-recursive ftp transfer creates no directory and does not recurse.
+
+    ftp ONLY, deliberately: scp does not give these answers (it may write a
+    file named like the missing directory), so this is not a cross-protocol
+    contract. Every case runs with and without a progress bar, which must
+    never change the outcome (#1062).
+    """
+
+    @pytest.mark.asyncio
+    async def test_put_to_a_missing_remote_directory_fails_and_creates_nothing(
+        self, transfer_host: UnixHost, tmp_path: Path, show_progress: bool
+    ):
+        src = tmp_path / "otto_ftp_refusal_put.txt"
+        src.write_text("payload")
+        absent = f"/tmp/otto_ftp_absent_{uuid.uuid4().hex}"
+
+        res = await transfer_with_retry(
+            lambda: transfer_host.put([src], Path(absent), show_progress=show_progress)
+        )
+
+        assert res.value[src].status == Status.Error, res.value[src].msg
+        assert absent in (res.value[src].msg or ""), res.value[src].msg
+        probe = (await transfer_host.run(f"test -e {absent}; echo rc=$?")).only
+        assert "rc=1" in probe.value, f"{absent} exists after a put without -r: {probe.value!r}"
+
+    @pytest.mark.asyncio
+    async def test_get_into_a_missing_local_directory_fails_and_does_not_desync(
+        self, transfer_host: UnixHost, tmp_path: Path, show_progress: bool
+    ):
+        sources = [Path("/etc/passwd"), Path("/etc/group")]
+        absent = tmp_path / "absent"
+
+        res = await transfer_with_retry(
+            lambda: transfer_host.get(sources, absent, show_progress=show_progress)
+        )
+
+        for src in sources:
+            assert res.value[src].status == Status.Error, res.value[src].msg
+            assert str(absent) in (res.value[src].msg or ""), res.value[src].msg
+        assert not absent.exists(), "a get without -r must not create the local directory"
+
+        # The same connection must still be in step: a stale reply left by the
+        # failed gets would break this one.
+        good = tmp_path / "good"
+        good.mkdir()
+        again = await transfer_with_retry(
+            lambda: transfer_host.get(sources, good, show_progress=show_progress)
+        )
+        assert again.status == Status.Success, again.msg
+        assert (good / "passwd").stat().st_size > 0
+        assert (good / "group").stat().st_size > 0
+
+    @pytest.mark.asyncio
+    async def test_get_of_a_remote_directory_fails_and_fetches_nothing(
+        self, transfer_host: UnixHost, tmp_path: Path, show_progress: bool
+    ):
+        res = await transfer_with_retry(
+            lambda: transfer_host.get([Path("/etc")], tmp_path, show_progress=show_progress)
+        )
+
+        assert res.value[Path("/etc")].status == Status.Error, res.value[Path("/etc")].msg
+        assert "/etc" in (res.value[Path("/etc")].msg or "")
+        assert list(tmp_path.iterdir()) == [], "a directory source must not be fetched without -r"

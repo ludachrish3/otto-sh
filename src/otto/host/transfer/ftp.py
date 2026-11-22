@@ -4,7 +4,9 @@
 """
 
 import asyncio
-from collections.abc import Callable, Coroutine
+import os
+from collections.abc import Callable, Coroutine, Generator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,11 +26,12 @@ from .base import (
     TransferContext,
     TransferProgressFactory,
 )
+from .shell import staged_temp_name
 from .unix_base import UnixFileTransfer
 
 _logger = logging.getLogger(__name__)
 
-# aioftp's own block size, mirrored rather than imported. Both arms use it:
+# aioftp's own block size, mirrored rather than imported. Both directions use it:
 # PUT reads `f.read(aioftp.DEFAULT_BLOCK_SIZE)` per `stream.write`, and
 # GET's `stream.iter_by_block()` defaults to `count=DEFAULT_BLOCK_SIZE`.
 # `aioftp` is imported LAZILY inside the transfer methods, and host-class
@@ -51,6 +54,64 @@ async def _ftp_size(ftp_conn: "aioftp.Client", path: str) -> int:
         return int(info[0].strip()) if info else 0
     except Exception:  # noqa: BLE001 — FTP SIZE command may fail for various protocol reasons; 0 is safe fallback
         return 0
+
+
+# How long a refused transfer waits for its data connection to finish closing.
+_FTP_DATA_CLOSE_WAIT = 1.0
+
+
+async def _open_transfer_stream(
+    ftp_conn: "aioftp.Client", command: str
+) -> "aioftp.DataConnectionThrottleStreamIO":
+    """Open the data connection, send ``command`` (STOR/RETR), return the stream.
+
+    Mirrors aioftp 0.28's ``Client.get_stream`` step for step (passive
+    connection of type ``I``, the command expecting ``1xx``, the same stream
+    class over the client's throttle and socket timeout; ``upload_stream`` and
+    ``download_stream`` are that function with a fixed command) with the one
+    thing it lacks: ``get_stream`` opens the data connection BEFORE sending the
+    command, so a refused STOR/RETR raises with the connection already open and
+    unreferenced, and only the garbage collector closes it (a ``ResourceWarning``
+    that pytest escalates into the next test's failure). aioftp offers no option
+    or public sequence that closes it. Here any exception, cancellation
+    included, closes the data writer first, the way aioftp closes its own
+    (``writer.close()``), then waits a bounded time for it to finish. Delete
+    this when aioftp's ``get_stream`` closes its connection on a refused command.
+    """
+    import aioftp
+
+    reader, writer = await ftp_conn.get_passive_connection("I")
+    try:
+        await ftp_conn.command(command, "1xx")
+        return aioftp.DataConnectionThrottleStreamIO(
+            ftp_conn,
+            reader,
+            writer,
+            throttles={"_": ftp_conn.throttle},
+            timeout=ftp_conn.socket_timeout,
+        )
+    except BaseException:
+        writer.close()
+        with suppress(Exception):
+            await asyncio.wait_for(writer.wait_closed(), _FTP_DATA_CLOSE_WAIT)
+        raise
+
+
+@contextmanager
+def _name_refusal(what: str) -> Generator[None, None, None]:
+    """Re-raise a server refusal as an ``OSError`` that says what was refused.
+
+    The server's status line names no path, so ``what`` supplies the words in
+    front of it. The dispatcher already prefixes every per-file failure with the
+    source path, so a get's ``what`` does not repeat it; a put's names the
+    destination, which the dispatcher does not print.
+    """
+    import aioftp
+
+    try:
+        yield
+    except aioftp.StatusCodeError as exc:
+        raise OSError(f"{what}: {exc}") from exc
 
 
 @final
@@ -156,74 +217,64 @@ class _FtpFileTransfer(UnixFileTransfer):
         async def _get_one(src: Path) -> Result:
             dst = dest_dir / src.name
             _logger.debug(f"{self._name}: FTP get {src} -> {dst}")
-            # The lock is per FILE now, and it serializes the files THIS
-            # instance moves over its own client: aioftp's client carries one
-            # data channel, so two overlapping host.get() calls on this object
-            # must not interleave a STOR/RETR exchange. The base semaphore
+            # The lock is per FILE, and it serializes the files THIS instance
+            # moves over its own client: aioftp's client carries one data
+            # channel, so two overlapping host.get() calls on this object must
+            # not interleave a STOR/RETR exchange. The base semaphore
             # (`concurrency_limit` 1) already serializes them; the lock stays
             # because the semaphore does not reach across two calls that each
             # bring their own. Two DIFFERENT backend objects sharing one
-            # client are not covered by either -- pre-existing, and not this
-            # change's to settle.
+            # client are not covered by either.
+            #
+            # One path whether or not a progress handler exists: the stream
+            # calls write exactly `dst`, create no directory and do not recurse,
+            # so a missing local directory or a remote directory source fails
+            # this file -- creating directories is the recursive transfer's job.
             async with self._ftp_lock:
-                if progress_factory is None:
-                    # `write_into=True` for the SAME JOIN REASON as the PUT
-                    # arm below -- and only that reason; the two arms differ
-                    # after it, so this defers for the mechanism and states
-                    # its own consequences.
-                    #
-                    # Shared: aioftp's `download` carries the identical
-                    # `if not write_into: destination = destination / name`
-                    # branch. `dst` is already `dest_dir / src.name`, so the
-                    # default joined the name a second time.
-                    #
-                    # GET-specific, and QUIETER than PUT's and so worse: the
-                    # following `path_io.mkdir(destination.parent)` runs on
-                    # the LOCAL filesystem, so the default turned the
-                    # CALLER'S OWN destination into a directory and wrote
-                    # the bytes one level inside it -- while the `Result`
-                    # below still said Success and named `dst`. A caller
-                    # checking `is_ok` believed a file had arrived; one
-                    # reading `.value` got IsADirectoryError. PUT failed
-                    # loudly one step later; this said nothing at all.
-                    # Pinned in
-                    # tests/unit/host/transfer/test_ftp_transfer_destination.py,
-                    # which observes the landed file rather than restating
-                    # this rule.
-                    #
-                    # NOT shared -- do not read PUT's caveats onto this arm:
-                    # * Directory sources. PUT's caveat says they stay
-                    #   broken; on `download` they do not. Its `is_dir`
-                    #   branch computes children as
-                    #   `destination_path / name.relative_to(source)` and
-                    #   recurses with `write_into=True`, i.e. relative to the
-                    #   DESTINATION, so `write_into=True` is strictly better
-                    #   here rather than merely harmless.
-                    # * The dest_dir asymmetry runs the same way but through
-                    #   different code: `download` mkdirs `dest_dir` for us,
-                    #   while the progress arm's `dst.open("wb")` below
-                    #   raises FileNotFoundError if it is missing. Same
-                    #   split question as PUT's, recorded here because it is
-                    #   reachable by a different path. Pre-existing, and not
-                    #   this fix's to settle.
-                    await ftp_conn.download(str(src), str(dst), write_into=True)
-                else:
-                    handler = progress_factory()
-                    # Use SIZE rather than aioftp's `stat()`: stat() falls back
-                    # to LIST when MLST is unsupported (e.g. vsftpd returns 500),
-                    # but `Client.get_stream` opens the passive data connection
-                    # *before* sending MLSD — when MLSD then 500s, the suppressed
-                    # StatusCodeError leaves the data StreamWriter unreferenced.
-                    # Python 3.11+ surfaces that as a ResourceWarning that pytest's
-                    # unraisable plugin escalates into a test failure.
-                    total = await _ftp_size(ftp_conn, str(src))
-                    bytes_done = 0
-                    async with ftp_conn.download_stream(str(src)) as stream:
-                        with dst.open("wb") as f:
+                # EVERY local decision is made BEFORE the server is asked to start
+                # the transfer. aioftp's stream context manager reads the final
+                # reply only on a clean exit; exited by an exception it closes the
+                # data connection and leaves that reply unread, which breaks the
+                # next command on this connection. So the destination is checked,
+                # and a temporary sibling is opened, before RETR, and the bytes
+                # reach `dst` only by `Path.replace` once the transfer completed.
+                # A failure while blocks are moving (a read or write raising
+                # mid-stream) still leaves that reply unread -- it is not
+                # repaired here; the later files on this connection then fail.
+                if dst.is_dir():
+                    raise IsADirectoryError(f"cannot write {dst}: it is an existing directory")
+                if not dst.parent.is_dir():
+                    why = "is not a directory" if dst.parent.exists() else "does not exist"
+                    raise FileNotFoundError(
+                        f"cannot write {dst}: destination directory {dst.parent} {why}"
+                    )
+                temp = dst.parent / staged_temp_name(dst.name, self._max_filename_len)
+                handler = progress_factory() if progress_factory is not None else None
+                # Use SIZE rather than aioftp's `stat()`: stat() falls back
+                # to LIST when MLST is unsupported (e.g. vsftpd returns 500),
+                # but `Client.get_stream` opens the passive data connection
+                # *before* sending MLSD — when MLSD then 500s, the suppressed
+                # StatusCodeError leaves the data StreamWriter unreferenced.
+                # Python 3.11+ surfaces that as a ResourceWarning that pytest's
+                # unraisable plugin escalates into a test failure. Only asked
+                # for when a handler will use it.
+                total = await _ftp_size(ftp_conn, str(src)) if handler is not None else 0
+                bytes_done = 0
+                try:
+                    with (
+                        temp.open("xb") as f,
+                        _name_refusal("the server refused to send it"),
+                    ):
+                        async with await _open_transfer_stream(ftp_conn, f"RETR {src}") as stream:  # ty: ignore[invalid-context-manager]
                             async for block in stream.iter_by_block():
                                 f.write(block)
                                 bytes_done += len(block)
-                                handler(str(src), str(dst), bytes_done, total)
+                                if handler is not None:
+                                    handler(str(src), str(dst), bytes_done, total)
+                    temp.replace(dst)
+                except BaseException:
+                    temp.unlink(missing_ok=True)
+                    raise
             return Result(status=Status.Success, value=dst)
 
         return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
@@ -246,56 +297,29 @@ class _FtpFileTransfer(UnixFileTransfer):
         async def _put_one(src: Path) -> Result:
             dst = dest_dir / src.name
             _logger.debug(f"{self._name}: FTP put {src} -> {dst}")
-            # The lock is per FILE now, and covers exactly what _get_files_ftp's
-            # own comment says it covers -- including its limit.
+            # The lock covers exactly what _get_files_ftp's own comment says it
+            # covers -- including its limit -- and the one path runs with or
+            # without a progress handler, for the reason given there.
             async with self._ftp_lock:
-                if progress_factory is None:
-                    # `write_into=True` is load-bearing, not a tidy-up. aioftp's
-                    # `upload` defaults to `write_into=False`, which means
-                    # "write source INTO destination" -- it appends
-                    # `source.name` to whatever it is given and mkdirs the
-                    # parent. `dst` is ALREADY `dest_dir / src.name`, so the
-                    # default resolved `<dest>/<name>/<name>` and left a
-                    # directory wearing the file's own name. Measured on the
-                    # bed 2026-08-26 across all four GNU hosts: the follow-up
-                    # `get` of the caller's path then failed `550 Failed to
-                    # open file`. True flag = "this destination IS the file",
-                    # which is what the progress arm's `upload_stream(dst)`
-                    # below has always meant. Pinned in
-                    # tests/unit/host/transfer/test_ftp_transfer_destination.py.
-                    #
-                    # SCOPE: "this destination IS the file" is the right
-                    # reading for a FILE source, which is all otto puts
-                    # here. A DIRECTORY source stays broken either way --
-                    # the top-level directory now lands correctly, but
-                    # aioftp walks children relative to the FTP cwd rather
-                    # than to the destination (its own bug,
-                    # `client.py:1216-1222`), so this is not a fix for
-                    # directory transfers and does not regress them. This
-                    # caveat is PUT-ONLY: `download`'s dir branch resolves
-                    # children against the destination, so the GET arm above
-                    # really is fixed for directories.
-                    #
-                    # One asymmetry this does NOT close, pre-existing and
-                    # left alone deliberately: `upload` still runs
-                    # `make_directory(destination.parent)`, so this arm
-                    # auto-creates `dest_dir` while the `upload_stream` arm
-                    # below fails if it is missing. Same call, two answers
-                    # to "must the destination directory exist?".
-                    await ftp_conn.upload(str(src), str(dst), write_into=True)
-                else:
-                    handler = progress_factory()
-                    total = src.stat().st_size
-                    bytes_done = 0
-                    async with ftp_conn.upload_stream(str(dst)) as stream:
-                        with src.open("rb") as f:
+                handler = progress_factory() if progress_factory is not None else None
+                bytes_done = 0
+                # The source is opened BEFORE STOR: STOR has already created or
+                # truncated the remote file when it is accepted, and an exception
+                # leaving aioftp's stream leaves the final reply unread (see
+                # _get_one). A mid-stream read or write failure still does; it is
+                # not repaired here.
+                with src.open("rb") as f:
+                    total = os.fstat(f.fileno()).st_size if handler is not None else 0
+                    with _name_refusal(f"cannot write {dst}"):
+                        async with await _open_transfer_stream(ftp_conn, f"STOR {dst}") as stream:  # ty: ignore[invalid-context-manager]
                             while True:
                                 block = f.read(aioftp.DEFAULT_BLOCK_SIZE)
                                 if not block:
                                     break
                                 await stream.write(block)
                                 bytes_done += len(block)
-                                handler(str(src), str(dst), bytes_done, total)
+                                if handler is not None:
+                                    handler(str(src), str(dst), bytes_done, total)
             return Result(status=Status.Success, value=dst)
 
         return await self.dispatch_per_file(src_files, transfer_one=_put_one, concurrent=concurrent)

@@ -28,6 +28,13 @@ are remote paths.  The remote side of each — `get`'s sources and `put`'s
 destination — completes against the host itself
 ([Remote path completion](../index.md#remote-path-completion)).
 
+Without `-r`, create `DEST` before the transfer: do not rely on it being
+created. What a transfer to a missing `DEST` does depends on the protocol. Over
+ftp, sftp, nc, the shell transfer and an embedded console it fails that file; a
+local host creates the directory, and scp may write a file named like it. `-r`
+creates directories only for directory sources; it is not the remedy for a
+missing `DEST` of a plain file.
+
 | Option | Default | Description |
 | ------ | ------- | ----------- |
 | `--mode TEXT` | backend default | **`put` only.** Octal permission bits for the uploaded file(s) — `755`, `0644`, `0o4755`. Always read as octal, never decimal |

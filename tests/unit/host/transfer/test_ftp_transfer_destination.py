@@ -1,124 +1,161 @@
-"""An ftp transfer must land the file at the path the caller named -- both ways.
+"""An ftp transfer answers the same with a progress bar and without one.
 
-``_put_files_ftp`` and ``_get_files_ftp`` each have two arms that reach aioftp
-through different calls. With a progress handler they drive
-``upload_stream(dst)`` / ``download_stream(src)``, which use the exact path they
-are given. Without one they call ``upload(src, dst)`` / ``download(src, dst)``,
-whose ``write_into`` parameter decides whether ``dst`` is the FILE or a
-CONTAINER to put the file inside. Those are different contracts, and otto
-computes ``dst`` once for both arms of both directions.
+``show_progress`` selects whether a handler is called, never whether a transfer
+succeeds. A non-recursive ftp put or get does not create the destination
+directory and does not recurse into a directory source -- creating directories is
+the job of the recursive transfer -- and that holds in both modes. Every test
+here is parametrized over ``show_progress`` so both modes drive the one function
+with the one input and must give the one outcome.
 
-THE TWO DIRECTIONS FAIL DIFFERENTLY, which is why they are tested differently.
-The PUT bug announced itself one step later -- the file was on the server at the
-wrong path, so the next `get` 550'd. The GET bug does not: ``_get_files_ftp``
-returns ``Result(status=Status.Success, value=dst)`` naming a path aioftp has just
-turned into a LOCAL directory, so a caller that checks ``is_ok`` believes a file
-arrived and a caller that reads the value gets ``IsADirectoryError``. A rule
-restated is enough for the loud one; the quiet one is observed directly, because
-aioftp's mkdir and write are both local and a stand-in can perform them for
-real.
-
-WHAT THIS PINS, AND WHY IT IS THE EFFECTIVE PATH RATHER THAN THE ARGUMENT. A
-test that asserted ``upload`` was called with ``dest_dir / src.name`` would have
-passed against the defect: that IS what it was called with. The bug was that
-aioftp then appended the name a second time, because ``write_into`` defaults to
-``False`` and that means "write source INTO destination". So these tests apply
-aioftp's own rule to the recorded call and assert on the path the file actually
-lands at. Two consequences worth stating:
-
-* the pin survives either real fix -- ``upload(src, dst, write_into=True)`` or
-  ``upload(src, dest_dir)`` -- because both put the bytes in the right place,
-  and pinning a spelling instead would forbid one of them for no reason;
-* it cannot be satisfied by a call that merely LOOKS right.
-
-MEASURED, NOT HYPOTHETICAL (2026-08-26, conformance bed, all four GNU hosts).
-Before the fix, ``put(..., show_progress=False)`` over ftp created a DIRECTORY
-named after the file and wrote the bytes inside it --
-``/tmp/gw2_prog-get.bin/gw2_prog-get.bin`` -- so the follow-up ``get`` of the
-path the caller asked for failed with ``550 Failed to open file``. The leftover
-directory then broke every later cell sharing that scratch path, because the
-suite's cleanup issues ``rm``. One defect, twelve failures.
-
-No network: the aioftp client is a recorder. The rule this file applies to its
-recording is aioftp's, quoted at :func:`_effective_destination`.
+The aioftp client is a stand-in over a real directory tree: "remote" paths are
+absolute paths under ``tmp_path``, and the stand-in refuses what a real server
+refuses (a STOR into a missing directory, a RETR of a directory). It records the
+control commands otto sends through ``command``.
 """
 
-from pathlib import Path, PurePosixPath
-from typing import Any
+import asyncio
+from pathlib import Path
+from typing import Any, BinaryIO
 from unittest.mock import AsyncMock
 
+import aioftp
 import pytest
-from typing_extensions import Self
 
 from otto.host.transfer.ftp import _FtpFileTransfer
 from otto.utils import Status
 
 
-class _RecordedUpload:
-    """One ``aioftp.Client.upload`` / ``download`` call, as otto made it."""
+class _DataWriter:
+    """The data connection's writer: bytes written land in ``sink`` (a STOR target)."""
 
-    def __init__(self, source: str, destination: str, write_into: bool) -> None:
-        self.source = source
-        self.destination = destination
-        self.write_into = write_into
+    def __init__(self) -> None:
+        self.sink: BinaryIO | None = None
+        self.closed = False
+
+    def write(self, data: bytes) -> None:
+        assert self.sink is not None, "bytes written on a data connection no STOR accepted"
+        self.sink.write(data)
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.closed = True
+        if self.sink is not None:
+            self.sink.close()
+
+    async def wait_closed(self) -> None:
+        return None
 
 
-class _RecordingFtpClient:
-    """Records ``upload`` / ``upload_stream`` destinations and moves no bytes.
+class _FsFtpClient:
+    """The ``aioftp.Client`` surface the backend uses, over the local filesystem.
 
-    Deliberately NOT a ``MagicMock``: this stands in for one class with two
-    methods, and a mock would answer every other attribute too, so an arm that
-    started reaching for something else on the client would go on passing here.
+    ``upload`` and ``download`` do what aioftp's do -- make the destination's
+    parent (and, for a directory source, the tree) -- so a backend that reached
+    for them again would create directories here and the "creates nothing"
+    tests would catch it. Deliberately NOT a ``MagicMock``.
     """
 
-    def __init__(self, fail_for: str | None = None) -> None:
-        self.uploads: list[_RecordedUpload] = []
-        self.stream_destinations: list[str] = []
-        # Basename whose upload raises the way a real server refusal reaches
-        # otto -- recorded first, so `uploads` stays the log of what otto
-        # ASKED for rather than only of what landed.
-        self._fail_for = fail_for
+    def __init__(self, refuse_upload_of: str | None = None) -> None:
+        self.commands: list[str] = []
+        self.uploaded: list[str] = []
+        self._refuse_upload_of = refuse_upload_of
+        self.retrs: list[str] = []
+        # True while a final 226/426 reply is unread on the control channel.
+        self.pending_reply = False
+        self.desyncs: list[str] = []
+        # Every data connection opened, with its reader; a refused STOR/RETR must
+        # not leave its writer open.
+        self.data_connections: list[tuple[asyncio.StreamReader, _DataWriter]] = []
+        # What aioftp's stream class reads off the client.
+        self.throttle = aioftp.StreamThrottle.from_limits()
+        self.socket_timeout: float | None = None
+
+    def send(self, verb: str) -> None:
+        """Record a command; one sent while a reply is unread is a desync."""
+        if self.pending_reply:
+            self.desyncs.append(verb)
+
+    async def get_passive_connection(
+        self, conn_type: str = "I"
+    ) -> tuple[asyncio.StreamReader, _DataWriter]:
+        """Open a data connection BEFORE any STOR/RETR, as aioftp does."""
+        reader, writer = asyncio.StreamReader(), _DataWriter()
+        self.data_connections.append((reader, writer))
+        return reader, writer
+
+    async def command(
+        self, cmd: str | None, expected: str = "", wait: str = "", censor_after: None = None
+    ) -> tuple[str, list[str]]:
+        if cmd is None:
+            # The final reply, read by the stream's clean exit.
+            self.pending_reply = False
+            return "226", []
+        verb, _, path = cmd.partition(" ")
+        if verb in ("STOR", "RETR"):
+            return self._transfer_command(verb, Path(path))
+        self.send(cmd)
+        self.commands.append(cmd)
+        assert verb == "SIZE", cmd
+        return "213", [str(Path(path).stat().st_size)]
+
+    def _transfer_command(self, verb: str, path: Path) -> tuple[str, list[str]]:
+        self.send(verb)
+        reader, writer = self.data_connections[-1]
+        if verb == "STOR":
+            self.uploaded.append(str(path))
+            refused = self._refuse_upload_of is not None and path.name == self._refuse_upload_of
+            if refused or not path.parent.is_dir():
+                raise aioftp.StatusCodeError("150", "550", ["Failed to open file."])
+            # A real server has created (or truncated) the file once it accepts STOR.
+            writer.sink = path.open("wb")
+        else:
+            self.retrs.append(str(path))
+            if not path.is_file():
+                raise aioftp.StatusCodeError("150", "550", ["Failed to open file."])
+            reader.feed_data(path.read_bytes())
+            reader.feed_eof()
+        self.pending_reply = True
+        return "150", []
 
     async def upload(
         self, source: str, destination: str = "", *, write_into: bool = False, **_: Any
     ) -> None:
-        # The signature mirrors aioftp's, INCLUDING the `write_into=False`
-        # default, so a caller that omits the flag records the same value the
-        # real client would apply.
-        self.uploads.append(_RecordedUpload(source, destination, write_into))
-        if self._fail_for is not None and Path(source).name == self._fail_for:
-            raise OSError("550 Failed to open file")
+        target = Path(destination)
+        if not write_into:
+            target = target / Path(source).name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(Path(source).read_bytes())
 
-    def upload_stream(self, destination: str, **_: Any) -> Any:
-        self.stream_destinations.append(destination)
-        return _NullStream()
-
-
-class _NullStream:
-    """An ``upload_stream`` context manager that accepts writes and keeps none."""
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_: object) -> bool:
-        return False
-
-    async def write(self, _data: bytes) -> None:
-        return None
+    async def download(
+        self, source: str, destination: str = "", *, write_into: bool = False, **_: Any
+    ) -> None:
+        src, target = Path(source), Path(destination)
+        if not write_into:
+            target = target / src.name
+        if src.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            for child in src.rglob("*"):
+                if child.is_file():
+                    out = target / child.relative_to(src)
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_bytes(child.read_bytes())
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(src.read_bytes())
 
 
 class _FakeConnections:
-    """A connection manager whose ``ftp()`` hands back the recorder."""
-
-    def __init__(self, client: _RecordingFtpClient) -> None:
+    def __init__(self, client: _FsFtpClient) -> None:
         self._client = client
 
-    async def ftp(self) -> _RecordingFtpClient:
+    async def ftp(self) -> _FsFtpClient:
         return self._client
 
 
-def _backend(client: _RecordingFtpClient) -> _FtpFileTransfer:
-    """The REAL backend over a recording client. Nothing about otto is faked."""
+def _backend(client: _FsFtpClient) -> _FtpFileTransfer:
+    """The REAL backend over the stand-in client. Nothing about otto is faked."""
     return _FtpFileTransfer(
         connections=_FakeConnections(client),  # ty: ignore[invalid-argument-type]
         name="dut",
@@ -126,306 +163,244 @@ def _backend(client: _RecordingFtpClient) -> _FtpFileTransfer:
     )
 
 
-def _effective_destination(call: _RecordedUpload) -> PurePosixPath:
-    """Where aioftp actually writes, given what otto asked for.
+class _Calls:
+    """A progress handler that records its calls."""
 
-    Both ``Client.upload`` and ``Client.download`` carry the SAME branch
-    (``client.py``, and unchanged across the 0.x line this project pins)::
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, int, int]] = []
 
-        if not write_into:
-            destination = destination / source.name
-
-    ``write_into`` is documented as "write source into destination", i.e. FALSE
-    means *destination is a container*. This function is that branch and nothing
-    else, so the assertions below are against aioftp's real behaviour rather
-    than against a restatement of otto's intent --
-    :func:`test_the_hand_mirrored_write_into_rule_still_matches_aioftp` pins the
-    mirror against the real signatures.
-    """
-    destination = PurePosixPath(call.destination)
-    if not call.write_into:
-        destination = destination / Path(call.source).name
-    return destination
+    def factory(self) -> Any:
+        return lambda *args: self.calls.append(args)
 
 
+def _progress(show_progress: bool) -> tuple[Any, _Calls]:
+    calls = _Calls()
+    return (calls.factory if show_progress else None), calls
+
+
+show_progress_modes = pytest.mark.parametrize("show_progress", [False, True], ids=["bare", "bar"])
+
+
+@show_progress_modes
 @pytest.mark.asyncio
-async def test_a_put_without_progress_writes_the_file_the_caller_asked_for(tmp_path: Path) -> None:
-    """The defect, stated as the property it broke.
-
-    RED before the fix: otto passed the already-joined ``/dest/payload.bin`` with
-    ``write_into`` left at its default, so aioftp resolved
-    ``/dest/payload.bin/payload.bin`` and this assertion reported exactly that
-    path. GREEN after.
-    """
+async def test_a_put_into_an_existing_directory_lands_the_bytes(
+    tmp_path: Path, show_progress: bool
+) -> None:
     src = tmp_path / "payload.bin"
-    src.write_bytes(b"x" * 64)
-    dest_dir = Path("/remote/dest")
+    src.write_bytes(b"x" * 20)
+    dest_dir = tmp_path / "remote"
+    dest_dir.mkdir()
+    factory, calls = _progress(show_progress)
 
-    client = _RecordingFtpClient()
-    result = await _backend(client).run_put([src], dest_dir, progress_factory=None)
+    result = await _backend(_FsFtpClient()).run_put([src], dest_dir, progress_factory=factory)
 
     assert result[src].status is Status.Success, result[src].msg
-    assert len(client.uploads) == 1, client.uploads
-    assert not client.stream_destinations, (
-        "the no-progress arm must not open an upload_stream; it took the other branch"
-    )
-    landed = _effective_destination(client.uploads[0])
-    assert landed == PurePosixPath("/remote/dest/payload.bin"), (
-        f"a put with progress OFF lands the bytes at {landed}, not at the path the "
-        f"caller asked for -- aioftp appends source.name to a destination it treats "
-        f"as a container, so an already-joined path is joined a second time"
-    )
+    assert (dest_dir / "payload.bin").read_bytes() == b"x" * 20
+    assert bool(calls.calls) is show_progress
 
 
+@show_progress_modes
 @pytest.mark.asyncio
-async def test_both_put_arms_agree_on_where_the_file_lands(tmp_path: Path) -> None:
-    """The invariant behind the defect: progress must not move the destination.
-
-    ``show_progress`` selects an implementation, never a location. This is the
-    assertion that would have caught the bug from either side, and it is the one
-    that keeps the two arms tied if someone edits one of them later.
-    """
-    src = tmp_path / "payload.bin"
-    src.write_bytes(b"y" * 64)
-    dest_dir = Path("/remote/dest")
-
-    without = _RecordingFtpClient()
-    await _backend(without).run_put([src], dest_dir, progress_factory=None)
-
-    with_progress = _RecordingFtpClient()
-    await _backend(with_progress).run_put(
-        [src], dest_dir, progress_factory=lambda: lambda *_a: None
-    )
-
-    assert len(with_progress.stream_destinations) == 1, with_progress.stream_destinations
-    streamed = PurePosixPath(with_progress.stream_destinations[0])
-    uploaded = _effective_destination(without.uploads[0])
-    assert uploaded == streamed, (
-        f"the two put arms disagree about the destination: progress ON writes "
-        f"{streamed}, progress OFF writes {uploaded}. show_progress selects an "
-        f"implementation, not a location"
-    )
-
-
-@pytest.mark.asyncio
-async def test_the_no_progress_arm_never_creates_a_directory_named_after_the_file(
-    tmp_path: Path,
+async def test_a_get_into_an_existing_directory_lands_the_bytes(
+    tmp_path: Path, show_progress: bool
 ) -> None:
-    """The user-visible consequence, pinned separately from the path itself.
+    src = tmp_path / "remote" / "payload.bin"
+    src.parent.mkdir()
+    src.write_bytes(b"y" * 20)
+    dest_dir = tmp_path / "local"
+    dest_dir.mkdir()
+    factory, calls = _progress(show_progress)
 
-    aioftp runs ``make_directory(destination.parent)`` before writing, so a
-    destination one level too deep does not merely misplace the file -- it
-    leaves a directory wearing the file's own name. That is the artefact that
-    outlived the bed run's cleanup (``rm`` cannot remove a directory) and
-    poisoned every later cell sharing the scratch path, so it is worth its own
-    red rather than being folded into the path assertion above.
-    """
+    result = await _backend(_FsFtpClient()).run_get([src], dest_dir, progress_factory=factory)
+
+    assert result[src].status is Status.Success, result[src].msg
+    landed = result[src].value
+    assert landed == dest_dir / "payload.bin"
+    assert landed.read_bytes() == b"y" * 20
+    assert bool(calls.calls) is show_progress
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_put_to_a_missing_directory_fails_and_creates_nothing(
+    tmp_path: Path, show_progress: bool
+) -> None:
     src = tmp_path / "payload.bin"
-    src.write_bytes(b"z" * 64)
-    dest_dir = Path("/remote/dest")
+    src.write_bytes(b"x" * 20)
+    dest_dir = tmp_path / "remote" / "absent"
+    factory, _ = _progress(show_progress)
 
-    client = _RecordingFtpClient()
-    await _backend(client).run_put([src], dest_dir, progress_factory=None)
+    result = await _backend(_FsFtpClient()).run_put([src], dest_dir, progress_factory=factory)
 
-    created = _effective_destination(client.uploads[0]).parent
-    assert created == PurePosixPath("/remote/dest"), (
-        f"aioftp will mkdir {created} before writing -- a directory named after the "
-        f"file. Only the intended destination directory may be created"
+    assert result[src].status is Status.Error, result[src].msg
+    assert str(dest_dir / "payload.bin") in (result[src].msg or ""), result[src].msg
+    assert not dest_dir.exists(), "a put without -r must not create the destination directory"
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_get_to_a_missing_directory_fails_and_creates_nothing(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    src = tmp_path / "remote" / "payload.bin"
+    src.parent.mkdir()
+    src.write_bytes(b"y" * 20)
+    dest_dir = tmp_path / "local" / "absent"
+    factory, _ = _progress(show_progress)
+
+    result = await _backend(_FsFtpClient()).run_get([src], dest_dir, progress_factory=factory)
+
+    assert result[src].status is Status.Error, result[src].msg
+    assert str(dest_dir) in (result[src].msg or ""), result[src].msg
+    assert not dest_dir.exists(), "a get without -r must not create the destination directory"
+    assert not dest_dir.parent.exists()
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_get_of_a_remote_directory_fails_and_fetches_nothing(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    src = tmp_path / "remote" / "tree"
+    src.mkdir(parents=True)
+    (src / "inner.txt").write_text("inner")
+    dest_dir = tmp_path / "local"
+    dest_dir.mkdir()
+    factory, _ = _progress(show_progress)
+
+    result = await _backend(_FsFtpClient()).run_get([src], dest_dir, progress_factory=factory)
+
+    assert result[src].status is Status.Error, result[src].msg
+    assert list(dest_dir.iterdir()) == [], "a directory source must not be fetched without -r"
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_get_into_a_missing_directory_sends_no_retr_and_does_not_desync(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    files = [remote / "a.bin", remote / "b.bin"]
+    for f in files:
+        f.write_bytes(b"y" * 20)
+    dest_dir = tmp_path / "local" / "absent"
+    factory, _ = _progress(show_progress)
+    client = _FsFtpClient()
+
+    result = await _backend(client).run_get(
+        files, dest_dir, progress_factory=factory, concurrent=False
     )
 
+    for f in files:
+        assert result[f].status is Status.Error, result[f].msg
+        assert str(dest_dir) in (result[f].msg or ""), result[f].msg
+    assert client.retrs == [], "the local side is decided before the server is asked"
+    assert client.desyncs == []
+    assert not dest_dir.parent.exists()
 
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_get_after_a_failed_get_on_the_same_client_succeeds(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    src = tmp_path / "remote" / "payload.bin"
+    src.parent.mkdir()
+    src.write_bytes(b"y" * 20)
+    missing = tmp_path / "local" / "absent"
+    good = tmp_path / "good"
+    good.mkdir()
+    factory, _ = _progress(show_progress)
+    client = _FsFtpClient()
+    backend = _backend(client)
+
+    failed = await backend.run_get([src], missing, progress_factory=factory)
+    landed = await backend.run_get([src], good, progress_factory=factory)
+
+    assert failed[src].status is Status.Error
+    assert landed[src].status is Status.Success, landed[src].msg
+    assert (good / "payload.bin").read_bytes() == b"y" * 20
+    assert client.desyncs == []
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_refused_get_names_the_source_path_once(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    tree = tmp_path / "remote" / "tree"
+    tree.mkdir(parents=True)
+    absent = tmp_path / "remote" / "absent.bin"
+    dest_dir = tmp_path / "local"
+    dest_dir.mkdir()
+    factory, _ = _progress(show_progress)
+
+    result = await _backend(_FsFtpClient()).run_get(
+        [tree, absent], dest_dir, progress_factory=factory, concurrent=False
+    )
+
+    for src in (tree, absent):
+        assert result[src].status is Status.Error, result[src].msg
+        # The dispatcher prints the source; the wrap does not repeat it.
+        assert (result[src].msg or "").count(str(src)) == 1, result[src].msg
+        assert "the server refused to send it" in (result[src].msg or ""), result[src].msg
+
+
+@pytest.mark.asyncio
+async def test_without_progress_no_size_command_is_sent(tmp_path: Path) -> None:
+    src = tmp_path / "remote" / "payload.bin"
+    src.parent.mkdir()
+    src.write_bytes(b"y" * 20)
+    dest_dir = tmp_path / "local"
+    dest_dir.mkdir()
+    client = _FsFtpClient()
+
+    await _backend(client).run_get([src], dest_dir, progress_factory=None)
+
+    assert client.commands == []
+
+
+@pytest.mark.asyncio
+async def test_with_progress_the_size_is_asked_once_and_reported(tmp_path: Path) -> None:
+    src = tmp_path / "remote" / "payload.bin"
+    src.parent.mkdir()
+    src.write_bytes(b"y" * 20)
+    dest_dir = tmp_path / "local"
+    dest_dir.mkdir()
+    client = _FsFtpClient()
+    factory, calls = _progress(True)
+
+    await _backend(client).run_get([src], dest_dir, progress_factory=factory)
+
+    assert client.commands == [f"SIZE {src}"]
+    assert calls.calls[-1] == (str(src), str(dest_dir / "payload.bin"), 20, 20)
+
+
+@show_progress_modes
 @pytest.mark.asyncio
 async def test_a_refused_upload_is_its_own_error_and_the_next_file_still_lands(
-    tmp_path: Path,
+    tmp_path: Path, show_progress: bool
 ) -> None:
-    """One file's refusal must not answer for the batch.
-
-    A single data channel is a reason to move one file at a time, never a
-    reason to stop: the second file is uploaded after the first is refused,
-    and nothing in the mapping is ``Skipped``.
-    """
+    """One file's refusal must not answer for the batch."""
     first = tmp_path / "a.bin"
     first.write_bytes(b"a" * 32)
     second = tmp_path / "b.bin"
     second.write_bytes(b"b" * 32)
-    dest_dir = Path("/remote/dest")
+    dest_dir = tmp_path / "remote"
+    dest_dir.mkdir()
+    factory, _ = _progress(show_progress)
 
-    client = _RecordingFtpClient(fail_for="a.bin")
+    client = _FsFtpClient(refuse_upload_of="a.bin")
     result = await _backend(client).run_put(
-        [first, second], dest_dir, progress_factory=None, concurrent=False
+        [first, second], dest_dir, progress_factory=factory, concurrent=False
     )
 
     assert result[first].status is Status.Error
     assert "550" in (result[first].msg or ""), result[first].msg
     assert result[second].status is Status.Success, result[second].msg
     assert not any(r.status is Status.Skipped for r in result.values())
-    assert [Path(u.source).name for u in client.uploads] == ["a.bin", "b.bin"], (
-        "the second file was never attempted after the first was refused"
-    )
-
-
-# ===========================================================================
-# GET -- observed against a real filesystem, not restated
-# ===========================================================================
-
-
-class _LocalWritingFtpClient:
-    """A ``download`` that performs aioftp's own two LOCAL operations, for real.
-
-    aioftp's ``Client.download`` resolves the destination, then
-    (``client.py:1285-1293``)::
-
-        await self.path_io.mkdir(destination_path.parent, parents=True, exist_ok=True)
-        async with self.path_io.open(destination_path, mode="wb") as file_out:
-            ...write blocks...
-
-    Both of those touch the LOCAL filesystem and neither needs a server, so this
-    stand-in does exactly them against a real ``tmp_path``. That is what lets
-    the GET tests assert ``dst.is_file()`` and read the bytes back -- a direct
-    observation of what the caller is handed, rather than a second copy of the
-    ``write_into`` rule sitting next to the first.
-
-    It records the call too, so the path assertions can stay symmetric with the
-    PUT ones.
-    """
-
-    def __init__(self, payload: bytes) -> None:
-        self._payload = payload
-        self.downloads: list[_RecordedUpload] = []
-        self.stream_sources: list[str] = []
-
-    async def download(
-        self, source: str, destination: str = "", *, write_into: bool = False, **_: Any
-    ) -> None:
-        self.downloads.append(_RecordedUpload(source, destination, write_into))
-        destination_path = Path(destination)
-        if not write_into:
-            destination_path = destination_path / PurePosixPath(source).name
-        destination_path.parent.mkdir(parents=True, exist_ok=True)
-        destination_path.write_bytes(self._payload)
-
-    def download_stream(self, source: str, **_: Any) -> Any:
-        self.stream_sources.append(source)
-        raise AssertionError("the no-progress arm must not open a download_stream")
-
-
-def _get_backend(client: _LocalWritingFtpClient) -> _FtpFileTransfer:
-    return _FtpFileTransfer(
-        connections=_FakeConnections(client),  # ty: ignore[invalid-argument-type]
-        name="dut",
-        exec_cmd=AsyncMock(),
-    )
-
-
-@pytest.mark.asyncio
-async def test_a_get_without_progress_leaves_a_readable_file_at_the_result_path(
-    tmp_path: Path,
-) -> None:
-    """The false ``Success``, observed rather than argued.
-
-    RED before the fix, and note WHICH assertion carried it: the status was
-    already ``Success`` and stayed ``Success``, because nothing in
-    ``_get_files_ftp`` looks at what landed. What reddened is ``dst.is_file()``
-    -- aioftp had made a DIRECTORY at exactly the path the ``Result`` names, and
-    put the bytes one level inside it.
-    """
-    payload = b"downloaded bytes" * 8
-    dest_dir = tmp_path / "landing"
-    dest_dir.mkdir()
-    src = PurePosixPath("/remote/src/payload.bin")
-
-    client = _LocalWritingFtpClient(payload)
-    result = await _get_backend(client).run_get([Path(src)], dest_dir, progress_factory=None)
-
-    landed = result[Path(src)]
-    assert landed.status is Status.Success, landed.msg
-    dst = landed.value
-    assert dst.is_file(), (
-        f"the result says Success and names {dst}, but that path is a "
-        f"{'directory' if dst.is_dir() else 'not a file'} -- aioftp appended "
-        f"source.name to a destination it treats as a container, so the bytes are "
-        f"one level deeper and every caller that trusts this Result is wrong"
-    )
-    assert dst.read_bytes() == payload
-
-
-@pytest.mark.asyncio
-async def test_a_get_creates_no_directory_named_after_the_file(tmp_path: Path) -> None:
-    """The litter, on the LOCAL filesystem this time.
-
-    The PUT twin of this leaves a directory on the remote host that the
-    conformance teardown's ``rm`` cannot remove. This one leaves it on the
-    caller's own machine, where nothing is watching at all.
-    """
-    dest_dir = tmp_path / "landing"
-    dest_dir.mkdir()
-    src = PurePosixPath("/remote/src/payload.bin")
-
-    client = _LocalWritingFtpClient(b"x" * 32)
-    await _get_backend(client).run_get([Path(src)], dest_dir, progress_factory=None)
-
-    strays = [p for p in dest_dir.iterdir() if p.is_dir()]
-    assert strays == [], (
-        f"a get with progress OFF created {strays} under {dest_dir} -- directories "
-        f"named after the files it was asked to fetch"
-    )
-
-
-@pytest.mark.asyncio
-async def test_both_get_arms_agree_on_where_the_file_lands(tmp_path: Path) -> None:
-    """The same invariant as the PUT pair: progress selects an implementation,
-    never a location.
-
-    The progress arm opens ``dst`` itself (``with dst.open("wb")``), so its
-    destination is ``dest_dir / src.name`` by construction; this pins the
-    no-progress arm to the same answer.
-    """
-    dest_dir = tmp_path / "landing"
-    dest_dir.mkdir()
-    src = PurePosixPath("/remote/src/payload.bin")
-
-    client = _LocalWritingFtpClient(b"y" * 16)
-    await _get_backend(client).run_get([Path(src)], dest_dir, progress_factory=None)
-
-    resolved = _effective_destination(client.downloads[0])
-    assert resolved == PurePosixPath(dest_dir / "payload.bin"), (
-        f"the no-progress get resolves to {resolved}, but the progress arm writes "
-        f"{dest_dir / 'payload.bin'} -- show_progress selects an implementation, "
-        f"not a location"
-    )
-
-
-# ===========================================================================
-# The mirror itself
-# ===========================================================================
-
-
-def test_the_hand_mirrored_write_into_rule_still_matches_aioftp() -> None:
-    """``_effective_destination`` hand-copies aioftp's branch, so pin the premise.
-
-    Every path assertion in this file reads ``write_into``'s default out of a
-    stand-in that declares it locally. If aioftp ever flipped that default, the
-    stand-ins would keep the old one, the tests would keep passing, and they
-    would be measuring a rule the library no longer has. Same shape, and the
-    same reason, as
-    ``test_transfer_registry.py::test_the_ftp_stride_is_aioftps_own_block_size``.
-    """
-    import inspect
-
-    import aioftp
-
-    for name in ("upload", "download"):
-        parameter = inspect.signature(getattr(aioftp.Client, name)).parameters["write_into"]
-        assert parameter.default is False, (
-            f"aioftp.Client.{name} now defaults write_into={parameter.default!r}; "
-            f"this file's stand-ins and _effective_destination mirror the old "
-            f"default and are no longer measuring aioftp's behaviour"
-        )
-
-
-# ---------------------------------------------------------------------------
-# The documented one-at-a-time bound
-# ---------------------------------------------------------------------------
+    assert [Path(p).name for p in client.uploaded] == ["a.bin", "b.bin"]
 
 
 def test_ftp_transfer_is_one_file_at_a_time() -> None:
@@ -438,4 +413,143 @@ def test_ftp_transfer_is_one_file_at_a_time() -> None:
     one file at a time whatever ``concurrent`` says, and nothing else checks
     that claim against the class.
     """
-    assert _backend(_RecordingFtpClient()).concurrency_limit == 1
+    assert _backend(_FsFtpClient()).concurrency_limit == 1
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_put_of_a_missing_source_never_reaches_the_server(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    missing = tmp_path / "absent.bin"
+    good = tmp_path / "good.bin"
+    good.write_bytes(b"g" * 20)
+    dest_dir = tmp_path / "remote"
+    dest_dir.mkdir()
+    (dest_dir / "absent.bin").write_bytes(b"keep")
+    factory, _ = _progress(show_progress)
+    client = _FsFtpClient()
+
+    result = await _backend(client).run_put(
+        [missing, good], dest_dir, progress_factory=factory, concurrent=False
+    )
+
+    assert result[missing].status is Status.Error, result[missing].msg
+    assert str(missing) in (result[missing].msg or ""), result[missing].msg
+    assert [Path(p).name for p in client.uploaded] == ["good.bin"], "no STOR for the missing source"
+    assert (dest_dir / "absent.bin").read_bytes() == b"keep"
+    assert result[good].status is Status.Success, result[good].msg
+    assert (dest_dir / "good.bin").read_bytes() == b"g" * 20
+    assert client.desyncs == []
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_get_onto_an_existing_directory_sends_no_retr_and_does_not_desync(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    files = [remote / "a.bin", remote / "b.bin"]
+    for f in files:
+        f.write_bytes(b"y" * 20)
+    dest_dir = tmp_path / "local"
+    (dest_dir / "a.bin").mkdir(parents=True)
+    factory, _ = _progress(show_progress)
+    client = _FsFtpClient()
+
+    result = await _backend(client).run_get(
+        files, dest_dir, progress_factory=factory, concurrent=False
+    )
+
+    assert result[files[0]].status is Status.Error, result[files[0]].msg
+    assert "existing directory" in (result[files[0]].msg or ""), result[files[0]].msg
+    assert result[files[1]].status is Status.Success, result[files[1]].msg
+    assert (dest_dir / "b.bin").read_bytes() == b"y" * 20
+    assert client.retrs == [str(files[1])], "no RETR for the file whose destination is a directory"
+    assert client.desyncs == []
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_get_whose_parent_is_a_file_says_it_is_not_a_directory(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    src = tmp_path / "remote" / "payload.bin"
+    src.parent.mkdir()
+    src.write_bytes(b"y" * 20)
+    not_a_dir = tmp_path / "local"
+    not_a_dir.write_bytes(b"file")
+    factory, _ = _progress(show_progress)
+    client = _FsFtpClient()
+
+    result = await _backend(client).run_get([src], not_a_dir, progress_factory=factory)
+
+    assert result[src].status is Status.Error, result[src].msg
+    assert "is not a directory" in (result[src].msg or ""), result[src].msg
+    assert client.retrs == []
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_refused_get_leaves_no_temp_file_and_keeps_an_existing_destination(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    src = tmp_path / "remote" / "tree"
+    src.mkdir(parents=True)
+    dest_dir = tmp_path / "local"
+    dest_dir.mkdir()
+    (dest_dir / "tree").write_bytes(b"old bytes")
+    factory, _ = _progress(show_progress)
+
+    result = await _backend(_FsFtpClient()).run_get([src], dest_dir, progress_factory=factory)
+
+    assert result[src].status is Status.Error, result[src].msg
+    assert [p.name for p in dest_dir.iterdir()] == ["tree"], "a failed get leaves no temp file"
+    assert (dest_dir / "tree").read_bytes() == b"old bytes"
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_get_over_an_existing_file_replaces_it_and_leaves_no_temp_file(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    src = tmp_path / "remote" / "payload.bin"
+    src.parent.mkdir()
+    src.write_bytes(b"new" * 10)
+    dest_dir = tmp_path / "local"
+    dest_dir.mkdir()
+    (dest_dir / "payload.bin").write_bytes(b"old")
+    factory, _ = _progress(show_progress)
+
+    result = await _backend(_FsFtpClient()).run_get([src], dest_dir, progress_factory=factory)
+
+    assert result[src].status is Status.Success, result[src].msg
+    assert (dest_dir / "payload.bin").read_bytes() == b"new" * 10
+    assert [p.name for p in dest_dir.iterdir()] == ["payload.bin"]
+
+
+@show_progress_modes
+@pytest.mark.asyncio
+async def test_a_refused_transfer_leaves_no_data_connection_open(
+    tmp_path: Path, show_progress: bool
+) -> None:
+    """A STOR or RETR the server refuses closes the data connection opened for it."""
+    src = tmp_path / "payload.bin"
+    src.write_bytes(b"x" * 20)
+    tree = tmp_path / "remote" / "tree"
+    tree.mkdir(parents=True)
+    dest = tmp_path / "local"
+    dest.mkdir()
+    factory, _ = _progress(show_progress)
+    client = _FsFtpClient()
+    backend = _backend(client)
+
+    put = await backend.run_put([src], tmp_path / "absent", progress_factory=factory)
+    get = await backend.run_get([tree], dest, progress_factory=factory)
+
+    assert put[src].status is Status.Error
+    assert get[tree].status is Status.Error
+    assert len(client.data_connections) == 2
+    assert all(writer.closed for _reader, writer in client.data_connections)
+    assert client.desyncs == []
