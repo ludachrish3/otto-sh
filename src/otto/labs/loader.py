@@ -30,12 +30,17 @@ from typing import (
 from typing_extensions import final
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ..host.host import Host
     from ..host.inventory_ref import MachineIdentity
     from ..inventory.protocol import Inventory
     from ..inventory.view import InventoryView
     from ..link.model import Link
+    from ..registry import Prepared
+    from .errors import LabRepositoryError
     from .protocol import LabRepository
+    from .sources import LabSourceEnv
 
 
 LAB_SEPARATOR = "+"
@@ -351,27 +356,125 @@ class Lab:
         return self
 
 
-def _json_source(search_paths: list[Path]) -> "LabRepository":
-    """Build a json source over *search_paths* through the lab-source registry.
+def paths_backend(paths: "Sequence[Path | str]") -> str:
+    """Return the lab-source backend a bare list of lab *paths* is: ``"jsonnet"`` or ``"json"``.
 
-    No project is selected on this path, so its hosts see no project data profiles.
+    THE one decision of it, which :func:`prepare_source_for_paths` builds
+    on and :func:`load_lab` labels its source with: an entry with the
+    ``jsonnet`` source's suffix (:data:`~otto.labs.sources.JSONNET_FILE_RULE`,
+    a ``.jsonnet`` file or a glob ending in it) makes it a ``jsonnet``
+    source, and every other entry (a directory, a ``.json`` file, a glob) a
+    ``json`` one, today's rule. No paths is ``json``. A ``str`` entry is
+    read as the path it spells, as the source's own configuration reads it.
+
+    Raises:
+        LabRepositoryError: *paths* mixes ``.jsonnet`` entries with others,
+            which no one source reads.
+    """
+    from .errors import LabRepositoryError
+    from .sources import JSONNET_FILE_RULE
+
+    kinds = {"jsonnet" if JSONNET_FILE_RULE.names_file(Path(p)) else "json" for p in paths}
+    if len(kinds) > 1:
+        listed = ", ".join(str(p) for p in paths)
+        raise LabRepositoryError(
+            f"search paths mix {JSONNET_FILE_RULE.suffix} entries with other lab paths, "
+            f"which no one lab source reads: {listed}"
+        )
+    return kinds.pop() if kinds else "json"
+
+
+def prepare_source_for_paths(
+    paths: "Sequence[Path | str]",
+) -> "Prepared[LabSourceEnv, Any, Any]":
+    """Prepare the lab source *paths* name, as ``load_lab(search_paths=)`` reads them.
+
+    Its backend is :func:`paths_backend`'s, prepared through
+    :data:`~otto.labs.registry.LAB_REPOSITORIES` and anchored at the current
+    directory. :func:`lab_source_for_paths` builds the result; a caller that
+    needs the prepared source itself (a script reading one entry's render
+    inputs) takes it from here.
+
+    No project declares the source, so its hosts see no project data
+    profiles and a template's ``otto.project`` is the empty string: no
+    project is named, and none is borrowed.
+
+    Raises:
+        LabRepositoryError: *paths* mixes ``.jsonnet`` entries with others.
     """
     from ..host.os_profile import ProfileContext
     from .registry import LAB_REPOSITORIES
     from .sources import LabSourceEnv
 
-    prepared = LAB_REPOSITORIES.prepare(
-        name="json",
-        raw={"paths": [str(p) for p in search_paths]},
+    backend = paths_backend(paths)
+    return LAB_REPOSITORIES.prepare(
+        name=backend,
+        raw={"paths": [str(p) for p in paths]},
         env=LabSourceEnv(
             project_root=Path.cwd(),
-            label="json",
+            label=backend,
             origin="load_lab(search_paths=)",
             profiles=ProfileContext.empty(),
+            project_name="",
         ),
         source="load_lab(search_paths=)",
     )
-    return LAB_REPOSITORIES.build(prepared=prepared)
+
+
+def search_paths_view() -> "InventoryView":
+    """Return the inventory view a lab read from bare search paths renders under.
+
+    THE one decision of it: :func:`otto.inventory.deferred_inventory_view`
+    over no project. It declares no inventory, and its protected-file catalog
+    is complete for a process with no project: the user settings file and
+    every file it names, read on the first render. When that file cannot be
+    read the catalog refuses, so nothing renders unprotected.
+    :func:`load_lab` defaults to it for a ``.jsonnet`` search path; the bed
+    scripts render the cell under it (``scripts/_lab_document.py``).
+    """
+    from ..inventory.config import deferred_inventory_view
+
+    return deferred_inventory_view(projects=[])
+
+
+def lab_source_for_paths(paths: "Sequence[Path | str]") -> "LabRepository":
+    """Build the lab source *paths* name, as :func:`prepare_source_for_paths` decides it.
+
+    A ``.jsonnet`` entry builds the ``jsonnet`` source and every other entry
+    the ``json`` one; :func:`load_lab` reads its ``search_paths`` through
+    it. A ``jsonnet`` source renders only under a view an inventory builder
+    made (its protected-file catalog): :func:`load_lab` renders one under
+    :func:`search_paths_view` unless it is given a view.
+
+    Raises:
+        LabRepositoryError: *paths* mixes ``.jsonnet`` entries with others.
+    """
+    from .registry import LAB_REPOSITORIES
+
+    return LAB_REPOSITORIES.build(prepared=prepare_source_for_paths(paths))
+
+
+def _inventory_argument_refusal() -> "LabRepositoryError":
+    """Return :func:`load_lab`'s refusal of ``inventory=`` with a ``.jsonnet`` search path.
+
+    The general statement is :data:`~otto.inventory.config.NO_CATALOG`'s, the
+    one spelling of "no catalog"; the remedy after it is this caller's, which
+    knows its arguments: no view is passed, and no inventory reaches a bare
+    search path's template.
+    """
+    from ..inventory.config import NO_CATALOG
+    from .errors import LabRepositoryError
+
+    return LabRepositoryError(
+        "load_lab(search_paths=) cannot render a .jsonnet entry with inventory=: "
+        f"{NO_CATALOG.refusal}. Pass no inventory= (the entry then renders with no "
+        "inventory, under otto.inventory.deferred_inventory_view(projects=[])). A bare "
+        ".jsonnet search path declares no inventories, even with view=, so a template "
+        "that reads an inventory loads through a configured project: "
+        "otto.session.build_lab, or load_lab(repository=, view=) with the project's "
+        "jsonnet lab source (otto.labs.build_lab_sources) and its view "
+        "(otto.inventory.build_inventory_view)"
+    )
 
 
 def _load_components(
@@ -420,18 +523,29 @@ def load_lab(
         Name(s) of lab data to retrieve. A string is split on ``+``
         (see :func:`split_lab_names`); a list is used as-is.
     search_paths : list[Path] | None
-        Directories searched by the default json backend. Ignored when
-        ``repository`` is supplied.
+        The lab paths the source this call builds reads (relative entries
+        anchor to the current directory); ignored when ``repository`` is
+        supplied. Directories, ``.json`` files and globs are read as
+        written, as always: a directory contributes its ``lab.json``.
+        ``.jsonnet`` entries (files, or globs ending in ``.jsonnet``) are
+        templates, rendered (:doc:`/configuration/lab/templating`); a
+        directory's ``lab.jsonnet`` is never read, so name the file. A list
+        mixing the two kinds is refused. A rendered entry's ``otto.project``
+        is the empty string, because no project declares the source, and
+        its imports resolve under ``lab_data/lib`` in the current
+        directory, the import root a project's source has by default under
+        its root: a template that imports a library loads only from the
+        directory that holds it.
     preferences : dict[str, dict[str, Any]] | None
         The unified ``{selector: {capability: [...] | option_table: {key: val}}}``
         product-preference table applied to every host in the resulting lab.
         ``None`` reproduces today's behavior.
     repository : LabRepository | None
         A pre-built host-source backend (e.g. from
-        :func:`otto.labs.build_lab_sources`). When ``None``, the ``json``
-        backend registered in :data:`~otto.labs.registry.LAB_REPOSITORIES`
-        is built over ``search_paths`` (relative entries anchor to the
-        current directory) — wrapped in a one-source
+        :func:`otto.labs.build_lab_sources`). When ``None``, the backend
+        ``search_paths`` names, registered in
+        :data:`~otto.labs.registry.LAB_REPOSITORIES`, is built over them —
+        wrapped in a one-source
         :class:`~otto.labs.composite.CompositeLabRepository`, which is where
         lab existence and the declared-but-memberless rule live. With no
         ``search_paths`` the composite has no source, and loading fails with
@@ -443,11 +557,26 @@ def load_lab(
         §6). ``None`` — the default — makes a referenced entry an error, which
         is exactly what a process with no ``[inventory]`` table should say.
         It stands for a view holding it alone as ``default``
-        (:meth:`~otto.inventory.InventoryView.of_default`).
+        (:meth:`~otto.inventory.InventoryView.of_default`). That view has no
+        protected-file catalog, so with *inventory* a ``.jsonnet`` search
+        path is refused; *view* says where a template that reads an
+        inventory loads from.
     view : InventoryView | None
         The process inventory view (:func:`otto.inventory.build_inventory_view`)
         every component resolves its references through, named inventories
-        included. Give *inventory* or *view*, not both.
+        included, and whose protected-file catalog a rendered entry is read
+        under. Give *inventory* or *view*, not both. With neither, a
+        ``.jsonnet`` search path renders with no inventory, protected from
+        reading the user settings file and every file it names; when that
+        file cannot be read, nothing renders. Every other source reads under
+        :meth:`~otto.inventory.InventoryView.of_default`. A *view* given
+        with a ``.jsonnet`` search path supplies its protected-file catalog
+        and nothing more: a bare ``.jsonnet`` search path declares no
+        inventories, even with *view*, so its template reads none. A
+        template that reads an inventory goes through a configured project:
+        :func:`otto.session.build_lab`, or a configured ``jsonnet`` lab
+        source (:func:`otto.labs.build_lab_sources`) as *repository*, with
+        the project's view (:func:`otto.inventory.build_inventory_view`).
 
     Returns
     -------
@@ -462,6 +591,9 @@ def load_lab(
     ------
     ValueError
         If both *inventory* and *view* are given.
+    LabRepositoryError
+        If *search_paths* mixes ``.jsonnet`` entries with others, or names
+        ``.jsonnet`` entries with *inventory*.
     LabUnavailableError
         If a :class:`~otto.labs.composite.CompositeLabRepository` reports a
         component unavailable.
@@ -506,7 +638,13 @@ def load_lab(
         # the composite is empty, and its load_lab fails loud with guidance.
         sources: list[LabSource] = []
         if search_paths:
-            sources.append(LabSource(label="json", repository=_json_source(search_paths)))
+            backend = paths_backend(search_paths)
+            if backend == "jsonnet" and view is None:
+                if inventory is not None:
+                    raise _inventory_argument_refusal()
+                view = search_paths_view()
+            found = lab_source_for_paths(search_paths)
+            sources.append(LabSource(label=backend, repository=found))
         repository = CompositeLabRepository(sources)
 
     if view is None:

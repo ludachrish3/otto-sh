@@ -282,7 +282,7 @@ def explain_host(
         entry=key.origin,
         element=key.element,
         index=key.index,
-        rendered=key.origin.suffix == JSONNET_FILE_RULE.suffix,
+        rendered=JSONNET_FILE_RULE.names_file(key.origin),
         provenance=entry.provenance,
         winners=entry.winners,
         inventories=[_age(name=name, view=view) for name in view.names()],

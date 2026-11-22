@@ -10,7 +10,7 @@ init = ["project5_instructions"]
 lab_patterns = [".*"]
 
 [[lab.sources]]
-backend = "json"
+backend = "jsonnet"
 paths = ["../_fixtures/lab_data/tech1"]
 
 # The library builds out of tree into build/lib/ (git-ignored) from this

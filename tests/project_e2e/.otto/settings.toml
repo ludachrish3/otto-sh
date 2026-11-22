@@ -11,7 +11,7 @@ init = [
 ]
 
 [[lab.sources]]
-backend = "json"
+backend = "jsonnet"
 paths = [
     "../_fixtures/lab_data/tech1",
 ]

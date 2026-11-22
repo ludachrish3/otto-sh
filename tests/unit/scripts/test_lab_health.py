@@ -60,6 +60,18 @@ def test_host_id_is_make_host_id(entry, expected):
     assert _host_id(entry) == make_host_id(entry["element"], entry.get("board"), entry.get("slot"))
 
 
+def test_the_ssh_login_prefers_vagrant_and_unwraps_its_wrapped_password():
+    """otto's reader wraps each password; the sshpass command gets the chosen one's text."""
+    from pydantic import SecretStr
+
+    creds = [
+        {"login": "root", "password": SecretStr("r00t")},
+        {"login": "vagrant", "password": SecretStr("vagr4nt")},
+    ]
+    assert lab_health._ssh_user_pass(creds) == ("vagrant", "vagr4nt")
+    assert lab_health._ssh_user_pass(creds[:1]) == ("root", "r00t")
+
+
 def _route_probes(monkeypatch):
     """Run ``_print_report`` over the real lab data with both probes stubbed,
     recording which host each probe was asked to handle."""

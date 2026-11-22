@@ -4,7 +4,7 @@
 another one: the five BusyBox guests hop ``test1`` (bb1350 three times, over
 telnet, ssh and console), the seven Zephyr guests hop ``test4``, and
 ``test2``'s three console cells dial their console server ``test1`` (measured,
-``tests/_fixtures/lab_data/tech1/lab.json``). A console server resolves by the
+``tests/_fixtures/lab_data/tech1/lab.jsonnet``). A console server resolves by the
 same lab lookup a hop does. Both of today's servers are also hop targets, so
 the lab below holds them without naming them; a console server that hopped
 nobody would not be in it, and ``tests/unit/test_conformance_bed.py`` checks
@@ -77,14 +77,13 @@ against. A venue whose job is to cross ``(term, transfer)`` over otto's own
 hosts should not be handing the contracts a host it has edited.
 """
 
-import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 from otto.context import OttoContext, reset_context, set_context
 from otto.host.factory import create_host_from_dict
 from otto.labs.loader import Lab
-from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
+from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_document
 
 # The name the venue's lab answers to. It reaches a reader in two places: the
 # ``hop 'x' not in lab 'conformance_bed'`` KeyError otto raises when a hop
@@ -124,7 +123,7 @@ def hop_targets(tech: str) -> "list[str]":
     than at open time, where it would arrive as an otto ``KeyError`` about a
     lab this tree assembled.
     """
-    entries = flatten_lab_doc(json.loads(lab_data_path(tech).read_text()))
+    entries = flatten_lab_doc(lab_document(tech))
     declared = {entry["element"] for entry in entries}
     targets: "list[str]" = []
     for entry in entries:

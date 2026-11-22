@@ -24,6 +24,37 @@ CHECKOUT_ROOT = TESTS_ROOT.parent
 _TESTS_ROOT = TESTS_ROOT
 _CUSTOM_HOSTS = _TESTS_ROOT / "custom_hosts"
 _PROJECT1 = _TESTS_ROOT / "project1"
+GOLDENS = TESTS_ROOT / "_fixtures" / "goldens"
+"""Frozen JSON documents a template must render: ``<name>_lab.json`` per lab file
+a Jsonnet entry replaced, and ``pages/<template>.json`` per docs page template."""
+TECH1_GOLDEN = GOLDENS / "tech1_lab.json"
+"""The bed cell's frozen JSON lab file: ``lab_data/tech1``'s hand-written lab, before its entry.
+
+``tech1/lab.jsonnet`` renders exactly this document
+(``tests/unit/labs/test_testbed_templates.py`` holds the two equal, section
+for section), so an edit to the bed (a new VM, a renamed interface) edits the
+entry AND this file, in one commit. It is three things at once: the template's
+oracle, the legacy JSON fixture that ``test_unchanged_loading`` loads, and the
+JSON lab the import budget's realistic project reads in place
+(:func:`tests._fixtures.generated_project.generate_project`), which must not
+render: the release delta generates that project under the previous release's
+otto. Updating it moves ``test_unchanged_loading``'s captured outputs too, so
+re-capture them in the same commit.
+"""
+GETTING_STARTED_GOLDEN = GOLDENS / "getting_started_lab.json"
+"""``docs/examples/getting-started``'s hand-written lab file, before its Jsonnet entry.
+
+The example's ``lab_data/lab.jsonnet`` renders exactly this document
+(``tests/unit/docs/test_getting_started_templates.py``), so an edit to the
+example's lab edits the entry AND this file, in one commit.
+"""
+GETTING_STARTED_INVENTORY_GOLDEN = GOLDENS / "getting_started_inventory_lab.json"
+"""``docs/examples/getting-started-inventory``'s hand-written lab file, before its entry.
+
+``test_unchanged_loading`` loads it as the twin's legacy JSON, and the twin's
+template builds the labs recorded for it
+(``tests/unit/docs/test_getting_started_templates.py``).
+"""
 WHEELS_DIR = TESTS_ROOT / "_fixtures" / "wheels"
 """Committed fixture wheels (see that directory's README).
 

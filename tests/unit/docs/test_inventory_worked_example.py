@@ -14,20 +14,15 @@ tests. This guard makes the two one artefact.
 """
 
 import json
-import re
 
 import tomli
 
 from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.marked_blocks import marked_blocks
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 _PAGE = CHECKOUT_ROOT / "docs" / "configuration" / "inventory.md"
 _FIXTURE = "tech1-inventory"
-_BLOCK = re.compile(
-    r"<!-- fixture: tech1-inventory/(?P<name>[\w.-]+) -->\s*"
-    r"```(?P<lang>json|toml)\n(?P<body>.*?)```",
-    re.DOTALL,
-)
 _EXPECTED = {"inventory.json", "creds.json", "lab.json", "user-settings.toml"}
 
 
@@ -36,7 +31,12 @@ def _blocks() -> "dict[str, tuple[str, str]]":
     # blocks carrying the same marker collapse to the last one silently, and a
     # page that mirrors one fixture file twice is a page defect — the earlier
     # block would be checked against nothing.
-    marked = [(m["name"], (m["lang"], m["body"])) for m in _BLOCK.finditer(_PAGE.read_text())]
+    marked = [
+        (block.name, (block.lang, block.body))
+        for block in marked_blocks(
+            _PAGE.read_text(), r"fixture: tech1-inventory/(?P<name>[\w.-]+)", "json", "toml"
+        )
+    ]
     names = [name for name, _ in marked]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     assert not duplicates, f"the page marks these fixture files more than once: {duplicates}"

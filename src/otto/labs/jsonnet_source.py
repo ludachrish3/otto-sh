@@ -244,6 +244,9 @@ class JsonnetSourceInputs:
         from .documents import RenderInputs
 
         project = self.env.project_name
+        # `None` is refused so `otto.project` is never invented; the empty
+        # string passes by design: `load_lab(search_paths=)` names no project
+        # (prepare_source_for_paths), and says so rather than borrowing one.
         if project is None:
             raise LabRepositoryError(
                 f"source {self.env.label}: a jsonnet lab source renders for a named project, "

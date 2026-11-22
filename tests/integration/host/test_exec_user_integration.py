@@ -24,7 +24,7 @@ VM — see ``provision_test_vm``):
 
 Containment mirrors ``test_proxy_user_stability_integration.py``: the
 ``sudo-su-shell`` proxy is registered at module scope with ``overwrite=True``
-and the creds are inline, so only the VM's IP is read from ``tech1/lab.json``.
+and the creds are inline, so only the VM's IP is read from ``tech1/lab.jsonnet``.
 
 Carries no ``stability`` marker, so it rides the ordinary Unix lab lanes
 (``make coverage-unix`` / ``nox -s tests_unix`` / ``tests_all``, all of which

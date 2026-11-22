@@ -46,7 +46,7 @@ previously untested here and confirmed 100% reliably hanging pre-fix.
 
 Containment
 -----------
-``tests/_fixtures/lab_data/tech1/lab.json`` (the "unix" lab) is loaded
+``tests/_fixtures/lab_data/tech1/lab.jsonnet`` (the "unix" lab) is loaded
 directly by several *unit* tests that do not register any login proxies —
 ``CredSpec`` validates a cred's ``proxy`` name against the ``LOGIN_PROXIES``
 registry at ingest, so adding a proxy-referencing cred to that shared file
@@ -57,7 +57,7 @@ module therefore never touches shared lab data:
   (``overwrite=True`` so re-import under xdist is idempotent).
 - Tests 1-5 build hosts from INLINE dicts via
   :func:`otto.host.factory.create_host_from_dict`, reading only the
-  leased VM's IP read-only from ``tech1/lab.json`` (via
+  leased VM's IP read-only from ``tech1/lab.jsonnet`` (via
   ``tests._fixtures.labdata.host_data``) — never its ``creds``.
 - Test 6 (the ``login --user`` bridge) drives a real ``otto``
   subprocess, which needs its OWN registration (it never imports this test
@@ -124,7 +124,7 @@ register_login_proxy("sudo-su-shell", _sudo_su_shell, undo=_sudo_su_shell_undo, 
 
 
 # ---------------------------------------------------------------------------
-# Inline host-dict builder (never touches tech1/lab.json's creds)
+# Inline host-dict builder (never touches tech1/lab.jsonnet's creds)
 # ---------------------------------------------------------------------------
 
 _MYSQL_CREDS: list[dict[str, str]] = [
@@ -163,7 +163,7 @@ def _mysql_host_dict(
 def leased_host() -> Iterator[tuple[str, str]]:
     """Lease one Unix host from the pool; yield ``(element, ip)``.
 
-    ``ip`` is read read-only from ``tech1/lab.json`` (the unix lab's
+    ``ip`` is read read-only from ``tech1/lab.jsonnet`` (the unix lab's
     real IP-to-element map) via :func:`tests._fixtures.labdata.host_data` —
     the shared file's ``creds`` are never consulted, so this never depends on
     (or risks) anything mutated there.

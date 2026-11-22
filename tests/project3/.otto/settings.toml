@@ -36,7 +36,7 @@ lab_patterns = [".*"]
 # reached over a QEMU `-serial telnet:` bridge. The instrumented product
 # (product/) is loaded at runtime; the base carries no coverage code.
 [[lab.sources]]
-backend = "json"
+backend = "jsonnet"
 paths = [
     "../_fixtures/lab_data/tech1",
 ]
@@ -126,7 +126,7 @@ hosts = "zephyr(37|44)-llext"
 #
 # The cross-gcov is no longer named here — it is a per-host bed property declared
 # in lab data (each host's ``toolchain`` dict). See the embedded host entries in
-# lab_data/tech1/lab.json. (.gcno discovery remains the no-config fallback.)
+# tests/_fixtures/lab_data/tech1/lab.jsonnet. (.gcno discovery remains the no-config fallback.)
 
 # The extension's build dir: holds the .gcno + source used as the report's
 # source root. Absolute, on the dev VM where the product is built. See product/.

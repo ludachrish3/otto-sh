@@ -6,10 +6,14 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from otto.models.jsonschema import build_schemas
-from tests._fixtures.labdata import lab_data_dir, lab_json_v2
+from tests._fixtures.labdata import lab_data_dir, lab_document, lab_json_v2
 
-_LAB_DATA = lab_data_dir()
-_LAB_FILES = sorted(_LAB_DATA.glob("*/lab.json"))
+_TECHS = sorted(
+    d.name
+    for d in lab_data_dir().iterdir()
+    if (d / "lab.json").is_file() or (d / "lab.jsonnet").is_file()
+)
+"""Every lab-data tech; tech1's document is its rendered ``lab.jsonnet`` (:func:`lab_document`)."""
 
 _VALID_HOST_ENTRY = {
     "ip": "10.10.200.11",
@@ -39,12 +43,12 @@ def lab_validator() -> Draft202012Validator:
 
 
 def test_lab_data_fixtures_exist():
-    assert _LAB_FILES, "expected at least one tests/_fixtures/lab_data/*/lab.json fixture"
+    assert "tech1" in _TECHS, _TECHS  # the bed's templated cell is validated, not skipped
 
 
-@pytest.mark.parametrize("lab_file", _LAB_FILES, ids=lambda p: p.parent.name)
-def test_real_lab_json_validates(lab_validator, lab_file):
-    lab = json.loads(lab_file.read_text())
+@pytest.mark.parametrize("tech", _TECHS)
+def test_real_lab_json_validates(lab_validator, tech):
+    lab = lab_document(tech)
     errors = list(lab_validator.iter_errors(lab))
     assert errors == [], [e.message for e in errors]
 

@@ -6,6 +6,8 @@ here reshapes what other tests believe they asserted.
 """
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -162,3 +164,107 @@ def test_element_for_and_host_data_read_the_same_flat_entry() -> None:
 def test_an_unknown_element_names_the_file(lookup) -> None:
     with pytest.raises(KeyError, match=r"lab\.json"):
         lookup("no-such-element")
+
+
+_IMPORTING_CELL = """\
+local host = import 'host.libsonnet';
+function(otto) {
+  labs: { cell: {} },
+  elements: [{ name: 'h1', labs: ['cell'], hosts: [host] }],
+}
+"""
+"""A cell whose one host is its library's: an edit to the library alone moves its document."""
+
+
+def _library_host(address: str) -> str:
+    return json.dumps({"ip": address, "os_type": "unix", "creds": _CREDS})
+
+
+@pytest.fixture
+def importing_cell(tmp_path, monkeypatch) -> "tuple[Path, Path]":
+    """A ``cell`` tech whose ``lab.jsonnet`` imports ``lab_data/lib/host.libsonnet``.
+
+    The working directory holds the import root (``load_lab``'s, anchored at
+    the current directory) and the otto home is empty. Returns the library
+    file and the user settings file.
+    """
+    from otto.config.user_settings import clear_user_settings_memo
+    from tests._fixtures import labdata
+
+    data = tmp_path / "techs"
+    (data / "cell").mkdir(parents=True)
+    (data / "cell" / "lab.jsonnet").write_text(_IMPORTING_CELL)
+    monkeypatch.setattr(labdata, "_LAB_DATA_DIR", data)
+    work = tmp_path / "work"
+    library = work / "lab_data" / "lib" / "host.libsonnet"
+    library.parent.mkdir(parents=True)
+    library.write_text(_library_host("192.0.2.1"))
+    monkeypatch.chdir(work)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("OTTO_HOME", str(home))
+    clear_user_settings_memo()
+    yield library, home / "settings.toml"
+    clear_user_settings_memo()
+
+
+def _cell_address() -> str:
+    from tests._fixtures.labdata import lab_document
+
+    return lab_document("cell")["elements"][0]["hosts"][0]["ip"]
+
+
+def _bump(path: Path, text: str) -> None:
+    """Rewrite *path* with *text*, its mtime moved on: an edit the freshness rule sees."""
+    before = path.stat().st_mtime_ns
+    path.write_text(text)
+    os.utime(path, ns=(before + 1_000_000_000, before + 1_000_000_000))
+
+
+def test_lab_document_sees_an_edit_to_an_imported_file_alone(importing_cell) -> None:
+    """The cell's entry is unchanged; its document follows the library it imports."""
+    library, _settings = importing_cell
+    assert _cell_address() == "192.0.2.1"
+    _bump(library, _library_host("192.0.2.2"))
+    assert _cell_address() == "192.0.2.2"
+
+
+def test_lab_document_sees_a_changed_protection_context(importing_cell) -> None:
+    """The user settings file now names the library as protected: the render is refused."""
+    from otto.config.user_settings import clear_user_settings_memo
+    from otto.labs.errors import LabRepositoryError
+
+    library, settings = importing_cell
+    assert _cell_address() == "192.0.2.1"
+    records = settings.parent / "usr.json"
+    records.write_text("{}")
+    settings.write_text(
+        "[[inventories]]\n"
+        'name = "usr"\nbackend = "json"\n'
+        f'path = "{records}"\n'
+        f'creds = {{ backend = "json", path = "{library}" }}\n'
+    )
+    clear_user_settings_memo()
+    with pytest.raises(LabRepositoryError, match=r"refused \(a protected file\)"):
+        _cell_address()
+
+
+def test_a_checked_in_cell_renders_once_per_process(monkeypatch) -> None:
+    """``tech1``'s entry is rendered at its first read; every later read is served by path."""
+    from otto.labs import documents
+    from tests._fixtures import labdata
+
+    monkeypatch.setattr(labdata, "_CHECKED_IN_TEXT", {})
+    real = documents.rendered_data
+    renders: list[Path] = []
+
+    def counting(path, render):
+        renders.append(path)
+        return real(path, render)
+
+    monkeypatch.setattr(documents, "rendered_data", counting)
+    first = labdata.lab_document("tech1")
+    first["elements"].clear()
+    again = [labdata.lab_document("tech1") for _ in range(3)]
+    assert renders == [labdata.lab_data_path("tech1")]
+    assert all(doc == again[0] and doc["elements"] for doc in again), "each read is its own copy"

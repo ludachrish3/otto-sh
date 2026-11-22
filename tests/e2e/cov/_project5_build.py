@@ -50,6 +50,7 @@ import pytest
 
 from otto.coverage.store.model import CoverageStore, FileRecord
 from tests._fixtures.gitrepo import git_env
+from tests._fixtures.labdata import lab_data_path, tech1_document
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import PROJECT5
@@ -68,7 +69,6 @@ UNIT_BINARY = UNIT_BUILD / "test_math_ops"
 BIND_BINARY = DOCKER / "build-bind" / "product"
 TARBALL = DOCKER / "otto-cov-demo.tar"
 KMOD_BUILD = PROJECT5 / "kmod" / "build.sh"
-LAB_DATA = CHECKOUT_ROOT / "tests" / "_fixtures" / "lab_data" / "tech1"
 STAMP = BUILD / "toolchain"
 """Which compiler built the kernel-module half last: its ``Toolchain.name``.
 
@@ -384,10 +384,10 @@ def overlay_lab(tc: Toolchain, root: Path) -> "Path | None":
     """
     if not tc.lcov_args:
         return None
-    fixture = json.loads((LAB_DATA / "lab.json").read_text())
+    fixture = tech1_document()
     elements = [e for e in fixture["elements"] if e["name"] in OVERLAY_ELEMENTS]
     assert len(elements) == len(OVERLAY_ELEMENTS), (
-        f"{LAB_DATA / 'lab.json'} holds {[e['name'] for e in elements]}, "
+        f"{lab_data_path()} holds {[e['name'] for e in elements]}, "
         f"expected {list(OVERLAY_ELEMENTS)} — the bed elements were renamed?"
     )
     root.mkdir(parents=True, exist_ok=True)
@@ -454,7 +454,7 @@ def docker3_overlay_project(root: Path) -> Path:
     from the element name) with ``docker3`` added to that list; the same-name
     element replaces project5's, and ``unix`` keeps its hosts.
     """
-    fixture = json.loads((LAB_DATA / "lab.json").read_text())
+    fixture = tech1_document()
     (element,) = [e for e in fixture["elements"] if e["name"] == "test3"]
     element["labs"] = [*element["labs"], DOCKER3_LAB]
     root.mkdir(parents=True, exist_ok=True)

@@ -1,14 +1,12 @@
 """The BusyBox bed guest entries, as the factory sees them.
 
-The five ``bb*`` entries in ``tests/_fixtures/lab_data/tech1/lab.json`` are the
+The five ``bb*`` entries in ``tests/_fixtures/lab_data/tech1/lab.jsonnet`` are the
 only description of the bed otto has: Phase B's bed conftest selects them by
 ``"busybox" in labs and hop present`` and reads ``sw_version`` to parametrize
 over the pinned versions. Nothing else validates them — a lab entry is data,
 and data with a typo in a key name is rejected by the spec (``extra='forbid'``)
 only when something builds a host out of it. This module is that something.
 """
-
-import json
 
 from otto.host.factory import create_host_from_dict
 from otto.host.options import NcOptions, TelnetOptions
@@ -21,7 +19,7 @@ from tests._fixtures.labdata import (
     flat_hosts,
     flatten_lab_doc,
     host_data,
-    lab_data_path,
+    tech1_document,
 )
 from tests.conftest import BUSYBOX_GUEST_NES
 from tests.e2e.chaos._bed import (
@@ -200,7 +198,7 @@ def test_the_declared_tap_link_names_both_ends_the_builder_provisions():
     second TAP would land, and the guest owns exactly one netdev.
     """
     guest = next(g for g in GUEST_TABLE if g.element == BUSYBOX_LINK_ELEMENT)
-    data = json.loads(lab_data_path("tech1").read_text())
+    data = tech1_document()
     hosts = {h["element"]: h for h in flatten_lab_doc(data)}
 
     assert hosts[guest.element]["interfaces"] == {

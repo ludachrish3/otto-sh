@@ -7,7 +7,6 @@ These tests require:
 
 import asyncio
 import contextlib
-import json
 import os
 import re
 import socket
@@ -28,7 +27,13 @@ from otto.logger.mode import LogMode
 from tests._fixtures._host_pool import DOCKER_HOST, docker_host_lease
 from tests._fixtures.docker_reap import reap_docker
 from tests._fixtures.env_guard import preserved_env_var
-from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
+from tests._fixtures.labdata import (
+    element_for,
+    flatten_lab_doc,
+    host_data,
+    lab_data_path,
+    lab_document,
+)
 from tests._fixtures.paths import default_project_root
 from tests._fixtures.run_state import preserved_run_state
 from tests.conftest import BUSYBOX_BED_GROUP, BUSYBOX_PARAM_TOKENS
@@ -271,7 +276,7 @@ def reap_orphan_docker_stacks(request: pytest.FixtureRequest) -> None:
 
 
 def _host_data(ne: str) -> dict[str, Any]:
-    for host in flatten_lab_doc(json.loads(_LAB_DATA.read_text())):
+    for host in flatten_lab_doc(lab_document()):
         if host["element"] == ne:
             return host
     raise KeyError(f"NE {ne!r} not found in {_LAB_DATA}")

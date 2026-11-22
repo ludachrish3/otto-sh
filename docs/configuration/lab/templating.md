@@ -2,12 +2,20 @@
 
 # Templated labs
 
-A lab file states each element by hand. When the machines already live in an
-inventory, such as NetBox, the labs are often a rule over them: "one router
-lab per site, with that site's router and its traffic generator". A
-**templated lab** writes the rule once, in [Jsonnet](https://jsonnet.org), and
-otto renders the lab documents from the inventory's records each time it
-needs them.
+A lab file states each element by hand. When several labs share one shape,
+and only their names, addresses and ports change from lab to lab, a
+**templated lab** writes the shape once, in [Jsonnet](https://jsonnet.org),
+and otto renders the lab documents from it each time it needs them. The
+labs may also be a rule over machines that already live in an inventory,
+such as NetBox: "one router lab per site, with that site's router and its
+traffic generator".
+
+The Jsonnet language is taught by its
+[tutorial](https://jsonnet.org/learning/tutorial.html), and its functions are
+listed in the [standard library](https://jsonnet.org/ref/stdlib.html). This
+page starts with a {ref}`simple example <lab-templating-simple>`, then an
+{ref}`advanced one <lab-templating-advanced>` that reads inventories, and
+then the reference.
 
 A `backend = "jsonnet"` lab source renders Jsonnet **entry files** into lab
 documents, in memory, and reads each one exactly as it reads a `lab.json`
@@ -20,9 +28,100 @@ Rendering needs a Jsonnet binding. otto installs one on most platforms; the
 platforms without one are listed in {ref}`jsonnet-known-gaps`. Everything that
 renders no template works without one.
 
-(lab-templating-example)=
+(lab-templating-simple)=
 
-## A worked example: one router lab per site
+## A simple example: one bench lab per number
+
+Each bench is a lab of two hosts, a DUT and a traffic generator. Its number
+`n` decides everything else: the lab is `bench<n>`, its hosts sit on
+`10.20.<n>.0/24`, and host `k` of the bench has ssh port `2200 + 100 * n + k`.
+The example needs no inventory.
+
+Make an empty directory named `benches` and create these two files in it.
+The paths below are relative to `benches/`.
+
+```{literalinclude} ../../examples/templating/simple/.otto/settings.toml
+:language: toml
+:caption: .otto/settings.toml
+```
+
+The settings declare one `jsonnet` lab source
+({ref}`The source's settings <the-sources-settings>`). It reads the
+`lab.jsonnet` of each directory its `paths` list.
+
+```{literalinclude} ../../examples/templating/simple/lab_data/lab.jsonnet
+:language: jsonnet
+:caption: lab_data/lab.jsonnet
+```
+
+The file is plain Jsonnet:
+
+- `benches` lists the bench numbers.
+- `subnet(n)` and `sshPortBase(n)` hold the address and port scheme.
+- `bench(n)` takes one bench number and returns that bench's two elements,
+  `bench<n>-dut` and `bench<n>-tgen`. Each joins the lab `bench<n>` and holds
+  one host. Host `k` (1 for the DUT, 2 for the traffic generator) gets the
+  `ip` `10.20.<n>.<k>` and the `ssh_options.port` `2200 + 100 * n + k`
+  ({doc}`../host-options`).
+- The object at the end is the lab document ({doc}`files-and-membership`): a
+  `labs` table with one lab per number, and the elements of every bench.
+
+To add a bench, add its number to `benches`: `[1, 2, 3, 4]` adds `bench4`,
+on `10.20.4.0/24` with ports 2601 and 2602. To change the address or port
+scheme, edit `subnet` or `sshPortBase`.
+
+A real lab's hosts need credentials, either inline `creds` in the lab file or
+an inventory's creds store ({ref}`credentials-layered`), which the advanced
+example uses. An inline literal password makes `otto lab render` refuse the
+document ({ref}`What otto checks in a rendered document <lab-templating-checks>`), and
+[#1269](https://github.com/ludachrish3/otto-sh/issues/1269) tracks that.
+
+Point otto at the project, from inside `benches/`. otto finds projects
+through `OTTOPATH`, never through the current directory
+([Environment variables](../../cli/index.md#environment-variables)):
+
+```bash
+export OTTOPATH=$PWD
+otto --list-labs
+```
+
+```{literalinclude} ../../examples/templating/output/simple/list-labs.txt
+:language: text
+```
+
+`otto lab render` prints the document the file renders to, so each host's
+name, address and port is in view ({doc}`../../cli/lab/index`):
+
+```bash
+otto lab render lab_data/lab.jsonnet
+```
+
+```{literalinclude} ../../examples/templating/output/simple/render.json
+:language: json
+```
+
+One lab, as otto loads it:
+
+```bash
+otto -l bench2 --show-lab
+```
+
+```{literalinclude} ../../examples/templating/output/simple/show-lab.txt
+:language: text
+```
+
+(lab-templating-advanced)=
+
+## Advanced: labs generated from inventory records
+
+Reach for this when the machines already live in an inventory, such as
+NetBox or an inventory file, and a lab is a rule over their records. The
+template then holds no addresses at all: it selects records from the
+inventories, pairs them into labs by role, and marks a lab whose roles are
+incomplete as unavailable, while the other labs still load. The credentials
+stay in the inventory's creds store. That is what `otto.libsonnet`'s
+`layout()` and the `function(otto)` entry below buy
+({ref}`otto.libsonnet <otto-libsonnet>`).
 
 This example builds a project from an empty directory. Its two inventories
 are `.jsonnet` files standing in for NetBox, so it runs without one:
@@ -170,6 +269,10 @@ The `ip` and `site` come from the `physical` record, the password from
 `router` profile, and the connect timeout from `[host_preferences]`. Which layer wins when two of them state a
 value is on {doc}`../precedence`.
 
+Explain names the layer, never the value. To see values, show the lab:
+`otto -l router-lab.east --show-lab` prints each host's address, transports
+and products.
+
 (the-sources-settings)=
 
 ## The source's settings
@@ -208,7 +311,10 @@ and listing, loading, host summaries and the doctor share that one rendering.
 
 The `otto` argument holds three fields:
 
-- `project`: the name of the project that declares the source.
+- `project`: the name of the project that declares the source. An entry
+  loaded from Python with `search_paths=[...]` has no declaring project
+  ({func}`otto.load_lab <otto.lab.load_lab>` says how it reads one), so
+  there `project` is the empty string `""`.
 - `inventories`: for each inventory the source declares, the list of its
   records, sorted by key.
 - `instances`: for each of those inventories, the instances its records
@@ -429,7 +535,7 @@ as any element does, with the override warning. Different machines are an
 error, because a template that reuses an element name by accident would
 otherwise replace a lab's real equipment.
 
-For example, give the worked example a hand-written source, read before the
+For example, give the {ref}`router example <lab-templating-advanced>` a hand-written source, read before the
 template's, that holds an element named `east-dut0` at another address. Its
 lab file is `bench/lab.json`:
 

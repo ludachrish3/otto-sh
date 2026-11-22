@@ -6,7 +6,7 @@ reap); ``make bed-reap`` runs everything (``--full``) and is what the docs name
 after a killed or interrupted run. The spec is
 docs/superpowers/specs/2026-11-01-bed-lease-design.md ("Decisions: the reap").
 
-``uv run python scripts/bed_reap.py --lab <lab.json> --pid PID
+``uv run python scripts/bed_reap.py --lab <lab file> --pid PID
 [--unless-all-under DIR -- PATHS...] [--full] [--restart-qemu]``
 
 In order, printing one line per thing removed and ``bed-reap: clean`` when

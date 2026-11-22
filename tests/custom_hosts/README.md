@@ -15,7 +15,7 @@ It currently provides one custom command frame:
 ## Why it's shared (not per-project)
 
 The 2.7 host `zephyr27_fat` lives in the shared `embedded` lab
-(`tests/lab_data/tech1/lab.json`), so *any* project that loads `--lab embedded`
+(`tests/_fixtures/lab_data/tech1/lab.jsonnet`), so *any* project that loads `--lab embedded`
 must be able to construct it — which means the `zephyr-inline` frame must be
 registered. Owning the frame here, and having each consuming project depend on it,
 keeps it a single definition (no per-project copies, no absorbing a test-only

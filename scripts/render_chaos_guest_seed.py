@@ -10,7 +10,7 @@ are JSON under a ``#cloud-config`` header, which is valid YAML.
 Its mirrors are pinned by three guards: the test file
 ``tests/unit/scripts/test_render_chaos_guest_seed.py``,
 ``tests/unit/host/test_chaos_guest_lab_entries.py`` and the lab data in
-``tests/_fixtures/lab_data/tech1/lab.json``.
+``tests/_fixtures/lab_data/tech1/lab.jsonnet``.
 
 Usage (exactly one mode per call):
 

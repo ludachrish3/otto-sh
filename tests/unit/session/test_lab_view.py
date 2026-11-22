@@ -25,6 +25,7 @@ from otto.models.base import OttoModel
 from otto.registry import FrozenMap
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.fake_project import fake_project
+from tests._fixtures.lab_projection import register_fixture_host_extensions
 from tests._fixtures.labdata import lab_data_dir, write_lab_json
 from tests._fixtures.named_inventory import FakeInventory, FakeViewSource
 from tests.unit.labs.test_unchanged_loading import (
@@ -34,7 +35,6 @@ from tests.unit.labs.test_unchanged_loading import (
     _env,
     _json_project,
     _listing_cases,
-    _register_host_extensions,
     _Setup,
 )
 
@@ -245,7 +245,7 @@ def _listed(case: str, setup: _Setup, workdir: Path) -> str:
     """``otto --list-labs`` over *setup*, under the header Task 0's golden uses for *case*."""
     from otto.cli.main import app
 
-    _register_host_extensions()
+    register_fixture_host_extensions()
     with (
         _env(COLUMNS=_COLUMNS, FORCE_COLOR=None, TTY_COMPATIBLE=None),
         _entered(setup, home=workdir / "home"),

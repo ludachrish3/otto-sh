@@ -2784,7 +2784,7 @@ def test_the_hand_reap_is_the_full_reap_under_the_lease() -> None:
 def test_the_lease_macros_are_what_the_recipes_rely_on() -> None:
     """The literal scan above is only as good as the macros it names."""
     text = _MAKEFILE_TEXT
-    assert "\nLAB_FILE := tests/_fixtures/lab_data/tech1/lab.json\n" in text
+    assert "\nLAB_FILE := tests/_fixtures/lab_data/tech1/lab.jsonnet\n" in text
     assert "\nBED_LEASE := uv run python scripts/bed_lease.py --lab $(LAB_FILE)\n" in text
     assert '\nbed_acquire = @$(BED_LEASE) acquire --pid $$PPID --purpose "$(1)"\n' in text
     assert "\nbed_release = @$(BED_LEASE) release --pid $$PPID $(1)\n" in text
@@ -2793,8 +2793,8 @@ def test_the_lease_macros_are_what_the_recipes_rely_on() -> None:
     )
     assert "\nBED_REAP := uv run python scripts/bed_reap.py --lab $(LAB_FILE)\n" in text
     assert "\nbed_reap = @$(BED_REAP) --pid $$PPID\n" in text
-    assert "tests/_fixtures/lab_data/tech1/lab.json" not in text.replace(
-        "LAB_FILE := tests/_fixtures/lab_data/tech1/lab.json", ""
+    assert "tests/_fixtures/lab_data/tech1/lab.jsonnet" not in text.replace(
+        "LAB_FILE := tests/_fixtures/lab_data/tech1/lab.jsonnet", ""
     ), "the lab file is spelled once, as LAB_FILE"
 
 

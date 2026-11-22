@@ -45,14 +45,14 @@ import pytest
 import requests
 
 import otto
-from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from otto.models.base import OttoModel
 from otto.registry import FrozenMap
 from tests._fixtures.env_guard import preserved_env_var
 from tests._fixtures.fake_project import fake_project
-from tests._fixtures.labdata import json_lab_sources, lab_data_dir, register_zephyr_inline_frame
+from tests._fixtures.lab_projection import lab_projection, register_fixture_host_extensions
+from tests._fixtures.labdata import json_lab_sources, lab_data_dir
 from tests._fixtures.netbox_replay import LOGICAL_URL, RequestTrap, route_requests_to
-from tests._fixtures.paths import ensure_custom_hosts_on_path
+from tests._fixtures.paths import GETTING_STARTED_INVENTORY_GOLDEN, TECH1_GOLDEN
 from tests._fixtures.portable import portable
 
 ROOT = Path(otto.__file__).resolve().parents[2]
@@ -64,7 +64,14 @@ LISTING_GOLDEN = FIXTURES / "unchanged_list_labs.txt"
 DOCTOR_GOLDEN = FIXTURES / "unchanged_doctor.json"
 LEGACY_SNAPSHOT = FIXTURES / "legacy_snapshot"
 TWIN = ROOT / "docs" / "examples" / "getting-started-inventory"
+TWIN_LAB = GETTING_STARTED_INVENTORY_GOLDEN
+"""The twin's ``lab_data/lab.json`` as it was before its template replaced it."""
 TECH1_INVENTORY = lab_data_dir() / "tech1-inventory"
+TECH1_LEGACY = TECH1_GOLDEN
+"""tech1's hand-written JSON lab file, as it was before its Jsonnet entry replaced it.
+
+The bed's golden (:data:`tests._fixtures.paths.TECH1_GOLDEN`): an edit to the
+bed updates it, and with it this setup's captured outputs."""
 
 _COLUMNS = "160"
 """The console width ``--list-labs`` renders at, so its bytes do not depend on a terminal."""
@@ -155,15 +162,6 @@ class _ProfiledRepository:
 
 def _profiled_source(c: Any) -> _ProfiledRepository:
     return _ProfiledRepository(has_x="x" in c.env.profiles.profiles)
-
-
-def _register_host_extensions() -> None:
-    """What the fixture labs' init modules register: ``tech1``'s frame, the example's proxy."""
-    from tests._fixtures.gs_example import import_gs_example
-
-    ensure_custom_hosts_on_path()
-    register_zephyr_inline_frame()
-    import_gs_example()
 
 
 # --------------------------------------------------------------------------- #
@@ -265,9 +263,9 @@ def _configurations() -> "dict[str, _Setup]":
     tech1_inventory_table = _toml_tables(TECH1_INVENTORY / "user-settings.toml")["inventory"]
     twin = _toml_tables(TWIN / ".otto" / "settings.toml")
     return {
-        "tech1": _Setup(
-            [_json_project("tech1", lab_data_dir() / "tech1", [lab_data_dir() / "tech1"])]
-        ),
+        # tech1's lab file is a Jsonnet entry now; its frozen JSON copy is the
+        # legacy fixture that stays loading unchanged.
+        "tech1": _Setup([_json_project("tech1", lab_data_dir() / "tech1", [TECH1_LEGACY])]),
         "tech2": _Setup(
             [_json_project("tech2", lab_data_dir() / "tech2", [lab_data_dir() / "tech2"])]
         ),
@@ -287,7 +285,7 @@ def _configurations() -> "dict[str, _Setup]":
                 _json_project(
                     "gs",
                     TWIN,
-                    [TWIN / "lab_data"],
+                    [TWIN_LAB],
                     inventory=twin["inventory"],
                     creds=twin["creds"],
                 )
@@ -313,69 +311,18 @@ def _configurations() -> "dict[str, _Setup]":
 # --------------------------------------------------------------------------- #
 
 
-def _jsonable(value: Any) -> Any:
-    """A dataclass or mapping as plain JSON, via a round trip that stringifies the rest."""
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        value = dataclasses.asdict(value)
-    return json.loads(json.dumps(value, sort_keys=True, default=str))
-
-
-def _remote_host(host: Any) -> dict[str, Any]:
-    ref = host.inventory_ref
-    return {
-        "id": host.id,
-        "class": type(host).__name__,
-        "os_type": host.os_type,
-        "ip": host.ip,
-        "element": host.element.slug,
-        "source_lab": host.source_lab,
-        "lab_info": host.lab_info.name,
-        "resources": sorted(host.resources),
-        "inventory_key": ref.key,
-        "inventory_backend": portable(ref.backend, places={"<root>": ROOT}),
-        "logins": sorted(c.login for c in host.creds),
-        "console_options": _jsonable(host.console_options),
-        "interfaces": {name: _jsonable(i) for name, i in sorted(host.interfaces.items())},
-        "hop": host.hop,
-    }
-
-
-def _local_host(host: Any) -> dict[str, Any]:
-    return {
-        "id": host.id,
-        "class": type(host).__name__,
-        "source_lab": host.source_lab,
-        "logins": sorted(c.login for c in host.creds or []),
-    }
-
-
-def _lab(lab: Any) -> dict[str, Any]:
-    return {
-        "hosts": {
-            host_id: (_local_host if host_id == BUILTIN_LOCAL_HOST_ID else _remote_host)(host)
-            for host_id, host in sorted(lab.hosts.items())
-        },
-        "links": {
-            link.id: {"a": _jsonable(link.a), "b": _jsonable(link.b)}
-            for link in sorted(lab.static_links(), key=lambda link: link.id)
-        },
-        "metadata": _jsonable(lab.metadata),
-        "resources": sorted(lab.resources),
-    }
-
-
 def loading(workdir: Path) -> dict[str, Any]:
     """Build every lab of every configured setup through ``build_lab``; project each."""
     from otto.labs.sources import build_lab_sources
     from otto.session.lab import build_lab
 
-    _register_host_extensions()
+    register_fixture_host_extensions()
     result: dict[str, Any] = {}
     for name, setup in _configurations().items():
         with _entered(setup, home=workdir / "homes" / name):
             labs = build_lab_sources(projects=setup.projects).list_labs()
             result[name] = {
-                lab: _lab(build_lab(setup.projects, labs=[lab])) for lab in sorted(labs)
+                lab: lab_projection(build_lab(setup.projects, labs=[lab])) for lab in sorted(labs)
             }
     return result
 
@@ -449,7 +396,7 @@ def listing(workdir: Path) -> str:
 
     from otto.cli.main import app
 
-    _register_host_extensions()
+    register_fixture_host_extensions()
     chunks: list[str] = []
     with _env(COLUMNS=_COLUMNS, FORCE_COLOR=None, TTY_COMPATIBLE=None):
         for name, setup in _listing_cases(workdir).items():

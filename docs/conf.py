@@ -724,7 +724,11 @@ def _generate_rendered_pages(app):  # noqa: ARG001 — Sphinx event signature
 
 
 def _build_example_archives(app):  # noqa: ARG001 — Sphinx event signature
-    """Archive every ``docs/examples/quickstart-*`` track for its page's ``{download}`` link.
+    """Archive every example track and bundle for its page's ``{download}`` link.
+
+    The tracks are ``docs/examples/quickstart-*``, one archive each; a bundle
+    (``scripts/build_example_archives.py``'s ``BUNDLES``, ``getting-started``
+    today) ships several projects in one archive.
 
     EVERY BUILDER, like the rendered pages: a ``{download}`` of a missing archive
     is a warning, so ``-W`` fails a build whose archive was not made. The archives

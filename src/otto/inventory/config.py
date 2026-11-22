@@ -380,8 +380,8 @@ NO_CATALOG: Final = ProtectedPaths(
     files=frozenset(),
     refusal=(
         "no protected-file catalog: this inventory view or inventory was not built "
-        "from settings (otto.inventory.build_inventory_view), so no template is "
-        "rendered through it"
+        "from settings (otto.inventory.build_inventory_view, otto.inventory.build_inventory), "
+        "so no template is rendered through it"
     ),
 )
 """THE one spelling of "no catalog", which a view or inventory no builder made carries.
@@ -391,7 +391,10 @@ A hand-built :class:`~otto.inventory.InventoryView` and a
 Its :attr:`~ProtectedPaths.refusal` is set, so no render runs under it
 (:class:`~otto.templating.imports.ImportPolicy` refuses it), and a template is
 never rendered unprotected by accident. A hand-written lab or inventory file
-reads under it exactly as before, because only a render consults a catalog."""
+reads under it exactly as before, because only a render consults a catalog.
+Its text holds for every caller that meets it; a caller that knows how it was
+reached adds its own remedy (:func:`otto.load_lab <otto.labs.loader.load_lab>`
+does, for ``inventory=`` with a ``.jsonnet`` search path)."""
 
 
 def unreadable_user_catalog(

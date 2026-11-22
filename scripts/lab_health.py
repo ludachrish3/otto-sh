@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Probe every lab VM + QEMU guest and report health + timestamps.
 
-Reads the lab data (``tests/_fixtures/lab_data/tech1/lab.json`` by default) and, for
-each defined host, reports reachability and a timestamp:
+Reads the lab data (``tests/_fixtures/lab_data/tech1/lab.jsonnet`` by default,
+rendered by otto through :mod:`scripts._lab_document`) and, for each defined
+host, reports reachability and a timestamp:
 
 * **Unix VMs** (``os_type == "unix"``, no hop) are reached over SSH; the script
   reads each VM's wall clock and prints the **drift** against this machine's
@@ -43,7 +44,7 @@ Exit status is non-zero if any host is unreachable/unresponsive.
 Usage::
 
     uv run python scripts/lab_health.py
-    uv run python scripts/lab_health.py --hosts tests/_fixtures/lab_data/tech1/lab.json
+    uv run python scripts/lab_health.py --hosts tests/_fixtures/lab_data/tech1/lab.jsonnet
     uv run python scripts/lab_health.py --restart-qemu
     uv run python scripts/lab_health.py --logout-consoles
 """
@@ -52,7 +53,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import json
 import shlex
 import shutil
 import subprocess
@@ -61,10 +61,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from otto.host.remote_host import make_host_id
-from otto.utils import WaitTimeoutError, wait_for
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+from otto.host.remote_host import make_host_id  # noqa: E402
+from otto.host.secret_wire import reveal  # noqa: E402
+from otto.utils import WaitTimeoutError, wait_for  # noqa: E402
+from scripts._lab_document import cell_hosts as _load_hosts  # noqa: E402 — the one host walk
 
-DEFAULT_HOSTS = Path("tests/_fixtures/lab_data/tech1/lab.json")
+DEFAULT_HOSTS = Path("tests/_fixtures/lab_data/tech1/lab.jsonnet")
 
 # Non-interactive SSH: no host-key prompts, no known_hosts churn (the lab VMs
 # get rebuilt often), quiet, and a bounded connect so a dead VM fails fast.
@@ -453,32 +457,14 @@ finally:
 """
 
 
-def _load_hosts(path: Path) -> list[dict]:
-    """Flatten a lab.json's ``elements`` into the flat host dicts this script reads.
-
-    Since lab.json v2 a host entry lives under its element and no longer
-    carries ``element``/``element_id`` itself — they are stamped back on here,
-    which is exactly what otto's own loader does before host validation.
-    Restated rather than imported: the lab file's shape is read directly here.
-    """
-    doc = json.loads(path.read_text())
-    hosts: list[dict] = []
-    for element in doc.get("elements", []):
-        for host in element["hosts"]:
-            flat = {**host, "element": element["name"]}
-            if element.get("id") is not None:
-                flat["element_id"] = element["id"]
-            hosts.append(flat)
-    return hosts
-
-
 def _ssh_user_pass(creds: list[dict]) -> tuple[str, str]:
-    """Pick the SSH login. Prefer ``vagrant``; otherwise the first cred entry."""
-    by_login = {c["login"]: c["password"] for c in creds}
-    if "vagrant" in by_login:
-        return "vagrant", by_login["vagrant"]
-    first = creds[0]
-    return first["login"], first["password"]
+    """Pick the SSH login. Prefer ``vagrant``; otherwise the first cred entry.
+
+    The password is unwrapped for the ``sshpass`` command by otto's one unwrap
+    (:func:`otto.host.secret_wire.reveal`, no newline), and only the chosen one.
+    """
+    cred = next((c for c in creds if c["login"] == "vagrant"), creds[0])
+    return cred["login"], reveal(cred["password"], newline="")
 
 
 def _run_ssh(
@@ -950,7 +936,7 @@ def main(argv: list[str] | None = None) -> int:
         "--hosts",
         type=Path,
         default=DEFAULT_HOSTS,
-        help=f"lab hosts JSON (default: {DEFAULT_HOSTS})",
+        help=f"the lab file (default: {DEFAULT_HOSTS})",
     )
     parser.add_argument(
         "--restart-qemu",

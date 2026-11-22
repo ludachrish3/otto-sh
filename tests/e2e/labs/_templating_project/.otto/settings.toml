@@ -1,0 +1,38 @@
+# The templating acceptance project (tests/e2e/labs/test_templating_e2e.py).
+# A template, not a settings file: the test copies this tree and substitutes
+# `$netbox_url`, the stub NetBox's address, which is only known once the stub
+# is listening.
+name = "templating_e2e"
+version = "0.1.0"
+
+# `physical` is NetBox: test4, as device `edge-r1`. NetBox holds no
+# credentials, so the inventory has a creds store of its own.
+[[inventories]]
+name = "physical"
+backend = "netbox"
+url = "$netbox_url"
+
+[inventories.creds]
+backend = "json"
+path = "creds.json"
+
+# `virtual` is a Jsonnet inventory file: test1, test2 and test3.
+[[inventories]]
+name = "virtual"
+backend = "json"
+path = "lab_data/virtual.jsonnet"
+
+# A hand-written lab, read first and outside the template's scope.
+[[lab.sources]]
+name = "bench"
+backend = "json"
+paths = ["lab_data/bench"]
+
+# One router lab per site and rack, over both inventories. Every lab it
+# declares starts with `router-lab.`, so a failure of this source fails only
+# those labs.
+[[lab.sources]]
+backend = "jsonnet"
+paths = ["lab_data/layouts/router-lab.jsonnet"]
+inventories = ["physical", "virtual"]
+scope = { prefixes = ["router-lab."] }

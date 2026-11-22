@@ -56,6 +56,66 @@ the host's userland probes it again. {doc}`lab/probing-hosts` shows what the
 pin looks like and where it goes.
 ```
 
+(lab-config-shared-shape)=
+
+## When hosts share a shape
+
+A bench of identical machines repeats one element per machine, with only the
+name and the address changing. A lab file can instead be a template, in
+[Jsonnet](https://jsonnet.org), that writes the shared element once. Jsonnet
+is JSON plus comments, variables, functions and `for` expressions that build
+lists, so any JSON document is already valid Jsonnet.
+
+Replace `lab_data/lab.json` with `lab_data/lab.jsonnet`, and the project's
+`json` lab source in `.otto/settings.toml` ({doc}`host-sources`) with a
+`jsonnet` one, which reads each listed directory's `lab.jsonnet`:
+
+<!-- template-source: lab-config-devboxes -->
+```toml
+[[lab.sources]]
+backend = "jsonnet"
+paths = ["lab_data"]
+```
+
+<!-- template: lab-config-devboxes -->
+```jsonnet
+// Three devboxes that differ only by number: devbox<n> is 10.0.0.(4+n).
+local devbox(n) = {
+  name: 'devbox' + n,
+  labs: ['bench'],
+  hosts: [{
+    ip: '10.0.0.' + (4 + n),
+    os_type: 'unix',
+    creds: [{ login: 'dev', password: 'secret' }],
+  }],
+};
+
+{
+  labs: { bench: {} },
+  elements: [devbox(n) for n in [1, 2, 3]],
+}
+```
+
+`devbox(n)` returns the minimal lab's element, named `devbox<n>` and
+addressed `10.0.0.(4+n)`. The document at the end declares the lab and calls
+the function for 1, 2 and 3, so `otto --lab bench --list-hosts` lists
+`devbox1`, `devbox2` and `devbox3`.
+
+The probe's pin still goes in each host's entry. Here every devbox's entry
+comes from one function, so give `devbox` a second argument merged over its
+host, `hosts: [{ ... } + host]`, and pass each devbox its own pin as
+`{ userland_options: { ... } }`. The bed case study's
+{doc}`Ubuntu VMs <../developing/bed-case-study/defining-hosts/index>` are
+written this way.
+
+{doc}`lab/templating` is the reference: when otto renders a template, a
+{ref}`simple example <lab-templating-simple>` that makes several labs of
+this shape, one that makes one lab per site from inventory records, what a
+template may read, and how to see what it renders. This lab's inline
+password makes `otto lab render` refuse it
+({ref}`What otto checks in a rendered document <lab-templating-checks>`), so
+see its hosts with `--list-hosts` and `--show-lab` instead.
+
 ## The pages
 
 ```{toctree}

@@ -2863,6 +2863,10 @@ subclass = false
 [symbols."otto.labs:LabFileRule"]
 subclass = false
 
+[symbols."otto.labs:LabFileRule.names_file"]
+positional = ["path"]
+why = "the subject: the one path it tests, as ProtectedPaths.contains reads"
+
 [symbols."otto.labs:LabRepository.load_lab"]
 positional = ["name"]
 why = "implementer-facing"

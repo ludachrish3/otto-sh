@@ -14,7 +14,6 @@ it, so a broken harness cannot masquerade as a passing guard.
 """
 
 import ast
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -593,30 +592,28 @@ def test_no_unbracketed_pattern_kills_across_the_tests_tree():
 # ---------------------------------------------------------------------------
 
 
-def _poisoned_lab_json(tmp_path, poison):
+def _poisoned_lab_document(poison):
     """tech1's lab data plus one extra element whose only host entry is *poison*.
 
     An ELEMENT, because since lab.json v2 that is the only place a host entry
     can live — there is no top-level ``hosts`` array to append to any more.
     """
-    data = json.loads(_bed.lab_data_path().read_text())
+    data = _bed.lab_document()
     ghost = {"name": "ghost", "labs": ["unix"], "hosts": [poison]}
     data["elements"] = [*data["elements"], ghost]
-    out = tmp_path / "lab.json"
-    out.write_text(json.dumps(data))
-    return out
+    return data
 
 
-def test_unix_link_id_skips_unresolvable_records(tmp_path, monkeypatch):
+def test_unix_link_id_skips_unresolvable_records(monkeypatch):
     """Positive control: a ValueError record (unknown os profile) is skipped —
     the documented zephyr27_fat/zephyr-inline case — and the link still resolves."""
     expected = unix_link_id()
-    poisoned = _poisoned_lab_json(tmp_path, {"ip": "203.0.113.9", "os_type": "no-such-profile"})
-    monkeypatch.setattr(_bed, "lab_data_path", lambda: poisoned)
+    poisoned = _poisoned_lab_document({"ip": "203.0.113.9", "os_type": "no-such-profile"})
+    monkeypatch.setattr(_bed, "lab_document", lambda: poisoned)
     assert unix_link_id() == expected
 
 
-def test_unix_link_id_propagates_non_validation_errors(tmp_path, monkeypatch):
+def test_unix_link_id_propagates_non_validation_errors(monkeypatch):
     """A record that breaks for a NON-validation reason is a broken fixture
     file, not an unregistered profile — swallowing it hides real corruption
     behind the skip meant for cross-project records.
@@ -638,7 +635,7 @@ def test_unix_link_id_propagates_non_validation_errors(tmp_path, monkeypatch):
     and is closed: every malformed value there is caught by the host spec and
     arrives as a ``ValidationError``, i.e. a ``ValueError``.
     """
-    poisoned = _poisoned_lab_json(tmp_path, {"ip": "203.0.113.9", "os_type": 42})
-    monkeypatch.setattr(_bed, "lab_data_path", lambda: poisoned)
+    poisoned = _poisoned_lab_document({"ip": "203.0.113.9", "os_type": 42})
+    monkeypatch.setattr(_bed, "lab_document", lambda: poisoned)
     with pytest.raises(TypeError):
         unix_link_id()

@@ -24,7 +24,10 @@ from otto.models.lab import HOISTED_HOST_KEYS
 from otto.registry import FrozenMap
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 
-_LAB_DATA_DIR = Path(__file__).resolve().parent / "lab_data"
+_CHECKED_IN_LAB_DATA = Path(__file__).resolve().parent / "lab_data"
+"""The checked-in lab-data trees: where :func:`_document_text` caches by path."""
+_LAB_DATA_DIR = _CHECKED_IN_LAB_DATA
+"""Where :func:`lab_data_path` looks; a test may point it at a scratch tree."""
 
 _V1_HOISTED_KEYS = HOISTED_HOST_KEYS | {"resources"}
 """What a v1 host dict carries that this helper lifts OUT of the host entry.
@@ -75,8 +78,103 @@ def dangling_ends(lab) -> list[str]:
 
 
 def lab_data_path(tech: str = "tech1") -> Path:
-    """Path to a tech's ``lab.json`` (default the primary ``tech1`` lab)."""
-    return _LAB_DATA_DIR / tech / "lab.json"
+    """Path to a tech's lab file (default the primary ``tech1`` lab, the bed's cell).
+
+    A tech's hand-written ``lab.json`` when it has one, else its Jsonnet entry
+    ``lab.jsonnet``: ``tech1`` is the entry (its Ubuntu VMs come from one
+    function), ``tech2`` and ``tech1-inventory`` are JSON (``tech1-inventory``'s
+    ``lab.jsonnet`` is its templated twin, read by its own test). Never read the
+    file as raw JSON: :func:`lab_document` is its content.
+    """
+    written = _LAB_DATA_DIR / tech / "lab.json"
+    return written if written.is_file() else _LAB_DATA_DIR / tech / "lab.jsonnet"
+
+
+def lab_document(tech: str = "tech1") -> dict[str, Any]:
+    """A tech's lab document as plain decoded JSON: what ``json.loads`` of a ``lab.json`` gives.
+
+    A Jsonnet entry is rendered as the bed scripts render the cell
+    (:func:`scripts._lab_document.cell_render_inputs`, through
+    :func:`otto.labs.documents.rendered_data`, the render the one reader
+    reads), so the document is the one otto loads, its passwords plain
+    strings rather than the reader's ``SecretStr``: a fixture copies,
+    rewrites and dumps it.
+    """
+    path = lab_data_path(tech)
+    document = json.loads(_document_text(path))
+    assert isinstance(document, dict), f"{path} is not a lab document"
+    return document
+
+
+_CHECKED_IN_TEXT: dict[Path, str] = {}
+"""The checked-in cells' documents as JSON text, by path: each read once per process."""
+
+
+def _document_text(path: Path) -> str:
+    """*path*'s document as JSON text, kept as text so every caller decodes its own copy.
+
+    A cell checked in under :data:`_CHECKED_IN_LAB_DATA` is read (a Jsonnet
+    entry rendered) once per process and served by path from then on, with
+    no freshness check: nothing edits ``tests/_fixtures/lab_data`` during a
+    run. No guard enforces that: the root conftest's only write guard on the
+    checkout is the ``__pycache__`` check on ``src/otto``, and no conftest
+    watches the fixture trees' contents or mtimes. A test that must change a
+    cell writes its own copy, which is any other path. The one render is
+    also under the first caller's view (working directory, otto home, user
+    settings): the checked-in cells import nothing those name.
+
+    Any other path, such as a test's scratch cell (``_LAB_DATA_DIR``
+    monkeypatched to a temporary tree), is read fresh on every call and
+    never kept, so an edit to the entry, to a file it imports, or to the
+    protection context is seen at the next call. A failed read is never kept.
+    """
+    if not path.is_relative_to(_CHECKED_IN_LAB_DATA):
+        return _read_document_text(path)
+    text = _CHECKED_IN_TEXT.get(path)
+    if text is None:
+        text = _CHECKED_IN_TEXT[path] = _read_document_text(path)
+    return text
+
+
+def _read_document_text(path: Path) -> str:
+    """*path*'s document as JSON text, read now: a Jsonnet entry rendered as the bed does."""
+    from otto.labs.documents import rendered_data
+    from scripts._lab_document import cell_render_inputs
+
+    render = cell_render_inputs(path)
+    if render is None:
+        return path.read_text()
+    return json.dumps(rendered_data(path, render))
+
+
+def tech1_document() -> dict[str, Any]:
+    """``tech1``'s lab document, rendered from its ``lab.jsonnet`` (:func:`lab_document`)."""
+    return lab_document("tech1")
+
+
+def tech1_lab_source() -> str:
+    """The ``[[lab.sources]]`` table a test project reads the bed's cell, ``tech1``, through.
+
+    ``tech1`` is a Jsonnet entry, so its source is ``backend = "jsonnet"``
+    over the cell's directory (which holds ``lab.jsonnet``), by absolute path.
+    One spelling, so no project names the cell as JSON, built by the one
+    ``[[lab.sources]]`` builder (:func:`tests._fixtures.settings_toml.jsonnet_source`).
+    """
+    from tests._fixtures.settings_toml import jsonnet_source
+
+    return jsonnet_source(paths=[str(_LAB_DATA_DIR / "tech1")])
+
+
+def load_tech_lab(labnames: "str | list[str]", tech: str = "tech1", **kwargs: Any) -> Any:
+    """Load *labnames* from a tech's lab file, as the bed scripts load the cell.
+
+    :func:`scripts._lab_document.load_cell_lab`: ``load_lab(search_paths=[file])``,
+    which renders a Jsonnet entry under its default view. *kwargs* go to
+    :func:`otto.labs.loader.load_lab` (``preferences=``, say).
+    """
+    from scripts._lab_document import load_cell_lab
+
+    return load_cell_lab(lab_data_path(tech), labnames, **kwargs)
 
 
 _ELEMENT_KEYS = ("element", "element_id")
@@ -249,7 +347,7 @@ def flat_hosts(tech: str = "tech1", *, with_labs: bool = False) -> list[dict[str
     DECLARED lab names the element's patterns match, so membership reads as it
     did on v1 entries.
     """
-    return flatten_lab_doc(json.loads(lab_data_path(tech).read_text()), with_labs=with_labs)
+    return flatten_lab_doc(lab_document(tech), with_labs=with_labs)
 
 
 def make_host(ne: str, **kwargs: Any) -> UnixHost:

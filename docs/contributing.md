@@ -141,9 +141,11 @@ stats, filesystem), the same way a Unix host needs an `sshd_config`. If any
 overlay is missing, the `west build` provisioning step fails with a
 missing-file error.
 
-The lab definition `tests/_fixtures/lab_data/tech1/lab.json` is read by otto at
-**runtime** (not provision time); it must be present to target the test
-hosts but is not needed for `vagrant up` itself.
+The lab definition `tests/_fixtures/lab_data/tech1/lab.jsonnet` is rendered and
+read by otto at **runtime** (not provision time); it must be present to target
+the test hosts but is not needed for `vagrant up` itself. It is a Jsonnet entry,
+never raw JSON: its Ubuntu VMs come from one function, and every script and test
+reads it through otto (`scripts/_lab_document.py`, `tests/_fixtures/labdata.py`).
 
 ### Iterating on overlays from outside the host checkout
 
@@ -1438,7 +1440,7 @@ libs = ["/home/vagrant/otto-sh/tests/custom_hosts"]
 init = ["custom_hosts"]
 
 [[lab.sources]]
-backend = "json"
+backend = "jsonnet"
 paths = ["/home/vagrant/otto-sh/tests/_fixtures/lab_data/tech1"]
 
 [reservations]
@@ -2088,7 +2090,11 @@ track's page links that archive:
 ```
 
 Only tracked files ship, so commit a file before its page relies on it being
-in the download.
+in the download. Projects that must unpack side by side, because one loads
+another's code by a relative path, ship as one archive: the script's
+`BUNDLES` names each such archive and its projects. The bed case study's
+`getting-started.tar.gz` is one, holding `getting-started/` and
+`getting-started-inventory/`.
 
 ### Setup and bed-case-study captures
 
@@ -2138,6 +2144,22 @@ reservation backend passes conformance with `expect_holders=True` and answers
 the inverted `holders` query. `tests/unit/docs/test_getting_started_includes.py`
 checks that every `{literalinclude}` under `docs/setup/` and `docs/developing/bed-case-study/` resolves.
 
+Both projects' lab files are Jsonnet templates (`lab_data/lab.jsonnet`), and
+the pages include them between `// doc: begin <id>` and `// doc: end <id>`
+markers. `tests/unit/docs/test_getting_started_templates.py` holds each
+template to the `lab.json` it replaced, kept under `tests/_fixtures/goldens/`
+as `getting_started_lab.json` and `getting_started_inventory_lab.json`
+(beside the bed cell's `tech1_lab.json`): the inline example renders that
+document exactly, and the inventory twin
+builds the labs `tests/unit/labs/test_unchanged_loading.py` recorded for the
+old file, which also stays one of that test's frozen fixtures. So an edit
+that changes what a template renders fails here: make it only as a
+deliberate change to the example, with its golden, and expect the bed
+captures that print the lab to change. The same test
+renders the `jsonnet` blocks the reference pages mark
+`<!-- template: <name> -->` (and the source table marked
+`<!-- template-source: <name> -->`) against `goldens/pages/<name>.json`.
+
 ### Configuration and host pages
 
 Parts of the Configuration tree and the host pages are tied to the code or to
@@ -2154,10 +2176,14 @@ test fixtures, so edit them with the tie in mind:
   `tests/unit/labs/test_inventory_equivalence.py` proves the fixture's
   referenced hosts build identically to the same hosts declared inline.
 - **The lab-config example is an excerpt.** The *Example* on
-  `docs/configuration/lab-config.md` is taken from
-  `tests/_fixtures/lab_data/tech1/lab.json`, trimmed to two elements, with
-  fewer resources and host fields. Nothing compares the two, so keep them in
-  step by hand.
+  `docs/configuration/lab-config.md` is taken from the document
+  `tests/_fixtures/lab_data/tech1/lab.jsonnet` renders, trimmed to two
+  elements, with fewer resources and host fields. Nothing compares the two, so
+  keep them in step by hand. That rendered document equals
+  `tests/_fixtures/goldens/tech1_lab.json`, the cell's old hand-written file
+  kept byte for byte, section for section
+  (`tests/unit/labs/test_testbed_templates.py`), so an edit to the bed edits
+  both files in one commit.
 - **The lab reference is an index plus one page per area.**
   `docs/configuration/lab-config.md` holds a minimal lab, the list of area
   pages under `docs/configuration/lab/`, and the whole-lab example. A new

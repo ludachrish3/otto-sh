@@ -48,7 +48,7 @@ from tests._fixtures.labdata import (
     flat_hosts,
     host_data,
     host_data_console,
-    write_lab_json,
+    lab_json_v2,
 )
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.profiles import (
@@ -732,7 +732,7 @@ def test_a_cell_builds_even_when_the_out_of_tree_frame_was_evicted():
 # 20 of the 55 bed cells name a host that is only reachable THROUGH another
 # one: the five BusyBox guests hop `test1` (bb1350 three times, over telnet,
 # ssh and console) and the seven Zephyr guests hop `test4` (measured,
-# `tests/_fixtures/lab_data/tech1/lab.json`). `test2`'s three console cells
+# `tests/_fixtures/lab_data/tech1/lab.jsonnet`). `test2`'s three console cells
 # reach `test1` too, as their console server, which resolves the same way.
 # `RemoteHost._build_hop_transport` resolves that hop id against the host's
 # own `_lab` back-reference or, failing that, against the active
@@ -798,7 +798,7 @@ def _entry(element: str, *, hop: "str | None" = None, board: "str | None" = None
     fail menu validation long before reaching what the test is about.
     """
     entry = dict(host_data("test1", BED_TECH))
-    # A flat v1-style dict: `write_lab_json` hoists `element` back onto the
+    # A flat v1-style dict: `lab_json_v2` hoists `element` back onto the
     # element wrapper, and `_fabricate_lab_data` reads it back off below.
     entry["element"] = element
     entry.pop("hop", None)
@@ -810,22 +810,22 @@ def _entry(element: str, *, hop: "str | None" = None, board: "str | None" = None
     return entry
 
 
-def _fabricate_lab_data(monkeypatch, tmp_path, entries: "list[dict]") -> None:
+def _fabricate_lab_data(monkeypatch, entries: "list[dict]") -> None:
     """Point ``_lab_context`` at a lab file *this test* wrote.
 
     Every reader is replaced, because the module reads the file by three
-    different routes -- the whole roster through ``lab_data_path``, one entry
+    different routes -- the whole roster through ``lab_document``, one entry
     at a time through ``host_data``, and that entry's element through
     ``element_for`` -- and a fabrication that moved only some of them would
     have the derivation and the construction disagreeing about which lab they
     are in.
     """
-    path = write_lab_json(tmp_path / "lab.json", entries)
+    document = lab_json_v2(entries)
 
     def _flat(ne):
         return next(e for e in entries if e["element"] == ne)
 
-    monkeypatch.setattr(_lab_context, "lab_data_path", lambda tech="tech1": path)
+    monkeypatch.setattr(_lab_context, "lab_document", lambda tech="tech1": document)
     monkeypatch.setattr(_lab_context, "host_data", lambda ne, tech="tech1": entry_of(_flat(ne)))
     monkeypatch.setattr(_lab_context, "element_for", lambda ne, tech="tech1": element_of(_flat(ne)))
 
@@ -1018,7 +1018,7 @@ def test_the_venues_lab_holds_the_hop_targets_and_nothing_else():
     )
 
 
-def test_the_hop_targets_are_read_off_the_lab_data_rather_than_listed(monkeypatch, tmp_path):
+def test_the_hop_targets_are_read_off_the_lab_data_rather_than_listed(monkeypatch):
     """INJECTED: lab data whose hop target is a host today's data never names.
 
     Every real hop in this bed points at ``test1`` or ``test4``, so a
@@ -1027,12 +1027,12 @@ def test_the_hop_targets_are_read_off_the_lab_data_rather_than_listed(monkeypatc
     inherit-versus-inject shape ``bed_kind`` hit when every Zephyr element
     happened to be called ``zephyr*``.
     """
-    _fabricate_lab_data(monkeypatch, tmp_path, [_entry("relay"), _entry("guest", hop="relay")])
+    _fabricate_lab_data(monkeypatch, [_entry("relay"), _entry("guest", hop="relay")])
     assert hop_targets("tech1") == ["relay"]
     assert sorted(bed_lab("tech1").hosts) == ["relay"]
 
 
-def test_every_link_of_a_hop_chain_reaches_the_lab(monkeypatch, tmp_path):
+def test_every_link_of_a_hop_chain_reaches_the_lab(monkeypatch):
     """INJECTED: today's bed data is flat, so real data cannot exercise this.
 
     ``_create_tunnel`` builds its hop's own hop transport when the hop host
@@ -1050,7 +1050,6 @@ def test_every_link_of_a_hop_chain_reaches_the_lab(monkeypatch, tmp_path):
     """
     _fabricate_lab_data(
         monkeypatch,
-        tmp_path,
         [_entry("guest", hop="inner"), _entry("inner", hop="outer"), _entry("outer")],
     )
     assert hop_targets("tech1") == ["inner", "outer"]
@@ -1066,12 +1065,12 @@ def test_a_hop_that_names_an_undeclared_host_fails_where_the_name_is_still_in_ha
     through: the guard cannot fire on real data and would otherwise be a
     claim nobody had tested.
     """
-    _fabricate_lab_data(monkeypatch, tmp_path, [_entry("guest", hop="ghost")])
+    _fabricate_lab_data(monkeypatch, [_entry("guest", hop="ghost")])
     with pytest.raises(KeyError, match="hops through 'ghost'"):
         hop_targets("tech1")
 
 
-def test_a_hop_target_whose_host_id_is_not_its_element_is_refused(monkeypatch, tmp_path):
+def test_a_hop_target_whose_host_id_is_not_its_element_is_refused(monkeypatch):
     """``hop`` names an ELEMENT; a ``Lab`` is keyed by host ID, and they can differ.
 
     INJECTED with a jump host that declares a board, which is what makes
@@ -1080,9 +1079,7 @@ def test_a_hop_target_whose_host_id_is_not_its_element_is_refused(monkeypatch, t
     in today's data is boardless, so real data cannot tell a lab that answers
     to the hop from one that does not.
     """
-    _fabricate_lab_data(
-        monkeypatch, tmp_path, [_entry("relay", board="qemu"), _entry("guest", hop="relay")]
-    )
+    _fabricate_lab_data(monkeypatch, [_entry("relay", board="qemu"), _entry("guest", hop="relay")])
     with pytest.raises(RuntimeError, match=r"cannot answer to \['relay'\]"):
         bed_lab("tech1")
 

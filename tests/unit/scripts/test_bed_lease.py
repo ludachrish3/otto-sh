@@ -24,7 +24,7 @@ from otto.reservations.json_backend import _JsonReservationBackend
 from otto.utils import wait_for
 from scripts import bed_lease
 from scripts.process_group import process_state, signal_group
-from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.labdata import lab_data_path, tech1_lab_source
 from tests._fixtures.lease_env import LEASE_ENV_PREFIX, lease_free_environ
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.project_scaffold import make_project
@@ -430,9 +430,9 @@ def test_force_release_clears_a_record_it_cannot_read(root, capsys):
 
 def test_release_and_status_do_not_load_the_labs(root, tmp_path, capsys):
     """A lab that fails to load must not turn a green lane's release into a red exit."""
-    cell = tmp_path / "tech1" / "lab.json"
+    cell = tmp_path / "tech1" / "lab.jsonnet"
     cell.parent.mkdir()
-    cell.write_text('{"labs": {"nope": {}}}')
+    cell.write_text('{"labs": {"nope": {}}}')  # JSON is Jsonnet: it renders, and loads nothing
     argv = ["--lab", str(cell), "--root", str(root)]
     assert bed_lease.main([*argv, "status"]) == 0
     assert "free" in capsys.readouterr().out
@@ -453,10 +453,80 @@ def test_stray_paths_without_the_classifier_are_a_usage_error(root):
 
 
 def test_an_unloadable_lab_is_a_usage_error(root, tmp_path):
+    """A lab file that declares no lab refuses the acquire; a missing one refuses every verb."""
     bad = tmp_path / "nolab" / "lab.json"
     bad.parent.mkdir()
     bad.write_text("{}")
-    assert bed_lease.main(["--lab", str(bad), "--root", str(root), "status"]) == 2
+    assert (
+        bed_lease.main(["--lab", str(bad), "--root", str(root), "acquire", "--pid", str(ME)]) == 2
+    )
+    missing = tmp_path / "nolab" / "lab.jsonnet"
+    assert bed_lease.main(["--lab", str(missing), "--root", str(root), "status"]) == 2
+
+
+def _broken_cell(tmp_path: Path) -> Path:
+    """A ``tech1`` cell whose ``lab.jsonnet`` does not render."""
+    cell = tmp_path / "tech1" / "lab.jsonnet"
+    cell.parent.mkdir()
+    cell.write_text("{ labs: { unix: {} }, elements: [ error 'broken on purpose' ] }\n")
+    return cell
+
+
+def _status_and_release_read_only_the_record(root: Path, cell: Path, capsys) -> None:
+    """Status and release on *cell*, free then held, name the holder and never read the lab."""
+    argv = ["--lab", str(cell), "--root", str(root)]
+    assert bed_lease.main([*argv, "status"]) == 0
+    assert "tech1: free" in capsys.readouterr().out
+    assert bed_lease.main([*argv, "release", "--pid", str(ME)]) == 0
+    capsys.readouterr()
+    root.mkdir(exist_ok=True)
+    held = {
+        "owner": "someone@elsewhere",
+        "user": "someone",
+        "pid": _gone_pid(),
+        "pid_started": 1,
+        "groups": [],
+        "checkout": "/nowhere",
+        "since": "2026-11-22T00:00:00+00:00",
+        "expires": "2026-11-22T04:00:00+00:00",
+        "purpose": "a bed lane",
+        "resources": ["test1"],
+    }
+    _write_record(root, held)
+    assert bed_lease.main([*argv, "status"]) == 0
+    out = capsys.readouterr().out
+    assert "held by someone@elsewhere" in out, out
+    assert "resources test1" in out, out
+    assert bed_lease.main([*argv, "release", "--pid", str(ME), "--force"]) == 0
+    assert "released by force" in capsys.readouterr().out
+    assert not (root / "tech1.json").exists()
+
+
+def test_lease_status_and_release_work_with_a_broken_template(root, tmp_path, capsys):
+    """A template that does not render never hides the holder or blocks a release."""
+    cell = _broken_cell(tmp_path)
+    _status_and_release_read_only_the_record(root, cell, capsys)
+    assert (
+        bed_lease.main(["--lab", str(cell), "--root", str(root), "acquire", "--pid", str(ME)]) == 2
+    )
+    assert "broken on purpose" in capsys.readouterr().err
+
+
+def test_lease_status_and_release_work_without_a_binding(root, capsys, monkeypatch):
+    """No Jsonnet binding loads: status and release of the real cell still work; acquire refuses."""
+    from otto.templating import binding, render
+    from otto.templating.errors import TemplatingError
+
+    def no_binding(*_: object, **__: object) -> object:
+        raise TemplatingError("no Jsonnet binding is installed (test)")
+
+    monkeypatch.setattr(binding, "load_binding", no_binding)
+    monkeypatch.setattr(render, "load_binding", no_binding)
+    _status_and_release_read_only_the_record(root, LAB, capsys)
+    assert (
+        bed_lease.main(["--lab", str(LAB), "--root", str(root), "acquire", "--pid", str(ME)]) == 2
+    )
+    assert "no Jsonnet binding" in capsys.readouterr().err
 
 
 # --- re-entrancy ---------------------------------------------------------
@@ -747,8 +817,7 @@ def _check(project: Path) -> "subprocess.CompletedProcess[str]":
 
 @pytest.fixture
 def project(tmp_path: Path, root: Path) -> Path:
-    """A scratch project whose settings name the cell's lab directory and the rendered file."""
-    lab_dir = LAB.parent
+    """A scratch project whose settings name the cell's lab and the rendered file."""
     return make_project(
         tmp_path / "proj",
         name="bedlease",
@@ -757,9 +826,7 @@ def project(tmp_path: Path, root: Path) -> Path:
             f'libs = ["{CHECKOUT_ROOT / "tests" / "custom_hosts"}"]\n'
             'init = ["custom_hosts"]\n'
             "\n"
-            "[[lab.sources]]\n"
-            'backend = "json"\n'
-            f'paths = ["{lab_dir}"]\n'
+            f"{tech1_lab_source()}"
             "\n"
             "[reservations]\n"
             'backend = "json"\n'

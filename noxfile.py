@@ -1655,6 +1655,15 @@ TEMPLATING_GO_PATHS = (
     "tests/unit/cli/test_lab_cli.py",
     "tests/unit/config/test_completion_templated.py",
     "tests/unit/docs/test_templating_example.py",
+    "tests/unit/labs/test_search_paths_load.py",
+    "tests/unit/labs/test_testbed_templates.py",
+    "tests/unit/docs/test_getting_started_templates.py",
+    "tests/unit/docs/test_getting_started_example.py",
+    "tests/unit/docs/test_gs_example_session_setup.py",
+    "tests/unit/host/test_host_id_invariant.py",
+    # The acceptance test's hostless half; HOSTLESS_CLAUSES deselects its
+    # integration (dispatch) half.
+    "tests/e2e/labs",
 )
 # `python -c` puts the checkout on sys.path, so the lock's one version reader
 # imports; the `nox` entry point itself never has it there.

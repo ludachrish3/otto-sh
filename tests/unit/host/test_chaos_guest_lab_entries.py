@@ -1,6 +1,6 @@
 """The chaos reboot guest's lab entries, as the factory and the loader see them.
 
-``tests/_fixtures/lab_data/tech1/lab.json`` carries the ``ubu2404`` element, the
+``tests/_fixtures/lab_data/tech1/lab.jsonnet`` carries the ``ubu2404`` element, the
 ``chaos`` lab and the declared data-plane link. Their literals are pinned here
 against ``CHAOS_GUEST`` (``scripts/render_chaos_guest_seed.py``), the one
 constant the provisioner renders from, so the lab data and the guest the
@@ -13,7 +13,6 @@ import pytest
 
 from otto.host.factory import create_host_from_dict
 from otto.host.unix_host import UnixHost
-from otto.labs.loader import load_lab
 from scripts.render_chaos_guest_seed import CHAOS_GUEST
 from tests._fixtures.labdata import (
     dangling_ends,
@@ -21,9 +20,9 @@ from tests._fixtures.labdata import (
     entry_of,
     flat_hosts,
     host_data,
-    lab_data_dir,
-    lab_data_path,
+    load_tech_lab,
     register_zephyr_inline_frame,
+    tech1_document,
 )
 from tests.e2e.chaos._bed import (
     CHAOS_GUEST_DATA_NETDEV,
@@ -43,7 +42,7 @@ def _zephyr_inline_frame() -> None:
 
 
 def _record(element: str) -> dict:
-    doc = json.loads(lab_data_path("tech1").read_text())
+    doc = tech1_document()
     el = next(e for e in doc["elements"] if e["name"] == element)
     return el["hosts"][0]
 
@@ -78,12 +77,12 @@ def test_the_guest_is_in_the_chaos_lab_and_no_other():
 
 
 def test_the_chaos_lab_holds_exactly_test4_and_the_guest():
-    doc = json.loads(lab_data_path("tech1").read_text())
+    doc = tech1_document()
     assert doc["labs"]["chaos"]["resources"] == ["test4", CHAOS_GUEST.element]
 
 
 def test_the_declared_link_names_both_ends_the_provisioner_creates():
-    doc = json.loads(lab_data_path("tech1").read_text())
+    doc = tech1_document()
     guest = _record(CHAOS_GUEST.element)
     test4 = _record(CHAOS_GUEST.hop)
     assert guest["interfaces"] == {
@@ -108,11 +107,11 @@ def test_the_declared_link_names_both_ends_the_provisioner_creates():
 
 
 def test_the_management_tap_is_declared_nowhere():
-    assert CHAOS_GUEST.mgmt.tap not in lab_data_path("tech1").read_text()
+    assert CHAOS_GUEST.mgmt.tap not in json.dumps(tech1_document())
 
 
 def test_the_loaded_chaos_lab_declares_the_link_with_no_dangling_end():
-    lab = load_lab("chaos", search_paths=[lab_data_dir() / "tech1"])
+    lab = load_tech_lab("chaos")
     assert "test4--ubu2404-qemu" in {link.id for link in lab.static_links()}
     assert dangling_ends(lab) == []
 
@@ -121,7 +120,7 @@ def test_the_embedded_lab_is_half_outside_by_design():
     """test4 is in `embedded`, the guest is not: the loader keeps a link with one loaded end
     (link/derive.py), so `-l embedded link repair --all` reports this end. The chaos lab
     exists so no sweep is aimed at `embedded`."""
-    lab = load_lab("embedded", search_paths=[lab_data_dir() / "tech1"])
+    lab = load_tech_lab("embedded")
     assert dangling_ends(lab) == ["test4--ubu2404-qemu: ubu2404-qemu"]
 
 

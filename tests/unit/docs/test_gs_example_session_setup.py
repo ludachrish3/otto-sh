@@ -8,6 +8,10 @@ import sys
 from otto.host.command_frame import BashFrame, RawFrame, SessionMarkers, ZephyrFrame
 from otto.host.session_setup import SESSION_SETUPS, SessionSetup
 from tests._fixtures.gs_example import import_gs_example, load_example_lab
+from tests.unit.templating import conftest as _templating
+
+# The binding proof every templated test file carries: the example's labs render.
+jsonnet_binding_under_test = _templating.jsonnet_binding_under_test
 
 M = SessionMarkers.for_session(session_id="cafef00d")
 

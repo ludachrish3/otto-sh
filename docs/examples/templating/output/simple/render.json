@@ -1,0 +1,93 @@
+{
+  "elements": [
+    {
+      "hosts": [
+        {
+          "ip": "10.20.1.1",
+          "ssh_options": {
+            "port": 2301
+          }
+        }
+      ],
+      "labs": [
+        "bench1"
+      ],
+      "name": "bench1-dut"
+    },
+    {
+      "hosts": [
+        {
+          "ip": "10.20.1.2",
+          "ssh_options": {
+            "port": 2302
+          }
+        }
+      ],
+      "labs": [
+        "bench1"
+      ],
+      "name": "bench1-tgen"
+    },
+    {
+      "hosts": [
+        {
+          "ip": "10.20.2.1",
+          "ssh_options": {
+            "port": 2401
+          }
+        }
+      ],
+      "labs": [
+        "bench2"
+      ],
+      "name": "bench2-dut"
+    },
+    {
+      "hosts": [
+        {
+          "ip": "10.20.2.2",
+          "ssh_options": {
+            "port": 2402
+          }
+        }
+      ],
+      "labs": [
+        "bench2"
+      ],
+      "name": "bench2-tgen"
+    },
+    {
+      "hosts": [
+        {
+          "ip": "10.20.3.1",
+          "ssh_options": {
+            "port": 2501
+          }
+        }
+      ],
+      "labs": [
+        "bench3"
+      ],
+      "name": "bench3-dut"
+    },
+    {
+      "hosts": [
+        {
+          "ip": "10.20.3.2",
+          "ssh_options": {
+            "port": 2502
+          }
+        }
+      ],
+      "labs": [
+        "bench3"
+      ],
+      "name": "bench3-tgen"
+    }
+  ],
+  "labs": {
+    "bench1": {},
+    "bench2": {},
+    "bench3": {}
+  }
+}

@@ -9,20 +9,15 @@ exercising selection across classes, projects, and non-class tests.
 
 from pathlib import Path
 
-from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.labdata import tech1_lab_source
 from tests._fixtures.project_scaffold import make_project
 
-# Reuse otto's own JSON lab fixture data (defines the "unix" lab) so a
+# Reuse otto's own lab fixture data, the bed's cell (it defines the "unix" lab), so a
 # throwaway project can satisfy the mandatory --lab flag without touching a real
 # host — none of these fixture suites request a host fixture.
-LAB_DATA_DIR = lab_data_dir() / "tech1"
 
 # Appended verbatim after make_project's name/version/tests header.
-SETTINGS_EXTRA = """\
-[[lab.sources]]
-backend = "json"
-paths = ["{lab_data_dir}"]
-"""
+SETTINGS_EXTRA = tech1_lab_source()
 
 SUITE_SRC = """\
 import pytest
@@ -72,7 +67,7 @@ def make_selection_project(
 
     Returns the project root (``root / name``).
 
-    ``with_lab`` controls whether this project contributes ``LAB_DATA_DIR`` to
+    ``with_lab`` controls whether this project contributes the tech1 lab to
     the aggregated lab search paths (see ``ensure_lab_context`` in
     ``otto.cli.invoke``, which concatenates every project's ``[[lab.sources]]``
     entries unchanged). Pass ``False`` for every project but one in a multi-project
@@ -90,6 +85,6 @@ def make_selection_project(
         name=name,
         version="0.1.0",
         tests=["tests"],
-        extra=SETTINGS_EXTRA.format(lab_data_dir=LAB_DATA_DIR) if with_lab else "",
+        extra=SETTINGS_EXTRA if with_lab else "",
         files={f"tests/test_selection_{name}.py": suite_src},
     )

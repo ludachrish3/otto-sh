@@ -11,7 +11,6 @@ the one-line lazy import here.
 
 import sys
 
-from otto.labs.loader import load_lab
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 EXAMPLE = CHECKOUT_ROOT / "docs" / "examples" / "getting-started"
@@ -26,6 +25,14 @@ def import_gs_example() -> None:
 
 
 def load_example_lab(labs: str):
-    """Build *labs* from the example project's lab data, with its init module loaded."""
+    """Build *labs* (``+``-joined) as ``otto --lab`` builds them from the example project.
+
+    Through the project's own ``[[lab.sources]]``, so its Jsonnet template
+    renders exactly as it does for a user, with its init module loaded first.
+    """
+    from otto.config.project import Project
+    from otto.labs.loader import split_lab_names
+    from otto.session import build_lab
+
     import_gs_example()
-    return load_lab(labs, search_paths=[EXAMPLE / "lab_data"])
+    return build_lab([Project(root=EXAMPLE)], labs=split_lab_names(labs))

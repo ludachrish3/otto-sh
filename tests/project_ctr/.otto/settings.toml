@@ -10,7 +10,7 @@ tests = ["tests"]
 lab_patterns = [".*"]
 
 [[lab.sources]]
-backend = "json"
+backend = "jsonnet"
 paths = ["../_fixtures/lab_data/tech1"]
 
 # docs-container-host-begin

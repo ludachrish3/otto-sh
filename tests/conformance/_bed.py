@@ -139,7 +139,7 @@ def _kind_for_userland(userland: str) -> str:
       GNU unix VM (measured: ``axes_for("test4").userland == "gnu"``), so a
       kind read off the lab name calls it a Zephyr guest;
     - ``os_type``: the five BusyBox guests declare ``os_type: "unix"``
-      (measured, ``tests/_fixtures/lab_data/tech1/lab.json``), so a kind read
+      (measured, ``tests/_fixtures/lab_data/tech1/lab.jsonnet``), so a kind read
       off it calls them plain unix hosts and the pinned-userland axis
       disappears.
 

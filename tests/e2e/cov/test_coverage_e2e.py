@@ -42,7 +42,7 @@ import pytest
 from otto import _webassets, layout
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore, FileRecord
-from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.labdata import tech1_lab_source
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import PROJECT1, output_dirs, run_otto
 
@@ -560,7 +560,7 @@ class TestCoverageIntegrity:
 # Test Class 5: .gcda Fetch Structure
 # ---------------------------------------------------------------------------
 
-# Expected host layout from tests/lab_data/tech1/lab.json for lab "unix".
+# Expected host layout from tests/_fixtures/lab_data/tech1/lab.jsonnet for lab "unix".
 # Discovering the list from disk rather than calling all_hosts() keeps this
 # test process free of otto.config singletons.
 EXPECTED_HOST_IDS = {"test1", "test2", "test3"}
@@ -987,16 +987,12 @@ STAGED_DIR = f"{STAGED_PARENT}/stage"
 STAGED_FILE = f"{STAGED_DIR}/staged-837.txt"
 STAGED_HOST = "test1"
 
-_LAB_DATA = lab_data_dir() / "tech1"
 
 _STAGED_SETTINGS = f"""\
 [project]
 lab_patterns = [".*"]
 
-[[lab.sources]]
-backend = "json"
-paths = ["{_LAB_DATA}"]
-
+{tech1_lab_source()}
 [[products]]
 name = "staged-837"
 kind = "shell"

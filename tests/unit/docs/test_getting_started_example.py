@@ -2,26 +2,33 @@
 
 Everything the pages include is a fragment of these files, so they must load
 through the same code every user's project loads through: ``Project`` parses the
-settings, ``load_lab`` builds every lab, and a stray key fails here before it
-can fail for a reader.
+settings, ``build_lab`` renders the project's lab template and builds every lab,
+and a stray key fails here before it can fail for a reader.
 """
 
 import ast
+import subprocess
 import sys
+import tarfile
 from pathlib import Path, PurePosixPath
 
 import pytest
 
 from otto.config.project import Project
 from otto.host.product import gcov_prefix_strip
-from otto.inventory import InventoryDeclaration, build_inventory_from_declarations
-from otto.labs.loader import load_lab
 from otto.reservations import SupportsResourceHolders
+from otto.session import build_lab
 from otto.testing import assert_reservation_backend_conforms
+from scripts.build_example_archives import build
+from tests._fixtures.gitrepo import git_env
 from tests._fixtures.gs_example import EXAMPLE, load_example_lab
 from tests._fixtures.gs_example import LIBS as _LIBS
 from tests._fixtures.gs_example import import_gs_example as _import_gs_example
 from tests._fixtures.paths import CHECKOUT_ROOT
+from tests.unit.templating import conftest as _templating
+
+# The binding proof every templated test file carries: these labs render.
+jsonnet_binding_under_test = _templating.jsonnet_binding_under_test
 
 TWIN = CHECKOUT_ROOT / "docs" / "examples" / "getting-started-inventory"
 _MIRROR_SOURCE = CHECKOUT_ROOT / "tests" / "custom_hosts" / "custom_hosts" / "zephyr_inline.py"
@@ -49,7 +56,7 @@ _ATTRS = [
 def test_settings_parse_as_a_real_project() -> None:
     project = Project(root=EXAMPLE)
     assert project.name == "gs"
-    assert [s.backend for s in project.lab_sources] == ["json"]
+    assert [s.backend for s in project.lab_sources] == ["jsonnet"]
 
 
 @pytest.mark.parametrize("lab", ["unix", "busybox", "embedded", "pyrepl"])
@@ -167,46 +174,25 @@ def test_the_example_enter_python_mirrors_the_api_sample() -> None:
     )
 
 
-@pytest.fixture
-def twin_inventory():
-    # The twin's `[inventory]`/`[creds]` tables are a per-project override
-    # (spec §8, the same TOML the `.otto/settings.toml` file's own
-    # `name`/`version`/`[[lab.sources]]` live in) -- read the way
-    # `otto.inventory.config.build_inventory` reads any active project's
-    # declaration, not `load_user_settings` (that model is `extra="forbid"`
-    # for a standalone `~/.otto/settings.toml` and would reject this file's
-    # other top-level keys). The `[creds]` table rides along -- the twin's
-    # `test1` carries the same proxied cred the inline lab does, layered over
-    # the store (spec 2026-09-06 §6.4).
-    project = Project(root=TWIN)
-    assert project.inventory_settings and project.creds_settings  # noqa: PT018
-    return build_inventory_from_declarations(
-        declarations=[
-            InventoryDeclaration(
-                origin="example",
-                anchor_dir=TWIN,
-                table=dict(project.inventory_settings),
-                creds_table=dict(project.creds_settings),
-            )
-        ],
-        user_settings=None,
-    )
+def test_the_referenced_twin_builds_the_same_unix_lab() -> None:
+    """Spec §3: two states of one lab, allowed only because this proves them equal.
 
-
-def test_the_referenced_twin_builds_the_same_unix_lab(twin_inventory) -> None:
-    """Spec §3: two states of one lab, allowed only because this proves them equal."""
+    The twin is built as its own project, so its ``[inventory]`` and
+    ``[creds]`` tables and its template's qualified references resolve as
+    they do for a user.
+    """
     # Explicit, not leaned on as a side effect of the `load_example_lab` call
     # below: the REFERENCED load needs the example project's init module
     # registered too, and spelling that out here means this test's own
     # dependency does not hide behind another line's incidental import.
     _import_gs_example()
     inline = load_example_lab("unix")
-    referenced = load_lab("unix", search_paths=[TWIN / "lab_data"], inventory=twin_inventory)
+    referenced = build_lab([Project(root=TWIN)], labs=["unix"])
     assert set(inline.hosts) == set(referenced.hosts)
     for name in _UNIX:
         a, b = inline.hosts[name], referenced.hosts[name]
         assert {k: getattr(a, k) for k in _ATTRS} == {k: getattr(b, k) for k in _ATTRS}, name
-        # Every cred, proxied ones included: the twin's lab.json carries the
+        # Every cred, proxied ones included: the twin's template carries the
         # route (and two login-only placeholders that pin the order), the creds
         # store the passwords, and the merge composes them (spec 2026-09-06 §6.4).
         assert [(c.login, c.password, c.proxy, c.via, c.params) for c in a.creds] == [
@@ -261,6 +247,34 @@ def test_the_twin_is_a_real_project_that_shares_the_examples_project_code() -> N
     assert [p.name for p in project.libs] == ["libs"]  # ../getting-started/libs, anchored
     assert project.libs[0].resolve() == (TWIN / "../getting-started/libs").resolve()
     assert project.creds_settings["backend"] == "json"
+
+
+def test_the_download_ships_both_projects_side_by_side(tmp_path) -> None:
+    """One archive, so the twin's ``../getting-started/libs`` resolves where a reader unpacks."""
+    (built,) = build(EXAMPLE.parent, tmp_path, checkout=CHECKOUT_ROOT, only={"getting-started"})
+    assert built.name == "getting-started.tar.gz"
+    with tarfile.open(built) as tar:
+        names = sorted(tar.getnames())
+    tracked = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(CHECKOUT_ROOT),
+            "ls-files",
+            "--",
+            str(EXAMPLE.relative_to(CHECKOUT_ROOT)),
+            str(TWIN.relative_to(CHECKOUT_ROOT)),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=git_env(tmp_path / "home"),
+    ).stdout.split()
+    assert names == sorted(
+        PurePosixPath(p).relative_to("docs/examples").as_posix() for p in tracked
+    )
+    assert "getting-started-inventory/.otto/settings.toml" in names
+    assert "getting-started/libs/gs_example/__init__.py" in names
 
 
 def test_the_worked_examples_agent_is_a_declared_class_entry() -> None:

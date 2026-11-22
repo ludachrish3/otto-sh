@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-from tests._fixtures.paths import CHECKOUT_ROOT
+from tests._fixtures.paths import TECH1_GOLDEN
 from tests._fixtures.project_scaffold import make_project
 
 GENERATED_LIB_DIRS = ["pylib"]
@@ -45,11 +45,11 @@ Hyphenated because a host id is a slug (``[a-z0-9-]``): an element named
 def _budget_ssh_lab(port: int) -> str:
     """A JSON lab holding one unix host at ``127.0.0.1`` whose SSH port is *port*.
 
-    The host entry is the unix host shape of ``lab_data/tech1/lab.json``
-    (``test3``), so the SSH path is measured on the same kind of host a real
-    lab carries. Only the addresses differ: ``127.0.0.1`` for the host, so a
-    connection is refused at once when the port is closed, and an interface
-    address no tech1 host uses, so the merged lab keeps its IPs unique.
+    The host entry is the unix host shape of the bed cell's ``test3``, so the
+    SSH path is measured on the same kind of host a real lab carries. Only the
+    addresses differ: ``127.0.0.1`` for the host, so a connection is refused at
+    once when the port is closed, and an interface address no tech1 host uses,
+    so the merged lab keeps its IPs unique.
     """
     host = {
         "ip": "127.0.0.1",
@@ -185,8 +185,9 @@ def generate_project(
 
     *realistic* shapes the project like a real one: top-level test-class files
     that import pytest, an init module that registers an instruction and imports a
-    monitor parser, and a JSON lab source, so budget surfaces see what real
-    projects cost. ``realistic=False`` behaves exactly as before: a bare init
+    monitor parser, and a JSON lab source reading the bed's cell, as its frozen
+    JSON file (:data:`~tests._fixtures.paths.TECH1_GOLDEN`), so budget surfaces
+    see what real projects cost. ``realistic=False`` behaves exactly as before: a bare init
     module and plain top-level test functions, no lab.
 
     *ssh_lab_port* adds a second JSON lab source, ``budget_lab/lab.json``,
@@ -205,9 +206,13 @@ def generate_project(
     extra = _EXTRA.format(name=name)
     init_body = ""
     if realistic:
-        extra += _LAB_SOURCE.format(
-            lab=CHECKOUT_ROOT / "tests" / "_fixtures" / "lab_data" / "tech1"
-        )
+        # The cell's frozen JSON, read in place: no render and no copy. The
+        # release's import-budget delta generates this project with the TIP's
+        # harness under the PREVIOUS release's otto (scripts/import_budget_delta.py),
+        # which may have no `jsonnet` backend; and a file outside the fixture
+        # root keeps the lab's reads out of the `workspace` counter, as the
+        # checkout's `lab_data/tech1` directory did.
+        extra += _LAB_SOURCE.format(lab=TECH1_GOLDEN)
         init_body = _REALISTIC_INIT
     project_files = {f"pylib/{name}_instructions.py": init_body}
     if ssh_lab_port is not None:

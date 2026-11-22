@@ -95,7 +95,7 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     # and a `--help` rebuild collects nothing.
     assert "suites" not in payload
     assert "__collected_tests__" not in cache
-    # Host IDs from tests/_fixtures/lab_data/tech1/lab.json — co-cached
+    # Host IDs from tests/_fixtures/lab_data/tech1/lab.jsonnet — co-cached
     # alongside instructions so `otto host <TAB>` hits the fast path.
     assert {"test1", "test2", "test3"} <= set(payload["hosts"])
     # docker-capable parents are cached separately so `otto docker --parent <TAB>`
@@ -181,7 +181,7 @@ def _host_completions(result: subprocess.CompletedProcess[str]) -> set[str]:
     return {line.split(",", 1)[-1] for line in result.stdout.splitlines() if line}
 
 
-# tech1/lab.json splits into two labs: `unix` (test1/test2/test3) and
+# tech1/lab.jsonnet splits into two labs: `unix` (test1/test2/test3) and
 # `embedded` (test4/zephyr*). Lab-scoped `otto host <TAB>` must show one, not both.
 _UNIX = {"test1", "test2", "test3"}
 # Every Zephyr element carries an underscore (`zephyr37_lfs`) and slugs to a
@@ -409,7 +409,7 @@ def test_fast_path_returns_host_ids_for_host_subcommand(tmp_path: Path) -> None:
         comp_cword="2",
     )
     assert result.returncode == 0, result.stderr
-    # tech1/lab.json in project1 defines test1, test2, test3.
+    # tech1/lab.jsonnet in project1 defines test1, test2, test3.
     blob = result.stdout
     for host_id in ("test1", "test2", "test3"):
         assert host_id in blob, f"{host_id!r} missing from: {blob!r}"

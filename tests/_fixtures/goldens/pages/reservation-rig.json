@@ -1,0 +1,14 @@
+{
+  "labs": {"rig": {"resources": ["rig-pdu"]}},
+  "elements": [
+    {"name": "chassis", "id": 1, "labs": ["rig"], "resources": ["chassis-1"],
+     "hosts": [
+       {"ip": "10.0.0.11", "board": "slot", "slot": 1,
+        "resources": ["chassis-1-slot-1"], "creds": [{"login": "admin", "password": "…"}]},
+       {"ip": "10.0.0.12", "board": "slot", "slot": 2,
+        "resources": ["chassis-1-slot-2"], "creds": [{"login": "admin", "password": "…"}]}
+     ]},
+    {"name": "gw", "labs": ["rig"],
+     "hosts": [{"ip": "10.0.0.1", "creds": [{"login": "admin", "password": "…"}]}]}
+  ]
+}

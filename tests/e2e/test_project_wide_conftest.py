@@ -4,23 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.labdata import lab_data_dir
+from tests._fixtures.labdata import tech1_lab_source
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.hostless
 
-# Reuse otto's own JSON lab fixture data (defines the "unix" lab) so this
+# Reuse otto's own lab fixture data, the bed's cell (it defines the "unix" lab), so this
 # throwaway project can satisfy the mandatory --lab flag without touching a real
 # host — TestConfcut itself requests no host fixture.
-LAB_DATA_DIR = lab_data_dir() / "tech1"
 
 # Appended verbatim after make_project's name/version/tests header.
-SETTINGS_EXTRA = """\
-[[lab.sources]]
-backend = "json"
-paths = ["{lab_data_dir}"]
-"""
+SETTINGS_EXTRA = tech1_lab_source()
 
 ROOT_CONFTEST = """\
 import pytest
@@ -43,7 +38,7 @@ def _make_project(root: Path) -> None:
         name="confrepo",
         version="0.1.0",
         tests=["tests/sub"],
-        extra=SETTINGS_EXTRA.format(lab_data_dir=LAB_DATA_DIR),
+        extra=SETTINGS_EXTRA,
         files={"conftest.py": ROOT_CONFTEST, "tests/sub/test_confcut.py": SUITE},
     )
 

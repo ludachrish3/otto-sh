@@ -1,4 +1,4 @@
-"""build_example_archives: one reproducible archive of tracked files per example track."""
+"""build_example_archives: one reproducible archive of tracked files per example track or bundle."""
 
 import tarfile
 from pathlib import Path
@@ -69,3 +69,27 @@ def test_no_track_builds_nothing(tmp_path):
     root.mkdir()
     assert bea.build(root, tmp_path / "out", checkout=tmp_path) == []
     assert not (tmp_path / "out").exists()
+
+
+def test_a_bundle_ships_its_projects_side_by_side(repo, tmp_path):
+    """getting-started-inventory loads ../getting-started/libs, so one archive holds both."""
+    git = TmpGitRepo(repo)
+    twin = repo / "docs" / "examples" / "getting-started-inventory"
+    twin.mkdir()
+    (twin / "b.txt").write_text("b\n")
+    git.commit("twin")
+    built = bea.build(repo / "docs" / "examples", tmp_path / "out", checkout=repo)
+    assert [p.name for p in built] == ["getting-started.tar.gz", "quickstart-shell.tar.gz"]
+    assert [m.name for m in _members(built[0])] == [
+        "getting-started-inventory/b.txt",
+        "getting-started/a.txt",
+    ]
+
+
+def test_only_writes_the_archives_it_names(repo, tmp_path):
+    """``only=`` packs just the named archive: a caller checking one never packs the rest."""
+    out = tmp_path / "out"
+    built = bea.build(repo / "docs" / "examples", out, checkout=repo, only={"quickstart-shell"})
+    assert [p.name for p in built] == ["quickstart-shell.tar.gz"]
+    assert sorted(p.name for p in out.iterdir()) == ["quickstart-shell.tar.gz"]
+    assert bea.build(repo / "docs" / "examples", out, checkout=repo, only=()) == []

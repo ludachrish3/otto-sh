@@ -1,0 +1,11 @@
+╭───────────────────────────────╮
+│ lab bench2                    │
+│ ├── bench2-dut  UnixHost      │
+│ │   ├── address: 10.20.2.1    │
+│ │   └── transports: ssh, scp  │
+│ ├── bench2-tgen  UnixHost     │
+│ │   ├── address: 10.20.2.2    │
+│ │   └── transports: ssh, scp  │
+│ └── local  LocalHost          │
+│     └── address: this machine │
+╰───────────────────────────────╯

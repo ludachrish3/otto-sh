@@ -109,7 +109,7 @@ def test_get_host_unknown_id_sentinel_lab_appends_open_context_breadcrumb():
 
 
 def test_context_get_host_and_all_hosts_resolve_from_lab():
-    # Use NEs that exist in tests/lab_data/tech1/lab.json with creds (Unix hosts):
+    # Use NEs that exist in tests/_fixtures/lab_data/tech1/lab.jsonnet with creds (Unix hosts):
     # test1, test2, test3, test4
     lab = _lab_with("test1", "test2", "test3")
     ctx = OttoContext(lab=lab)

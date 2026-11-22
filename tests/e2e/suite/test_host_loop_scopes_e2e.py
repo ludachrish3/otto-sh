@@ -13,17 +13,13 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import CHECKOUT_ROOT
+from tests._fixtures.labdata import tech1_lab_source
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.integration
 
-_LAB_SOURCE = f'''
-[[lab.sources]]
-backend = "json"
-paths = ["{CHECKOUT_ROOT / "tests/_fixtures/lab_data/tech1"}"]
-'''
+_LAB_SOURCE = "\n" + tech1_lab_source()
 
 
 def _run(tmp_path: Path, body: str, *names: str, timeout: int = 90):

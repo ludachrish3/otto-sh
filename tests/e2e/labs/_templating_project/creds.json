@@ -1,0 +1,6 @@
+{
+  "edge-r1": [
+    {"login": "vagrant", "password": "vagrant"},
+    {"login": "test", "password": "Password1"}
+  ]
+}

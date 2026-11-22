@@ -27,12 +27,15 @@ the jump session itself.
 Some Unix hosts are worth reaching over their serial console too: it
 answers when the network does not, and it is the only way in before the
 device's network is up. On the bed, `test2`'s serial port is served by a
-telnet server on `test1`, port 4001, and its entry says so:
+telnet server on `test1`, port 4001, and its entry says so. It is one of the
+Ubuntu VMs the {doc}`first page <index>`'s `ubuntuVm` function writes, so its
+call states only what is its own: its rack position, its term and transfer
+menus, the console, and the console's resource:
 
-```{literalinclude} ../../../examples/getting-started/lab_data/lab.json
-:language: json
-:start-after: '"_doc_begin": "test2"'
-:end-before: '"_doc_end": "test2"'
+```{literalinclude} ../../../examples/getting-started/lab_data/lab.jsonnet
+:language: jsonnet
+:start-after: "// doc: begin test2"
+:end-before: "// doc: end test2"
 ```
 
 `console_options` names the *server* by its lab ID and the port on it —

@@ -7,7 +7,7 @@ import pytest
 
 from otto.labs.json_repository import _JsonFileLabRepository
 from otto.labs.loader import Lab, load_lab
-from tests._fixtures.labdata import lab_data_dir, write_lab_json
+from tests._fixtures.labdata import load_tech_lab, write_lab_json
 
 
 def _hosts_file(path: Path, hosts: list[dict]) -> Path:
@@ -165,7 +165,7 @@ def test_merged_lab_name_uses_the_plus_separator(tmp_path):
 
 def test_load_lab_round_trips_declared_link_from_fixture():
     """The tech1 fixture's test1<->test2 udp link survives load_lab end to end."""
-    lab = load_lab("unix", search_paths=[lab_data_dir() / "tech1"])
+    lab = load_tech_lab("unix")
 
     by_pair = {frozenset({link.a.host, link.b.host}): link for link in lab.links}
     link = by_pair[frozenset({"test1", "test2"})]
@@ -193,7 +193,7 @@ def test_loading_one_lab_also_loads_a_link_reaching_out_of_it():
     impairable, but which ``link impair --from test1`` will act on
     while ``link repair`` refuses it for exactly that reason.
     """
-    lab = load_lab("unix", search_paths=[lab_data_dir() / "tech1"])
+    lab = load_tech_lab("unix")
 
     pairs = {frozenset({link.a.host, link.b.host}) for link in lab.links}
     assert frozenset({"test1", "bb1350-qemu"}) in pairs, pairs

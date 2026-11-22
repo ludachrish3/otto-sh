@@ -35,7 +35,7 @@ The existing concurrency-focused stability suite
 (``tests/unit/host/test_session_stability_integration.py``) covers unix
 SSH/telnet fan-out dynamics that don't generalize to embedded; this file
 covers what *does* generalize, including future embedded OS / version /
-filesystem variants that drop into ``lab_data/tech1/lab.json``.
+filesystem variants that drop into ``tests/_fixtures/lab_data/tech1/lab.jsonnet``.
 """
 
 from __future__ import annotations
