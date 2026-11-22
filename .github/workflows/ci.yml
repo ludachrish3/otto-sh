@@ -77,7 +77,7 @@ jobs:
           fetch-depth: 0
       - name: Set up uv
         if: env.AWAIT_LOCAL_GATE == 'true'
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - name: Set up Python 3.10
@@ -306,7 +306,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
 
@@ -388,7 +388,7 @@ jobs:
       image: ${{ steps.lock.outputs.image }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
       - id: lock
         run: uv run --no-project --with tomli python scripts/playwright_version.py uv.lock
 
@@ -429,7 +429,7 @@ jobs:
         uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv python install 3.10
@@ -640,7 +640,7 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv python install 3.10
@@ -720,7 +720,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv python install 3.10
@@ -787,7 +787,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv python install 3.10
@@ -805,7 +805,7 @@ jobs:
         uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       # graphviz `dot` renders the architecture-docs diagrams. ubuntu-latest
@@ -854,7 +854,7 @@ jobs:
         uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv python install 3.10
@@ -877,7 +877,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - name: Set up Python ${{ matrix.python }}
@@ -896,7 +896,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - name: Set up Python 3.10
@@ -928,7 +928,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv python install 3.10
