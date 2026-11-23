@@ -43,7 +43,7 @@ from .product import (
     mkdir_line,
     planned_stage_dir,
     put_line,
-    resolve_stage_dir,
+    resolve_entry_stage_dir,
     stage_dir_key,
     staged_file,
     sudo_line,
@@ -162,13 +162,15 @@ class KmodTool(DevTool):
     async def resolved_stage_dir(self, host: "Host") -> Path:
         """Resolve :attr:`stage_dir` against *host*, absolutely.
 
-        Delegates to :func:`~otto.host.product.resolve_stage_dir`, the one
+        Delegates to :func:`~otto.host.product.resolve_entry_stage_dir`, the one
         implementation the product side uses too, so a dev tool and a product
         can never disagree about where a staged artifact lands — and, like
         the product side, what it returns is handed straight to ``host.load``
         and never resolved again.
         """
-        return await resolve_stage_dir(self.stage_dir, host, who=f"dev tool {self.name!r}")
+        return await resolve_entry_stage_dir(
+            self, self.stage_dir, host, who=f"dev tool {self.name!r}"
+        )
 
     def stage_key(self, host: "Host") -> str:
         """:attr:`stage_dir` as a lab-load key (:func:`~otto.host.product.stage_dir_key`)."""

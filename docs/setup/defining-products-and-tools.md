@@ -212,8 +212,8 @@ host_patterns = ["dut", "peer[12]"]
 key a `match` table takes. On one host, products install and uninstall in
 declaration order, so put first a product that another's `install` needs.
 Two entries that would stage files with the same basename into one directory
-on one host are refused at lab load: two artifacts both called `app` need
-different `stage_dir`s. Each product has its own `cov_dir`, `/tmp/<name>` by
+on one host are refused: two artifacts both called `app` need
+different `stage_dir`s ([when the check runs](../configuration/declared-products-tools.md)). Each product has its own `cov_dir`, `/tmp/<name>` by
 default, so their counters never mix; two products on one host whose
 `cov_dir`s are equal or nested are refused at lab load. The same product built differently for
 two hosts keeps one `name` in two entries, each with its own `match`; on

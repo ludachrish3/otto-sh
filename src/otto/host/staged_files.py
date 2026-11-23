@@ -84,7 +84,7 @@ def staged_entries(host: "Host", items: "Iterable[Product | DevTool]") -> list[S
       ``kmod``, the kernel-module dev tools, a provider's shell-class product);
     - it has an ``artifact`` and a ``stage_key``
       (:func:`~otto.host.product.places_staged_file`, which
-      :func:`~otto.host.factory.check_stage_collisions` asks too);
+      :func:`~otto.host.product.check_stage_collisions` asks too);
     - it is not a :class:`~otto.host.declared_product.DeclaredProduct` whose
       ``stage`` a ``class =`` subclass replaced: that code may place the file
       anywhere. The built-in kinds override ``stage`` themselves and are covered.
@@ -160,9 +160,24 @@ async def staged_paths(host: "Host", items: "Iterable[StagedEntry]") -> list[Pat
 
     Raises:
         ~otto.host.errors.HostCommandError: the login home an entry falls back
-            on could not be discovered: a failure, never "nothing staged".
+            on could not be discovered, or two entries stage one file into the
+            same directory once it is known
+            (:func:`~otto.host.product.check_stage_collisions`): a failure,
+            never "nothing staged".
     """
-    return [await staged_path(item, host) for item in items]
+    from .errors import HostCommandError
+
+    try:
+        return [await staged_path(item, host) for item in items]
+    except (HostCommandError, ValueError) as error:
+        # ValueError is a refusal the lab or an entry earned (two entries stage
+        # one file into the discovered home). Both ends of cleanup say it the
+        # one way they say a home that could not be read: a failure to tell
+        # where the files are, never "nothing staged", and an OttoError the
+        # CLI prints as one line.
+        raise HostCommandError(
+            f"{host.id}: cannot tell where the staged files are: {error}"
+        ) from error
 
 
 # ── the commands ─────────────────────────────────────────────────────────────
@@ -311,9 +326,7 @@ async def remove_staged(host: "Host", items: "Iterable[Product | DevTool]") -> R
     try:
         paths = await staged_paths(host, covered)
     except HostCommandError as error:
-        return Result(
-            status=Status.Error, msg=f"{host.id}: cannot tell where the staged files are: {error}"
-        )
+        return Result(status=Status.Error, msg=str(error))
     dirs = declared_stage_dirs(covered)
     cmd = await _exec(host, removal_script(paths, dirs))
     if cmd.status is Status.NotRun:
@@ -350,7 +363,7 @@ async def staged_files_left(host: "Host", items: "Iterable[Product | DevTool]") 
         ~otto.result.CommandNotRunError: a dry run, which never answers.
         ~otto.host.errors.HostCommandError: a path could not be looked at (an
             unsearchable parent), the probe did not answer every path, or the
-            login home could not be discovered.
+            login home could not be discovered or two entries collide in it.
     """
     from ..result import CommandNotRunError
     from .errors import HostCommandError

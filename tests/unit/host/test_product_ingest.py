@@ -5,10 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from otto.errors import OttoError
 from otto.host import dev_tool as dev_tool_mod
 from otto.host import factory
 from otto.host import product as product_mod
 from otto.host.dev_tool import DevTool
+from otto.host.errors import StageCollisionError
 from otto.host.product import Product, ShellProduct
 from otto.result import Result
 from otto.utils import Status
@@ -151,6 +153,8 @@ def test_two_products_staging_one_basename_into_one_dir_are_refused():
     )
     with pytest.raises(ValueError, match="overwrite") as excinfo:
         factory.apply_providers(_staging_host())
+    assert isinstance(excinfo.value, StageCollisionError)
+    assert isinstance(excinfo.value, OttoError)
     msg = str(excinfo.value)
     assert "alpha" in msg  # both products, by name
     assert "beta" in msg
@@ -425,3 +429,191 @@ def test_one_cov_dir_on_two_hosts_is_accepted(monkeypatch):
     for host_id in ("h1", "h2"):
         host = _ingest(monkeypatch, declared=[("app", "/var/cov/app")], host_id=host_id)
         assert [p.cov_dir for p in host.products] == ["/var/cov/app"]
+
+
+# ── a declared dir equal to the login home another entry falls back to (#1251) ─
+
+
+def _discovering_host(home: str = "/home/u", **attrs):
+    """A host whose login home is unknown until ``login_home()`` asks, as on a real one.
+
+    Like ``UnixHost.login_home``, the answer is cached on ``cached_login_home``
+    by the first ask, so what the lab-load key sees changes at that moment.
+    """
+    host = _staging_host(default_dest_dir=Path(), cached_login_home=None, **attrs)
+    host.probes = 0
+
+    async def _login_home():
+        if host.cached_login_home is None:
+            host.probes += 1
+            host.cached_login_home = Path(home)
+        return host.cached_login_home
+
+    host.login_home = _login_home
+    return host
+
+
+def _entry(kind: str, name: str, stage_dir: Path):
+    """A product or a kmod dev tool staging ``app.bin`` into *stage_dir* (empty: the fallback)."""
+    from otto.host.kmod_tool_kind import KmodTool
+
+    artifact = Path(f"/builds/{name}/app.bin")
+    if kind == "tool":
+        return KmodTool(name=name, artifact=artifact, stage_dir=stage_dir)
+    return _P(artifact=artifact, name=name, stage_dir=stage_dir)
+
+
+def _load(host, *entries):
+    """Ingest *entries* on *host* the way lab load does: products and tools through providers."""
+    product_mod.register_product_provider(lambda h: [e for e in entries if isinstance(e, _P)])
+    dev_tool_mod.register_dev_tool_provider(lambda h: [e for e in entries if not isinstance(e, _P)])
+    factory.apply_providers(host)
+    return host
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fallback_kind", "declared_kind"),
+    [("product", "product"), ("product", "tool"), ("tool", "product")],
+)
+async def test_a_declared_dir_equal_to_the_discovered_home_is_refused_once_it_is_known(
+    fallback_kind, declared_kind
+):
+    """Accepted at lab load (the home is a placeholder there), refused when it becomes known."""
+    host = _discovering_host()
+    fallback = _entry(fallback_kind, "alpha", Path())
+    declared = _entry(declared_kind, "beta", Path("/home/u"))
+    _load(host, fallback, declared)  # no refusal: nothing is connected
+    with pytest.raises(ValueError, match="overwrite") as excinfo:
+        await fallback.resolved_stage_dir(host)
+    msg = str(excinfo.value)
+    assert "h1" in msg
+    assert f"{fallback_kind} 'alpha'" in msg
+    assert f"{declared_kind} 'beta'" in msg
+    assert "/home/u" in msg
+    assert "app.bin" in msg
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_repeats_on_every_attempt_not_only_the_first():
+    # The home is cached after the first ask, so a check that lived in the
+    # discovery step would let the second attempt through silently.
+    host = _discovering_host()
+    fallback = _entry("product", "alpha", Path())
+    _load(host, fallback, _entry("product", "beta", Path("/home/u")))
+    for _ in range(3):
+        with pytest.raises(ValueError, match="overwrite"):
+            await fallback.resolved_stage_dir(host)
+    assert host.cached_login_home == Path("/home/u")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spelling", ["/home/u/", "/home/u//", "/home/u/."])
+async def test_a_trailing_slash_spelling_of_the_home_is_still_the_home(spelling):
+    host = _discovering_host()
+    fallback = _entry("product", "alpha", Path())
+    _load(host, fallback, _entry("product", "beta", Path(spelling)))
+    with pytest.raises(ValueError, match="overwrite"):
+        await fallback.resolved_stage_dir(host)
+
+
+@pytest.mark.asyncio
+async def test_a_declared_dir_that_differs_from_the_home_is_fine():
+    host = _discovering_host()
+    fallback = _entry("product", "alpha", Path())
+    _load(host, fallback, _entry("product", "beta", Path("/home/other")))
+    assert await fallback.resolved_stage_dir(host) == Path("/home/u")
+
+
+@pytest.mark.asyncio
+async def test_a_different_basename_in_the_home_is_fine():
+    host = _discovering_host()
+    fallback = _entry("product", "alpha", Path())
+    other = _P(artifact=Path("/builds/beta/other.bin"), name="beta", stage_dir=Path("/home/u"))
+    _load(host, fallback, other)
+    assert await fallback.resolved_stage_dir(host) == Path("/home/u")
+
+
+@pytest.mark.asyncio
+async def test_two_entries_falling_back_to_the_home_are_still_refused_the_same_way_at_load():
+    host = _discovering_host()
+    with pytest.raises(ValueError, match="overwrite") as excinfo:
+        _load(host, _entry("product", "alpha", Path()), _entry("product", "beta", Path()))
+    assert product_mod.LOGIN_HOME in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("declared_kind", ["product", "tool"])
+async def test_the_declared_entry_resolved_first_is_refused_with_one_home_probe(declared_kind):
+    """The declared side stages first (another seam, another run, another owner)."""
+    host = _discovering_host()
+    declared = _entry(declared_kind, "beta", Path("/home/u"))
+    _load(host, _entry("product", "alpha", Path()), declared)
+    for _ in range(2):
+        with pytest.raises(ValueError, match=r"(?s)'alpha'.*'beta'.*overwrite") as excinfo:
+            await declared.resolved_stage_dir(host)
+        assert isinstance(excinfo.value, StageCollisionError)
+        assert isinstance(excinfo.value, OttoError)
+    assert host.probes == 1  # the home is cached; the check repeats without a second probe
+
+
+@pytest.mark.asyncio
+async def test_the_declared_entry_is_refused_though_the_fallback_entry_is_never_resolved():
+    host = _discovering_host()
+    declared = _entry("product", "beta", Path("/home/u"))
+    fallback = _entry("tool", "alpha", Path())
+    _load(host, fallback, declared)
+    with pytest.raises(ValueError, match="overwrite"):
+        await declared.resolved_stage_dir(host)  # `fallback` was skipped as already installed
+
+
+@pytest.mark.asyncio
+async def test_a_declared_entry_with_no_same_basename_fallback_entry_probes_nothing():
+    """The ordinary path gains no host command: the question is answered in memory."""
+    host = _discovering_host()
+    declared = _entry("product", "beta", Path("/home/u"))
+    fallback_other_name = _P(artifact=Path("/builds/x/other.bin"), name="x", stage_dir=Path())
+    _load(host, declared, fallback_other_name)
+    assert await declared.resolved_stage_dir(host) == Path("/home/u")
+    assert host.probes == 0
+
+
+@pytest.mark.asyncio
+async def test_a_host_default_dir_with_the_same_declarations_probes_nothing_and_is_not_refused():
+    host = _discovering_host(home="/home/u")
+    host.default_dest_dir = Path("/srv/stage")
+    first = _entry("product", "alpha", Path())  # falls to /srv/stage, not the home
+    second = _entry("product", "beta", Path("/home/u"))
+    _load(host, first, second)
+    assert await second.resolved_stage_dir(host) == Path("/home/u")
+    assert await first.resolved_stage_dir(host) == Path("/srv/stage")
+    assert host.probes == 0
+
+
+@pytest.mark.asyncio
+async def test_an_ad_hoc_load_on_a_host_with_a_colliding_pair_is_not_refused_by_this_check():
+    """``UnixHost.load`` with no ``dest_dir`` belongs to no entry: it resolves the host alone."""
+    host = _discovering_host()
+    _load(host, _entry("product", "alpha", Path()), _entry("product", "beta", Path("/home/u")))
+    assert await product_mod.resolve_stage_dir(Path(), host, who="host h1") == Path("/home/u")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage_dir", [Path(), Path("/srv/x")], ids=["host-default", "declared"])
+async def test_a_stand_in_host_with_no_entries_of_its_own_still_resolves(stage_dir):
+    """A product author's own test hands ``resolved_stage_dir`` a minimal stand-in host.
+
+    Such a host has no ``products`` or ``dev_tools``: there is nothing to
+    collide with, so the directory resolves as it did before the collision
+    check existed (the getting-started example's test does exactly this).
+    """
+
+    class StandIn:
+        id = "h1"
+        os_type = "unix"
+        default_dest_dir = "/opt/agent"
+        cached_login_home = "/root"
+
+    entry = _P(artifact=Path("/builds/a/app.bin"), name="a", stage_dir=stage_dir)
+    expected = Path("/opt/agent") if stage_dir == Path() else stage_dir
+    assert await entry.resolved_stage_dir(StandIn()) == expected

@@ -29,6 +29,10 @@ and the reference can link them. The public names are on :doc:`/api/host/product
 
 .. autofunction:: otto.host.product.places_staged_file
 
+.. autofunction:: otto.host.product.check_stage_collisions
+
+.. autofunction:: otto.host.product.resolve_entry_stage_dir
+
 .. autofunction:: otto.host.product.cov_dir_of_name
 
 .. autofunction:: otto.host.product.cov_dir_of

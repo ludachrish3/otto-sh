@@ -103,6 +103,7 @@ def test_a_host_with_no_login_home_is_a_refusal_not_a_placeholder():
 
     class _NoHome:
         id = "board1"
+        products = ()
 
     product = _shell(_NoHome())
     plan = product.plan(_NoHome())
