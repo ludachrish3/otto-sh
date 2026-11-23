@@ -81,6 +81,7 @@ from pathlib import Path
 from otto.host.factory import create_host_from_dict
 from otto.host.host import BaseHost
 from otto.host.local_host import LocalHost
+from otto.models.base import Cred, CredSpec
 from otto.utils import process_user
 from tests._fixtures.busybox import BUSYBOX_MATRIX, BusyBoxRelease, busybox_binary, can_run
 from tests._fixtures.env_guard import preserved_env_var
@@ -158,6 +159,39 @@ def _stand_in_for(login: str) -> str:
             f"to a second user"
         )
     return STAND_IN_USER
+
+
+def stand_in_cred_entry(login: str) -> "dict[str, object]":
+    """The stand-in user's credential, as a lab entry spells it; *login* is who switches to them.
+
+    The stand-in ``su - USER`` never asks for a password
+    (:mod:`tests._fixtures.fake_elevation`), and otto predicts a challenge
+    from who is asking: any caller but root is watched for a password prompt,
+    for the whole prompt watch when none comes (about five seconds a switch,
+    docs/configuration/host-sources.md, ``expect_prompt``). An undeclared
+    stand-in therefore cost every ``user=`` and ``as_user()`` arm that wait,
+    which is the documented price of an unchallenged non-root switch and not a
+    thing any contract here measures. So each hermetic host declares the
+    stand-in the way a lab declares such an account.
+
+    The switch BACK to *login* from inside the stand-in's scope is still
+    watched: the login is the host's default cred, which takes no ``params``.
+    """
+    return {
+        "login": STAND_IN_USER,
+        "proxy": "su",
+        "via": login,
+        "params": {"expect_prompt": False},
+    }
+
+
+def _stand_in_creds(login: str) -> "list[Cred]":
+    """:func:`stand_in_cred_entry` for a host built without a lab entry (``LocalHost``).
+
+    The stand-in alone: a switch from a login with no cred of its own resolves
+    the login by name, as it did when the host knew no cred at all.
+    """
+    return [CredSpec.model_validate(stand_in_cred_entry(login)).to_cred()]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -256,7 +290,7 @@ def _local_cells() -> "list[ResolvedCell]":
     @contextlib.asynccontextmanager
     async def opener() -> "AsyncIterator[BaseHost]":
         with _local_stand_in():
-            async with LocalHost() as host:
+            async with LocalHost(creds=_stand_in_creds(process_user() or "")) as host:
                 yield host
 
     return [
@@ -324,8 +358,9 @@ def _loopback_ssh_cells() -> "list[ResolvedCell]":
             term: proxied_on(entry_of(entry), term, family=family) for term in host.valid_terms
         }
         # The entry's own second user where it names one; the stand-in,
-        # who has no credential entry and is reached by `su`, where it does
-        # not (today: it names the login alone).
+        # whom the opener declares as an unchallenged `su` cred
+        # (`stand_in_cred_entry`), where it does not (today: it names the
+        # login alone).
         login = entry_of(entry)["creds"][0]["login"]
         switch_users = {
             term: switch_user_on(entry_of(entry), term, family=family) for term in host.valid_terms
@@ -398,6 +433,11 @@ def _loopback_opener(
             # `{"transfer": "nc"}` raise the transfer analogue.
             flat = _loopback_entry(root)
             pinned = entry_of(flat) | {"term": term, "transfer": transfer}
+            # Declared whether or not this cell switches to the stand-in: a
+            # proxied cred is never read as the entry's own second user
+            # (`switch_user_on`), so it changes no cell's route.
+            login = pinned["creds"][0]["login"]
+            pinned["creds"] = [*pinned["creds"], stand_in_cred_entry(login)]
             if session_setup is not None:
                 pinned["session_setup"] = session_setup
             async with create_host_from_dict(pinned, element=element_of(flat)) as host:
@@ -475,7 +515,7 @@ def _busybox_opener(
                 capture_output=True,
                 timeout=_INSTALL_TIMEOUT_S,
             )
-            async with LocalHost() as host:
+            async with LocalHost(creds=_stand_in_creds(process_user() or "")) as host:
                 # The stand-in elevation ahead of the applets: BusyBox's own
                 # `su` and `id` would otherwise shadow it, and the hermetic
                 # venue drives no real user switch (module docstring).

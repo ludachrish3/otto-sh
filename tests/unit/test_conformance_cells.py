@@ -16,6 +16,8 @@ from types import SimpleNamespace
 import pytest
 
 from otto.host.element import Element
+from otto.host.login_proxy import _may_challenge
+from otto.models.base import Cred
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.profiles import Cell
 from tests.conformance import _cells
@@ -275,3 +277,33 @@ def test_resolved_cells_are_frozen() -> None:
     assert isinstance(resolved, ResolvedCell)
     with pytest.raises(dataclasses.FrozenInstanceError):
         resolved.kind = "rewritten"
+
+
+def test_the_stand_in_is_declared_as_a_switch_nobody_challenges() -> None:
+    """The stand-in ``su`` never asks, and each hermetic host says so (#1277).
+
+    otto watches a non-root caller's switch for a password prompt, for the
+    whole watch when none comes. Undeclared, the stand-in cost every ``user=``
+    and ``as_user()`` arm that wait: the options contract took 20 to 30 s a
+    cell on a quiet machine, and the unit test that runs a cell in a
+    subprocess crossed its 180 s under load.
+    """
+    login = Cred(login="someone")
+    declared = next(
+        cred for cred in _cells._stand_in_creds(login.login) if cred.login == _cells.STAND_IN_USER
+    )
+
+    assert not _may_challenge(declared, login)
+    # The undeclared stand-in is the watched case: what the declaration is for.
+    assert _may_challenge(Cred(login=_cells.STAND_IN_USER), login)
+
+
+@pytest.mark.asyncio
+async def test_the_local_cell_opens_a_host_that_knows_the_stand_in() -> None:
+    """The declaration reaches the host the cell opens, not only the helper."""
+    (local,) = [rc for rc in hermetic_space() if rc.kind == _cells.LOCAL]
+
+    async with local.open_host() as host:
+        logins = [cred.login for cred in host.creds or []]
+
+    assert _cells.STAND_IN_USER in logins, logins
