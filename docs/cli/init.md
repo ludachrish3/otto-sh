@@ -228,6 +228,10 @@ would:
   active project or to see `otto --list-labs`. A warning never changes the exit
   code.
 
+An inventory a source lists in `inventories` is never reported as holding
+unused records: the records a template reads are known only by rendering it
+([Warnings](../configuration/inventory.md#warnings)).
+
 <!-- Doctor parity for a project outside the active ones is tracked as #1213. -->
 
 A `.jsonnet` inventory file
