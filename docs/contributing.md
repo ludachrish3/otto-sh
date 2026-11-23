@@ -2489,6 +2489,7 @@ make profile                              # enforce the ceilings (scripts/import
 uv run python scripts/import_budget.py    # print the table, gated and tracked surfaces, without checking
 uv run python scripts/import_budget.py --report-json budget.json   # the same, with full breakdowns
 make import-snapshot                      # regenerate every minor's ceilings file
+make import-snapshot ONLY=help_project_warm   # rewrite only these surfaces' entries
 ```
 
 - **A release compares against the previous tag, not just the ceilings.**
@@ -2575,6 +2576,28 @@ make import-snapshot                      # regenerate every minor's ceilings fi
   the next Python's included (`uv python install <minor>` adds one), and
   takes about 30 minutes, measuring the minors one after another.
   `--update` moves ceilings only: a `target_ratio` breach stays red.
+- **Add or re-baseline one surface without touching the rest.** `make
+  import-snapshot ONLY=<key>[,<key>...]` measures only the named surfaces,
+  in every minor, and writes their entries into each ceilings file. Every
+  other entry stays byte for byte as it was. A named surface with a
+  `target_ratio` also measures `version_project`, the ratio's floor, but
+  does not write it. An unknown or tracked key, or a file that is not its
+  minor's ceilings, refuses the run before anything is measured.
+- **A new completion site needs a map entry, and sometimes a surface.**
+  `tests/unit/import_budget/test_completion_coverage.py` fails, naming the
+  site, until `SITE_PROFILES` or `HANDOVER_SITES` in
+  `scripts/import_budget.py` sends it to a gated surface. A new site of an
+  existing kind the shim answers needs nothing. Which map a site belongs in,
+  and when a site needs a surface of its own, is on
+  [Shell completion and the shim](architecture/subsystems/completion.md#adding-a-completion-site).
+- **A new surface is listed where the harness's tests pin the set, and
+  baselined in every minor.** Add it to `SURFACES` in `scripts/import_budget.py`, to
+  `KNOWN_SURFACES` and, when it runs in the generated project,
+  `REPO_SURFACES` in `scripts/import_budget_delta.py`, and to the surface set
+  `test_surfaces_table_well_formed` (`tests/unit/import_budget/`) pins.
+  Then record it with `make
+  import-snapshot ONLY=<key>`, which writes its entry into every minor's
+  ceilings file: a gated surface missing from one fails by name.
 - **A regeneration locks in declines; a raise needs a reason.** `make
   import-snapshot` writes every surface as measured. Before committing,
   restore the committed entry of each surface where any gated counter

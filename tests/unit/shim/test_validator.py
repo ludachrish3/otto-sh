@@ -414,6 +414,8 @@ def test_schema_constants_track_the_product():
     assert sc.MARKER_FILENAMES == cmn.MARKER_FILENAMES
     assert sc.WINDOW_SECONDS == cmn.SHIM_WINDOW_SECONDS
     assert sc.CHECK_WINDOW_SECONDS == cmn.CHECK_WINDOW_SECONDS
+    for which in sc.MARKER_FILENAMES:
+        assert str(cmn.marker_path(Path("/c"), which)) == sc.marker_path("/c", which), which
 
 
 STALE_REASON_FRAGMENTS = [

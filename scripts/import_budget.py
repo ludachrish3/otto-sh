@@ -49,10 +49,27 @@ project, because startup I/O against an empty workspace is zero and therefore
 unmeasurable. They stay host-independent the same way — the harness creates
 what it measures.
 
+A COUNT IS ONLY KEPT FROM THE PATH IT NAMES. A ``real_entry`` run passes one
+validity verdict (:func:`check_exit`) before its count gates or is recorded:
+its exit and escaped exception, the module roots it must and must not have
+imported (a TAB the shim answers denies :data:`SHIM_DENY`), and, for a TAB,
+the candidate lines on its stdout. A run that failed earlier, fell through to
+another path or answered the wrong site would otherwise pass with a smaller
+count, and ``--update`` would record it.
+
+THE TAB SURFACES MEASURE ONE WARM TAB PER COST PROFILE: each way the shim
+validates its cache, and each kind of hand-over to the full CLI. The site map
+(:data:`SITE_PROFILES`, :data:`HANDOVER_SITES`) sends every completion site to
+one of them, and tests/unit/import_budget/test_completion_coverage.py fails on
+a site it does not. Two TABs stay unmeasured on purpose: a remote-path listing
+miss, which contacts the host, and a reservation-cache miss, whose cost is the
+backend's. See docs/architecture/subsystems/completion.md.
+
 Usage:
     python scripts/import_budget.py            # print the per-surface table
     python scripts/import_budget.py --check    # enforce the ceilings; exit non-zero on a breach
     python scripts/import_budget.py --update   # rewrite every minor's ceilings file
+    python scripts/import_budget.py --update --only KEY[,KEY...]   # only these surfaces' entries
     python scripts/import_budget.py --python PATH   # measure PATH's interpreter as it is
     python scripts/import_budget.py --report   # the table (an alias of no flag)
     python scripts/import_budget.py --report-json PATH   # the same, with full breakdowns, as JSON
@@ -74,6 +91,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
@@ -226,14 +244,82 @@ class Surface:
     For a verb that bridges the user's terminal (``host login``): with a pipe
     on stdin it would measure a different code path, or refuse to start."""
 
-    expect_loaded: str | None = None
-    """A module a real-entry run must have imported, if any.
+    expect_loaded: tuple[str, ...] = ()
+    """Module roots a real-entry run must have imported (:func:`check_exit`).
 
-    ``expect_exit`` alone cannot tell a refused connection from a command that
-    never reached the network: an unknown host id also exits 1, with the same
-    one-line error and no exception. A surface that fails by construction
-    names a module only the path it measures imports, so a run that failed
-    earlier cannot pass as the surface with a smaller count."""
+    Each entry is a root: it is met by the module itself or any dotted child
+    (:func:`loaded_root`). ``expect_exit`` alone cannot tell a refused
+    connection from a command that never reached the network: an unknown host
+    id also exits 1, with the same one-line error and no exception. A surface
+    that fails by construction names a module only the path it measures
+    imports, so a run that failed earlier cannot pass as the surface with a
+    smaller count. A handover TAB names the module its completer lives in, so
+    a TAB the shim answered by itself cannot pass as the handover."""
+
+    expect_not_loaded: tuple[str, ...] = ()
+    """Module roots a real-entry run must NOT have imported, matched as
+    :attr:`expect_loaded` is. A shim surface sets :data:`SHIM_DENY`, so a TAB
+    that fell through to the full CLI cannot pass as one the shim answered."""
+
+    expect_answer: tuple[str, ...] = ()
+    """Candidate lines the TAB's stdout must hold, each as a WHOLE line.
+
+    Bash completion prints one candidate per line, so ``run`` is met by a
+    ``run`` line and never by ``runner``. A TAB that answered nothing, or
+    answered the wrong site, is a failure path with a smaller count."""
+
+    expect_answer_templated: tuple[str, ...] = ()
+    """Candidate lines, as :attr:`expect_answer`'s, that come from the templated lab.
+
+    Required only when the measured interpreter loads a jsonnet binding
+    (``otto.templating.binding.load_binding``, asked by :func:`warm_paths`):
+    without one the lab never renders, so these lines are dropped from the
+    verdict and the result's ``proofs_skipped`` names it
+    (:data:`SKIPPED_TEMPLATED_ANSWER`). The counts are measured and gated
+    all the same; the stat pass under test is the same either way."""
+
+    expect_answer_exact: frozenset[str] | None = None
+    """The exact set of candidate lines the TAB's stdout must hold, when set.
+
+    For a site whose wrong answer would still contain the right lines (a
+    past-separator site that also offered the values already typed)."""
+
+    seed_env_remove: tuple[str, ...] = ()
+    """Variable names removed from the SEED run's environment only; the measured run keeps them.
+
+    For a surface whose measured env would make the seed do something else: a
+    seed of ``otto --help`` with the completion variables still set would
+    complete instead (``otto._shim``), and try a live listing."""
+
+    post_seed: str | None = None
+    """A key into :data:`POST_SEED_WRITERS`: the writer run after the seed, before the measured run.
+
+    It fills a cache the seed cannot (a remote listing, the observed
+    containers) through otto's own writer, in the surface's env
+    (:func:`_run_post_seed`). A writer that fails or wrote nothing is the
+    result's ``ending``, so the surface is never measured on an empty cache."""
+
+    cache_unchanged: bool = False
+    """``completion_cache.json`` under the surface's home must keep its mtime and size
+    across the measured run, and so must its remote sidecar
+    (``remote_completion_cache.json``), present or absent.
+
+    A warm TAB that found the cache stale and rebuilt it would otherwise be
+    measured, and baselined, as the warm path; a remote-path TAB that missed
+    its cached listing and listed live writes the sidecar. A changed cache is
+    the result's ``ending``."""
+
+    stat_leg: bool = False
+    """The measured run must take the shim's ``names`` stat leg, not the marker window's skip.
+
+    The harness backdates the ``names`` marker after the seed (and the
+    writer), and the run must touch it: only the stat pass does. A seed that
+    left none (a cold seed TAB is answered by the full CLI, which writes no
+    marker) leaves the run to take the stat leg on the missing marker, and
+    the run must create it. A ``tests`` marker the seed left is touched
+    instead, so a TAB that reads the test tables finds no refresh due and
+    starts no collect child. A run that did not touch the ``names`` marker is
+    the result's ``ending``."""
 
     ssh_lab: bool = False
     """Generate the project with a second lab source holding one SSH host on a closed port.
@@ -242,6 +328,12 @@ class Surface:
     proves it refuses a connection before every measured run, so the surface
     measures one refused attempt rather than whatever a stray listener says.
     """
+
+    reservations: bool = False
+    """Generate the project with ``[reservations]`` declared, on the ``json`` backend.
+
+    See ``generate_project``'s ``reservations``. Per surface, so no other
+    surface's project, and no other surface's ceiling, changes with it."""
 
     templated_lab: bool = False
     """Generate the project with a ``jsonnet`` lab source as well.
@@ -289,7 +381,7 @@ def _verb_surface(
     expect_exit: int = 0,
     pty_input: str | None = None,
     ssh_lab: bool = False,
-    expect_loaded: str | None = None,
+    expect_loaded: tuple[str, ...] = (),
     target_ratio: float | None = None,
     seed_argv: list[str] | None = None,
 ) -> Surface:
@@ -318,6 +410,42 @@ def _verb_surface(
         ssh_lab=ssh_lab,
         expect_loaded=expect_loaded,
         target_ratio=target_ratio,
+    )
+
+
+def _remote_hit_surface(
+    key: str, *, post_seed: str, reservations: bool = False, deny: tuple[str, ...] = ()
+) -> Surface:
+    """Build a remote-path hit surface: ``otto host budget-ssh get <TAB>``, listing cached.
+
+    Both share one shape and differ only in the project's ``[reservations]``,
+    the writer that fills the sidecar, and what else the run must not import.
+    ``COMP_CWORD=4`` is the empty word after ``get``: its first argument, the
+    remote source path.
+    """
+    return Surface(
+        key,
+        ["otto"],
+        project_files=50,
+        project_dirs_count=5,
+        real_entry=True,
+        warm=True,
+        ssh_lab=True,
+        reservations=reservations,
+        seed_argv=["otto", "--help"],
+        seed_env_remove=("_OTTO_COMPLETE", "COMP_WORDS", "COMP_CWORD"),
+        env_extra=(
+            ("OTTO_LAB", "unix"),
+            ("_OTTO_COMPLETE", "complete_bash"),
+            TAB_HOST_TIMEOUT,
+            ("COMP_WORDS", f"otto host {BUDGET_SSH_HOST} get "),
+            ("COMP_CWORD", "4"),
+        ),
+        post_seed=post_seed,
+        expect_loaded=("otto.cli.remote_completion",),
+        expect_not_loaded=("asyncssh.connection", *deny),
+        expect_answer=(REMOTE_HIT_ANSWER,),
+        cache_unchanged=True,
     )
 
 
@@ -360,6 +488,142 @@ is registered; ``scripts/import_budget_delta.py``'s ``KNOWN_SURFACES``
 pins the resulting set literally. Under the delta the list arrives in
 :data:`VERBS_ENV` instead, read from the tip's registry."""
 
+
+SHIM_DENY: tuple[str, ...] = ("typer", "rich", "pydantic", "otto.cli", "otto.config")
+"""The module roots a TAB the shim answers never imports: its surfaces' ``expect_not_loaded``.
+
+The one list; ``otto._shim_complete``'s docstring points here. Typer vendors
+click, so denying ``typer`` covers click, and ``click`` itself would prove
+nothing. ``tests/unit/test_shim.py`` pins the shim's whole warm module set in
+process; this list is what the measured surfaces enforce from outside."""
+
+TAB_HOST_TIMEOUT: tuple[str, str] = ("OTTO_COMPLETION_HOST_TIMEOUT", "300")
+"""Every TAB surface's ``env_extra`` entry lifting the host-enumeration deadline to 300 s.
+
+The variable is ``otto.config.completion_cache.HOST_SUMMARY_DEADLINE_ENV_VAR``
+(a test pins the name). A TAB surface's seed is a cold TAB or root help, so
+the full CLI enumerates the hosts under strace against the 2 s default; a
+missed deadline caches ``hosts: ["local"]``, and the measured TAB answers from
+it. That fails the verdict, or moves the count, for a reason in the
+preparation, not a regression. Reading the variable is no file operation.
+``tests/unit/config/test_completion_templated.py`` lifts it the same way for
+its recorded TABs."""
+
+OBSERVED_PARENT = "test1"
+"""The docker parent ``completion_docker_observed_warm`` completes containers on: a tech1 host."""
+
+OBSERVED_CONTAINER = "otto-budget-observed-1"
+"""The container name the ``docker_containers`` writer records, and that surface's TAB answers."""
+
+
+def _generated_project() -> ModuleType:
+    """Return ``tests._fixtures.generated_project``, where the generated project is defined.
+
+    ``tests._fixtures`` is not importable from the script's own ``sys.path[0]``
+    (``scripts/``), so a standalone ``python scripts/import_budget.py`` puts the
+    repo root on the path for the import and takes it off again: merely
+    importing this module never leaves ``sys.path`` changed. The fixture and
+    what it imports are stdlib-only at module scope.
+    """
+    if str(REPO_ROOT) in sys.path:
+        import tests._fixtures.generated_project as module
+    else:
+        sys.path.insert(0, str(REPO_ROOT))
+        try:
+            import tests._fixtures.generated_project as module
+        finally:
+            sys.path.remove(str(REPO_ROOT))
+    return module
+
+
+BUDGET_SSH_HOST: str = _generated_project().BUDGET_SSH_HOST
+"""``ssh_lab``'s closed-port host, as the generated project names it: the SSH verbs' and
+the remote-path TABs' host.
+
+It is in ``unix`` and has ``term="ssh"``; an SSH verb is refused at its connect,
+and a TAB that missed the cached listing would dial the same closed loopback port."""
+
+REMOTE_HIT_ENTRIES: dict[str, bool] = {"budget-dir-a": True, "budget-file-b": False}
+"""The entries (name -> is_dir) the remote-path writers cache for the home directory."""
+
+REMOTE_HIT_ANSWER = "~/budget-dir-a/"
+"""One line the remote-path TAB prints for :data:`REMOTE_HIT_ENTRIES`: the directory, slashed."""
+
+_REMOTE_LISTING_BODY = f"""
+import json
+from datetime import datetime, timezone
+from otto.cli.remote_completion import split_incomplete
+from otto.config.remote_completion_cache import ListingEntry, cached_listing, store_listing
+
+now = datetime.now(tz=timezone.utc)
+directory = split_incomplete("").directory
+entries = [ListingEntry(name=n, is_dir=d) for n, d in {REMOTE_HIT_ENTRIES!r}.items()]
+store_listing({BUDGET_SSH_HOST!r}, directory, entries, now)
+wrote = len(cached_listing({BUDGET_SSH_HOST!r}, directory, now) or [])
+"""
+"""Store the remote-path TAB's listing, keyed as the completer reads it, and read it back."""
+
+_REMOTE_RESERVATIONS_BODY = f"""
+import os
+from otto.cli.remote_completion import _ChainParams, _required_for
+from otto.config.remote_completion_cache import cached_reservation_ok, store_reservations
+from otto.reservations.identity import resolve_username
+from otto.reservations.protocol import Reservation
+
+# The chain the measured TAB collects: no --holder, no --hop, no -I/-E, and the
+# one lab OTTO_LAB names in the surface's env.
+labs = [os.environ["OTTO_LAB"]]
+chain = _ChainParams(host_id={BUDGET_SSH_HOST!r}, hop="", term=None, labs=labs, holder=None)
+required = _required_for(chain)
+if not required:
+    raise RuntimeError("the lab requires no resource, so the gate would never read the cache")
+username = resolve_username(chain.holder).username
+rows = [Reservation(user=username, resource=r) for r in sorted(required)]
+store_reservations(username, rows, now)
+if cached_reservation_ok(username, required, now) is not True:
+    wrote = 0
+"""
+"""Then cache a covering answer for the gate, from the gate's own username and requirement."""
+
+_WROTE = """
+print(json.dumps({"wrote": wrote}))
+"""
+
+POST_SEED_WRITERS: dict[str, str] = {
+    # The listing `otto host budget-ssh get <TAB>` reads: `split_incomplete("")`
+    # is the directory key the completer looks up (`~`).
+    "remote_listing": _REMOTE_LISTING_BODY + _WROTE,
+    # The same listing, then a cached reservation answer covering everything
+    # the gate requires, so the gate answers from the sidecar and builds no
+    # backend.
+    "remote_listing_reserved": _REMOTE_LISTING_BODY + _REMOTE_RESERVATIONS_BODY + _WROTE,
+    # The control's writer: the listing alone, on a project that declares
+    # `[reservations]`, so the gate misses and builds the backend.
+    "remote_listing_reserved_without_reservations": _REMOTE_LISTING_BODY + _WROTE,
+    # The projects as discovery found them, as `otto docker`'s TAB readers
+    # reach the cache (src/otto/cli/docker.py, `_discovered_projects`), then
+    # read back through the reader those TABs share.
+    "docker_containers": f"""
+import json
+from otto.config.completion_cache import read_docker_observed, record_docker_containers
+from otto.config.project import discover
+
+projects = discover().projects
+record_docker_containers(projects, {OBSERVED_PARENT!r}, names=[{OBSERVED_CONTAINER!r}], ids=[])
+found = read_docker_observed(projects, {OBSERVED_PARENT!r}).container_names
+print(json.dumps({{"wrote": len(found)}}))
+""",
+}
+"""Post-seed writer name -> the body of the child script that runs it (:attr:`Surface.post_seed`).
+
+Each body calls otto's own writer, never hand-written JSON, then READS BACK
+what it wrote through otto's own reader and prints one JSON line,
+``{"wrote": <int>}``: the count the reader found, never what was attempted.
+otto's writers return ``None`` and can no-op silently (an ephemeral
+fingerprint, no projects), and a writer that wrote nothing would leave the
+surface measuring a miss. The body runs in the measured venv with the
+surface's env (:func:`_run_post_seed`), so it resolves the same home and
+projects the measured run does."""
 
 SURFACES: list[Surface] = [
     Surface("import_otto", ["python"]),  # bare `import otto`: the lazy package init
@@ -482,7 +746,8 @@ SURFACES: list[Surface] = [
     # degrades to a wrong answer. The seed run leaves the `shim` section, and
     # the measured run is the shim's stat pass plus one JSON read: `otto._shim`
     # answers the TAB from the cache without ever importing `otto.cli`,
-    # `otto.config`, typer, click, or rich.
+    # `otto.config`, typer, click, or rich. `expect_not_loaded` enforces that
+    # (`SHIM_DENY`), and `expect_answer` that the answer is the command names.
     Surface(
         "completion_project_warm",
         ["otto"],
@@ -492,9 +757,14 @@ SURFACES: list[Surface] = [
         warm=True,
         env_extra=(
             ("_OTTO_COMPLETE", "complete_bash"),
+            TAB_HOST_TIMEOUT,
             ("COMP_WORDS", "otto "),
             ("COMP_CWORD", "1"),
         ),
+        expect_not_loaded=SHIM_DENY,
+        expect_answer=("run",),
+        cache_unchanged=True,
+        stat_leg=True,
     ),
     # THE FALLBACK'S TAB COST. `otto tunnel remove <TAB>` (COMP_CWORD=3) is a
     # `live` site: the resolver hands over rather than answering, and the shim
@@ -517,9 +787,143 @@ SURFACES: list[Surface] = [
         warm=True,
         env_extra=(
             ("_OTTO_COMPLETE", "complete_bash"),
+            TAB_HOST_TIMEOUT,
             ("COMP_WORDS", "otto tunnel remove "),
             ("COMP_CWORD", "3"),
         ),
+        # The handover reached the completer: a TAB the shim answered alone
+        # would never import it.
+        expect_loaded=("otto.cli.tunnel",),
+        cache_unchanged=True,
+    ),
+    # A HOST TAB IN A TEMPLATED PROJECT: `otto -l unix+templated host <TAB>`,
+    # with a jsonnet lab source beside the json one. The shim answers the host
+    # ids from the `names` payload after the stat pass over its key paths,
+    # which here include the jsonnet entry, its import root and what is under
+    # it, and the inventory file: it evaluates nothing and reads no template,
+    # library or inventory. `-l` names both labs so the answer holds a json
+    # host (`test1`) and a rendered one (`tmpl-0`); the selection filters the
+    # payload in memory and leaves the stat pass as it is. It stands for every
+    # `payload`, `static` and `none` site (the sub-variant test covers the
+    # rest).
+    Surface(
+        "completion_host_warm",
+        ["otto"],
+        project_files=50,
+        project_dirs_count=5,
+        real_entry=True,
+        warm=True,
+        templated_lab=True,
+        env_extra=(
+            ("_OTTO_COMPLETE", "complete_bash"),
+            TAB_HOST_TIMEOUT,
+            ("COMP_WORDS", "otto -l unix+templated host "),
+            ("COMP_CWORD", "4"),
+        ),
+        expect_not_loaded=SHIM_DENY,
+        expect_answer=("test1",),
+        expect_answer_templated=("tmpl-0",),
+        cache_unchanged=True,
+        stat_leg=True,
+    ),
+    # A TEST-NAME TAB: `otto test T<TAB>`, answered by the shim from the
+    # collected-tests tables (`table_view`) after the `names` stat pass. The
+    # seed is the same TAB on a cold home: it hands over, and the full path
+    # waits once for the collect child's whole-tree table, which leaves the
+    # `tests` marker. `stat_leg` keeps that marker fresh, so the measured run
+    # finds no check due and starts no collect child: `subprocess`, which only
+    # starting one imports (`spawn_refresh`), is denied to prove it.
+    Surface(
+        "completion_test_warm",
+        ["otto"],
+        project_files=50,
+        project_dirs_count=5,
+        real_entry=True,
+        warm=True,
+        env_extra=(
+            ("_OTTO_COMPLETE", "complete_bash"),
+            TAB_HOST_TIMEOUT,
+            ("COMP_WORDS", "otto test T"),
+            ("COMP_CWORD", "2"),
+        ),
+        expect_not_loaded=(*SHIM_DENY, "subprocess"),
+        expect_answer=("TestTop0",),
+        cache_unchanged=True,
+        stat_leg=True,
+    ),
+    # AN OBSERVED-STATE TAB: `otto docker logs --parent test1 <TAB>`, answered
+    # by the shim from `__docker_observed__` after the `names` stat pass. No
+    # seed can fill that namespace (only a docker verb that asked a daemon
+    # does), so the `docker_containers` writer records one container through
+    # otto's own writer after the seed.
+    Surface(
+        "completion_docker_observed_warm",
+        ["otto"],
+        project_files=50,
+        project_dirs_count=5,
+        real_entry=True,
+        warm=True,
+        env_extra=(
+            ("_OTTO_COMPLETE", "complete_bash"),
+            TAB_HOST_TIMEOUT,
+            ("COMP_WORDS", f"otto docker logs --parent {OBSERVED_PARENT} "),
+            ("COMP_CWORD", "5"),
+        ),
+        post_seed="docker_containers",
+        expect_not_loaded=SHIM_DENY,
+        expect_answer=(OBSERVED_CONTAINER,),
+        cache_unchanged=True,
+        stat_leg=True,
+    ),
+    # PAST THE SEPARATOR: `otto tunnel add --hosts test1,<TAB>`. The `hosts`
+    # payload is `live_past_sep`, so the shim hands over once a host is typed,
+    # and the completer runs host and address discovery and narrows to the
+    # hosts on test1's /24 (src/otto/cli/tunnel.py, `_hosts_completer`). No
+    # lab is selected, so the candidates are the whole fleet, and the exact
+    # set is tech1's other hosts on 10.10.200.0/24. It leaves out every host
+    # on another segment (`local`, the zephyr and busybox hosts), which the
+    # completer's fallback to every host would offer, so a broken narrowing
+    # cannot pass as this one.
+    Surface(
+        "completion_hosts_past_sep_handover",
+        ["otto"],
+        project_files=50,
+        project_dirs_count=5,
+        real_entry=True,
+        warm=True,
+        env_extra=(
+            ("_OTTO_COMPLETE", "complete_bash"),
+            TAB_HOST_TIMEOUT,
+            ("COMP_WORDS", "otto tunnel add --hosts test1,"),
+            ("COMP_CWORD", "4"),
+        ),
+        expect_loaded=("otto.cli.tunnel",),
+        expect_answer_exact=frozenset({"test1,test2", "test1,test3", "test1,test4"}),
+        cache_unchanged=True,
+    ),
+    # THE REMOTE-PATH HIT: `otto host budget-ssh get <TAB>` with the listing
+    # cached. The site is `live`, so the shim hands over, and the full CLI
+    # bootstraps the projects, runs the reservation gate (no `[reservations]`
+    # here, so it returns at once), builds the lab and checks the host's term
+    # before it reads the cached listing (src/otto/cli/remote_completion.py,
+    # `_complete`). The seed is root help with the completion variables
+    # removed: with them it would complete, and try a live listing. The
+    # `remote_listing` writer caches the listing after it, and the sidecar
+    # must not change across the run, so a TAB that listed live is a miss.
+    # `asyncssh.connection` is denied: only a connect imports it.
+    _remote_hit_surface("completion_remote_path_hit", post_seed="remote_listing"),
+    # THE SAME HIT WITH RESERVATIONS: `[reservations]` declared on the json
+    # backend, and the gate's answer cached by the writer, so the gate loads
+    # the lab a second time (`_required_for`), resolves the username and reads
+    # the sidecar. It builds no backend: `otto.reservations.registry`, which
+    # only building one loads, is denied. The control
+    # (`test_reserved_hit_without_reservations_fails_its_verdict`) caches no
+    # answer and fails this verdict.
+    _remote_hit_surface(
+        "completion_remote_path_hit_reserved",
+        post_seed="remote_listing_reserved",
+        reservations=True,
+        deny=("otto.reservations.registry",),
     ),
     # THE COMMANDS A USER RUNS. The surfaces above measure `--version`, help,
     # completion and one dispatch; nothing measured what `otto host X exec`
@@ -568,10 +972,10 @@ SURFACES: list[Surface] = [
     # unknown host id exits 1 as well, but never reaches asyncssh.
     _verb_surface(
         "host_ssh_exec",
-        ["otto", "host", "budget-ssh", "exec", "true"],
+        ["otto", "host", BUDGET_SSH_HOST, "exec", "true"],
         ssh_lab=True,
         expect_exit=1,
-        expect_loaded="asyncssh.connection",
+        expect_loaded=("asyncssh.connection",),
         # Re-derived once asyncssh's import stopped running gcc and ld to
         # look for liboqs (#659): the largest ratio was 5.531 (3.11), so 5.6
         # plus 10%.
@@ -587,11 +991,11 @@ SURFACES: list[Surface] = [
     # `host_ssh_exec` does.
     _verb_surface(
         "host_ssh_login",
-        ["otto", "host", "budget-ssh", "login"],
+        ["otto", "host", BUDGET_SSH_HOST, "login"],
         pty_input="exit\n",
         ssh_lab=True,
         expect_exit=1,
-        expect_loaded="asyncssh.connection",
+        expect_loaded=("asyncssh.connection",),
         target_ratio=6.16,
     ),
     # `dispatch_project_warm`'s own sibling, dispatching `local_true` instead of
@@ -613,28 +1017,54 @@ SURFACES: list[Surface] = [
     # host measures the machine it runs on, not otto.
     _verb_surface("tracked_host_probe", ["otto", "host", "local", "probe", "--help"], tracked=True),
     _verb_surface("tracked_host_power", ["otto", "host", "local", "power", "--help"], tracked=True),
-    # A WARM TAB IN A TEMPLATED PROJECT: `otto host <TAB>` with a jsonnet lab
-    # source beside the json one. Warm, so the measured run is the shim's stat
-    # pass over the stored key paths (the entry, its import root and what is
-    # under it, the inventory file) plus one cache read: it evaluates nothing
-    # and reads no template, library or inventory. Tracked until someone pins
-    # the number.
-    Surface(
-        "tracked_tab_warm_templated",
-        ["otto"],
-        project_files=50,
-        project_dirs_count=5,
-        real_entry=True,
-        warm=True,
-        templated_lab=True,
-        tracked=True,
-        env_extra=(
-            ("_OTTO_COMPLETE", "complete_bash"),
-            ("COMP_WORDS", "otto host "),
-            ("COMP_CWORD", "2"),
-        ),
-    ),
 ]
+
+# WHICH SURFACE MEASURES EACH TAB COMPLETION SITE: the one site map.
+# tests/unit/import_budget/test_completion_coverage.py enumerates every
+# value-taking parameter of the serialised completion tree, through every host
+# class's view (tests/_fixtures/completion_sites.py), and fails on a site
+# neither map sends to a gated surface above. A site the shim answers maps by
+# its source kind; a site it hands over (a `live` source, a list that goes live
+# past its separator, `nargs > 1`) maps by its identity, one entry per host
+# class that has it.
+
+SITE_PROFILES: dict[str, str] = {
+    "tests": "completion_test_warm",
+    "markers": "completion_test_warm",
+    "observed": "completion_docker_observed_warm",
+    "payload": "completion_host_warm",
+    "static": "completion_host_warm",
+    "none": "completion_host_warm",
+}
+"""A shim-answered site's source kind to the surface its validation profile is
+measured by. ``static``, ``none`` and ``markers`` cost what their representative
+costs (tests/unit/shim/test_subvariant_cost.py). ``echo`` (a File parameter) has
+no otto parameter today and so no entry: its first site fails the coverage test
+until someone maps it."""
+
+HANDOVER_SITES: dict[tuple[tuple[str, ...], str | None, str], str] = {
+    (("tunnel", "remove"), None, "tunnel_id"): "completion_project_handover",
+    (("tunnel", "add"), None, "hosts"): "completion_hosts_past_sep_handover",
+    (("tunnel", "check"), None, "hosts"): "completion_hosts_past_sep_handover",
+    # The remote paths: the union menu (an id with no known class) and `unix`,
+    # the only builtin class whose transfer completes the far side.
+    (("host", "get"), None, "src_files"): "completion_remote_path_hit",
+    (("host", "get"), "unix", "src_files"): "completion_remote_path_hit",
+    (("host", "put"), None, "dest_dir"): "completion_remote_path_hit",
+    (("host", "put"), "unix", "dest_dir"): "completion_remote_path_hit",
+}
+"""Every site the shim hands over, keyed ``(command path, host class, parameter)``
+(``None`` outside a class view), to the surface that measures that hand-over.
+A scoped verb's path omits the host id: ``("host", "get")``."""
+
+VARIANT_SURFACES: dict[str, str] = {
+    # The same remote-path sites as the hit, under cached reservations.
+    "completion_remote_path_hit_reserved": "completion_remote_path_hit",
+    # The command and option menus, not a value site: the same warm shim pass
+    # as the `names` profile.
+    "completion_project_warm": "completion_host_warm",
+}
+"""A measured completion surface no site maps to, to the mapped surface it varies."""
 
 # The payload still carries the module inventory (`modules`, `otto_modules`,
 # `non_stdlib_modules`): nothing gates on it, but a failure is easier to read
@@ -1530,10 +1960,16 @@ def _run_child(
     call, rather than per child kind, so a future body that starts writing the
     file needs no change here.
 
+    THE CHILD'S STDOUT RIDES A RESULT-FILE PAYLOAD, as ``stdout``
+    (:func:`_with_stdout`): it is where a TAB's candidates are printed, which
+    :func:`check_exit` reads, so the answer is judged from the measured run
+    itself, with no second invocation.
+
     With *pty_input*, the child's stdin, stdout and stderr are a
     pseudo-terminal instead (:func:`_run_under_pty`), and *pty_input* is
     typed into it. Only the real-entry child is run this way, so its result
-    still comes back through the file.
+    still comes back through the file, with an empty ``stdout``: the terminal
+    is not a channel this function keeps.
     """
     result_fd, result_name = tempfile.mkstemp(prefix="otto-budget-result-", suffix=".json")
     os.close(result_fd)
@@ -1557,7 +1993,7 @@ def _run_child(
         with _measurement_lock():
             if pty_input is not None:
                 _run_under_pty(argv, child_env, pty_input)
-                return result_path.read_text()
+                return _with_stdout(result_path.read_text(), "")
             out = subprocess.run(  # noqa: S603 (fixed interpreter + measured argv, no shell)
                 argv,
                 capture_output=True,
@@ -1567,7 +2003,7 @@ def _run_child(
                 cwd=_quiet_cwd(),
             )
         if result_path.stat().st_size > 0:
-            return result_path.read_text()
+            return _with_stdout(result_path.read_text(), out.stdout)
         # THE LAST *JSON* LINE, NOT THE LAST LINE — for the three child kinds
         # that still reach here (`_CHILD_IMPORT`, `_CHILD_CLI`,
         # `_CHILD_BASELINE`; the real-entry child never does, since it always
@@ -1586,6 +2022,11 @@ def _run_child(
         )
     finally:
         result_path.unlink(missing_ok=True)
+
+
+def _with_stdout(payload: str, stdout: str) -> str:
+    """Return the JSON object *payload* with *stdout* added under ``"stdout"``."""
+    return json.dumps({**json.loads(payload), "stdout": stdout})
 
 
 def _run_under_pty(argv: list[str], env: dict[str, str], text: str) -> None:
@@ -1685,6 +2126,7 @@ def _generated_repo_for(
     dirs: int,
     ssh_lab_port: int | None = None,
     templated_lab: bool = False,
+    reservations: bool = False,
 ) -> Path:
     """Build (once per surface) a generated project and return its path.
 
@@ -1694,14 +2136,7 @@ def _generated_repo_for(
     the script's table, then several tests — reuses one tree instead of writing
     a fresh corpus per call.
     """
-    # `tests._fixtures` is not importable from the script's own sys.path[0]
-    # (`scripts/`), so standalone `python scripts/import_budget.py` needs the
-    # repo root on the path. Done lazily, here, so merely importing this module
-    # never mutates sys.path.
-    if str(REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(REPO_ROOT))
-    from tests._fixtures.generated_project import generate_project
-
+    generate_project = _generated_project().generate_project
     root = Path(tempfile.mkdtemp(prefix=f"otto-budget-{key}-"))
     _FIXTURE_ROOTS.append(root)
     # realistic=True (spec §3.5 of `2026-09-25-dispatch-startup-cost-design.md`):
@@ -1717,6 +2152,7 @@ def _generated_repo_for(
         realistic=True,
         ssh_lab_port=ssh_lab_port,
         templated_lab=templated_lab,
+        reservations=reservations,
     )
 
 
@@ -1760,6 +2196,7 @@ def _surface_repo(surface: Surface) -> Path:
         surface.project_dirs_count,
         port,
         surface.templated_lab,
+        surface.reservations,
     )
 
 
@@ -2170,6 +2607,261 @@ def measure(
     return result
 
 
+class PostSeedError(RuntimeError):
+    """A surface's post-seed writer failed, or read back nothing (:func:`_run_post_seed`)."""
+
+
+class WarmProofError(RuntimeError):
+    """The seed left no cache for a warm proof to keep."""
+
+
+def _run_post_seed(surface: Surface, env: dict[str, str]) -> None:
+    """Run *surface*'s post-seed writer as a child of the measured interpreter, in *env*.
+
+    Raises :class:`PostSeedError` when it exits non-zero, prints no JSON line or a
+    malformed one, or reports ``wrote == 0`` (see :data:`POST_SEED_WRITERS` for the
+    contract).
+    """
+    name = surface.post_seed
+    if name not in POST_SEED_WRITERS:
+        raise KeyError(f"no post-seed writer named {name!r} (surface `{surface.key}`)")
+    try:
+        report = json.loads(_run_child(POST_SEED_WRITERS[name], env))
+    except subprocess.CalledProcessError as e:
+        tail = (e.stderr or "").strip().splitlines()[-1:] or [f"exit {e.returncode}"]
+        raise PostSeedError(f"the post-seed writer {name!r} failed: {tail[0]}") from e
+    except RuntimeError as e:
+        raise PostSeedError(f"the post-seed writer {name!r} reported nothing: {e}") from e
+    except ValueError as e:  # a JSON-looking line that does not parse
+        raise PostSeedError(f"the post-seed writer {name!r} printed a malformed report: {e}") from e
+    wrote = report.get("wrote") if isinstance(report, dict) else None
+    if not isinstance(wrote, int) or isinstance(wrote, bool) or wrote <= 0:
+        raise PostSeedError(
+            f"the post-seed writer {name!r} read back {wrote!r} entries, so the measured "
+            f"run would find nothing it wrote"
+        )
+
+
+@dataclass(frozen=True)
+class _CacheStamp:
+    """``completion_cache.json``'s mtime and size: what :attr:`Surface.cache_unchanged` keeps."""
+
+    mtime_ns: int
+    size: int
+
+
+def _cache_stamp(path: str) -> "_CacheStamp | None":
+    try:
+        st = Path(path).stat()
+    except FileNotFoundError:
+        return None
+    return _CacheStamp(st.st_mtime_ns, st.st_size)
+
+
+def _mtime_ns(path: str) -> "int | None":
+    try:
+        return Path(path).stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+
+
+@dataclass(frozen=True)
+class StatLegStamp:
+    """The ``names`` marker a warm TAB must touch, and its mtime before (:func:`stage_stat_leg`)."""
+
+    marker: str
+    before_ns: int | None
+    """``None`` when there was no marker: a cold seed writes none, and the TAB creates it."""
+
+
+def stage_stat_leg(cache_dir: str) -> StatLegStamp:
+    """Stage the warm TAB's stat leg in *cache_dir*, the cache's directory, and stamp it.
+
+    The ``names`` marker is backdated past its window, so the TAB runs the stat
+    pass instead of trusting it; the ``tests`` marker is freshened, so a TAB
+    that reads the test tables finds no check due and starts no collect child.
+    Each only if it exists, never created: a seed that wrote no ``tests``
+    marker has a TAB that never reads the tables. The paths come from the
+    shim's own ``marker_path``, so the caller's otto must have it.
+    :func:`stat_leg_ending` checks the stamp after the TAB. The one staging:
+    :func:`_prepare_proofs` and ``tests/_fixtures/recorded_tab.py`` share it.
+    """
+    from otto import _shim_complete as shim
+
+    marker = shim.marker_path(cache_dir, "names")
+    # A cold seed answers from the full CLI and writes no marker; the
+    # measured run then finds none, takes the stat leg, and creates it.
+    if Path(marker).exists():
+        old = time.time() - 10 * shim.WINDOW_SECONDS
+        os.utime(marker, (old, old))
+    stamp = StatLegStamp(marker, _mtime_ns(marker))
+    # Fresh, so a TAB that reads the test tables finds no refresh due; never
+    # created, since a surface whose seed wrote none never reads them.
+    tests = shim.marker_path(cache_dir, "tests")
+    if Path(tests).exists():
+        os.utime(tests, None)
+    return stamp
+
+
+def stat_leg_ending(stamp: StatLegStamp) -> "str | None":
+    """Why the TAB after :func:`stage_stat_leg` skipped the stat pass; ``None`` when it took it.
+
+    It took it when it created the ``names`` marker or touched it.
+    """
+    if _mtime_ns(stamp.marker) in (None, stamp.before_ns):
+        return (
+            f"the measured run did not touch the names marker ({stamp.marker}), "
+            f"so it skipped the stat pass the surface measures"
+        )
+    return None
+
+
+@dataclass(frozen=True)
+class _WarmProofs:
+    """What :func:`_prepare_proofs` recorded before the measured run, for :meth:`ending`."""
+
+    cache: str
+    cache_before: _CacheStamp | None
+    stat_leg: StatLegStamp | None
+    """The staged stat leg (:func:`stage_stat_leg`), ``None`` when the surface checks none."""
+    skipped: list[str] = field(default_factory=list)
+    """Each proof the measured tree's otto cannot support, with why: the result's
+    ``proofs_skipped``. The counts are still measured and compared."""
+
+    sidecar: str | None = None
+    """The remote sidecar beside :attr:`cache`, kept with it (:attr:`Surface.cache_unchanged`)."""
+    sidecar_before: _CacheStamp | None = None
+    """Its stamp before the run, ``None`` when there was none: it must stay absent too."""
+
+    def ending(self) -> "str | None":
+        """Why the measured run is not the surface's warm leg; ``None`` when it is."""
+        if self.cache_before is not None and _cache_stamp(self.cache) != self.cache_before:
+            return (
+                f"completion_cache.json changed across the measured run ({self.cache}), "
+                f"so the TAB rebuilt a cache it found stale instead of serving it"
+            )
+        if self.sidecar is not None and _cache_stamp(self.sidecar) != self.sidecar_before:
+            return (
+                f"remote_completion_cache.json changed across the measured run "
+                f"({self.sidecar}), so the TAB listed or queried live instead of "
+                f"answering from it"
+            )
+        if self.stat_leg is not None:
+            return stat_leg_ending(self.stat_leg)
+        return None
+
+
+_CHILD_WARM_PATHS = """
+import json
+from otto.config.completion_cache import _cache_path
+from otto.config.remote_completion_cache import _path
+
+cache, sidecar = _cache_path(), _path()
+try:  # an otto from before the module (a base tag) renders no templated lab either
+    from otto.templating.binding import load_binding
+
+    load_binding()
+    jsonnet = True
+except Exception:
+    jsonnet = False
+print(json.dumps({"cache": cache and str(cache), "sidecar": sidecar and str(sidecar),
+                  "jsonnet": jsonnet}))
+"""
+"""Print the cache and the remote sidecar as otto itself resolves them, and whether it
+loads a jsonnet binding (:func:`warm_paths`)."""
+
+
+@dataclass(frozen=True)
+class WarmPaths:
+    """Where the measured otto keeps the completion cache and its remote sidecar."""
+
+    cache: str
+    sidecar: str
+    jsonnet: bool = True
+    """Whether the measured interpreter loads a jsonnet binding, so a templated lab renders."""
+
+
+def warm_paths(env: dict[str, str]) -> WarmPaths:
+    """Ask the measured otto, in *env*, where its completion cache and remote sidecar live.
+
+    One child of the measured interpreter, outside the measured run, printing
+    ``completion_cache._cache_path()`` and ``remote_completion_cache._path()``:
+    the harness never restates either location, and the answer is the
+    measured tree's, not the harness interpreter's. Raises
+    :class:`WarmProofError` when otto says the cache is off, or the child fails.
+    """
+    try:
+        report = json.loads(_run_child(_CHILD_WARM_PATHS, env))
+    except (subprocess.CalledProcessError, RuntimeError, ValueError) as e:
+        raise WarmProofError(f"the measured otto did not name its cache paths: {e}") from e
+    if not report.get("cache") or not report.get("sidecar"):
+        raise WarmProofError("the completion cache is off in the surface's env: nothing to keep")
+    return WarmPaths(report["cache"], report["sidecar"], jsonnet=report.get("jsonnet") is True)
+
+
+SKIPPED_STAT_LEG = "stat_leg: marker_path unavailable at base"
+"""The ``proofs_skipped`` note of a stat-leg proof whose measured otto has no ``marker_path``."""
+
+SKIPPED_TEMPLATED_ANSWER = "templated answer: no jsonnet binding on this interpreter"
+"""The ``proofs_skipped`` note of :attr:`Surface.expect_answer_templated` lines dropped from
+the verdict, because the measured interpreter loads no jsonnet binding."""
+
+
+def _prepare_proofs(surface: Surface, env: dict[str, str]) -> "_WarmProofs | None":
+    """Backdate and snapshot what *surface*'s warm proofs check, after the seed and the writer.
+
+    The cache and sidecar paths are the measured otto's own (:func:`warm_paths`,
+    one child in the surface's env). The markers' come from the shim's
+    ``marker_path``, imported from the harness interpreter's otto, which is
+    the measured tree's under the delta and ``make import-snapshot``. An otto
+    with no ``marker_path`` (a release from before it, under the delta) skips
+    the stat-leg proof, noted in ``skipped``, and is still measured; the
+    harness never restates the join itself. Raises :class:`WarmProofError`
+    when the seed left no cache to keep.
+    """
+    if not (surface.cache_unchanged or surface.stat_leg or surface.expect_answer_templated):
+        return None
+    from otto import _shim_complete as shim
+
+    paths = warm_paths(env)
+    cache = paths.cache
+    cache_before = None
+    sidecar = sidecar_before = None
+    if surface.cache_unchanged:
+        cache_before = _cache_stamp(cache)
+        if cache_before is None:
+            raise WarmProofError(f"the seed left no completion_cache.json at {cache}")
+        sidecar = paths.sidecar
+        sidecar_before = _cache_stamp(sidecar)
+    stat_leg = None
+    skipped: list[str] = []
+    if surface.expect_answer_templated and not paths.jsonnet:
+        skipped.append(SKIPPED_TEMPLATED_ANSWER)
+    if surface.stat_leg and not hasattr(shim, "marker_path"):
+        skipped.append(SKIPPED_STAT_LEG)
+    elif surface.stat_leg:
+        stat_leg = stage_stat_leg(str(Path(cache).parent))
+    return _WarmProofs(cache, cache_before, stat_leg, skipped, sidecar, sidecar_before)
+
+
+def _ended_before_measuring(why: str) -> dict:
+    """Return the :func:`measure_surface` result of a surface that ended before its measured run.
+
+    Zero counts and no exit, so a report row still renders (the release
+    delta lists it by *why*); :func:`check_exit` reports *why* alone.
+    """
+    return {
+        "ending": why,
+        "measured": False,
+        "exit_code": None,
+        "exception": None,
+        "modules": [],
+        "non_stdlib_modules": [],
+        "stdout": "",
+        "file_ops": asdict(FileOps()),
+    }
+
+
 def measure_surface(surface: Surface) -> dict:
     """Measure *surface* with its own options — the one way to measure a surface.
 
@@ -2184,6 +2876,13 @@ def measure_surface(surface: Surface) -> dict:
     its measured run share the same ``OTTO_HOME`` — the seed's cache write is
     the state the measurement exists to observe. Two calls still get two
     homes, which is what keeps repeated measurements independent.
+
+    The one sequence: seed (in its env less :attr:`Surface.seed_env_remove`),
+    the fixture reset and the closed-port proof, the post-seed writer
+    (:attr:`Surface.post_seed`), the warm proofs' backdate and snapshot
+    (:func:`_prepare_proofs`), the measured run, then the proofs' checks. A
+    writer or proof that fails becomes the result's ``ending``, which
+    :func:`check_exit` reports.
     """
     _warm_bytecode()
     env = surface_env(surface)
@@ -2197,11 +2896,12 @@ def measure_surface(surface: Surface) -> dict:
         # cache the measured run reads. Its counts are discarded. The argv is
         # the surface's own UNLESS ``seed_argv`` overrides it — see
         # ``Surface.seed_argv`` for when the measured argv cannot seed itself.
+        seed_env = {k: v for k, v in env.items() if k not in surface.seed_env_remove}
         measure(
             surface.seed_argv or argv,
             bootstrap=surface.bootstrap,
             real_entry=surface.real_entry,
-            env=env,
+            env=seed_env,
         )
     # Immediately before the measured run, after the seed: the seed never
     # transfers or connects, and these must hold for the run that counts.
@@ -2209,18 +2909,49 @@ def measure_surface(surface: Surface) -> dict:
         _reset_transfer_fixture(Path(env[FIXTURE_ROOT_ENV_VAR]))
     if surface.ssh_lab:
         _prove_port_closed(_budget_ssh_port())
-    return measure(
+    seeded_at = None
+    try:
+        if surface.post_seed is not None:
+            _run_post_seed(surface, env)
+            seeded_at = time.monotonic()
+        proofs = _prepare_proofs(surface, env)
+    except (PostSeedError, WarmProofError) as e:
+        return _ended_before_measuring(str(e))
+    result = measure(
         argv,
         bootstrap=surface.bootstrap,
         real_entry=surface.real_entry,
         env=env,
         pty_input=surface.pty_input,
     )
+    if seeded_at is not None:
+        # What the cached state aged by before the run finished reading it:
+        # :func:`check_exit` names an expired listing (:func:`_listing_expiry`).
+        result["seeded_age_seconds"] = time.monotonic() - seeded_at
+    ending = proofs.ending() if proofs is not None else None
+    if ending is not None:
+        result["ending"] = ending
+    if proofs is not None and proofs.skipped:
+        result["proofs_skipped"] = proofs.skipped
+    return result
+
+
+class UnmeasuredSurfaceError(RuntimeError):
+    """A count was asked of a result that names an ``ending`` (:func:`measure_file_ops`)."""
 
 
 def measure_file_ops(surface: Surface) -> FileOps:
-    """Measure *surface* and return only its file operations."""
-    return FileOps(**measure_surface(surface)["file_ops"])
+    """Measure *surface* and return only its file operations.
+
+    Raises :class:`UnmeasuredSurfaceError` when the result names an ``ending``:
+    its counts are not the surface's (zeros, when it ended before the measured
+    run), and a caller that reads counts alone would compare them as if they were.
+    """
+    result = measure_surface(surface)
+    ending = result.get("ending")
+    if ending is not None:
+        raise UnmeasuredSurfaceError(f"`{surface.key}`: {ending}")
+    return FileOps(**result["file_ops"])
 
 
 def interpreter_tag() -> str:
@@ -2307,8 +3038,15 @@ def write_ceilings(minor: str, results: dict[str, FileOps]) -> None:
 # Not scripts/gate_stamp_common.write_atomically: the delta loads this harness by
 # path from a tip worktree, so it stays stdlib-only and reads no file outside
 # INSTRUMENT_PATHS (itself and scripts/uv_env.py).
-def write_ceilings_files(results: "dict[str, dict[str, FileOps]]") -> None:
+def write_ceilings_files(
+    results: "dict[str, dict[str, FileOps]]",
+    kept: "dict[str, dict[str, dict[str, object]]] | None" = None,
+) -> None:
     """Write each minor's ceilings file from *results* (minor -> its measurements).
+
+    *kept* (minor -> surface -> its stored entry) is what a keys-scoped
+    update (``--only``) carries over from each file as it was: those entries
+    are written back as they were read, under the measured ones.
 
     Every file's content is staged first, each in a file of its own in
     :data:`CEILINGS_DIR` (``.<minor>.json.staged``, never read as a minor's
@@ -2327,7 +3065,7 @@ def write_ceilings_files(results: "dict[str, dict[str, FileOps]]") -> None:
     staged: "list[tuple[Path, Path]]" = []
     try:
         for minor, measured in results.items():
-            text = _ceilings_text(minor, measured)
+            text = _ceilings_text(minor, measured, (kept or {}).get(minor))
             tmp = CEILINGS_DIR / f".{minor}.json.staged"
             staged.append((tmp, ceilings_path(minor)))
             tmp.write_text(text)
@@ -2360,7 +3098,9 @@ def _unlinked(path: Path) -> bool:
     return True
 
 
-def _ceilings_text(minor: str, results: dict[str, FileOps]) -> str:
+def _ceilings_text(
+    minor: str, results: dict[str, FileOps], kept: "dict[str, dict[str, object]] | None" = None
+) -> str:
     """Return the ceilings file for Python *minor* from *results*, for the gated surfaces only.
 
     The file stores BASELINES, not ceilings: :func:`ceiling` is applied at
@@ -2369,10 +3109,13 @@ def _ceilings_text(minor: str, results: dict[str, FileOps]) -> str:
     package or child process grew (:func:`breakdown_diff`). A tracked surface
     is never written, because nothing reads its baseline. The whole file is
     replaced: a regeneration records one interpreter's measurement, not a
-    merge with an older one. *minor* names the interpreter that measured
-    *results*; the caller knows it, this function does not ask.
+    merge with an older one, unless *kept* names the entries a keys-scoped
+    update carries over (:func:`write_ceilings_files`). *minor* names the
+    interpreter that measured *results*; the caller knows it, this function
+    does not ask.
     """
-    surfaces = {
+    surfaces = dict(kept or {})
+    surfaces |= {
         key: {
             "file_ops": ops.total,
             "workspace": ops.workspace,
@@ -2393,32 +3136,119 @@ BREAKDOWN_LINES = 12
 """The most lines :func:`breakdown_diff` prints; ``--report-json`` has every group."""
 
 
-def check_exit(surface: Surface, result: dict) -> list[str]:
-    """Return a violation unless a real-entry run ended the way *surface* expects (empty = pass).
+DENIED_NAMED = 8
+"""How many denied modules a :func:`check_exit` violation names before it counts the rest."""
 
-    The exit code must be ``expect_exit``, and no exception may have escaped
-    the entry: every surface, the failing ones included, measures a command
-    that ends as a user's does, and an uncaught exception is a rendered
-    traceback, a cost of its own. A surface with ``expect_loaded`` must also
-    have imported that module. The message always quotes the recorded
-    exception, so a crash names its cause without a re-run.
+
+def loaded_root(module: str, roots: tuple[str, ...]) -> bool:
+    """Return whether *module* is one of *roots* or a dotted child of one (``typer.core``)."""
+    return any(module == root or module.startswith(root + ".") for root in roots)
+
+
+def check_exit(surface: Surface, result: dict) -> list[str]:
+    """Return why a real-entry run is not the surface it measured (empty = pass).
+
+    The one validity verdict: :func:`check_surface`, ``--update``
+    (:func:`_measure_table`) and every report row (:func:`report_row`, which
+    the delta reports read) all take it from here.
+
+    The ending: the exit code must be ``expect_exit``, and no exception may
+    have escaped the entry: every surface, the failing ones included, measures
+    a command that ends as a user's does, and an uncaught exception is a
+    rendered traceback, a cost of its own. The message always quotes the
+    recorded exception, so a crash names its cause without a re-run.
+
+    The path: every root in ``expect_loaded`` must have been imported, and
+    none in ``expect_not_loaded`` (:func:`loaded_root`).
+
+    The answer: every ``expect_answer`` line, and with ``expect_answer_exact``
+    exactly that set of lines, in the child's ``stdout``, where a TAB prints
+    one candidate per line.
+
+    The warm sequence's own verdict, first: :func:`measure_surface`'s
+    ``ending`` (a post-seed writer that failed, a cache the run changed, a
+    marker it left untouched). One that ended before the measured run is the
+    only violation, since nothing else was measured.
     """
+    violations: list[str] = []
+    ending = result.get("ending")
+    if ending is not None:
+        violations.append(f"`{surface.key}`: {ending}; it is not the surface")
+        if result.get("measured") is False:
+            return violations
     if not surface.real_entry:
-        return []
+        return violations
     exit_code = result.get("exit_code", 0)
     exception = result.get("exception")
-    loaded = surface.expect_loaded is None or surface.expect_loaded in result.get("modules", [])
-    if exit_code == surface.expect_exit and exception is None and loaded:
-        return []
-    expected = f"exit {surface.expect_exit} with no exception" + (
-        f" having imported {surface.expect_loaded}" if surface.expect_loaded else ""
+    modules = result.get("modules", [])
+    missing = [r for r in surface.expect_loaded if not any(loaded_root(m, (r,)) for m in modules)]
+    if exit_code != surface.expect_exit or exception is not None or missing:
+        expected = f"exit {surface.expect_exit} with no exception" + (
+            f" having imported {', '.join(surface.expect_loaded)}" if surface.expect_loaded else ""
+        )
+        violations.append(
+            f"`{surface.key}`: the measured command exited {exit_code} with "
+            f"{exception or 'no exception'}, not {expected}, so it measured a failure "
+            f"path, not the surface"
+        )
+    denied = [m for m in modules if loaded_root(m, surface.expect_not_loaded)]
+    if denied:
+        named = ", ".join(denied[:DENIED_NAMED]) + (
+            f" and {len(denied) - DENIED_NAMED} more" if len(denied) > DENIED_NAMED else ""
+        )
+        violations.append(
+            f"`{surface.key}`: the measured command imported {named}, under a "
+            f"denied root ({', '.join(surface.expect_not_loaded)}), so it took a "
+            f"different path than the surface"
+        )
+    # A blank line is no candidate: a TAB with nothing to offer prints one.
+    lines = {line for line in result.get("stdout", "").splitlines() if line}
+    expected = list(surface.expect_answer)
+    if SKIPPED_TEMPLATED_ANSWER not in result.get("proofs_skipped", []):
+        expected += surface.expect_answer_templated
+    absent = [line for line in expected if line not in lines]
+    if absent:
+        violations.append(
+            f"`{surface.key}`: the TAB's answer lacks the candidate line(s) "
+            f"{', '.join(map(repr, absent))}; it answered {sorted(lines)!r}"
+        )
+    exact = surface.expect_answer_exact
+    if exact is not None and lines != exact:
+        violations.append(
+            f"`{surface.key}`: the TAB answered {sorted(lines)!r}, not exactly {sorted(exact)!r}"
+        )
+    expiry = _listing_expiry(surface, result) if violations else None
+    if expiry is not None:
+        violations.append(f"`{surface.key}`: {expiry}")
+    return violations
+
+
+_REMOTE_LISTING_WRITERS = frozenset(
+    name for name, body in POST_SEED_WRITERS.items() if body.startswith(_REMOTE_LISTING_BODY)
+)
+"""The post-seed writers that cache a remote listing: every one built on its body."""
+
+
+def _listing_expiry(surface: Surface, result: dict) -> "str | None":
+    """Why a failed remote-path verdict may be the clock's: the seeded listing aged past its TTL.
+
+    A declared limitation, not a clock seam: the listing is stamped when the
+    writer runs, and the TAB trusts it for ``LISTING_TTL_SECONDS`` (read from
+    otto). Measured margins are over 25 times, and an expired listing fails
+    closed (the TAB lists live and the proofs catch it); this only names the
+    cause, so an overloaded machine is not read as a regression.
+    """
+    if surface.post_seed not in _REMOTE_LISTING_WRITERS:
+        return None
+    age = result.get("seeded_age_seconds")
+    from otto.config.remote_completion_cache import LISTING_TTL_SECONDS
+
+    if age is None or age < LISTING_TTL_SECONDS:
+        return None
+    return (
+        f"the seeded listing expired before the TAB read it ({age:.1f} s elapsed): "
+        f"the machine was overloaded, not a regression"
     )
-    message = (
-        f"`{surface.key}`: the measured command exited {exit_code} with "
-        f"{exception or 'no exception'}, not {expected}, so it measured a failure "
-        f"path, not the surface"
-    )
-    return [message]
 
 
 RATIO_BREAKDOWN_LINES = 8
@@ -2477,11 +3307,12 @@ def check_surface(
     they share one source of truth. A TRACKED surface returns ``[]`` whatever
     it measured. A gated one is checked in this order:
 
-      1. its ending (:func:`check_exit`) — a ``real_entry`` surface must exit
-         ``surface.expect_exit`` with no exception escaping AND have imported
-         ``surface.expect_loaded``, or it measured a failure path rather than
-         the surface: a misspelled host id exits 1 too, and its smaller count
-         would read as a saving;
+      1. its validity (:func:`check_exit`) — a ``real_entry`` surface must exit
+         ``surface.expect_exit`` with no exception escaping, have imported
+         every ``surface.expect_loaded`` root and none of
+         ``surface.expect_not_loaded``, and print the answer it expects, or
+         it measured a failure path rather than the surface: a misspelled
+         host id exits 1 too, and its smaller count would read as a saving;
       2. its baseline — no entry for this surface in the MEASURED
          interpreter's ceilings file (see :func:`interpreter_tag`) is a named
          failure, never a skip, because "no file for this Python" is the shape
@@ -2610,6 +3441,8 @@ def report_row(surface: Surface, result: dict) -> dict:
     ``ending`` is :func:`check_exit`'s verdict on the run (empty when it ended
     as the surface expects), so a reader of the JSON can tell a run that
     measured the surface from one that failed earlier with the same exit.
+    ``proofs_skipped`` names each warm proof the measured otto could not
+    support (:func:`_prepare_proofs`): measured and compared all the same.
     """
     ops = result["file_ops"]
     return {
@@ -2619,6 +3452,7 @@ def report_row(surface: Surface, result: dict) -> dict:
         "workspace": ops["workspace"],
         "exit": result.get("exit_code"),
         "ending": check_exit(surface, result),
+        "proofs_skipped": list(result.get("proofs_skipped", [])),
         "by_bucket": ops["by_bucket"],
         "by_process": ops["by_process"],
         "by_path": ops["by_path"],
@@ -2685,6 +3519,8 @@ def _measure_table(
             violations = check_exit(s, r)
         for v in violations:
             print(f"  FAIL {v}", flush=True)
+        for skipped in rows[-1]["proofs_skipped"]:
+            print(f"  NOTE `{s.key}`: proof skipped ({skipped})", flush=True)
         if check:
             # Advisory only: printed, never counted toward `failed`.
             for note in advisories(s, r):
@@ -2698,13 +3534,70 @@ def _nothing_written(why: str) -> int:
     return 1
 
 
-def _update_every_minor(surfaces: list[Surface]) -> int:
+def _scoped(surfaces: list[Surface], only: "list[str]") -> list[Surface]:
+    """Return what a keys-scoped update measures: *only*'s surfaces, and the floor one needs.
+
+    :data:`RATIO_FLOOR` comes first when a named surface has a
+    ``target_ratio``, so every ratio has its floor from the same run; it is
+    measured, never written, unless it is named. Raises ``KeyError`` for a
+    key no surface has, ``ValueError`` for a tracked one, which has no
+    baseline to record.
+    """
+    tracked = [key for key in only if surface_by_key(key).tracked]
+    if tracked:
+        raise ValueError(
+            f"--only: {', '.join(tracked)} is tracked, and a tracked surface has no baseline"
+        )
+    named = [s for s in surfaces if s.key in only]
+    wanted = set(only)
+    if any(s.target_ratio is not None for s in named):
+        wanted.add(RATIO_FLOOR)
+    return sorted((s for s in surfaces if s.key in wanted), key=lambda s: s.key != RATIO_FLOOR)
+
+
+_KEEPS = "a keys-scoped update keeps every other entry, but"
+"""How a refusal to merge into a ceilings file starts (:func:`_stored_entries`)."""
+
+
+def _stored_entries(minor: str) -> "dict[str, dict[str, object]]":
+    """Every entry in *minor*'s ceilings file as it is: what a keys-scoped update keeps.
+
+    Raises ``ValueError`` for a file that is not one minor's ceilings (any
+    content a new minor's file may hold), since nothing in it can be kept, and
+    for one that is not in the form :func:`_ceilings_text` writes: rewriting it
+    would move the kept entries' bytes, where on a canonical file they stay
+    byte-identical.
+    """
+    path = ceilings_path(minor)
+    text = path.read_text()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{_KEEPS} {_display_path(path)} is not JSON ({e})") from e
+    if not isinstance(data, dict) or data.get("interpreter") != minor:
+        raise ValueError(f"{_KEEPS} {_display_path(path)} is not CPython {minor}'s ceilings")
+    entries = dict(data.get("surfaces", {}))
+    if text != _ceilings_text(minor, {}, entries):
+        raise ValueError(
+            f"{_KEEPS} {_display_path(path)} is not in canonical form (as --update writes "
+            f"it), so its kept entries would not stay byte-identical; regenerate it with "
+            f"{SNAPSHOT_HOW}"
+        )
+    return entries
+
+
+def _update_every_minor(surfaces: list[Surface], *, only: "list[str] | None" = None) -> int:
     """Regenerate every minor's ceilings file, each measured in the venv :func:`build_env` makes.
 
     Every minor's interpreter is looked up before anything is built, and
     nothing is written unless every minor measured clean. Then every file is
     staged and each replaced atomically (:func:`write_ceilings_files`); a
     failed replacement names what was already replaced.
+
+    With *only* (``--only``), just those surfaces are measured (:func:`_scoped`)
+    and their entries written into each file, every other entry kept as it was
+    stored; a file that is not its minor's ceilings refuses the update whole,
+    a full regeneration first making it one.
     """
     try:
         minors = ceilings_minors()
@@ -2721,6 +3614,13 @@ def _update_every_minor(surfaces: list[Surface]) -> int:
         )
     if missing:
         return _nothing_written("every minor with a ceilings file must be measured")
+    kept: "dict[str, dict[str, dict[str, object]]] | None" = None
+    if only is not None:
+        try:
+            surfaces = _scoped(surfaces, only)
+            kept = {minor: _stored_entries(minor) for minor in minors}
+        except (KeyError, OSError, ValueError) as e:
+            return _nothing_written(e.args[0] if isinstance(e, KeyError) else str(e))
     results: dict[str, dict[str, FileOps]] = {}
     for minor in minors:
         try:
@@ -2734,9 +3634,11 @@ def _update_every_minor(surfaces: list[Surface]) -> int:
         _rows, measured, failed = _measure_table(surfaces, check=False, update=True)
         if failed:
             return _nothing_written(f"CPython {minor} failed (see FAIL lines above)")
-        results[minor] = measured
+        results[minor] = (
+            measured if only is None else {k: v for k, v in measured.items() if k in only}
+        )
     try:
-        write_ceilings_files(results)
+        write_ceilings_files(results, kept)
     except CeilingsReplaceError as e:
         print(f"\nimport budget: FAILED — {e}", flush=True)
         return 1
@@ -2779,6 +3681,13 @@ def main(argv: list[str] | None = None) -> int:
         "minor's interpreter is found and measures clean",
     )
     ap.add_argument(
+        "--only",
+        metavar="KEY[,KEY...]",
+        help="with --update: measure only these surfaces (and the ratio floor one of them "
+        "divides by) and write their entries into each ceilings file, keeping every other "
+        "entry as it is",
+    )
+    ap.add_argument(
         "--python",
         metavar="PATH",
         help="measure the interpreter at PATH as it is, with no venv built "
@@ -2809,6 +3718,11 @@ def main(argv: list[str] | None = None) -> int:
             "--update regenerates every interpreter's file, each in the venv it syncs; "
             "it measures no single --python"
         )
+    only = None if args.only is None else [k.strip() for k in args.only.split(",")]
+    if only is not None and not args.update:
+        ap.error("--only scopes --update; it cannot be used without it")
+    if only is not None and not all(only):
+        ap.error("--only names surfaces by key, comma-separated, with no empty key")
     if args.python:
         # Absolute, since the measured children run elsewhere (`_quiet_cwd`);
         # never resolved, since a venv's interpreter is a link `venv_of` reads.
@@ -2820,7 +3734,7 @@ def main(argv: list[str] | None = None) -> int:
     # every target ratio is checked against a floor from this same run.
     surfaces.sort(key=lambda s: s.key != RATIO_FLOOR)
     if args.update:
-        return _update_every_minor(surfaces)
+        return _update_every_minor(surfaces, only=only)
     # Resolved before the table: a failed build is a named exit, and the
     # sync's own output lands above the header, not inside the table.
     if _built_or_named_failure(measured_python) is None:

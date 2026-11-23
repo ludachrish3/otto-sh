@@ -103,6 +103,23 @@ function(otto) {
 }
 """
 
+_RESERVATIONS_SOURCE = """\
+[reservations]
+backend = "json"
+
+[reservations.json]
+path = "{path}"
+"""
+
+RESERVATIONS_FILE = "reservations.json"
+"""The JSON reservation file ``generate_project(reservations=True)`` declares, under the project.
+
+It holds no rows: a surface that needs a reservation stores the answer in the
+completion sidecar, and a backend that is ever read finds nobody holding
+anything."""
+
+_RESERVATIONS_BODY = json.dumps({"version": 1, "reservations": []}, indent=4) + "\n"
+
 TEMPLATED_HOSTS = 4
 """How many hosts ``generate_project(templated_lab=True)``'s jsonnet source renders."""
 
@@ -177,6 +194,7 @@ def generate_project(
     realistic: bool = False,
     ssh_lab_port: int | None = None,
     templated_lab: bool = False,
+    reservations: bool = False,
 ) -> Path:
     """Write a project under *root*; return the path for ``OTTOPATH``.
 
@@ -199,6 +217,9 @@ def generate_project(
     *templated_lab* adds a ``jsonnet`` lab source rendering
     :data:`TEMPLATED_HOSTS` hosts into the ``templated`` lab from a ``fleet``
     json inventory, with one library under its import root.
+
+    *reservations* declares ``[reservations]`` with the ``json`` backend, read
+    from :data:`RESERVATIONS_FILE` under the project, which lists nobody.
     """
     # Through `make_project`, not a hand-rolled write: `.otto/settings.toml`
     # has exactly one spelling in the suite (tests/_fixtures/project_scaffold.py), and
@@ -221,6 +242,9 @@ def generate_project(
     if templated_lab:
         extra += _TEMPLATED_SOURCE
         project_files.update(_templated_files())
+    if reservations:
+        extra += _RESERVATIONS_SOURCE.format(path=RESERVATIONS_FILE)
+        project_files[RESERVATIONS_FILE] = _RESERVATIONS_BODY
     project = make_project(
         root / name,
         name=name,

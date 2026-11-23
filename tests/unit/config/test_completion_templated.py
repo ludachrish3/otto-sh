@@ -38,6 +38,7 @@ from otto.templating.memo import RenderMemo, cancellation
 from tests._fixtures.completion_deadline import expire_when
 from tests._fixtures.named_inventory import FakeDiscoveryInventory
 from tests._fixtures.paths import CHECKOUT_ROOT
+from tests._fixtures.recorded_tab import record_cold_tab, record_warm_tab, tab_marker
 from tests.unit.templating import conftest as _templating
 from tests.unit.templating._doctor_project import SITES, entry_path, records, templated
 from tests.unit.templating._lab_project import CREDS, inventory, jsonnet_source, project, table
@@ -583,38 +584,8 @@ def test_cold_link_completion_builds_no_host(monkeypatch, tmp_path, otto_home):
 # Warm: the shim stats stored key paths, and nothing else.
 # --------------------------------------------------------------------------- #
 
-_RECORDED_TAB = """
-import json, os, sys
-sys.argv = ["otto"]
-import otto
-from otto import _shim, _shim_complete
-ops = {{"opens": [], "listdirs": [], "sockets": [], "stats": []}}
-def hook(event, args):
-    if event == "open" and args and isinstance(args[0], str):
-        ops["opens"].append(args[0])
-    elif event in ("os.listdir", "os.scandir"):
-        ops["listdirs"].append(str(args[0]) if args else ".")
-    elif event.startswith("socket."):
-        ops["sockets"].append(event)
-real_stat = os.stat
-class CountingStat:  # a callable object, not a function: a class attribute never binds it
-    def __call__(self, path, *args, **kwargs):
-        ops["stats"].append(str(path))
-        return real_stat(path, *args, **kwargs)
-os.stat = CountingStat()
-sys.addaudithook(hook)
-try:
-    _shim.main()
-except SystemExit:
-    pass
-finally:
-    os.stat = real_stat
-    ops["templating"] = sorted(m for m in sys.modules if m.startswith("otto.templating"))
-    ops["cli"] = "otto.cli.main" in sys.modules
-    with open({out!r}, "w") as fh:
-        json.dump(ops, fh)
-"""
-"""A bash TAB through the real shim entry, recording every open, listing, socket and stat."""
+_CLI = "otto.cli.main"
+"""The full CLI's entry module: in a recorded TAB's modules only when the shim handed over."""
 
 
 def _tab_env(sut: Project, home: Path) -> dict[str, str]:
@@ -629,51 +600,25 @@ def _tab_env(sut: Project, home: Path) -> dict[str, str]:
     }
 
 
-def _recorded_tab(tmp_path: Path, env: dict[str, str], name: str) -> "tuple[str, dict[str, Any]]":
-    """Run one TAB through the shim in a child; return its answer and what it touched."""
-    out = tmp_path / f"{name}.ops.json"
-    child = tmp_path / f"{name}.py"
-    child.write_text(_RECORDED_TAB.format(out=str(out)))
-    done = subprocess.run(
-        [sys.executable, str(child)], env=env, capture_output=True, text=True, check=False
-    )
-    assert done.returncode == 0, done.stderr
-    return done.stdout, json.loads(out.read_text())
-
-
-def _warm_tab(tmp_path: Path, env: dict[str, str], name: str) -> "tuple[str, dict[str, Any]]":
-    """A warm TAB whose ``names`` marker is backdated, so the shim runs its stat pass."""
-    import time
-
-    cache = Path(_shim_complete.locate_cache(env))
-    marker = cache.parent / _shim_complete.MARKER_FILENAMES["names"]
-    if marker.exists():
-        old = time.time() - 10 * _shim_complete.WINDOW_SECONDS
-        os.utime(marker, (old, old))
-    answer, ops = _recorded_tab(tmp_path, env, name)
-    ops["cache_file"] = str(cache)
-    ops["marker"] = str(marker)
-    # The child's own report of what it touched, written after the TAB answered.
-    ops["opens"] = [p for p in ops["opens"] if p != str(tmp_path / f"{name}.ops.json")]
-    return answer, ops
-
-
 def test_warm_tab_is_stat_only(tmp_path, otto_home):
     sut = templated(tmp_path / "sut", sites=("east", "west"), entry=_linked(TRUNK))
     write_file(sut.root / "lab_data" / "lib" / "unused.libsonnet", "{}\n")
     env = _tab_env(sut, otto_home)
-    cold, cold_ops = _recorded_tab(tmp_path, env, "cold")
-    assert cold_ops["cli"], "control: the cold TAB took the full path and rebuilt the cache"
-    assert "east-dut0" in cold.split()
-    warm, ops = _warm_tab(tmp_path, env, "warm")
-    assert not ops["cli"], "the warm TAB handed over"
-    assert warm == cold
-    assert ops["templating"] == [], "a warm TAB imports no templating code, so it evaluates nothing"
-    assert ops["listdirs"] == []
-    assert ops["sockets"] == []
+    cold = record_cold_tab(tmp_path, env, "cold")
+    assert _CLI in cold.modules, "control: the cold TAB took the full path and rebuilt the cache"
+    assert "east-dut0" in cold.stdout.split()
+    warm = record_warm_tab(tmp_path, env, "warm")
+    assert _CLI not in warm.modules, "the warm TAB handed over"
+    assert warm.stdout == cold.stdout
+    templating = [m for m in warm.modules if m.startswith("otto.templating")]
+    assert templating == [], "a warm TAB imports no templating code, so it evaluates nothing"
+    assert warm.listdirs == []
+    assert warm.sockets == []
     # The shim's own cache read and its marker touch; no inventory, template or library read.
-    assert [p for p in ops["opens"] if p not in (ops["cache_file"], ops["marker"])] == []
-    assert str(entry_path(sut.root)) in ops["stats"], "the stat pass ran over the stored keys"
+    cache = _shim_complete.locate_cache(env)
+    marker = str(tab_marker(env, "names"))
+    assert [p for p in warm.opens if p not in (cache, marker)] == []
+    assert str(entry_path(sut.root)) in warm.stats, "the stat pass ran over the stored keys"
 
 
 def _patched_library(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -761,11 +706,11 @@ def _fleet(root: Path, hosts: int) -> Project:
 
 def _warm_stat_count(tmp_path: Path, sut: Project, home: Path) -> int:
     env = _tab_env(sut, home)
-    cold, _ = _recorded_tab(tmp_path, env, "cold")
-    assert "dut-0000" in cold.split()
-    _, ops = _warm_tab(tmp_path, env, "warm")
-    assert not ops["cli"], "the warm TAB handed over"
-    return len(ops["stats"])
+    cold = record_cold_tab(tmp_path, env, "cold")
+    assert "dut-0000" in cold.stdout.split()
+    warm = record_warm_tab(tmp_path, env, "warm")
+    assert _CLI not in warm.modules, "the warm TAB handed over"
+    return len(warm.stats)
 
 
 def test_warm_tab_file_ops_do_not_grow_with_fleet_size(tmp_path, otto_home):
