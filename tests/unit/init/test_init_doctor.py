@@ -2310,3 +2310,181 @@ def test_a_jsonnet_read_inventory_still_reports_its_stale_snapshot(tmp_path, ott
     assert len(stale) == 1, report.warnings
     assert "31h old" in stale[0]
     assert not [w for w in report.warnings if "referenced by no" in w]
+
+
+def _stale_overrides(report: DoctorReport) -> list[str]:
+    return [w for w in report.warnings if "overrides" in w and "no element" in w]
+
+
+def test_a_stale_overrides_entry_is_warned_of_naming_source_and_entry(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog, templated
+
+    sut = templated(tmp_path / "sut", overrides=["east-dut0", "gone-dut9"])
+    report = check_project(sut.root, catalog=catalog(sut))
+    assert report.ok, _text(report)
+    [warning] = _stale_overrides(report)
+    assert warning.startswith("source sut/jsonnet#1: ")
+    assert "'gone-dut9'" in warning
+    assert "east-dut0" not in warning
+
+
+def test_judging_overrides_evaluates_no_template_again(tmp_path, otto_home, monkeypatch):
+    from tests.unit.templating._doctor_project import catalog, templated
+    from tests.unit.templating._render_helpers import count_evaluations
+
+    plain = templated(tmp_path / "plain", entry=None)
+    judged = templated(tmp_path / "judged", overrides=["east-dut0", "gone-dut9"])
+    evaluations = count_evaluations(monkeypatch)
+    check_project(plain.root, catalog=catalog(plain))
+    without = evaluations()
+    check_project(judged.root, catalog=catalog(judged))
+    assert without > 0
+    assert evaluations() - without == without
+
+
+def test_an_overrides_entry_spelled_differently_by_slug_rules_is_not_stale(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog, templated
+
+    sut = templated(tmp_path / "sut", overrides=["East_DUT0"])
+    report = check_project(sut.root, catalog=catalog(sut))
+    assert _stale_overrides(report) == []
+
+
+def test_a_source_that_failed_never_makes_an_overrides_entry_stale(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog, templated
+
+    entry = "function(otto)\n  { labs: error 'boom' }\n"
+    sut = templated(tmp_path / "sut", entry=entry, overrides=["gone-dut9"])
+    report = check_project(sut.root, catalog=catalog(sut))
+    assert not report.ok
+    assert _stale_overrides(report) == []
+
+
+def test_a_refusing_catalog_never_makes_an_overrides_entry_stale(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog, templated
+
+    sut = templated(tmp_path / "sut", overrides=["gone-dut9"])
+    (otto_home / "settings.toml").write_text("not valid toml [[[")  # scaffold-exempt: refusal
+    for view in (None, catalog(sut)):
+        report = check_project(sut.root, catalog=view)
+        assert _stale_overrides(report) == [], view
+
+
+def test_each_jsonnet_source_is_judged_by_its_own_elements(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog, templated
+    from tests.unit.templating._lab_project import CREDS, jsonnet_source, write
+
+    other = {
+        "labs": {"solo": {}},
+        "elements": [
+            {
+                "name": "solo-1",
+                "labs": ["solo"],
+                "hosts": [{"ip": "10.9.9.9", "os_type": "unix", "creds": CREDS}],
+            }
+        ],
+    }
+    second = write(
+        tmp_path / "sut" / "lab_data" / "other.jsonnet", f"function(otto) {json.dumps(other)}\n"
+    )
+    extra = jsonnet_source(paths=[str(second)], overrides=["east-dut0"])
+    sut = templated(tmp_path / "sut", extra=extra, overrides=["solo-1"])
+    report = check_project(sut.root, catalog=catalog(sut))
+    assert report.ok, _text(report)
+    stale = _stale_overrides(report)
+    assert len(stale) == 2, stale
+    assert sum("'solo-1'" in w for w in stale) == 1
+    assert sum("'east-dut0'" in w for w in stale) == 1
+
+
+def test_two_spellings_of_one_stale_overrides_entry_are_one_warning(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog, templated
+
+    sut = templated(tmp_path / "sut", overrides=["Gone-Dut9", "gone_dut9"])
+    report = check_project(sut.root, catalog=catalog(sut))
+    [warning] = _stale_overrides(report)
+    assert "'Gone-Dut9'" in warning
+    assert "gone_dut9" not in warning
+
+
+def _manual_source(root: Path, *entries: "tuple[str, str]", **source) -> Path:
+    """A project over ``physical`` whose one jsonnet source renders *entries* (name, text)."""
+    from tests.unit.templating._doctor_project import records
+    from tests.unit.templating._lab_project import inventory, jsonnet_source, project, write
+
+    paths = [str(write(root / "lab_data" / name, text)) for name, text in entries]
+    settings = inventory(root, "physical", records("east")) + jsonnet_source(
+        paths=paths, inventories=["physical"], **source
+    )
+    return project(root, settings).root
+
+
+def test_a_lab_the_declaration_marks_unavailable_still_judges_overrides(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog
+    from tests.unit.templating._lab_project import CREDS
+
+    document = {
+        "labs": {"rig": {"unavailable": "dut: expected 2, found 1"}},
+        "elements": [
+            {
+                "name": "rig-1",
+                "labs": ["rig"],
+                "hosts": [{"ip": "10.0.0.1", "os_type": "unix", "creds": CREDS}],
+            }
+        ],
+    }
+    root = _manual_source(
+        tmp_path / "sut",
+        ("rig.jsonnet", f"function(otto) {json.dumps(document)}\n"),
+        overrides=["rig-1", "gone-9"],
+    )
+    from otto.config.project import Project
+
+    report = check_project(root, catalog=catalog(Project(root=root)))
+    assert report.ok, _text(report)
+    [warning] = _stale_overrides(report)
+    assert "'gone-9'" in warning
+    assert "rig-1" not in warning
+
+
+def test_a_source_with_one_failing_entry_file_gets_no_stale_overrides_warning(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog
+
+    good = {"labs": {"solo": {}}, "elements": []}
+    root = _manual_source(
+        tmp_path / "sut",
+        ("good.jsonnet", f"function(otto) {json.dumps(good)}\n"),
+        ("bad.jsonnet", "function(otto) error 'boom'\n"),
+        overrides=["gone-9"],
+    )
+    from otto.config.project import Project
+
+    report = check_project(root, catalog=catalog(Project(root=root)))
+    assert not report.ok
+    assert _stale_overrides(report) == []
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_a_source_whose_read_has_a_problem_gets_no_stale_overrides_warning(
+    tmp_path, otto_home, scoped
+):
+    """An element twice in one entry: a problem of the read, so no entry can be judged."""
+    from otto.config.project import Project
+    from tests.unit.templating._doctor_project import catalog
+    from tests.unit.templating._lab_project import CREDS
+
+    host = {"ip": "10.0.0.1", "os_type": "unix", "creds": CREDS}
+    twice = {
+        "labs": {"solo": {}},
+        "elements": [{"name": "dup", "labs": ["solo"], "hosts": [host]}] * 2,
+    }
+    keys = {"scope": {"names": ["solo"]}} if scoped else {}
+    root = _manual_source(
+        tmp_path / "sut",
+        ("twice.jsonnet", f"function(otto) {json.dumps(twice)}\n"),
+        overrides=["gone-9"],
+        **keys,
+    )
+    report = check_project(root, catalog=catalog(Project(root=root)))
+    assert not report.ok
+    assert _stale_overrides(report) == []

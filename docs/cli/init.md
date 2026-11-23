@@ -228,9 +228,18 @@ would:
   active project or to see `otto --list-labs`. A warning never changes the exit
   code.
 
-An inventory a source lists in `inventories` is never reported as holding
-unused records: the records a template reads are known only by rendering it
-([Warnings](../configuration/inventory.md#warnings)).
+Two more findings are warnings, never problems:
+
+- `source <label>: overrides entry '<name>' matches no element the source
+  generates`: the entry no longer names an element of that source (compared by
+  slug, as elements are), so it only keeps the permission to replace a
+  different machine's element of that name
+  ({ref}`Generated elements that replace others <lab-templating-overrides>`).
+  Nothing is said when the doctor cannot tell: a source that is unavailable or
+  has a problem in any entry, or a project it does not render.
+- An inventory a source lists in `inventories` is never reported as holding
+  unused records: the records a template reads are known only by rendering it
+  ([Warnings](../configuration/inventory.md#warnings)).
 
 <!-- Doctor parity for a project outside the active ones is tracked as #1213. -->
 

@@ -863,6 +863,13 @@ def _error_text(error: Exception) -> str:
     return str(error) if isinstance(error, LISTING_ERRORS) else f"{type(error).__name__}: {error}"
 
 
+_STALE_OVERRIDE = (
+    "source {label}: overrides entry {entry!r} matches no element the source generates; "
+    "it still lets a different machine's element of that name be replaced, so remove it "
+    "or correct its spelling"
+)
+"""The warning of a ``jsonnet`` source's ``overrides`` entry no element answers to."""
+
 _NOT_RENDERED = (
     "{entry}: not rendered: {refusal}; run otto init from inside an active project, "
     "or see otto --list-labs"
@@ -944,6 +951,7 @@ def _templating_rows(
     projects = membership.projects
     project_root = membership.project.root
     rows: list[_Row] = []
+    warnings: list[str] = []
     if isinstance(outcome, Exception):
         text = _error_text(outcome)
         rows.append(_Row(cause=str(outcome), text=f"host source unavailable: {text}"))
@@ -979,8 +987,66 @@ def _templating_rows(
             elif refusal.diagnostic not in reported_outages:
                 reason = refusal.diagnostic.reason
                 rows.append(_Row(cause=reason, text=f"{status.name} — unavailable: {reason}"))
+        warnings = _stale_overrides(
+            sources,
+            down={outage.source.label for outage in outages},
+            view=catalog,
+            project_root=project_root,
+        )
     problems = [row.text for row in rows if not row.caused_by(reported)]
-    return _TemplatingRows(problems=list(dict.fromkeys(problems)))
+    return _TemplatingRows(problems=list(dict.fromkeys(problems)), warnings=warnings)
+
+
+def _stale_overrides(
+    sources: "list[SourceFiles]",
+    *,
+    down: "set[str]",
+    view: "InventoryView",
+    project_root: Path,
+) -> list[str]:
+    """Return a warning for each ``overrides`` entry of *sources* that no generated element matches.
+
+    *down* is the labels of the sources the listing reports unavailable.
+
+    The elements a source generated are in its validated read
+    (:func:`~otto.labs.jsonnet_source.validated_source_read`), which the
+    listing above already derived once in *view*'s render memo, so asking
+    for it again evaluates nothing. An entry is compared as the source
+    compares it (:class:`~otto.labs.protocol.SupportsOverridePolicy`,
+    through :meth:`~otto.labs.jsonnet_source.JsonnetLabSourceConfig.override_spellings`):
+    by its slug, against the slug of each element in any lab the source
+    produced. A source the doctor cannot say that of is left alone: one the
+    report lists as unavailable (its existing row says why), one whose read
+    has a problem in any entry (an entry's elements may be the missing
+    ones), and one that cannot be read at all. A cancelled read is the
+    operation's and propagates.
+    """
+    from ..labs.composite import project_view
+    from ..labs.drops import is_timeout
+    from ..labs.errors import LabRepositoryError
+    from ..labs.jsonnet_source import validated_source_read
+
+    through = project_view(view=view, project_root=project_root)
+    warnings: list[str] = []
+    for group in sources:
+        inputs = _jsonnet_inputs(group)
+        if inputs is None or not inputs.config.overrides or inputs.env.label in down:
+            continue
+        try:
+            read = validated_source_read(inputs=inputs, view=through)
+        except LabRepositoryError as e:
+            if is_timeout(e):
+                raise
+            continue  # the listing's source row reports why this source cannot be read
+        if read.problems:
+            continue
+        generated = {element.key for document in read.documents for element in document.elements}
+        warnings.extend(
+            _STALE_OVERRIDE.format(label=inputs.env.label, entry=entry)
+            for identity, entry in inputs.config.override_spellings().items()
+            if identity not in generated
+        )
+    return warnings
 
 
 @final
