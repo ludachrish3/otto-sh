@@ -38,6 +38,12 @@ updates:
       - dependency-type: "direct"
       - dependency-name: "playwright"
         dependency-type: "all"
+    # Every runtime dependency is capped ("Dependency updates" in
+    # docs/contributing.md). `widen` raises a cap to admit a new release and
+    # keeps the floor. The default, `auto`, picks `increase` or `widen` by
+    # guessing whether the project is an app or a library, and `increase`
+    # typically moves only the lower bound.
+    versioning-strategy: widen
     labels:
       - "dependencies"
       - "python"

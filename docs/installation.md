@@ -708,37 +708,49 @@ minimum, and below several it does not work (below pydantic 2.10.4 it fails
 at import), so if your project pins an older version, raise that pin rather
 than overriding otto's requirement.
 
-| Package | Min version | Purpose |
-| ------- | ----------- | ------- |
-| `aioftp` | 0.27.2 | Async FTP client for file transfers |
-| `aiosqlite` | 0.21.0 | Async SQLite for persisting monitor metrics |
-| `asyncssh` | 2.24.0 | SSH connections to remote hosts |
-| `fastapi` | 0.135.1 | Monitor dashboard web server |
-| `gojsonnet` | 0.22.0 | Go Jsonnet binding for lab and inventory templates; Linux aarch64 only ([known gaps](#jsonnet-known-gaps)) |
-| `jsonnet` | 0.22.0 | C++ Jsonnet binding for lab and inventory templates; Linux x86_64, Windows and Apple-silicon macOS ([known gaps](#jsonnet-known-gaps)) |
-| `packaging` | 24.0 | Requirement/marker/specifier evaluation for the dependency preflight |
-| `pydantic` | 2.10.4 | Boundary validation models for lab JSON, host records, and settings |
-| `pydantic-settings` | 2.7.0 | Environment-variable settings (`OTTO_*`) |
-| `pynetbox` | 7.4.0 | NetBox REST client for the `netbox` inventory backend |
-| `pysnmp` | 7.1.21 | Async SNMP manager for separate-channel host monitoring |
-| `pytest` | 9.1.1 | Test runner; otto imports user test files at runtime |
-| `pytest-asyncio` | 1.4.0 | Async test support for pytest |
-| `pytest-timeout` | 2.3.1 | Per-test timeouts for `otto test` (`@pytest.mark.timeout`) |
-| `pytest-randomly` | 4.1.0 | Random test order for `otto test` (`--random`, `--seed N` to reproduce) |
-| `pyyaml` | 6.0.3 | Parses rendered compose YAML to collect `env_file:` sidecar references |
-| `requests` | 2.30.0 | HTTP adapter mounted directly by the `netbox` inventory backend to bound each request |
-| `rich` | 15.0.0 | Terminal formatting, panels, and tables |
-| `sse-starlette` | 3.3.3 | Server-sent events for live dashboard updates |
-| `starlette` | 0.52.1 | ASGI request types used directly by the monitor server |
-| `telnetlib3` | 5.0.1 | Async Telnet client for telnet-based hosts |
-| `tomli` | 2.4.0 | TOML parser for `.otto/settings.toml` |
-| `tomlkit` | 0.14 | Comment-preserving edits to the user settings file (`otto cache enable` / `disable`) |
-| `truststore` | 0.10.1 | Verifies otto's HTTPS clients (`otto.tls`) against the OS certificate store |
-| `typer` | 0.29 | CLI framework (builds `otto run`, `otto test`, etc.) |
-| `typing-extensions` | 4.13.2 | Backport of `typing.override` (PEP 698) for Python < 3.12 |
-| `urllib3` | 2.0.2 | HTTP connection pools under `requests`; otto's OS-store TLS context needs urllib3 2 |
-| `uv` | 0.11 | Installs and syncs the `otto env` orchestration venv; otto runs the uv installed with it |
-| `uvicorn` | 0.42.0 | ASGI server for the monitor dashboard |
+Every package also has an upper bound, the "Below" column. Every otto release
+is tested at each minimum and at one newer version, the one in otto's
+lockfile. Other versions under the bound are admitted because the package's
+own versioning says they should not break, but they are not each tested. A
+version at or above the bound is not admitted.
+
+A bound can sit below a version already on PyPI until a pull request widens
+it. If your project needs such a version, keep the older version of that
+package, wait for the otto release that admits the newer one, or open an
+issue. How the bounds are chosen and widened is in
+{ref}`Dependency updates <dependency-bounds>`.
+
+| Package | Min version | Below | Purpose |
+| ------- | ----------- | ----- | ------- |
+| `aioftp` | 0.27.2 | 0.29 | Async FTP client for file transfers |
+| `aiosqlite` | 0.21.0 | 0.23 | Async SQLite for persisting monitor metrics |
+| `asyncssh` | 2.24.0 | 3 | SSH connections to remote hosts |
+| `fastapi` | 0.135.1 | 0.163 | Monitor dashboard web server |
+| `gojsonnet` | 0.22.0 | 0.23 | Go Jsonnet binding for lab and inventory templates; Linux aarch64 only ([known gaps](#jsonnet-known-gaps)) |
+| `jsonnet` | 0.22.0 | 0.23 | C++ Jsonnet binding for lab and inventory templates; Linux x86_64, Windows and Apple-silicon macOS ([known gaps](#jsonnet-known-gaps)) |
+| `packaging` | 24.0 | 27 | Requirement/marker/specifier evaluation for the dependency preflight |
+| `pydantic` | 2.10.4 | 3 | Boundary validation models for lab JSON, host records, and settings |
+| `pydantic-settings` | 2.7.0 | 3 | Environment-variable settings (`OTTO_*`) |
+| `pynetbox` | 7.4.0 | 8 | NetBox REST client for the `netbox` inventory backend |
+| `pysnmp` | 7.1.21 | 8 | Async SNMP manager for separate-channel host monitoring |
+| `pytest` | 9.1.1 | 10 | Test runner; otto imports user test files at runtime |
+| `pytest-asyncio` | 1.4.0 | 2 | Async test support for pytest |
+| `pytest-timeout` | 2.3.1 | 3 | Per-test timeouts for `otto test` (`@pytest.mark.timeout`) |
+| `pytest-randomly` | 4.1.0 | 6 | Random test order for `otto test` (`--random`, `--seed N` to reproduce) |
+| `pyyaml` | 6.0.3 | 7 | Parses rendered compose YAML to collect `env_file:` sidecar references |
+| `requests` | 2.30.0 | 3 | HTTP adapter mounted directly by the `netbox` inventory backend to bound each request |
+| `rich` | 15.0.0 | 16 | Terminal formatting, panels, and tables |
+| `sse-starlette` | 3.3.3 | 4 | Server-sent events for live dashboard updates |
+| `starlette` | 0.52.1 | 2 | ASGI request types used directly by the monitor server |
+| `telnetlib3` | 5.0.1 | 6 | Async Telnet client for telnet-based hosts |
+| `tomli` | 2.4.0 | 3 | TOML parser for `.otto/settings.toml` |
+| `tomlkit` | 0.14 | 0.16 | Comment-preserving edits to the user settings file (`otto cache enable` / `disable`) |
+| `truststore` | 0.10.1 | 0.11 | Verifies otto's HTTPS clients (`otto.tls`) against the OS certificate store |
+| `typer` | 0.29 | 0.30 | CLI framework (builds `otto run`, `otto test`, etc.) |
+| `typing-extensions` | 4.13.2 | 5 | Backport of `typing.override` (PEP 698) for Python < 3.12 |
+| `urllib3` | 2.0.2 | 3 | HTTP connection pools under `requests`; otto's OS-store TLS context needs urllib3 2 |
+| `uv` | 0.11 | 0.14 | Installs and syncs the `otto env` orchestration venv; otto runs the uv installed with it |
+| `uvicorn` | 0.42.0 | 0.55 | ASGI server for the monitor dashboard |
 
 (native-extension-dependencies)=
 
