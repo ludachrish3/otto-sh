@@ -27,7 +27,7 @@ from otto.errors import OttoError
 from otto.version import get_version
 from tests._fixtures.paths import CHECKOUT_ROOT, WHEELS_DIR
 from tests._fixtures.project_scaffold import copy_sample_project, make_project
-from tests.e2e._otto_subprocess import PROJECT1, run_otto
+from tests.e2e._otto_subprocess import PREPARATION_TIMEOUT, PROJECT1, run_otto
 
 pytestmark = pytest.mark.hostless
 
@@ -79,6 +79,26 @@ def _the_env(home):
     return found[0] if found else None
 
 
+@pytest.fixture(scope="module")
+def warm_uv_cache(tmp_path_factory):
+    """Run one real ``otto env create`` so uv's downloads happen in setup.
+
+    The child otto inherits ``HOME`` and sets no ``UV_CACHE_DIR`` (see
+    ``coverage_subprocess_env``), so every case here shares one uv cache. On a
+    cold cache the first build downloads otto's own dependencies from the
+    index, and pytest-timeout times a test's body only: that download is
+    preparation and belongs in setup, under :data:`PREPARATION_TIMEOUT`,
+    rather than inside whichever case builds first (#1274). With a warm cache
+    this is one ordinary build (a venv and an install from the cache).
+    Module scope: later builds, in any class, find otto's dependencies cached.
+    The fixture wheels the cases install besides are local files and were
+    never a download.
+    """
+    home = tmp_path_factory.mktemp("warm_uv_cache") / "home"
+    result = _run(["env", "create"], home=home, timeout=PREPARATION_TIMEOUT)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.fixture
 def project4(tmp_path):
     """A PRIVATE copy of project4, because these tests install it editable.
@@ -109,6 +129,7 @@ def _otto_uv_version():
     return uv_version(uv_bin())
 
 
+@pytest.mark.usefixtures("warm_uv_cache")
 class TestCreate:
     def test_it_builds_an_env_holding_otto_and_the_installable_project(self, tmp_path, project4):
         """project4's dependency lives on no index, so the find-links is required.
@@ -180,6 +201,7 @@ class TestCreate:
         assert _the_env(home) is None, f"-n built something: {list(home.rglob('*'))}"
 
 
+@pytest.mark.usefixtures("warm_uv_cache")
 class TestSync:
     def test_sync_with_no_env_behaves_as_create(self, tmp_path):
         """A missing env is built, not refused: ``sync`` is the verb every error names."""
@@ -291,6 +313,7 @@ class TestSync:
         assert probe.stdout.strip() == "0.1.0+otto.fixture"
 
 
+@pytest.mark.usefixtures("warm_uv_cache")
 class TestWorkspaceWithoutInstallableProjects:
     def test_it_still_builds_and_names_what_it_skipped(self, tmp_path):
         """Every sample project but project4 lacks a pyproject; that must still work.
@@ -310,6 +333,7 @@ class TestWorkspaceWithoutInstallableProjects:
         assert "installed (editable)" not in result.stdout, result.stdout
 
 
+@pytest.mark.usefixtures("warm_uv_cache")
 class TestShow:
     def test_a_missing_env_is_described_not_an_error(self, tmp_path):
         """`show` is the DIAGNOSTIC verb.
@@ -470,6 +494,7 @@ def _has_dist(env, dist):
     return probe.returncode == 0
 
 
+@pytest.mark.usefixtures("warm_uv_cache")
 class TestVirtualProject:
     """A project with a pyproject but no build backend is never built (#554)."""
 
@@ -621,6 +646,7 @@ def _stand_in_otto_wheel(directory, version):
     return module.write_wheel(directory, "otto_sh", version, {})
 
 
+@pytest.mark.usefixtures("warm_uv_cache")
 class TestOttoOption:
     """``--otto`` on ``env sync`` and ``env create`` installs the otto the operator names."""
 

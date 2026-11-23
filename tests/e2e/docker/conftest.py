@@ -10,7 +10,7 @@ from scripts.bed_lease import load_labs
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.docker_reap import docker_parents
 from tests._fixtures.labdata import lab_data_path
-from tests.e2e._otto_subprocess import PROJECT1
+from tests.e2e._otto_subprocess import PREPARATION_TIMEOUT, PROJECT1
 
 from ._cli import (
     _DEFAULT_PARENT,
@@ -145,3 +145,60 @@ def teardown_default_parent_after(fresh_suffix, default_parent_host, tmp_path):
     """``teardown_after``, for the tests that lease :data:`_DEFAULT_PARENT`."""
     yield fresh_suffix
     _tear_down(default_parent_host, fresh_suffix, tmp_path)
+
+
+def _build_sample_images(host: str, suffix: str, xdir) -> None:
+    """Build every sample project's declared images on *host*, through the real CLI.
+
+    The one invocation ``otto docker build --parent <host>`` over both sample
+    projects, the same one ``test_e2e_multi_project_build_builds_every_loaded_project_on_the_host``
+    drives. *suffix* is the test's own compose suffix, so the build's staging key
+    (``build_staging_key(project, suffix)``) is one :func:`_tear_down` already
+    removes. A cold layer cache pulls base images: that is preparation, and it
+    runs in setup under :data:`PREPARATION_TIMEOUT`.
+
+    *xdir* is the build's own output directory, never the test's: a test that
+    asserts its commands wrote a ``docker`` run directory, or reads the one
+    completion cache under its ``tmp_path``, must not find this build's there.
+    """
+    built = _run_otto(
+        "docker",
+        "build",
+        "--parent",
+        host,
+        roots=f"{PROJECT1}{os.pathsep}{PROJECT2}",
+        xdir=xdir,
+        compose_suffix=suffix,
+        timeout=PREPARATION_TIMEOUT,
+    )
+    assert built.returncode == 0, (
+        f"building the sample images on {host} failed\n"
+        f"stdout:\n{built.stdout}\nstderr:\n{built.stderr}"
+    )
+
+
+@pytest.fixture
+def built_images(docker_host, fresh_suffix, tmp_path_factory) -> None:
+    """The sample projects' images, built on the leased ``docker_host`` before the body.
+
+    pytest-timeout times a test's body only, so a test whose subject is not the
+    image build gets its images here, in setup, instead of running
+    ``compose up --build`` in the body (#1274). Request it with
+    ``teardown_after``, which shares the lease and the suffix: the teardown's
+    staging cleanup is what removes this build's staging key from the host.
+
+    Function scoped on purpose. ``test_docker_honesty.py`` removes images
+    (``_rmi``) and the host a test leases differs from one test to the next, so a
+    session-scoped build would make the tests order-dependent. With a warm layer
+    cache the build is a no-op, so running it per test costs little.
+    """
+    _build_sample_images(docker_host, fresh_suffix, tmp_path_factory.mktemp("image-build"))
+
+
+@pytest.fixture
+def built_images_default_parent(default_parent_host, fresh_suffix, tmp_path_factory) -> None:
+    """:func:`built_images`, on the leased :data:`_DEFAULT_PARENT` host.
+
+    Request it with ``teardown_default_parent_after``, for the same reason.
+    """
+    _build_sample_images(default_parent_host, fresh_suffix, tmp_path_factory.mktemp("image-build"))

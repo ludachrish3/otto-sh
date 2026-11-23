@@ -40,7 +40,7 @@ from otto.coverage.store.model import CoverageStore
 from otto.docker.compose import use_case_project
 from tests._fixtures._host_pool import DOCKER_HOST, docker_host_lease
 from tests._fixtures.gitrepo import git_env
-from tests.e2e._otto_subprocess import PROJECT_CTR, run_otto
+from tests.e2e._otto_subprocess import PREPARATION_TIMEOUT, PROJECT_CTR, run_otto
 from tests.e2e.cov._project5_build import _artifacts_are_stale, _hits, _line_of, _record
 
 _LAB = "unix"
@@ -143,7 +143,7 @@ def _ensure_runtime_image(otto: _Otto) -> None:
         return
     remote = f"/tmp/{RUNTIME_TAR.name}"
     try:
-        otto("host", _PARENT, "put", str(RUNTIME_TAR), "/tmp", timeout=600)
+        otto("host", _PARENT, "put", str(RUNTIME_TAR), "/tmp", timeout=PREPARATION_TIMEOUT)
         loaded = otto.marked(
             f"docker load -i {remote} >/dev/null; "
             f"echo \"image=<$(docker image inspect --format '{{{{.Id}}}}' {RUNTIME_IMAGE} "
@@ -237,7 +237,7 @@ def ctr_run(tmp_path_factory):
             # Collection clears the counters it captured, so exercise the
             # product again — --no-cov, since collection is otherwise on by
             # default for an instrumented lab — before `otto cov get`.
-            otto("test", "--no-cov", "TestCovCtr", timeout=600)
+            otto("test", "--no-cov", "TestCovCtr", timeout=PREPARATION_TIMEOUT)
             otto("cov", "get", "--output", str(get_dir), timeout=300)
         except BaseException:
             _teardown_after_failure(otto, project)
