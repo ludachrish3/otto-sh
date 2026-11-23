@@ -71,8 +71,8 @@ def image_rm_command(
 ) -> str:
     """``docker image rm [-f] [--no-prune] -- IMAGE...``, every image name shell-quoted.
 
-    The one image removal: ``otto docker image rm``, a product's uninstall, the
-    coverage scan's cleanup and the stale-scan sweep all render it here. The
+    The one image removal: ``otto docker image rm``, the coverage scan's
+    cleanup of its own snapshot and the stale-scan sweep all render it here. The
     ``--`` ends docker's flags, so an image whose name starts with ``-``
     (``otto docker image rm -- -f``) is removed as named, never read as a flag.
     """
