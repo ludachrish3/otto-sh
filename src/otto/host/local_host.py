@@ -22,7 +22,7 @@ from errno import (
     EIO,
 )
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from typing_extensions import final, override
 
@@ -274,6 +274,18 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
     #  Command execution
     ####################
+
+    @override
+    def _terminal_limitation(
+        self,
+        terminal: bool,
+        *,
+        verb: Literal["run", "exec", "open_session"],
+    ) -> str | None:
+        """Refuse a terminal: every session and subprocess of the local host reads a pipe."""
+        return (
+            "is not available on the local host, whose sessions read a pipe" if terminal else None
+        )
 
     @override
     def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:

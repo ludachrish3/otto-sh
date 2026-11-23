@@ -19,7 +19,12 @@ import pytest
 from otto.errors import OttoError
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
-from otto.host.errors import ContainerNotRunningError, HostUnreachableError, MountNotFoundError
+from otto.host.errors import (
+    ContainerNotRunningError,
+    HostUnreachableError,
+    MountNotFoundError,
+    UnsupportedOptionError,
+)
 from otto.host.inventory_ref import InventoryRef
 from otto.host.login_proxy import Cred
 from otto.host.mount import Mount
@@ -326,6 +331,38 @@ async def test_exec_forwards_expects_to_the_parents_exec():
     await h.exec("id", expects=[("assword", "pw\n")])
 
     assert parent.exec.await_args.kwargs["expects"] == [("assword", "pw\n")]
+
+
+@pytest.mark.parametrize("terminal", [None, False])
+@pytest.mark.asyncio
+async def test_exec_without_a_terminal_is_the_exec_a_container_always_had(terminal):
+    """``docker exec -i`` gives the command no terminal; the parent is told nothing new."""
+    parent = _mock_parent()
+    h = _make_container(parent)
+    await h.exec("id", terminal=terminal)
+    sent = parent.exec.await_args
+    assert sent.args[0] == f"docker exec -i {h.container_id} sh -c id"
+    assert "terminal" not in sent.kwargs
+
+
+@pytest.mark.parametrize(
+    ("verb", "terminal", "reason"),
+    [
+        ("exec", True, "terminal=True is not available for a container's exec() yet"),
+        ("run", False, "terminal=False is not available for a container's run() and"),
+        ("open_session", False, "terminal=False is not available for a container's run() and"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_container_refuses_the_mode_an_entry_does_not_have_before_any_lookup(
+    verb, terminal, reason
+):
+    parent = _mock_parent()
+    h = _make_container(parent, container_id="")
+    with pytest.raises(UnsupportedOptionError) as refused:
+        await getattr(h, verb)("aux" if verb == "open_session" else "true", terminal=terminal)
+    assert reason in str(refused.value)
+    parent.exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -1223,7 +1223,7 @@ class TestTheBudgetIsTheHostsExecRouteSpeaking:
         """Once the default session measured its terminal, the chunks size to that fact."""
         host = self._busybox_host("telnet")
         # An open default session that measured *echoes* at its handshake.
-        session = SimpleNamespace(alive=True, echoes=echoes)
+        session = SimpleNamespace(alive=True, echoes=echoes, reads_a_terminal=True)
         host._session_mgr._session = cast("ShellSession", session)
         budget = host._file_transfer._line_room()("")
         assert budget == ceiling - framed_line_overhead(

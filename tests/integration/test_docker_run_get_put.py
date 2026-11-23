@@ -17,6 +17,7 @@ import pytest_asyncio
 from otto.config.project import Project
 from otto.docker import build_images, compose_down, compose_up
 from otto.host.element import Element
+from otto.host.errors import UnsupportedOptionError
 from otto.host.exec_route import ExecRoute, container_route
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
@@ -96,6 +97,19 @@ async def test_exec_returns_output_from_container(stack):
     result = await stack.exec("echo hello-from-container")
     assert result.status is Status.Success
     assert "hello-from-container" in result.value
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_a_container_has_a_terminal_for_run_and_none_for_exec(stack):
+    """Each entry's own mode is the only one it has; the other is refused by name."""
+    probe = "[ -t 1 ] && echo tty || echo pipe"
+    assert (await stack.exec(probe)).value == "pipe"
+    assert (await stack.exec(probe, terminal=False)).value == "pipe"
+    assert (await stack.run(probe, terminal=True)).only.value == "tty"
+    with pytest.raises(UnsupportedOptionError, match="terminal=True is not available"):
+        await stack.exec(probe, terminal=True)
+    with pytest.raises(UnsupportedOptionError, match="terminal=False is not available"):
+        await stack.run(probe, terminal=False)
 
 
 @pytest.mark.asyncio(loop_scope="module")
