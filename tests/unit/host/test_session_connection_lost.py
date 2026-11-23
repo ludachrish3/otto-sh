@@ -14,6 +14,15 @@ from otto.utils import Status
 from tests.unit.host._session_feed import identity_handshake_reply
 from tests.unit.host.test_session import MockSession
 
+# What every transport agrees means "the connection is gone": EOF, a write on
+# a dead channel, a reset, an abort.
+_NEUTRAL_ERRORS: list[type[BaseException]] = [
+    asyncio.IncompleteReadError,
+    BrokenPipeError,
+    ConnectionResetError,
+    ConnectionAbortedError,
+]
+
 
 def test_local_session_never_imports_asyncssh():
     code = (
@@ -36,19 +45,13 @@ def test_local_session_never_imports_asyncssh():
 def test_base_session_names_only_transport_neutral_errors():
     """``ShellSession`` is an ABC (``object.__new__`` refuses it — R3): the
     method doesn't read ``self``, so call it unbound with ``self=None``."""
-    assert ShellSession._connection_lost_errors(None) == [
-        asyncio.IncompleteReadError,
-        BrokenPipeError,
-    ]
+    assert ShellSession._connection_lost_errors(None) == _NEUTRAL_ERRORS
 
 
 def test_local_session_names_only_transport_neutral_errors():
     """``LocalSession`` implements every abstract method, so it is concrete —
     ``object.__new__`` works here (unlike the base ABC above)."""
-    assert LocalSession._connection_lost_errors(object.__new__(LocalSession)) == [
-        asyncio.IncompleteReadError,
-        BrokenPipeError,
-    ]
+    assert LocalSession._connection_lost_errors(object.__new__(LocalSession)) == _NEUTRAL_ERRORS
 
 
 @pytest.mark.parametrize("cls", [SshSession, _DockerSshSession])
@@ -58,7 +61,7 @@ def test_ssh_session_adds_asyncssh_connection_lost(cls: type[SshSession]):
     import asyncssh
 
     errors = cls._connection_lost_errors(object.__new__(cls))
-    assert errors == [asyncio.IncompleteReadError, BrokenPipeError, asyncssh.ConnectionLost]
+    assert errors == [*_NEUTRAL_ERRORS, asyncssh.ConnectionLost]
 
 
 @pytest.mark.asyncio
@@ -118,8 +121,7 @@ def test_telnet_session_adds_the_closed_read_gate():
     from otto.host.telnet import ReadGateClosed
 
     assert TelnetSession._connection_lost_errors(object.__new__(TelnetSession)) == [
-        asyncio.IncompleteReadError,
-        BrokenPipeError,
+        *_NEUTRAL_ERRORS,
         ReadGateClosed,
     ]
 
@@ -189,3 +191,180 @@ async def test_run_cmd_read_after_close_marks_session_dead(caplog):
     # The refusal itself is the read entry's: a read after the take never starts.
     with pytest.raises(ReadGateClosed):
         await session.read_transport_until(pattern=re.compile("x"))
+
+
+# ---------------------------------------------------------------------------
+# A reset or abort is the same lost connection on every transport
+# ---------------------------------------------------------------------------
+
+_HANG = object()  # a read that never answers: the command runs past its budget
+
+
+def _scripted_stdout(ready: str, *script: "bytes | Exception | object") -> AsyncMock:
+    """A ``stdout.read`` that answers the handshake, then each *script* step in turn.
+
+    A step is bytes to return, an exception to raise, or ``_HANG`` to wait
+    until the command's timeout cancels it.
+    """
+    steps: list[object] = [identity_handshake_reply(ready).encode(), *script]
+
+    async def read(n: int) -> bytes:
+        step = steps.pop(0)
+        if step is _HANG:
+            await asyncio.get_running_loop().create_future()
+        if isinstance(step, Exception):
+            raise step
+        assert isinstance(step, bytes)
+        return step
+
+    return AsyncMock(side_effect=read)
+
+
+def _ssh_session(*script: "bytes | Exception | object") -> ShellSession:
+    conn = MagicMock()
+    proc = MagicMock()
+    conn.create_process = AsyncMock(return_value=proc)
+    s = SshSession(conn)
+    proc.stdout.read = _scripted_stdout(s._ready_marker, *script)
+    return s
+
+
+def _local_session(*script: "bytes | Exception | object") -> ShellSession:
+    """A real ``LocalSession`` over a scripted stdout, with no bash started."""
+    s = LocalSession()
+
+    async def open_transport() -> None:
+        s._process = MagicMock()
+        s._process.stdin.drain = AsyncMock()
+        stdout = MagicMock()
+        stdout.read = _scripted_stdout(s._ready_marker, *script)
+        s._bind_stdout(stdout)
+
+    s.open_transport = open_transport  # type: ignore[method-assign]
+    return s
+
+
+def _telnet_session(*script: "bytes | Exception | object") -> ShellSession:
+    """A real ``TelnetSession`` on a real ``TelnetReader`` that fails as a script says.
+
+    The shell answers the handshake; a ``_HANG`` step leaves the stream quiet
+    and an exception step fails the reader (what telnetlib3 does when the
+    socket resets) at the next thing the session writes.
+    """
+    from telnetlib3.stream_reader import TelnetReader
+
+    from otto.host.session import TelnetSession
+    from tests.unit.host._session_feed import onlcr_handshake_reply, writes_handshake
+    from tests.unit.host._telnet_fakes import stream_client
+
+    reader = TelnetReader()
+    steps = list(script)
+
+    class _Shell:
+        session: TelnetSession
+
+        def write(self, data: bytes) -> None:
+            text = data.decode(errors="replace").replace("\r", "\n")
+            if writes_handshake(text, self.session.markers.ready):
+                reader.feed_data(onlcr_handshake_reply(self.session.markers.ready).encode())
+                return
+            # Later writes (the recovery's probe) follow the failure and
+            # have nothing left to script.
+            step = steps.pop(0) if steps else None
+            if isinstance(step, Exception):
+                reader.set_exception(step)
+
+        def is_closing(self) -> bool:
+            return False
+
+        def close(self) -> None:
+            pass
+
+    shell = _Shell()
+    s = TelnetSession(reader=reader, writer=shell, client=stream_client(reader, shell))
+    shell.session = s
+    return s
+
+
+_TRANSPORTS = [
+    pytest.param(_ssh_session, id="ssh"),
+    pytest.param(_local_session, id="local"),
+    pytest.param(_telnet_session, id="telnet"),
+]
+_DROPS = [
+    pytest.param(asyncio.IncompleteReadError(b"", None), "EOF", id="eof"),
+    pytest.param(BrokenPipeError("broken pipe"), "broken pipe", id="broken-pipe"),
+    pytest.param(ConnectionResetError("reset by peer"), "connection reset", id="reset"),
+    pytest.param(ConnectionAbortedError("aborted"), "connection lost", id="aborted"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make", _TRANSPORTS)
+@pytest.mark.parametrize(("drop", "reason"), _DROPS)
+async def test_a_drop_during_a_command_is_the_lost_connection_outcome(make, drop, reason):
+    """The command's read fails with *drop*: one outcome on every transport.
+
+    The scripted stdout (ssh, local) raises on the command's first read; the
+    telnet reader fails on the command's own write, as telnetlib3's reader
+    does once its socket has reset.
+    """
+    session = make(drop)
+
+    result = await session.run_cmd(cmd="echo hi", timeout=5)
+
+    assert result.status == Status.Error
+    assert result.value == f"Session died unexpectedly ({reason})"
+    assert result.retcode == -1
+    assert not session.alive
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make", _TRANSPORTS)
+@pytest.mark.parametrize(("drop", "reason"), _DROPS)
+async def test_a_drop_while_recovering_from_a_timeout_ends_the_session(make, drop, reason):
+    """The command times out, and the recovery's own read meets *drop*.
+
+    The caller still gets the timeout's result (that is what happened to the
+    command) and the session is dead; no raw exception leaves ``run_cmd``.
+    """
+    session = make(_HANG, drop)
+
+    result = await session.run_cmd(cmd="sleep 99", timeout=0.05)
+
+    assert result.status == Status.Error
+    assert "timed out" in result.value
+    assert not session.alive
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make", _TRANSPORTS)
+async def test_an_otto_connection_error_is_not_a_dropped_transport(make):
+    """``SessionSetupError`` is a ``ConnectionError`` of otto's, not a drop.
+
+    The list names concrete transport failures, never the ``ConnectionError``
+    base, so an error that means something else keeps its own handling and
+    reaches the caller.
+    """
+    from otto.host.errors import SessionSetupError
+
+    session = make(SessionSetupError("a setup hook failed"))
+
+    with pytest.raises(SessionSetupError):
+        await session.run_cmd(cmd="echo hi", timeout=5)
+
+
+def test_no_otto_connection_error_is_listed_as_a_drop():
+    from otto.host.errors import ConsoleError, HostKeyChangedError, SessionSetupError
+    from otto.host.session import TelnetSession
+
+    lists = {
+        "ShellSession": ShellSession._connection_lost_errors(None),  # an ABC: unbound call
+        **{
+            cls.__name__: cls._connection_lost_errors(object.__new__(cls))
+            for cls in (LocalSession, SshSession, TelnetSession)
+        },
+    }
+    for name, errors in lists.items():
+        for own in (SessionSetupError, ConsoleError, HostKeyChangedError):
+            assert not issubclass(own, tuple(errors)), (name, own.__name__)

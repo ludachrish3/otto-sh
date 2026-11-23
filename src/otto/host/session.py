@@ -1239,9 +1239,23 @@ class ShellSession(ABC):
         """Exceptions that mean **this session's own transport** dropped mid-command.
 
         Transport-neutral by default: EOF on the read side
-        (``asyncio.IncompleteReadError``) or a write landing on an
-        already-dead channel (``BrokenPipeError``). Overridden by
-        :class:`SshSession` to add asyncssh's own ``ConnectionLost`` —
+        (``asyncio.IncompleteReadError``), a write landing on an
+        already-dead channel (``BrokenPipeError``), and the peer or the
+        network ending the connection under a read or write
+        (``ConnectionResetError``, ``ConnectionAbortedError``: a telnet
+        reader that failed carries the first). Every transport agrees on
+        these, so a reset gives the same outcome on ssh, telnet, console and
+        local sessions.
+
+        The ``ConnectionError`` base class is deliberately NOT listed. Many
+        of otto's own errors subclass it on purpose (``SessionSetupError``,
+        ``ConsoleError``, the host-key errors, ``ReadGateClosed``) and are not
+        a transport dropping: they keep their own handling, and listing the
+        base would swallow them into "the session died". Name a new
+        transport failure here by its concrete class instead.
+
+        Overridden by :class:`SshSession` to add asyncssh's own
+        ``ConnectionLost`` —
         asyncssh is a heavy import (the cryptography stack, and ``ldconfig``
         runs to look for liboqs and nettle: :mod:`otto.host._asyncssh`),
         so only the transport that can actually raise that error pays to
@@ -1250,7 +1264,12 @@ class ShellSession(ABC):
         class of event regardless of which transport it is: :meth:`expect`,
         :meth:`run_cmd`, :meth:`_recover_session`, :meth:`_confirm_recovered`.
         """
-        return [asyncio.IncompleteReadError, BrokenPipeError]
+        return [
+            asyncio.IncompleteReadError,
+            BrokenPipeError,
+            ConnectionResetError,
+            ConnectionAbortedError,
+        ]
 
     async def console_login(self) -> None:
         """Run the console login state machine on this session's own streams.
@@ -1843,6 +1862,8 @@ class ShellSession(ABC):
                 if isinstance(exc, asyncio.IncompleteReadError)
                 else "broken pipe"
                 if isinstance(exc, BrokenPipeError)
+                else "connection reset"
+                if isinstance(exc, ConnectionResetError)
                 else "connection lost"
             )
             return CommandResult(
