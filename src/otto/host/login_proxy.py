@@ -161,11 +161,11 @@ def _may_challenge(hop: Cred, via: Cred) -> bool:
     already in hand and costs no clock -- when it is known at all: an
     unidentified caller is NOT assumed to be root (see the guard below).
 
-    That matters because the watch is not free. Measured on the bed, a hop that
-    waits out ``_PROMPT_WATCH`` for a prompt that never comes costs ~0.49s;
-    skipping it where none can come takes a root-to-service-account switch from
-    1.44s to 0.96s, while the challenged path is unchanged (0.63s either way,
-    since a real prompt ends the watch in milliseconds).
+    That matters because the watch is not free. A hop that waits out
+    ``_PROMPT_WATCH`` for a prompt that never comes pays the whole of it, about
+    five seconds; skipping it where none can come saves that on every
+    root-to-service-account switch, while the challenged path is unchanged,
+    since a real prompt ends the watch in milliseconds.
 
     Returning False also DISARMS answering for that hop rather than merely
     skipping the wait, and that is the safety half. If this prediction is ever
@@ -239,9 +239,9 @@ async def _su_proxy(io: ProxyIO, ctx: ProxyContext) -> None:
     The watch is not free -- waiting one out costs ``_PROMPT_WATCH`` -- so it
     is armed only for hops that can actually be challenged, which
     ``_may_challenge`` decides from the caller's identity rather than by
-    watching. Measured on the bed, that takes a root-to-service-account switch
-    from 1.44s to 1.25s and leaves a challenged switch at 0.63s either way,
-    since a real prompt ends the watch in milliseconds.
+    watching. That saves the whole watch on a root-to-service-account switch
+    and leaves a challenged switch as it was, since a real prompt ends the
+    watch in milliseconds.
 
     What is deliberately NOT done is shortening the watch itself. A prompt
     arriving just after a too-short one would be met by otto's first probe, and
