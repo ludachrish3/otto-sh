@@ -120,7 +120,7 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
 
 
 def test_e2e_host_run_against_running_container(
-    teardown_default_parent_after, default_parent_host, tmp_path
+    teardown_default_parent_after, default_parent_host, built_images_default_parent, tmp_path
 ):
     """Once a stack is up, `otto host <id> run` must execute inside the container.
 
@@ -136,7 +136,6 @@ def test_e2e_host_run_against_running_container(
         _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
-        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -159,7 +158,9 @@ def test_e2e_host_run_against_running_container(
     assert_output_dir(tmp_path, "docker")
 
 
-def test_e2e_host_put_get_roundtrip(teardown_default_parent_after, default_parent_host, tmp_path):
+def test_e2e_host_put_get_roundtrip(
+    teardown_default_parent_after, default_parent_host, built_images_default_parent, tmp_path
+):
     """Two-step put / get through `docker cp` and the parent's SSH.
 
     On :data:`_DEFAULT_PARENT` for ``test_e2e_host_run_against_running_container``'s
@@ -174,7 +175,6 @@ def test_e2e_host_put_get_roundtrip(teardown_default_parent_after, default_paren
         _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
-        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -233,12 +233,12 @@ def test_e2e_host_put_get_roundtrip(teardown_default_parent_after, default_paren
 # ---------------------------------------------------------------------------
 
 
-def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
+def test_e2e_up_is_idempotent(teardown_after, docker_host, built_images, tmp_path):
     """A second `otto docker compose up` against a running stack must not fail or
     re-create containers.
 
-    Only the first `up` says `--build`: the second needs no build, because the
-    image the first one built is already on the daemon.
+    Neither `up` says `--build`: the ``built_images`` fixture built the images
+    before the body, so both composes find them on the daemon.
     """
     suffix = teardown_after
     first = _run_otto(
@@ -248,7 +248,6 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
         _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
-        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -299,7 +298,7 @@ def test_e2e_multi_project_build_builds_every_loaded_project_on_the_host(docker_
 
 
 def test_e2e_multi_project_up_composes_only_the_named_use_case(
-    teardown_after, docker_host, tmp_path
+    teardown_after, docker_host, built_images, tmp_path
 ):
     """With both projects loaded, `otto docker compose up project1` must touch project1 alone.
 
@@ -318,7 +317,6 @@ def test_e2e_multi_project_up_composes_only_the_named_use_case(
         _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
-        "--build",
         roots=f"{PROJECT1}{os.pathsep}{PROJECT2}",
         xdir=tmp_path,
         compose_suffix=suffix,
@@ -487,7 +485,7 @@ def test_e2e_up_with_no_use_case_names_the_declared_ones(tmp_path):
     assert "Traceback" not in output, f"unexpected traceback:\n{output}"
 
 
-def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
+def test_e2e_ps_lists_running_containers(teardown_after, docker_host, built_images, tmp_path):
     """After `up`, `otto docker ps` must show the running container."""
     suffix = teardown_after
     _run_otto(
@@ -497,7 +495,6 @@ def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
         _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
-        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -511,7 +508,7 @@ def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
 
 
 def test_e2e_default_parent_serves_up_ps_and_logs_with_no_flag(
-    teardown_default_parent_after, default_parent_host, tmp_path
+    teardown_default_parent_after, default_parent_host, built_images_default_parent, tmp_path
 ):
     """With no `--parent` anywhere, the verbs agree on the lab's default parent.
 
@@ -521,8 +518,8 @@ def test_e2e_default_parent_serves_up_ps_and_logs_with_no_flag(
     every docker-capable host, daemons this test does not lease); and
     `logs <name>` with no flag reads that container's log from the
     same daemon (docker's own "No such container" would fail it on any other).
-    `--build` is the image build, unrelated to the host: `up` builds nothing
-    without it.
+    The images are built beforehand by ``built_images_default_parent``, unrelated
+    to which host `up` resolves: `up` builds nothing without `--build`.
     """
     suffix = teardown_default_parent_after
     project = f"unix-{_MERGED_USE_CASE}-{suffix}"
@@ -531,7 +528,6 @@ def test_e2e_default_parent_serves_up_ps_and_logs_with_no_flag(
         "compose",
         "up",
         _MERGED_USE_CASE,
-        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -669,7 +665,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
     )
 
 
-def test_e2e_provide_flips_the_winner(teardown_after, docker_host, tmp_path):
+def test_e2e_provide_flips_the_winner(teardown_after, docker_host, built_images, tmp_path):
     """`--provide edge=project2` hands the capability to the mock (spec §4).
 
     Two things are asserted, and the second is the sharper one: the winner
@@ -688,7 +684,6 @@ def test_e2e_provide_flips_the_winner(teardown_after, docker_host, tmp_path):
         "edge=project2",
         "--parent",
         docker_host,
-        "--build",
         roots=_BOTH_REPOS,
         xdir=tmp_path,
         compose_suffix=suffix,

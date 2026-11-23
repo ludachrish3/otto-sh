@@ -44,7 +44,7 @@ from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore, FileRecord
 from tests._fixtures.labdata import tech1_lab_source
 from tests._fixtures.project_scaffold import make_project
-from tests.e2e._otto_subprocess import PROJECT1, output_dirs, run_otto
+from tests.e2e._otto_subprocess import PREPARATION_TIMEOUT, PROJECT1, output_dirs, run_otto
 
 PRODUCT_DIR = PROJECT1 / "product"
 
@@ -177,7 +177,7 @@ def coverage_run(tmp_path_factory):
     _run_otto(
         ["test", "--cov", "TestCoverageProduct"],
         xdir=xdir,
-        timeout=600,
+        timeout=PREPARATION_TIMEOUT,
     )
 
     log_dir = _find_test_log_dir(xdir)
@@ -679,7 +679,7 @@ def auto_cov_run(tmp_path_factory):
         xdir=xdir,
         roots=PROJECT1,
         lab=_LAB,
-        timeout=600,
+        timeout=PREPARATION_TIMEOUT,
     )
     return result, xdir
 
@@ -830,7 +830,7 @@ def polluted_run(tmp_path_factory):
     _run_otto(
         ["test", "--cov", "TestCoverageProduct"],
         xdir=xdir,
-        timeout=600,
+        timeout=PREPARATION_TIMEOUT,
     )
     log_dir = _find_test_log_dir(xdir)
 

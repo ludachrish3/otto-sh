@@ -43,6 +43,16 @@ COVERAGERC = CHECKOUT_ROOT / ".coveragerc"
 COVERAGE_BOOTSTRAP = CHECKOUT_ROOT / "tests" / "_coverage_bootstrap"
 OTTO_BIN = Path(sys.executable).parent / "otto"
 
+PREPARATION_TIMEOUT = 600
+"""Seconds a fixture gives one otto child that PREPARES a test: a product build,
+an image build, an inner suite run, an installer filling a cold cache.
+
+pytest-timeout times a test's body only (``timeout_func_only``), so setup has
+no limit of its own; this is it, and a child that passes it ends as a
+``TimeoutExpired`` naming the command and what it printed. Above the per-test
+180 s on purpose, so it is only meaningful in a fixture: in a body the test's
+own timeout always fires first."""
+
 
 def _ctracer_importable() -> bool:
     """Whether coverage's compiled ``CTracer`` imports in this interpreter.

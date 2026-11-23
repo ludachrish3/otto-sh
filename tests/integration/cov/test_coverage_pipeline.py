@@ -21,6 +21,7 @@ Run with::
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 import tomli
 
 import otto.host.factory  # noqa: F401 — imported for its side effect: the factory module is what puts the built-in "file" product kind in PRODUCT_KINDS
@@ -107,8 +108,7 @@ async def _compile_product() -> None:
 
 
 async def _install_on_host(host: UnixHost) -> None:
-    """Attach the declared product, then deploy its binary to a remote host."""
-    attach_product(host)
+    """Deploy the product's binary to a remote host that already carries the declared product."""
     cov_dir = _cov_dir(host)
     await host.exec(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {cov_dir}", timeout=10)
     await host.exec(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {cov_dir}", timeout=10)
@@ -140,46 +140,61 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     return result.value
 
 
+@pytest_asyncio.fixture
+async def installed_product_hosts(test1, test2):
+    """Compile the product and install it on test1 and test2, then yield both.
+
+    pytest-timeout times a test's body only, so the compile and the two installs
+    are preparation and live here, in setup. Teardown uninstalls from each host
+    the product was attached to, and runs whether or not the test passed (#1274).
+    """
+    hosts = [test1, test2]
+    await _compile_product()
+    # The uninstall reads the cov dir off the attached product, so only a host
+    # the product was attached to is cleaned up; a failed attach keeps its own error.
+    attached: list[UnixHost] = []
+    try:
+        for host in hosts:
+            attach_product(host)
+            attached.append(host)
+            await _install_on_host(host)
+        yield hosts
+    finally:
+        for host in attached:
+            await _uninstall_from_host(host)
+
+
 @pytest.mark.xdist_group("coverage_e2e")
 class TestCoverageFetch:
     """Test that .gcda files are correctly fetched from remote hosts."""
 
     @pytest.mark.asyncio
-    async def test_fetch_gcda_files(self, test1, test2, tmp_path):
-        """Deploy, run, and fetch .gcda files from two hosts."""
-        hosts = [test1, test2]
+    async def test_fetch_gcda_files(self, installed_product_hosts, tmp_path):
+        """Run the deployed product on two hosts and fetch their .gcda files."""
+        hosts = installed_product_hosts
+        test1, test2 = hosts
 
-        # Setup
-        await _compile_product()
-        for host in hosts:
-            await _install_on_host(host)
+        # Run the product on each host with different operations
+        await _run_product(test1, "add", 1, 2)
+        await _run_product(test2, "sub", 5, 3)
 
-        try:
-            # Run the product on each host with different operations
-            await _run_product(test1, "add", 1, 2)
-            await _run_product(test2, "sub", 5, 3)
+        # Fetch .gcda files — the fetcher takes no remote directory: each
+        # product names its own (`Product.cov_dir`), which is what makes a
+        # host with two products two separate staging dirs.
+        cov_dir = tmp_path / "cov"
+        with configured_hosts(*hosts):
+            fetcher = _GcdaFetcher(cov_dir)
+            product_dirs = await fetcher.fetch_all(failures={})
 
-            # Fetch .gcda files — the fetcher takes no remote directory: each
-            # product names its own (`Product.cov_dir`), which is what makes a
-            # host with two products two separate staging dirs.
-            cov_dir = tmp_path / "cov"
-            with configured_hosts(*hosts):
-                fetcher = _GcdaFetcher(cov_dir)
-                product_dirs = await fetcher.fetch_all(failures={})
+        # Verify we got .gcda files from both hosts
+        assert len(product_dirs) == 2, f"Expected 2 (host, product) keys, got {product_dirs}"
 
-            # Verify we got .gcda files from both hosts
-            assert len(product_dirs) == 2, f"Expected 2 (host, product) keys, got {product_dirs}"
+        # Verify the staging tree is keyed by (host.id, product name)
+        assert (test1.id, PRODUCT_NAME) in product_dirs
+        assert (test2.id, PRODUCT_NAME) in product_dirs
 
-            # Verify the staging tree is keyed by (host.id, product name)
-            assert (test1.id, PRODUCT_NAME) in product_dirs
-            assert (test2.id, PRODUCT_NAME) in product_dirs
-
-            # ...and that each key's dir is the two-level cov/<host>/<product>/
-            for (host_id, product), product_dir in product_dirs.items():
-                assert product_dir == cov_dir / host_id / product
-                gcda_files = list(product_dir.glob("**/*.gcda"))
-                assert len(gcda_files) > 0, f"No .gcda files found for {product} on {host_id}"
-
-        finally:
-            for host in hosts:
-                await _uninstall_from_host(host)
+        # ...and that each key's dir is the two-level cov/<host>/<product>/
+        for (host_id, product), product_dir in product_dirs.items():
+            assert product_dir == cov_dir / host_id / product
+            gcda_files = list(product_dir.glob("**/*.gcda"))
+            assert len(gcda_files) > 0, f"No .gcda files found for {product} on {host_id}"

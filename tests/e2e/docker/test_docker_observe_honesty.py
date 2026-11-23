@@ -46,7 +46,9 @@ def _daemon_container_ids(host: str, xdir) -> "set[str]":
     return ids
 
 
-def test_ps_prints_only_container_ids_the_daemon_holds(teardown_after, docker_host, tmp_path):
+def test_ps_prints_only_container_ids_the_daemon_holds(
+    teardown_after, docker_host, built_images, tmp_path
+):
     suffix = teardown_after
     up = _run_otto(
         "docker",
@@ -55,7 +57,6 @@ def test_ps_prints_only_container_ids_the_daemon_holds(teardown_after, docker_ho
         _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
-        "--build",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -77,11 +78,9 @@ def test_ps_prints_only_container_ids_the_daemon_holds(teardown_after, docker_ho
         )
 
 
-def test_images_prints_only_references_and_ids_the_daemon_holds(docker_host, tmp_path):
-    built = _run_otto(
-        "docker", "build", "project1-api", "--parent", docker_host, xdir=tmp_path, env=_WIDE
-    )
-    assert built.returncode == 0, built.stdout + built.stderr
+def test_images_prints_only_references_and_ids_the_daemon_holds(
+    teardown_after, docker_host, built_images, tmp_path
+):
     images = _run_otto("docker", "images", "--parent", docker_host, xdir=tmp_path, env=_WIDE)
     assert images.returncode == 0, images.stdout + images.stderr
     printed = parse_images_rows(images.stdout)
@@ -112,7 +111,6 @@ def _up_project1(docker_host: str, suffix: str, xdir) -> None:
         _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
-        "--build",
         xdir=xdir,
         compose_suffix=suffix,
     )
@@ -120,7 +118,7 @@ def _up_project1(docker_host: str, suffix: str, xdir) -> None:
 
 
 def test_compose_ps_names_only_containers_of_the_project_the_daemon_holds(
-    teardown_after, docker_host, tmp_path
+    teardown_after, docker_host, built_images, tmp_path
 ):
     suffix = teardown_after
     # `use_case_project(lab, use_case, suffix)`: the three slugged segments joined by `-`.
@@ -149,7 +147,7 @@ def test_compose_ps_names_only_containers_of_the_project_the_daemon_holds(
 
 
 def test_compose_logs_prints_the_services_log_lines_the_daemon_holds(
-    teardown_after, docker_host, tmp_path
+    teardown_after, docker_host, built_images, tmp_path
 ):
     suffix = teardown_after
     project = f"unix-{_PROJECT1_USE_CASE}-{suffix}"
@@ -258,7 +256,7 @@ def _assert_lines_are_the_daemons(printed: str, host: str, cid: str, xdir) -> No
 
 
 def test_logs_with_no_parent_prints_what_docker_logs_prints(
-    teardown_default_parent_after, default_parent_host, tmp_path
+    teardown_default_parent_after, default_parent_host, built_images_default_parent, tmp_path
 ):
     """With no `--parent`, `logs <name>` asks the default parent's daemon.
 
@@ -289,7 +287,7 @@ def test_logs_with_no_parent_prints_what_docker_logs_prints(
 
 
 def test_logs_of_a_stopped_container_are_still_dockers_to_print(
-    teardown_default_parent_after, default_parent_host, tmp_path
+    teardown_default_parent_after, default_parent_host, built_images_default_parent, tmp_path
 ):
     """`docker logs` reads a stopped container's log, so `logs <name>` still prints it."""
     suffix = teardown_default_parent_after
@@ -343,7 +341,9 @@ def _observed_entry(xdir, host: str, kind: str) -> dict:
     return json.loads(cache.read_text())["__docker_observed__"]["hosts"][host][kind]
 
 
-def test_ps_records_exactly_the_containers_the_daemon_lists(teardown_after, docker_host, tmp_path):
+def test_ps_records_exactly_the_containers_the_daemon_lists(
+    teardown_after, docker_host, built_images, tmp_path
+):
     """After `otto docker ps`, the host's containers entry is the daemon's own list."""
     _up_project1(docker_host, teardown_after, tmp_path)
     ps = _run_otto("docker", "ps", "-a", "--parent", docker_host, xdir=tmp_path, env=_WIDE)
@@ -358,10 +358,11 @@ def test_ps_records_exactly_the_containers_the_daemon_lists(teardown_after, dock
 
 
 def test_images_records_the_daemons_references_minus_dangling(
-    teardown_after, docker_host, tmp_path
+    teardown_after, docker_host, built_images, tmp_path
 ):
     """After `otto docker images`, the images entry is the daemon's list minus dangling."""
-    # `compose up --build` leaves project1's images on the daemon, so the list is never empty.
+    # The `built_images` fixture leaves the sample projects' images on the daemon, so the list
+    # is never empty.
     _up_project1(docker_host, teardown_after, tmp_path)
     images = _run_otto("docker", "images", "--parent", docker_host, xdir=tmp_path, env=_WIDE)
     assert images.returncode == 0, images.stdout + images.stderr
