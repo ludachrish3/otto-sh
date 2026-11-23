@@ -361,19 +361,22 @@ class MountNotFoundError(OttoError, ValueError):
 
 
 class UnsupportedOptionError(OttoError, NotImplementedError):
-    """A ``run`` or ``exec`` option the host family can never honour.
+    """An option of ``run``, ``exec`` or a session that this host cannot honour.
 
-    Raised before anything is sent, under a dry run too, from the family's
-    declared limitation (:attr:`~otto.host.capability_grid.HostCapabilities.sudo`,
+    Raised before anything is sent, under a dry run too. For ``sudo``,
+    ``user`` and ``expects`` it comes from the family's declared limitation
+    (:attr:`~otto.host.capability_grid.HostCapabilities.sudo`,
     :attr:`~otto.host.capability_grid.HostCapabilities.expects` or
-    :attr:`~otto.host.capability_grid.HostCapabilities.user_refusal`). The
-    message names the option, the host and the limitation's reason.
+    :attr:`~otto.host.capability_grid.HostCapabilities.user_refusal`). For
+    ``terminal`` it comes from the host as it is configured, or from what the
+    call combines the choice with (:func:`terminal_refusal`). The
+    message names the option, the host and the reason.
     ``NotImplementedError``, so a caller that caught the bare refusal keeps
     catching it.
     """
 
     option: str
-    """The refused option, ``sudo``, ``user`` or ``expects``."""
+    """The refused option, ``sudo``, ``user``, ``expects`` or ``terminal``."""
 
     host: str
     """Which host refused it, by name."""
@@ -386,6 +389,18 @@ class UnsupportedOptionError(OttoError, NotImplementedError):
         self.host = host
         self.reason = reason
         super().__init__(f"{host}: {option}= is not supported on this host: {reason}")
+
+
+def terminal_refusal(*, host: str, terminal: bool, reason: str) -> UnsupportedOptionError:
+    """Build the refusal of ``terminal=<terminal>`` on *host*: the one spelling of it.
+
+    *reason* completes the sentence that starts with the value, so every
+    refusal of the switch reads ``terminal=False cannot …`` or
+    ``terminal=True is not available …``.
+    """
+    return UnsupportedOptionError(
+        option="terminal", host=host, reason=f"terminal={terminal} {reason}"
+    )
 
 
 class UntypableCommandError(OttoError, ValueError):

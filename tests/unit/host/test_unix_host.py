@@ -2200,6 +2200,7 @@ class TestOpenSession:
             command_frame=None,
             init_timeout=None,
             shell_history=False,
+            terminal=True,
         )
 
     # --- Telnet ---

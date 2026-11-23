@@ -19,7 +19,7 @@ otto host <host_id> <command> [ARGS...] [OPTIONS]
 Run commands, transfer files, log in, and invoke capability verbs on lab hosts.
 
 ```text
-otto host <HOST_ID> exec [--sudo] [--timeout SECS] [--user NAME] "COMMAND"
+otto host <HOST_ID> exec [--sudo] [--timeout SECS] [--user NAME] [--terminal | --no-terminal] "COMMAND"
 otto host <HOST_ID> put <SRC...> <DEST>
 otto host <HOST_ID> get <SRC...> <DEST>
 otto host <HOST_ID> login [--user NAME] [--force]

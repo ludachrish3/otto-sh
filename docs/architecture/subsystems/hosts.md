@@ -107,6 +107,75 @@ Both return the command's exact output, whichever route carried it;
 {ref}`command-output-contract` says what that means and what otto undoes to
 get there.
 
+(terminal-switch)=
+
+### With or without a terminal
+
+`run()`, `exec()` and `open_session()` take `terminal=`. Left unset, nothing
+is refused and every call runs as it did before the switch existed: each
+host uses its own kind of session.
+
+| Host | Unset | `terminal=True` | `terminal=False` |
+| --- | --- | --- | --- |
+| ssh | `run` and named sessions have a terminal; `exec` takes a bare channel where it can | a session with a terminal (for `exec`, a pooled shell) | a session without one; `exec` takes the bare channel |
+| telnet, console, embedded | a terminal | the same | refused: the transport is a terminal |
+| local host | a pipe | refused: its sessions read a pipe | the same as unset, in every respect |
+| container | `run` and named sessions have a terminal; `exec` has none (`docker exec -i`) | `exec` is refused | `run` and `open_session` are refused |
+
+```python
+probe = "test -t 1 && echo terminal || echo pipe"
+await host.run(probe)  # terminal
+await host.run(probe, terminal=False)  # pipe
+await host.exec(probe)  # pipe
+await host.exec(probe, terminal=True)  # terminal
+aux = await host.open_session("aux", terminal=False)
+```
+
+A refusal is an {exc}`~otto.host.errors.UnsupportedOptionError` that names
+the value and the reason. It is raised before anything is opened, sent or
+logged, and under a dry run too.
+
+**Two sessions.** On an ssh host `run(..., terminal=False)` uses a second
+default session, opened the first time it is asked for. The two do not share
+a working directory or variables, and `close()` closes both. A named session
+keeps the mode it was opened with: opening a live name in the other mode
+raises `ValueError`.
+
+**What a session without a terminal cannot do, on an ssh host.** Switching
+users answers a password prompt on a terminal. So `run(..., terminal=False)` refuses
+`user=`, `sudo=True` and a call inside `as_user()` or after `switch_user()`, and a named session
+opened without a terminal refuses `as_user()` and `switch_user()`.
+`exec(..., terminal=False)` refuses `sudo=True`, `expects=` and a user
+reached only by switching; a user with a direct ssh login is accepted. An
+ssh host whose login is proxied through another user, or that has a
+`session_setup` hook, has no session without a terminal at all.
+
+**What it changes for the command.** Without a terminal there is no line
+discipline: nothing is echoed, a TAB arrives as a TAB, and the length of a
+line is not limited ({ref}`the run contract <command-contract-run>` has the
+limits a terminal sets). An ssh session without a terminal (the one `run`
+uses, or a named one) runs the login shell of the user, started with
+`OTTO_SESSION=<token>` in its environment, which every command it starts
+inherits. An `exec` on the bare channel has no such shell and no token.
+
+`terminal=True` gives an `exec` command a terminal on its output. Its input
+is still at end of file unless the call answers prompts (`expects=`), as for
+every `exec`.
+
+(terminal-switch-stop)=
+**On an ssh session without a terminal, a timed-out or cancelled command ends the session.** With a terminal otto
+types Ctrl-C and the session lives on. Without one Ctrl-C is only a byte, and
+closing the channel leaves the command running. otto instead opens a second
+channel and stops every process that carries the session's token, then kills
+the session's shell. The next `run` opens a new session, so the working
+directory and variables of the old one are gone; a named session is dead and
+is opened again by name. The stop reaches everything
+the session started, a background job from an earlier command included. It
+does not reach a process that changed user (its environment cannot be read)
+or one that removed the token from its environment. It needs `/proc` and a
+second channel on the host: without them only the shell is killed, and on a
+dropbear server the command it was running is then left behind.
+
 (host-exec-pool)=
 
 ### The exec pool: one free-list per user

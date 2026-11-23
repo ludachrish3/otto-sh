@@ -50,7 +50,7 @@ The interactive bridge (``run_login``) currently raises
 import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Annotated, Any, NoReturn, cast
+from typing import Annotated, Any, Literal, NoReturn, cast
 
 from typing_extensions import final, override
 
@@ -455,6 +455,17 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         return Result(
             status=Status.Success,
             value=f"{self.name}: this console has no login step; nothing to reset",
+        )
+
+    @override
+    def _terminal_limitation(
+        self, terminal: bool, *, verb: Literal["run", "exec", "open_session"]
+    ) -> str | None:
+        """Refuse a session without a terminal: an embedded target's one console is a terminal."""
+        return (
+            None
+            if terminal
+            else "is not available on an embedded host, whose console is a terminal"
         )
 
     @override

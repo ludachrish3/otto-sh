@@ -35,7 +35,7 @@ from dataclasses import (
     replace,
 )
 from pathlib import Path
-from typing import Annotated, TypeGuard
+from typing import Annotated, Literal, TypeGuard
 
 from typing_extensions import final, override
 
@@ -54,6 +54,7 @@ from .errors import (
 from .exec_route import ExecRoute, container_route
 from .file_ops import PosixFileOps
 from .host import (
+    _TERMINAL_HELP,
     CONCURRENT_HELP,
     DEFAULT_COMMAND_TIMEOUT,
     BaseHost,
@@ -1068,6 +1069,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 "accept it, and how, is declared per family in `otto host` docs."
             ),
         ] = None,
+        terminal: Annotated["bool | None", Opt(help=_TERMINAL_HELP)] = None,
     ) -> CommandResult:
         """See :meth:`~otto.host.host.BaseHost.exec`.
 
@@ -1075,6 +1077,11 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         exec channel has no pty to answer a ``sudo -S`` prompt on, and root
         in the container is what elevation means there. ``user`` and
         ``sudo`` together refuse: both choose the ``-u``.
+
+        *terminal* false is what a container's ``exec`` already is: the
+        command runs under ``docker exec -i``, with no terminal in the
+        container, whatever carries the wrapper on the parent. ``True`` is
+        refused (``_terminal_limitation``).
 
         The command and its output are logged on this container, and so are
         the container's own helpers that run through ``exec`` (a chmod with
@@ -1098,11 +1105,31 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     f"choose the user; pass one"
                 ) from None
             return await super(DockerContainerHost, self).exec(
-                cmd, expects=expects, timeout=timeout, log=log, user=ROOT_LOGIN
+                cmd, expects=expects, timeout=timeout, log=log, user=ROOT_LOGIN, terminal=terminal
             )
         return await super(DockerContainerHost, self).exec(
-            cmd, expects=expects, timeout=timeout, log=log, user=user
+            cmd, expects=expects, timeout=timeout, log=log, user=user, terminal=terminal
         )
+
+    @override
+    def _terminal_limitation(
+        self, terminal: bool, *, verb: Literal["run", "exec", "open_session"]
+    ) -> str | None:
+        """Refuse the mode each entry of a container does not have.
+
+        A container's session is ``docker exec -it … sh`` on its parent's
+        terminal, and no other kind is built. Its ``exec`` is
+        ``docker exec -i``, with no terminal in the container: ``-t`` would
+        run the command under a terminal no session has measured, whose
+        carriage returns would reach the caller's output.
+        """
+        if verb == "exec":
+            if not terminal:
+                return None
+            return "is not available for a container's exec() yet; its run() has a terminal"
+        if terminal:
+            return None
+        return "is not available for a container's run() and open_session(); its exec() has none"
 
     @override
     def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:

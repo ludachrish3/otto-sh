@@ -41,6 +41,18 @@ otto --lab my_lab host router1 exec "systemctl restart foo" --sudo
 container it runs the command as root. Families that cannot elevate refuse
 and say so.
 
+## With or without a terminal
+
+```bash
+otto --lab my_lab host router1 exec "test -t 1 && echo terminal || echo pipe" --terminal
+otto --lab my_lab host router1 exec "test -t 1 && echo terminal || echo pipe" --no-terminal
+```
+
+Without either flag the host chooses, and nothing is refused. `--terminal`
+runs the command on a shell session that has a terminal; `--no-terminal`
+insists on none. A host that cannot give what is asked refuses and says why.
+Which host gives which is in {ref}`terminal-switch`.
+
 ## `exec` options
 
 ```text
@@ -53,6 +65,7 @@ otto host <HOST_ID> exec [OPTIONS] COMMAND
 | `--timeout SECS` | `30.0` | Seconds before the command is abandoned. Must be `>= 0`; `inf` for a deliberately unbounded command |
 | `--sudo / --no-sudo` | `--no-sudo` | Elevate |
 | `--user NAME` | none | Run as this user; see {doc}`families` |
+| `--terminal / --no-terminal` | unset | Run under a terminal, or insist on none; see {ref}`terminal-switch` |
 
 A second positional argument is a usage error — `exec` takes one command.
 

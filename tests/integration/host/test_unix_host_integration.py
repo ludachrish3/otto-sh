@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from otto.host.connections import teardown_step
+from otto.host.errors import UnsupportedOptionError
 from otto.host.host import Host
 from otto.host.login_proxy import Cred, LoginProxyError
 from otto.host.unix_host import UnixHost
@@ -182,6 +183,58 @@ class TestTimeout:
         result = (await host1.run("echo recovered")).only
         assert result.status == Status.Success
         assert "recovered" in result.value
+
+
+# ---------------------------------------------------------------------------
+# With or without a terminal
+# ---------------------------------------------------------------------------
+
+_TTY_PROBE = "[ -t 1 ] && echo tty || echo pipe"
+
+
+@pytest.mark.parametrize("host1", ["ssh"], indirect=True)
+class TestTerminalSwitch:
+    @pytest.mark.asyncio
+    async def test_each_entry_has_a_terminal_only_where_it_says(self, host1: Host):
+        assert (await host1.run(_TTY_PROBE)).only.value == "tty"
+        assert (await host1.run(_TTY_PROBE, terminal=False)).only.value == "pipe"
+        assert (await host1.exec(_TTY_PROBE)).value == "pipe"
+        assert (await host1.exec(_TTY_PROBE, terminal=False)).value == "pipe"
+        assert (await host1.exec(_TTY_PROBE, terminal=True)).value == "tty"
+        async with await host1.open_session("plain", terminal=False) as plain:
+            assert (await plain.run(_TTY_PROBE)).only.value == "pipe"
+
+    @pytest.mark.asyncio
+    async def test_the_session_without_a_terminal_keeps_state_of_its_own(self, host1: Host):
+        await host1.run("cd /tmp && OTTO_MODE=plain", terminal=False)
+        await host1.run("cd / && OTTO_MODE=term")
+        plain = (await host1.run("echo $PWD $OTTO_MODE", terminal=False)).only
+        term = (await host1.run("echo $PWD $OTTO_MODE")).only
+        assert (plain.value, term.value) == ("/tmp plain", "/ term")
+
+    @pytest.mark.asyncio
+    async def test_a_timed_out_command_without_a_terminal_is_stopped(self, host1: Host):
+        """The command and what it started are gone, nothing after it ran, the next call runs."""
+        # A length no other sleep on the host has: the wrapper's argv and its
+        # child's both hold it, so one pattern finds either left behind.
+        length = f"600.{uuid.uuid4().int % 10**9:09d}"
+        ran_on = f"/tmp/ran-on-{uuid.uuid4().hex}"
+        result = (
+            await host1.run(f"sh -c 'sleep {length}; :'; touch {ran_on}", timeout=2, terminal=False)
+        ).only
+        assert result.timed_out, result
+        assert (await host1.run("echo again", terminal=False)).only.value == "again"
+        # The bracket keeps the pattern from matching the shell that runs pgrep.
+        left = await host1.exec(f"pgrep -f '[s]leep {length}'; [ -e {ran_on} ] && echo ran-on")
+        assert left.value == "", left
+
+
+@pytest.mark.parametrize("host1", ["telnet"], indirect=True)
+@pytest.mark.asyncio
+async def test_telnet_refuses_a_session_without_a_terminal(host1: Host):
+    with pytest.raises(UnsupportedOptionError, match="terminal=False needs an ssh transport"):
+        await host1.run("true", terminal=False)
+    assert (await host1.run(_TTY_PROBE)).only.value == "tty"
 
 
 # ---------------------------------------------------------------------------

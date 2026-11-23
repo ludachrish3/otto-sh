@@ -16,9 +16,11 @@ from otto.cli.expose import (
     exposed_cli_names,
     make_method_command,
 )
+from otto.host.element import Element
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
+from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
-from otto.result import Result
+from otto.result import CommandResult, Result
 from otto.utils import Arg, Opt, Status, cli_exposed
 from tests._fixtures.dispatch import DispatchRunner
 
@@ -482,6 +484,39 @@ def test_login_user_flag_dispatches_end_to_end(monkeypatch):
     assert captured["user"] is None
 
 
+@pytest.mark.parametrize(
+    ("flags", "terminal"),
+    [([], None), (["--terminal"], True), (["--no-terminal"], False)],
+    ids=["unset", "terminal", "no-terminal"],
+)
+def test_exec_terminal_flag_reaches_the_method_and_is_unset_by_default(
+    monkeypatch, flags, terminal
+):
+    """``--terminal/--no-terminal`` is a three-state option: omitted, the method sees ``None``."""
+    captured: dict = {}
+
+    async def exec_(self, cmd, **kwargs):
+        captured.update(kwargs)
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
+
+    monkeypatch.setattr(UnixHost, "_exec_in_turn", exec_)
+    monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: UnixHost)
+    app = typer.Typer(name="host", cls=HostGroup)
+    host = UnixHost(
+        ip="10.0.0.1", element=Element(name="u1"), creds=[Cred(login="u", password="p")]
+    )
+
+    @app.callback(invoke_without_command=True)
+    def main(ctx: typer.Context, host_id: str = typer.Argument("")):
+        if ctx.resilient_parsing:
+            return
+        ctx.obj = host
+
+    r = DispatchRunner().invoke(app, ["u1", "exec", *flags, "true"])
+    assert r.exit_code == 0, r.output
+    assert captured.get("terminal") is terminal
+
+
 def test_host_verbs_synthesize_user_flag(monkeypatch):
     """Task 8 pin: every host verb Tasks 1-7 threaded `user=` through
     (login/exec/put/get) synthesizes a `--user` CLI option, and none of them
@@ -539,6 +574,8 @@ def test_docker_exec_override_mirrors_the_base_hosts_cli_overlays(monkeypatch):
         assert "--sudo" in flat
         assert "--no-sudo" in flat
         assert "--user" in flat
+        assert "--terminal" in flat
+        assert "--no-terminal" in flat
 
 
 def test_probe_renders_user_and_scan_ports_options(monkeypatch):

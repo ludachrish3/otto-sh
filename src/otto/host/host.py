@@ -35,6 +35,7 @@ from typing import (
     ClassVar,
     Literal,
     Protocol,
+    TypedDict,
     TypeGuard,
     TypeVar,
     cast,
@@ -136,6 +137,31 @@ class CredentialExpect:
     Set only for a prompt nothing else can print; otherwise a later match is
     output and is neither answered nor an error.
     """
+
+
+_TERMINAL_HELP = "Run under a terminal, or insist on none. Unset leaves the choice to the host."
+
+_NO_TERMINAL_SWITCH = (
+    "cannot switch users (user=, sudo=True, as_user(), switch_user()): the password prompt is "
+    "answered on a terminal"
+)
+"""Why a session without a terminal refuses a user switch; the host's and the named session's."""
+
+
+class _TerminalChoice(TypedDict, total=False):
+    """The ``terminal=`` keyword a call passes on, absent when the caller made no choice."""
+
+    terminal: bool
+
+
+def _terminal_choice(terminal: bool | None) -> _TerminalChoice:
+    """Return the ``terminal=`` keyword to pass on for a caller's choice; nothing when unset.
+
+    An unset choice is passed to nobody, so every receiver that predates the
+    switch (a session manager's stand-in, an override of the per-command
+    hook) sees the call it always saw.
+    """
+    return {} if terminal is None else {"terminal": terminal}
 
 
 def exec_stdin_eof(expects: "Sequence[Expect | CredentialExpect] | None") -> bool:
@@ -990,6 +1016,7 @@ class Host(Protocol):
         log: LogMode = LogMode.NORMAL,
         sudo: bool = False,
         user: str | None = None,
+        terminal: bool | None = None,
     ) -> Results:
         """Run one or more commands on the host and collect their results.
 
@@ -1026,6 +1053,14 @@ class Host(Protocol):
                 On containers the persistent channel binds its user at open;
                 a later ``run()`` naming a different user refuses — ``close()``
                 or ``rebuild_connections()`` to rebind.
+            terminal: Whether the session the commands run on has a terminal.
+                ``None`` (the default) is the host's own session, which every
+                family has and which never refuses: a terminal everywhere but
+                on the local host, whose session reads a pipe. ``False`` on
+                an ssh host runs on a second session that has no terminal,
+                with its own shell state; on the local host it is the one
+                session there is. A value the host cannot give is refused by
+                name before anything is sent — see :ref:`terminal-switch`.
 
         Returns:
             A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
@@ -1047,6 +1082,7 @@ class Host(Protocol):
         log: LogMode = LogMode.NORMAL,
         sudo: bool = False,
         user: str | None = None,
+        terminal: bool | None = None,
     ) -> CommandResult:
         """Run ONE command on a session this host does not keep.
 
@@ -1074,6 +1110,12 @@ class Host(Protocol):
                 enclosing ``as_user()``'s identity, else the connection's own.
                 Which families accept it, and how, is declared per family on
                 :class:`~otto.host.capability_grid.HostCapabilities`.
+            terminal: Whether the command runs under a terminal. ``None`` (the
+                default) leaves the choice to the host, as before the switch
+                existed, and never refuses. ``True`` runs it on a shell
+                session with a terminal; ``False`` insists on none, and is
+                refused where the call needs one (a prompt to answer, an
+                elevation, a switched user) — see :ref:`terminal-switch`.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
@@ -1088,8 +1130,13 @@ class Host(Protocol):
     async def open_session(
         self,
         name: str,
+        *,
+        terminal: bool | None = None,
     ) -> "HostSession":
         """Open a named auxiliary session on this host.
+
+        *terminal* chooses whether the session has a terminal, as on
+        :meth:`run`; a session keeps the mode it was opened with.
 
         Named sessions are independent of the host's default persistent
         session and of each other, allowing concurrent shell interactions.
@@ -2311,6 +2358,7 @@ class BaseHost(ABC):
         log: LogMode = LogMode.NORMAL,
         sudo: bool = False,
         user: str | None = None,
+        terminal: bool | None = None,
     ) -> Results:
         """Execute one or more commands on the host via the persistent shell session.
 
@@ -2358,6 +2406,14 @@ class BaseHost(ABC):
                 containers bind the user when the channel opens; embedded and
                 local refuse. Which is which is declared per family on
                 :class:`~otto.host.capability_grid.HostCapabilities`.
+            terminal: Whether the session the commands run on has a terminal.
+                ``None`` (the default) is the host's own session, which every
+                family has and which never refuses: a terminal everywhere but
+                on the local host, whose session reads a pipe. ``False`` on
+                an ssh host runs on a second session that has no terminal,
+                with its own shell state; on the local host it is the one
+                session there is. A value the host cannot give is refused by
+                name before anything is sent — see :ref:`terminal-switch`.
 
         Returns:
             A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
@@ -2379,6 +2435,11 @@ class BaseHost(ABC):
                 shares ``run``'s session and its bound, so split the command.
             ~otto.host.errors.SessionSetupError: a ``session_setup`` hook
                 called this while the session it sets up is opening.
+            ~otto.host.errors.UnsupportedOptionError: *terminal* asks for a
+                mode this host cannot give, or ``terminal=False`` on an ssh
+                host is combined with a user switch (``user=``,
+                ``sudo=True``, an enclosing ``as_user()``, an earlier
+                ``switch_user()``).
 
         On a host whose commands share one line (a console, an embedded
         host) a call waits for the one before it to end.
@@ -2388,7 +2449,13 @@ class BaseHost(ABC):
         """
         async with self._host_entry("run"):
             return await self._run_in_turn(
-                cmds, expects=expects, timeout=timeout, log=log, sudo=sudo, user=user
+                cmds,
+                expects=expects,
+                timeout=timeout,
+                log=log,
+                sudo=sudo,
+                user=user,
+                **_terminal_choice(terminal),
             )
 
     async def _run_in_turn(
@@ -2400,6 +2467,7 @@ class BaseHost(ABC):
         log: LogMode,
         sudo: bool,
         user: str | None,
+        terminal: bool | None = None,
     ) -> Results:
         """Run :meth:`run`'s body, inside the turn :meth:`run` took."""
         timeout = _validate_timeout(timeout)
@@ -2412,6 +2480,13 @@ class BaseHost(ABC):
         ]
         self._refuse_options(
             resolved, call_expects=default_expects, sudo=sudo, user=user, verb="run"
+        )
+        self._refuse_terminal(
+            terminal,
+            verb="run",
+            # Asked only for an explicit False: nothing new is read for any other call.
+            switches=terminal is False
+            and (sudo or user is not None or self._ambient_user() is not None),
         )
         if user is not None:
             if capabilities.run_user is UserSupport.switch and not is_dry_run():
@@ -2426,7 +2501,12 @@ class BaseHost(ABC):
                 # before an invalid argument has had the chance to raise.
                 async with self.as_user(user=user):
                     return await self.run(
-                        cmds, expects=expects, timeout=timeout, log=log, sudo=sudo
+                        cmds,
+                        expects=expects,
+                        timeout=timeout,
+                        log=log,
+                        sudo=sudo,
+                        **_terminal_choice(terminal),
                     )
             if capabilities.run_user is UserSupport.switch:
                 user = None
@@ -2451,6 +2531,7 @@ class BaseHost(ABC):
                 timeout=one.timeout if one.timeout is not None else timeout,
                 log=one.log,
                 user=user,
+                **_terminal_choice(terminal),
             )
             return Results.collect(items=[result])
 
@@ -2463,6 +2544,7 @@ class BaseHost(ABC):
                 timeout=t,
                 log=pc.log,
                 user=user,
+                **_terminal_choice(terminal),
             )
 
         return await _run_cmds_with_budget(_run_pc, prepared, timeout)
@@ -2499,6 +2581,7 @@ class BaseHost(ABC):
         expects: list[Expect | CredentialExpect] | None = None,
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
+        terminal: bool | None = None,
     ) -> CommandResult:
         """Run one command on the persistent shell session: the one policy for every family.
 
@@ -2530,6 +2613,9 @@ class BaseHost(ABC):
             user: Run as this user. Bound by the container family
                 (``_run_user_binding``); a family that refuses *user* refused
                 it in :meth:`run`, above this.
+            terminal: The caller's choice of session mode, already checked by
+                :meth:`run` (``_refuse_terminal``); ``None`` is the host's
+                own session.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
@@ -2540,7 +2626,11 @@ class BaseHost(ABC):
         await self._prepare_live_session()
         with self._run_user_binding(user):
             return await self._live_session_mgr().run_cmd(
-                cmd=cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+                cmd=cmd,
+                expects=expects,
+                timeout=timeout,
+                log=self._effective_log(log),
+                **_terminal_choice(terminal),
             )
 
     def _run_user_binding(self, user: "str | None") -> "AbstractContextManager[None]":  # noqa: ARG002 — the hook's signature; the default binds nothing
@@ -2580,6 +2670,7 @@ class BaseHost(ABC):
                 "accept it, and how, is declared per family in `otto host` docs.",
             ),
         ] = None,
+        terminal: Annotated[bool | None, Opt(help=_TERMINAL_HELP)] = None,
     ) -> CommandResult:
         """Run ONE command on a session this host does not keep.
 
@@ -2617,6 +2708,12 @@ class BaseHost(ABC):
                 enclosing ``as_user()``'s identity, else the connection's own.
                 Which families accept it, and how, is declared per family on
                 :class:`~otto.host.capability_grid.HostCapabilities`.
+            terminal: Whether the command runs under a terminal. ``None`` (the
+                default) leaves the choice to the host, as before the switch
+                existed, and never refuses. ``True`` runs it on a shell
+                session with a terminal; ``False`` insists on none, and is
+                refused where the call needs one (a prompt to answer, an
+                elevation, a switched user) — see :ref:`terminal-switch`.
 
         Raises:
             ~otto.host.errors.PasswordRefusedError: ``sudo=True`` and the
@@ -2624,10 +2721,18 @@ class BaseHost(ABC):
                 password was refused. The command is interrupted first.
             ~otto.host.errors.SessionSetupError: a ``session_setup`` hook
                 called this while the session it sets up is opening.
+            ~otto.host.errors.UnsupportedOptionError: *terminal* asks for a
+                mode this host, or this call on it, cannot have.
         """
         async with self._host_entry("exec"):
             return await self._exec_in_turn(
-                cmd, expects=expects, timeout=timeout, log=log, sudo=sudo, user=user
+                cmd,
+                expects=expects,
+                timeout=timeout,
+                log=log,
+                sudo=sudo,
+                user=user,
+                **_terminal_choice(terminal),
             )
 
     async def _exec_delegated(
@@ -2666,6 +2771,7 @@ class BaseHost(ABC):
         log: LogMode,
         sudo: bool,
         user: str | None,
+        terminal: bool | None = None,
         exec_log: "ExecLogContext | None" = None,
     ) -> CommandResult:
         """Run :meth:`exec`'s body, inside the turn :meth:`exec` took.
@@ -2679,6 +2785,13 @@ class BaseHost(ABC):
         self._refuse_options(
             [sc], call_expects=_normalize_expects(expects), sudo=sudo, user=user, verb="exec"
         )
+        # A terminal is a reason to want a shell, as a prompt or an elevation is.
+        needs_shell = sudo or bool(sc.expects) or terminal is True
+        self._refuse_terminal(terminal, verb="exec")
+        if terminal is False:
+            self._refuse_exec_on_a_terminal(
+                user=user, needs_shell=needs_shell, sudo=sudo, expects=bool(sc.expects)
+            )
         if sudo:
             await self._prepare_exec_elevation(user)
         # Imported here: the frame module is needed only once a command runs.
@@ -2701,9 +2814,88 @@ class BaseHost(ABC):
             log=pc.log,
             user=user,
             expects=pc.expects,
-            needs_shell=sudo or bool(pc.expects),
+            needs_shell=needs_shell or bool(pc.expects),
             exec_input=exec_input,
         )
+
+    def _terminal_limitation(
+        self,
+        terminal: bool,
+        *,
+        verb: Literal["run", "exec", "open_session"],  # noqa: ARG002 — the hook's signature; a container answers per verb
+    ) -> str | None:
+        """Why this host cannot give *verb* a session of mode *terminal*, or ``None`` if it can.
+
+        The one answer per family to "which terminal modes exist here",
+        synchronous and free of I/O. This default is the family whose
+        sessions are terminals: a terminal always, and no terminal where the
+        transport can leave it out
+        (:meth:`~otto.host.session.SessionManager.no_terminal_limitation`:
+        ssh, with no proxied login and no session-setup hook). The local
+        host and a container override it.
+        """
+        return None if terminal else self._live_session_mgr().no_terminal_limitation()
+
+    def _refuse_terminal(
+        self,
+        terminal: bool | None,
+        *,
+        verb: Literal["run", "exec", "open_session"],
+        switches: bool = False,
+    ) -> None:
+        """Refuse a *terminal* choice this host cannot honour for *verb*; ``None`` never refuses.
+
+        The one refusal of the switch for ``run``, ``exec`` and
+        ``open_session``, called above each one's dry-run arm, so nothing is
+        sent, opened or logged for a call that is refused. *switches* says the
+        call changes user on the session (``user=``, ``sudo=True``, an
+        enclosing ``as_user()``): the password prompt of a switch is answered
+        on a terminal, so the second session, the one without a terminal
+        (``SessionManager._wants_plain``), refuses it. A family whose own
+        session reads a pipe has no second session and switches as it always did.
+
+        Raises:
+            ~otto.host.errors.UnsupportedOptionError: naming the value and why.
+        """
+        if terminal is None:
+            return
+        reason = self._terminal_limitation(terminal, verb=verb)
+        if reason is None and switches and self._live_session_mgr()._wants_plain(terminal):  # noqa: SLF001 — the manager's own answer
+            reason = _NO_TERMINAL_SWITCH
+        if reason is not None:
+            self._raise_terminal_refusal(terminal, reason)
+
+    def _raise_terminal_refusal(self, terminal: bool, reason: str) -> Never:
+        """Raise the refusal of ``terminal=<terminal>`` on this host, for *reason*."""
+        from .errors import terminal_refusal  # a refusal only: off the startup graph
+
+        raise terminal_refusal(host=self.name, terminal=terminal, reason=reason)
+
+    def _refuse_exec_on_a_terminal(
+        self, *, user: str | None, needs_shell: bool, sudo: bool, expects: bool
+    ) -> None:
+        """Refuse an ``exec(terminal=False)`` whose planned route is a session with a terminal.
+
+        Asked of the plan (:meth:`_exec_plan`), so it is the route the call
+        would take that is judged and no condition is restated here: a prompt
+        to answer, an elevation and a user reached by a switch all plan a
+        shell session, and on a family whose sessions are terminals
+        (``SessionManager._wants_plain``) that session has one. The local
+        host's shell session reads a pipe, so nothing is refused there.
+        """
+        plan = self._exec_plan(user=user, needs_shell=needs_shell)
+        on_a_session = plan.route in (ExecRoute.POOLED_SHELL, ExecRoute.DEFAULT_SESSION)
+        if not on_a_session or not self._live_session_mgr()._wants_plain(False):  # noqa: SLF001 — the manager's own answer
+            return
+        if sudo:
+            why = "cannot elevate (sudo=True): the password prompt is answered on a terminal"
+        elif expects:
+            why = "cannot answer prompts (expects=): they are answered on a terminal"
+        elif user is not None:
+            why = f"cannot run as {user!r}, who is reached by switching users on a terminal"
+        else:  # pragma: no cover — _terminal_limitation(False) names every other cause first
+            why = "cannot be given: this call runs on a session with a terminal"
+        self._raise_terminal_refusal(False, why)
 
     def _refuse_options(
         self,
@@ -2914,6 +3106,8 @@ class BaseHost(ABC):
     async def open_session(
         self,
         name: str,
+        *,
+        terminal: bool | None = None,
     ) -> "HostSession":
         """Open a named persistent shell session.
 
@@ -2949,19 +3143,32 @@ class BaseHost(ABC):
             name: Identifier for this session. Reusing an existing name
                 returns the existing session if it is still alive, or
                 replaces it if dead.
+            terminal: Whether the session has a terminal, as on :meth:`run`:
+                ``None`` is the host's own kind of session, ``False`` one
+                without a terminal (an ssh host; the local host's sessions
+                have none already). A session keeps the mode it was opened
+                with; asking for a live name in the other mode raises
+                :exc:`ValueError`. An ssh session opened without a terminal
+                refuses ``switch_user`` and ``as_user``. See
+                :ref:`terminal-switch`.
 
         Returns:
             A :class:`~otto.host.session.HostSession` proxy exposing ``run``,
             ``send``, ``expect``, and ``close``.
 
+        Raises:
+            ~otto.host.errors.UnsupportedOptionError: *terminal* asks for a
+                mode this host cannot give.
+
         See Also:
             :meth:`~otto.host.host.BaseHost.exec`: stateless alternative for one-off commands.
             :meth:`~otto.host.host.BaseHost.run`: default persistent session.
         """
+        self._refuse_terminal(terminal, verb="open_session")
         if is_dry_run():
             return self._dry_run_session(name)
         await self._prepare_live_session()
-        return await self._live_session_mgr().open_session(name=name)
+        return await self._live_session_mgr().open_session(name=name, **_terminal_choice(terminal))
 
     async def _prepare_live_session(self) -> None:
         """Make the device ready for the live session arm; nothing, for most families.

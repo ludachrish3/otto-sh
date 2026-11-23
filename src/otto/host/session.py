@@ -3303,6 +3303,22 @@ class HostSession:
         """
         refuse_declined_elevation(verb, user, self._host_id, self._log_command)
 
+    def _refuse_switch_without_a_terminal(self) -> None:
+        """Refuse a user switch on a session opened with ``terminal=False``.
+
+        The host's own refusal (``BaseHost._refuse_terminal``), for a named
+        session: the switch's password prompt is answered on a terminal. A
+        session whose family never had one (the local host's) is not such a
+        session and switches as it always did: only a session whose mode
+        differs from its transport's own was opened that way.
+        """
+        if self._session.reads_a_terminal or not type(self._session).reads_a_terminal:
+            return
+        from .errors import terminal_refusal  # a refusal only: off the startup graph
+        from .host import _NO_TERMINAL_SWITCH
+
+        raise terminal_refusal(host=self._host_id, terminal=False, reason=_NO_TERMINAL_SWITCH)
+
     async def switch_user(self, *, user: str = "", password: str | SecretStr | None = None) -> None:
         """``su`` *this* session to *user* (default root), tracking :attr:`current_user`.
 
@@ -3319,6 +3335,7 @@ class HostSession:
         """
         if self._creds is None:
             raise NotImplementedError("switch_user is not supported on this host's sessions")
+        self._refuse_switch_without_a_terminal()
         if is_dry_run():
             self._refuse_elevation("switch_user", user or ROOT_LOGIN)
         await switch_and_stamp(
@@ -3354,6 +3371,7 @@ class HostSession:
         """
         if self._creds is None:
             raise NotImplementedError("as_user is not supported on this host's sessions")
+        self._refuse_switch_without_a_terminal()
         if is_dry_run():
             self._refuse_elevation("as_user", user)
         prev = self.current_user
@@ -4741,6 +4759,12 @@ class SessionManager:
         # wall-clock wait without changing the retry logic itself.
         self._retry_backoff = _HANDSHAKE_RETRY_BACKOFF if retry_backoff is None else retry_backoff
         self._session: ShellSession | None = None
+        # The default session WITHOUT a terminal, on a transport whose own
+        # default session has one (ssh): what `run(..., terminal=False)`
+        # uses. A session of its own, because shell state belongs to a
+        # session. None until asked for, and always on a manager whose
+        # default session reads a pipe already (`_types_into_terminal` false).
+        self._plain_session: ShellSession | None = None
         # The user the DEFAULT session was opened as (the login target, after
         # proxy hops), recorded when the session comes up. `ambient_user`
         # compares the live identity against it: anything else is a switch
@@ -4785,10 +4809,63 @@ class SessionManager:
 
     @property
     def has_live_sessions(self) -> bool:
-        """Whether any session (default or named) is currently alive."""
-        if self._session and self._session.alive:
+        """Whether any session (default, of either mode, or named) is currently alive."""
+        if any(s is not None and s.alive for s in (self._session, self._plain_session)):
             return True
         return any(s.alive for s in self._named_sessions.values())
+
+    def no_terminal_limitation(self) -> str | None:
+        """Why this manager cannot open a session without a terminal, or ``None`` if it can.
+
+        The one answer for ``run``, ``open_session`` and ``exec``: only an
+        ssh transport can leave the pty out, and only for a login that needs
+        no terminal to arrive (no proxied login to type a password into, no
+        session-setup hook written against a terminal). Read fresh on every
+        call, as :meth:`exec_route` reads the same conditions.
+        """
+        term = getattr(self._connections, "term", None)
+        if term != "ssh" or self._session_factory or self._named_session_factory:
+            # A factory builds the one kind of session it knows.
+            theirs = f"; this host's is {term}" if term and term != "ssh" else ""
+            return f"needs an ssh transport{theirs}"
+        if getattr(self._connections, "proxy_hops", []):
+            return "cannot reach a login that is proxied through another user"
+        if self._session_setup is not None:
+            return (
+                f"cannot run the session setup {self._session_setup.name!r}, "
+                f"which is written for a terminal"
+            )
+        return None
+
+    def _wants_plain(self, terminal: bool | None) -> bool:
+        """Whether mode *terminal* is the second default session, the one without a terminal.
+
+        ``None`` and the transport's own mode are the one default session
+        every caller had before; ``False`` on a terminal transport is the
+        second one (:attr:`_plain_session`).
+        """
+        return terminal is False and self._types_into_terminal
+
+    def _checked_plain(self, terminal: bool | None) -> bool:
+        """Answer :meth:`_wants_plain`, refusing a session without a terminal that cannot be opened.
+
+        The check of the manager's own entries (:meth:`run_cmd`,
+        :meth:`open_session`), so a caller that reaches them without the
+        host's refusal gets the same one and never a session of the other mode.
+
+        Raises:
+            ~otto.host.errors.UnsupportedOptionError: :meth:`no_terminal_limitation` says why.
+        """
+        plain = self._wants_plain(terminal)
+        if plain and (why := self.no_terminal_limitation()) is not None:
+            from .errors import terminal_refusal  # a refusal only: off the startup graph
+
+            raise terminal_refusal(host=self._name, terminal=False, reason=why)
+        return plain
+
+    def _default_session(self, *, plain: bool) -> "ShellSession | None":
+        """Return the default session held for a mode (:meth:`_wants_plain`), or ``None``."""
+        return self._plain_session if plain else self._session
 
     def _bridge_setup(self) -> BridgeSetup | None:
         """Return what ``otto login`` needs to run this host's hook, or ``None`` without one."""
@@ -5095,8 +5172,13 @@ class SessionManager:
         if self._session is not None:
             self._session.current_user = user
 
-    async def _ensure_session(self) -> None:
-        """Create a ShellSession if one doesn't exist or if the current one is dead.
+    async def _ensure_session(self, *, terminal: bool | None = None) -> "ShellSession":
+        """Return the default session of mode *terminal*, creating it if absent or dead.
+
+        *terminal* picks the slot (:meth:`_wants_plain`); the open is the
+        same sequence for both. A session without a terminal is only asked
+        for where :meth:`no_terminal_limitation` is ``None``, so the proxy
+        and setup steps below find nothing to do on it.
 
         Serialized via ``_ensure_session_lock`` with a double-checked-locking
         pattern: the fast path returns without lock acquisition when the
@@ -5128,27 +5210,30 @@ class SessionManager:
         retried at all: the rebuild re-runs the login, typing the password
         into the line a second time (see ``_retry_failed_handshake``).
         """
-        if self._session and self._session.alive:
-            return
+        plain = self._wants_plain(terminal)
+        current = self._default_session(plain=plain)
+        if current and current.alive:
+            return current
 
         async with self._ensure_session_lock:
             # Re-check after acquiring the lock — another task may have
             # created the session while we waited.
-            if self._session and self._session.alive:
-                return
+            current = self._default_session(plain=plain)
+            if current and current.alive:
+                return current
 
             # Close the old dead session to release its subprocess transport.
             # Without this, the orphaned transport is GC'd after the event loop
             # closes and raises "RuntimeError: Event loop is closed" from __del__.
-            if self._session is not None:
-                await self._session.close()
+            if current is not None:
+                await current.close()
 
             last_exc: ConnectionError | None = None
             # A retry of the one-shot build on a handshake race, not a poll of
             # a state (the rule's note names it).
             # ast-grep-ignore: no-handrolled-deadline-poll
             for attempt in range(2):
-                new_session = await self._build_session()
+                new_session = await self._build_session(terminal=not plain)
                 new_session._on_output = _sink_for(self._log_output, LogMode.NORMAL)  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
                 self._seed_user(new_session)
                 # The marker handshake can take ~1 s on a cold telnet open. A
@@ -5197,21 +5282,26 @@ class SessionManager:
                     with suppress(Exception):  # pragma: no cover - best-effort cleanup
                         await new_session.close()
                     raise
-                self._session = new_session
-                self._baseline_user = new_session.current_user
-                break
-            else:  # pragma: no cover - the loop always breaks or raises
-                assert last_exc is not None  # noqa: S101 — internal invariant: for-else only reached when loop ran at least once
-                raise last_exc
+                if plain:
+                    self._plain_session = new_session
+                else:
+                    self._session = new_session
+                    self._baseline_user = new_session.current_user
+                return new_session
+            # The loop always returns or raises; this is for the type checker.
+            assert last_exc is not None  # pragma: no cover  # noqa: S101 — internal invariant
+            raise last_exc  # pragma: no cover
 
-    async def _build_session(self) -> "ShellSession":
+    async def _build_session(self, *, terminal: bool = True) -> "ShellSession":
         """Construct a fresh ShellSession from the configured factory or connection manager.
 
         Split out from ``_ensure_session`` so the retry path can rebuild the transport cleanly.
+        *terminal* false is the transport's session without a terminal; a
+        factory builds the one kind of session it knows.
         """
         if self._session_factory is not None:
             return self._from_factory(self._session_factory)
-        return await self._open_transport_session(named=False)
+        return await self._open_transport_session(named=False, terminal=terminal)
 
     def _from_factory(self, factory: "Callable[[], ShellSession]") -> "ShellSession":
         """Build a session from *factory*, holding the deadline this manager resolves.
@@ -5230,7 +5320,7 @@ class SessionManager:
         return session
 
     async def _open_transport_session(
-        self, *, named: bool, ssh_user: str | None = None
+        self, *, named: bool, ssh_user: str | None = None, terminal: bool = True
     ) -> "ShellSession":
         """Build a ShellSession over the manager's term: ssh, telnet or console.
 
@@ -5246,6 +5336,9 @@ class SessionManager:
         *ssh_user* (``ssh`` only) builds the session over that user's own
         connection (:meth:`~otto.host.connections.ConnectionManager.ssh_as`)
         instead of the login's.
+
+        *terminal* false (``ssh`` only, where :meth:`no_terminal_limitation`
+        allows it) builds the session without a pty.
         """
         assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no session_factory
         # Resolved before anything dials: an unusable OTTO_INIT_TIMEOUT is
@@ -5264,6 +5357,7 @@ class SessionManager:
                 command_frame=self._session_frame,
                 init_timeout=init_timeout,
                 shell_history=self._shell_history,
+                terminal=terminal,
             )
         if term == "telnet" and not named:
             telnet_conn = await self._connections.telnet()
@@ -5355,8 +5449,13 @@ class SessionManager:
         log: LogMode = LogMode.NORMAL,
         write_progress: Callable[[int, int], None] | None = None,
         exec_input: ExecInput | None = None,
+        terminal: bool | None = None,
     ) -> CommandResult:
         """Run *cmd* on the default session, creating it if needed.
+
+        *terminal* false runs it on the default session WITHOUT a terminal
+        (``_wants_plain``), a session of its own with its own shell
+        state; ``None`` and the transport's own mode are the default session.
 
         Wraps :meth:`~otto.host.session.ShellSession.run_cmd` with automatic
         session creation. Shell state persists across calls (same session is
@@ -5389,10 +5488,13 @@ class SessionManager:
         """
         exec_input = self._with_restore_for(ExecRoute.DEFAULT_SESSION, exec_input)
         exec_escapes = getattr(self._connections, "term", None) != "console"
-        # Before the open the manager's own mode answers; an open session
+        # Before the open the mode asked for answers; an open session
         # answers for itself, here as below.
-        opened = self._session if self._session is not None and self._session.alive else None
-        if self._types_into_terminal if opened is None else opened.reads_a_terminal:
+        plain = self._checked_plain(terminal)
+        held = self._default_session(plain=plain)
+        opened = held if held is not None and held.alive else None
+        asked = self._types_into_terminal and not plain
+        if asked if opened is None else opened.reads_a_terminal:
             refuse_if_typed_line_would_be_cut(
                 self._command_frame,
                 cmd,
@@ -5401,20 +5503,19 @@ class SessionManager:
                 exec_escapes=exec_escapes,
                 exec_input=exec_input,
             )
-        await self._ensure_session()
-        assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
-        if self._session.reads_a_terminal:
+        session = await self._ensure_session(terminal=terminal)
+        if session.reads_a_terminal:
             refuse_if_typed_line_would_be_cut(
                 self._command_frame,
                 cmd,
-                echoes=self._session.echoes,
+                echoes=session.echoes,
                 host=self._name,
                 exec_escapes=exec_escapes,
                 exec_input=exec_input,
             )
         # *log* is folded already: the host's `_run_one` folds its standing mode in.
         result = await _log_and_run(
-            self._session,
+            session,
             self._log_command,
             self._log_output,
             cmd,
@@ -5937,8 +6038,11 @@ class SessionManager:
         because a smaller budget only shortens a transfer's chunks and
         ``run_cmd`` checks its own session's measured fact before typing.
         """
+        # A session without a terminal measured no terminal: it says nothing here.
         opened = [
-            s for s in [self._session, *self._named_sessions.values()] if s is not None and s.alive
+            s
+            for s in [self._session, *self._named_sessions.values()]
+            if s is not None and s.alive and s.reads_a_terminal
         ]
         return not opened or any(s.echoes for s in opened)
 
@@ -6004,8 +6108,15 @@ class SessionManager:
             return
         session.identity_mark = mark
 
-    async def open_session(self, *, name: str, as_user: str | None = None) -> "HostSession":
+    async def open_session(
+        self, *, name: str, as_user: str | None = None, terminal: bool | None = None
+    ) -> "HostSession":
         """Open or reuse a named persistent shell session, as *as_user* when given.
+
+        *terminal* false opens it without a terminal (ssh only; the caller
+        has asked :meth:`no_terminal_limitation`). A session keeps the mode
+        it was opened with: asking for a live name in the other mode is
+        refused by name (``_refuse_other_mode``).
 
         Serialized via a per-name lock with a double-checked-locking
         pattern: concurrent callers requesting the same name resolve to a
@@ -6041,9 +6152,10 @@ class SessionManager:
         raises :class:`ValueError` naming the session, its user and
         *as_user*, before anything is typed.
         """
+        self._checked_plain(terminal)
         existing = self._named_sessions.get(name)
         if existing and existing.alive:
-            return self._refuse_other_user(existing, as_user)
+            return self._refuse_other_mode(self._refuse_other_user(existing, as_user), terminal)
 
         # ``setdefault`` is atomic here — no ``await`` between lookup and use —
         # so concurrent callers for the same name share one lock instance.
@@ -6051,7 +6163,7 @@ class SessionManager:
         async with lock:
             existing = self._named_sessions.get(name)
             if existing and existing.alive:
-                return self._refuse_other_user(existing, as_user)
+                return self._refuse_other_mode(self._refuse_other_user(existing, as_user), terminal)
 
             # Close the underlying transport of the dead entry (if any) but
             # leave the dict slot intact — we'll overwrite it below.  Calling
@@ -6066,7 +6178,9 @@ class SessionManager:
             if named_factory is not None and own_login is None:
                 shell_session: ShellSession = self._from_factory(named_factory)
             else:
-                shell_session = await self._open_transport_session(named=True, ssh_user=own_login)
+                shell_session = await self._open_transport_session(
+                    named=True, ssh_user=own_login, terminal=terminal is not False
+                )
 
             shell_session._on_output = _sink_for(self._log_output, LogMode.NORMAL)  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
             self._seed_user(shell_session, own_login)
@@ -6182,6 +6296,21 @@ class SessionManager:
             )
         return session
 
+    @staticmethod
+    def _refuse_other_mode(session: "HostSession", terminal: bool | None) -> "HostSession":
+        """Return *session*, or raise if *terminal* asks for the mode it was not opened with."""
+        if terminal is not None and session.reads_a_terminal != terminal:
+            had, asked = (
+                ("with a terminal", "without one")
+                if session.reads_a_terminal
+                else ("without a terminal", "with one")
+            )
+            raise ValueError(
+                f"session {session.name!r} is open {had}: open it under another name "
+                f"to have it {asked}"
+            )
+        return session
+
     async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to the default session, creating it if needed."""
         await self._ensure_session()
@@ -6215,6 +6344,9 @@ class SessionManager:
             await self._session.close()
             self._session = None
             self._baseline_user = None
+        if self._plain_session:
+            await self._plain_session.close()
+            self._plain_session = None
 
         if self._named_sessions:
             await asyncio.gather(
