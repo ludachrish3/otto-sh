@@ -147,6 +147,20 @@ class JsonnetLabSourceConfig(OttoModel):
         """Anchor every relative entry to the root of the project that declares the source."""
         return _anchored_entries(value, info, backend="jsonnet")
 
+    def override_spellings(self) -> dict[str, str]:
+        """Return each ``overrides`` entry's element identity (its slug), by its first spelling.
+
+        THE one reading of ``overrides``: the composite's policy
+        (``declared_overrides``) and the ``otto init``
+        doctor both take it, so an entry means the same element to both.
+        """
+        from ..host.remote_host import slug
+
+        spellings: dict[str, str] = {}
+        for name in self.overrides:
+            spellings.setdefault(slug(name), name)
+        return spellings
+
     def prepared_facts(self) -> LabSourceFacts:
         """Return the entries the source renders, their file rule and its import roots.
 
@@ -537,9 +551,7 @@ class _JsonnetLabRepository(_DocumentLabRepository):
         different machines only when it is listed. Each entry is read as the
         element's identity, its slug, as elements are keyed.
         """
-        from ..host.remote_host import slug
-
-        return frozenset(slug(name) for name in self.inputs.config.overrides)
+        return frozenset(self.inputs.config.override_spellings())
 
     @override
     def list_labs(self) -> list[str]:

@@ -565,7 +565,8 @@ List the element in the source's `overrides` to mean it: with
 `overrides = ["east-dut0"]` on the template's source, its `east-dut0`
 replaces `bench`'s, with the override warning. An entry is read as
 the element's name, compared by its slug as elements are. An `overrides` entry
-that names no element is not reported.
+that names no element the source generates is a warning of `otto init`
+({ref}`doctor-templated-labs`).
 
 (lab-templating-completion)=
 
@@ -657,5 +658,6 @@ source that is legitimately slow.
   whose hosts carry none, such as one that holds only containers, replaces an
   earlier element of the same name that also carries none with the override
   warning alone, even when `overrides` does not list it.
-- **An `overrides` entry that matches no element is not reported.**
+- **Only `otto init` reports an `overrides` entry that matches no element.** A
+  load and `otto lab explain` do not ({ref}`doctor-templated-labs`).
 - The doctor's own checks never render a template ({doc}`../../cli/init`).
