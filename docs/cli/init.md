@@ -192,6 +192,11 @@ never changes the exit code. Two are about lab shape:
   `resources` entry, or make one lab a sub-lab of the other.  (A lab that
   reserves nothing is never half of such a pair.)
 
+In an active project (one `OTTOPATH` names), the doctor resolves the
+`default` inventory as `otto` itself does across every active project, so its
+exit code agrees with whether the lab loads there; see
+{ref}`what the doctor checks <doctor-default-inventory>`.
+
 When an inventory is configured, its own doctor findings join the same
 `Warnings` block — see the
 [Warnings](../configuration/inventory.md#warnings) section of the inventory

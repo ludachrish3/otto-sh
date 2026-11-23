@@ -118,9 +118,9 @@ class DoctorReport:
 def check_project(root: Path, *, catalog: "InventoryView | None" = None) -> DoctorReport:
     """Check every area of the project at *root*; never prints, never raises for its content.
 
-    Inventories: ``default`` is the project's own tables, else the user
-    file's, as before named inventories (the doctor-versus-dispatch
-    difference this keeps is tracked in #1186). Each name the project's own
+    Inventories: ``default`` is the one dispatch resolves when *root* is one
+    of *catalog*'s active projects (:func:`catalog_membership`), else the
+    project's own tables, then the user file's. Each name the project's own
     file declares is built from that file alone, so ``otto init`` checks
     what it just wrote. Any other name a lab file references comes from
     *catalog*, the active projects' view
@@ -237,7 +237,11 @@ def check_project(root: Path, *, catalog: "InventoryView | None" = None) -> Doct
         if verdict is None and name == "lab" and deferred:
             verdict = AreaVerdict(name, "absent", detail=f"{_ABSENT[name]}; {deferred}")
         verdicts.append(verdict or AreaVerdict(name, "absent", detail=_ABSENT[name]))
-    warnings = [] if lab_blocked or lab_unprepared else _lab_warnings(doctor, parsed)
+    warnings = (
+        []
+        if lab_blocked or lab_unprepared
+        else _lab_warnings(doctor, parsed, siblings=_sibling_references(catalog, root=root))
+    )
     warnings.extend(templating.warnings)
     warnings.extend(_kmodcov_warnings(root))
     warnings.extend(_embedded_gcov_warnings(root))
@@ -323,9 +327,21 @@ def _instructions_verdict(root: Path) -> AreaVerdict:
 
 
 def _inventory_for(
-    root: Path, cache: "dict[Path, Inventory | Exception | None] | None" = None
+    root: Path,
+    cache: "dict[Path, Inventory | Exception | None] | None" = None,
+    *,
+    catalog: "InventoryView | None" = None,
 ) -> "Inventory | None":
-    """Return the inventory bootstrap would build for *root*: its own override, else the user file.
+    """Return the ``default`` inventory dispatch would resolve for *root*.
+
+    When *root* is one of *catalog*'s active projects
+    (:func:`catalog_membership`) that is the catalog's own ``default``: the
+    one process-wide walk over every active project, then the user file, and
+    ``[creds]`` composed the same way, so a project that declares none, or
+    only ``[creds]``, resolves through a sibling's inventory and two projects
+    declaring different ones are refused in dispatch's words. Otherwise it is
+    what bootstrap would build for *root* alone: its own tables, else the
+    user file.
 
     Raises ``InventoryError`` / ``ValueError`` for a broken declaration — the
     caller reports that as a problem naming the file; the doctor must never
@@ -347,15 +363,19 @@ def _inventory_for(
         return cached
 
     from ..config.user_settings import load_user_settings
+    from ..host.inventory_ref import DEFAULT_INVENTORY
     from ..inventory.config import build_inventory_from_declarations
     from ..inventory.errors import InventoryError
 
     try:
-        declaration = _declaration_of(root)
-        result = build_inventory_from_declarations(
-            declarations=[] if declaration is None else [declaration],
-            user_settings=load_user_settings(),
-        )
+        if catalog is not None and catalog_membership(catalog, root=root).project is not None:
+            result = _catalog_member(catalog, DEFAULT_INVENTORY)
+        else:
+            declaration = _declaration_of(root)
+            result = build_inventory_from_declarations(
+                declarations=[] if declaration is None else [declaration],
+                user_settings=load_user_settings(),
+            )
     except (InventoryError, ValueError) as e:
         if cache is not None:
             cache[root] = e
@@ -436,7 +456,7 @@ class _DoctorInventories(Mapping[str, "Inventory"]):
         from ..inventory.config import build_named_inventory_from_declarations
 
         if name == DEFAULT_INVENTORY:
-            return _inventory_for(self._root, self._cache)
+            return _inventory_for(self._root, self._cache, catalog=self._catalog)
         if name in self.own and self.declaration is not None:
             return build_named_inventory_from_declarations(
                 name=name, declarations=[self.declaration], user_settings=None
@@ -581,7 +601,7 @@ def _view_for(
 ) -> _DoctorView:
     """Return the inventory view the doctor checks *root* with; builds and reads nothing yet.
 
-    ``default`` comes from :func:`_inventory_for` over *cache*, unchanged; the
+    ``default`` comes from :func:`_inventory_for` over *cache*; the
     other names are described under :class:`_DoctorInventories`. *references*
     are the lab files' well-formed references: each qualified one names an
     inventory to check. The project's own settings decide whether it refuses
@@ -1260,7 +1280,41 @@ def _resolved(
         raise InventoryError(text) from e
 
 
-def _lab_warnings(doctor: _DoctorView, parsed: _ParsedLab) -> list[str]:
+def _sibling_references(catalog: "InventoryView | None", *, root: Path) -> "dict[str, set[str]]":
+    """Return each inventory name and the keys the OTHER active projects' labs select in it.
+
+    Empty unless *root* is one of *catalog*'s projects
+    (:func:`catalog_membership`). Each sibling's references are placed by the
+    catalog as that sibling sees it
+    (:meth:`~otto.inventory.InventoryView.for_project`,
+    :func:`~otto.inventory.doctor.referenced_by_name`), so a bare reference
+    counts against ``default`` only where that project allows it, and a
+    sibling whose lab files do not read is left to its own check.
+    """
+    from ..inventory.doctor import referenced_by_name
+
+    membership = catalog_membership(catalog, root=root)
+    if catalog is None or membership.project is None or membership.projects is None:
+        return {}
+    keys: dict[str, set[str]] = {}
+    for project in membership.projects:
+        if project is membership.project:
+            continue
+        try:
+            references = _parse_lab_documents(project.root).references()
+        except ValueError:
+            continue
+        placed = referenced_by_name(
+            references=references, view=catalog.for_project(root=project.root)
+        )
+        for name, found in placed.items():
+            keys.setdefault(name, set()).update(found)
+    return keys
+
+
+def _lab_warnings(
+    doctor: _DoctorView, parsed: _ParsedLab, *, siblings: "dict[str, set[str]] | None" = None
+) -> list[str]:
     """Advisory findings across every lab file — never failing.
 
     Spec §8.3, §9 and §11, plus the shared-element protection rule of spec
@@ -1278,7 +1332,8 @@ def _lab_warnings(doctor: _DoctorView, parsed: _ParsedLab) -> list[str]:
     unreachable, orphan records
     (:func:`~otto.inventory.doctor.orphan_warning`, counting this project's
     references that select that inventory,
-    :func:`~otto.inventory.doctor.referenced_by_name`; none for an inventory a
+    :func:`~otto.inventory.doctor.referenced_by_name`, and *siblings*, the
+    other active projects' (:func:`_sibling_references`); none for an inventory a
     ``jsonnet`` source reads, :meth:`_ParsedLab.template_inventories`), creds-store keys the
     inventory does not hold, and world-readable creds-store files
     (:func:`~otto.inventory.doctor.creds_mode_warnings`), each attributed to
@@ -1308,7 +1363,7 @@ def _lab_warnings(doctor: _DoctorView, parsed: _ParsedLab) -> list[str]:
             continue  # a failure is in the lab verdict; a templated one is warned of below
         findings = _inventory_findings(
             inventories[name],
-            referenced=referenced.get(name, set()),
+            referenced=referenced.get(name, set()) | (siblings or {}).get(name, set()),
             read_by_templates=name in read_by_templates,
         )
         warnings.extend(_attributed(view=view, name=name, text=w) for w in findings)
