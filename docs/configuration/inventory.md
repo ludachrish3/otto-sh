@@ -921,7 +921,10 @@ settings file declares.
   expected to be wider than any one project, so this is information, not a
   defect. A project that has adopted nothing yet gets it listing everything,
   which is exactly the state the bridge starts from — the warning is how you
-  watch that list shrink.
+  watch that list shrink. An inventory a `jsonnet` lab source names in its
+  `inventories` gets no such warning: which records a template reads is known
+  only by rendering it, which the doctor never does
+  ({ref}`doctor-templated-labs`).
 - A creds-store file that is group- or world-readable, naming the mode, or one
   that is named and does not exist.
 - **Orphan creds** — keys the store holds that the inventory does not, up to

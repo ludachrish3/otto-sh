@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from ..inventory.view import InventoryView
     from ..labs.composite import LabStatusReport
     from ..labs.json_repository import LabDocument
+    from ..labs.jsonnet_source import JsonnetSourceInputs
     from ..labs.protocol import LabStatus
     from ..vendoring import CheckResult
 
@@ -652,11 +653,30 @@ class _ParsedLab:
     jsonnet: list[SourceFiles] = dataclasses.field(default_factory=list)
     """The ``jsonnet`` sources, their entries listed and never read here."""
 
+    def template_inventories(self) -> set[str]:
+        """Return the inventories some ``jsonnet`` source declares it reads (its ``inventories``).
+
+        Read from the source's parsed settings, never by rendering.
+        """
+        inputs = (_jsonnet_inputs(group) for group in self.jsonnet)
+        return {name for each in inputs if each is not None for name in each.config.inventories}
+
     def references(self) -> "list[InventoryReference]":
         """Return every well-formed inventory reference the documents' host entries state."""
         from ..inventory.doctor import referenced_references
 
         return referenced_references(element_lists=(d.elements for d in self.documents))
+
+
+def _jsonnet_inputs(group: SourceFiles) -> "JsonnetSourceInputs | None":
+    """Return *group*'s configuration and environment when it is otto's ``jsonnet`` source.
+
+    Its parsed settings, the one reader the listing rows and the read
+    inventories share: nothing is rendered.
+    """
+    from ..labs.jsonnet_source import JsonnetSourceInputs
+
+    return None if group.state is None else JsonnetSourceInputs.of_prepared(group.state.prepared)
 
 
 def _parse_lab_documents(root: Path) -> _ParsedLab:
@@ -1192,7 +1212,8 @@ def _lab_warnings(doctor: _DoctorView, parsed: _ParsedLab) -> list[str]:
     unreachable, orphan records
     (:func:`~otto.inventory.doctor.orphan_warning`, counting this project's
     references that select that inventory,
-    :func:`~otto.inventory.doctor.referenced_by_name`), creds-store keys the
+    :func:`~otto.inventory.doctor.referenced_by_name`; none for an inventory a
+    ``jsonnet`` source reads, :meth:`_ParsedLab.template_inventories`), creds-store keys the
     inventory does not hold, and world-readable creds-store files
     (:func:`~otto.inventory.doctor.creds_mode_warnings`), each attributed to
     the inventory's name (:func:`_attributed`). An inventory that fails to
@@ -1215,23 +1236,44 @@ def _lab_warnings(doctor: _DoctorView, parsed: _ParsedLab) -> list[str]:
     view = doctor.view
     referenced = referenced_by_name(references=parsed.references(), view=view)
     inventories = doctor.inventories
+    read_by_templates = parsed.template_inventories()
     for name in inventories.declared:
         if name in inventories.skipped([name]):
             continue  # a failure is in the lab verdict; a templated one is warned of below
-        findings = _inventory_findings(inventories[name], referenced=referenced.get(name, set()))
+        findings = _inventory_findings(
+            inventories[name],
+            referenced=referenced.get(name, set()),
+            read_by_templates=name in read_by_templates,
+        )
         warnings.extend(_attributed(view=view, name=name, text=w) for w in findings)
     warnings.extend(row for name in view.names() if (row := inventories.not_rendered(name)))
     return warnings
 
 
-def _inventory_findings(inventory: "Inventory", *, referenced: set[str]) -> list[str]:
-    """Return one inventory's findings: stale notice, orphans, orphan creds, creds modes."""
+def _inventory_findings(
+    inventory: "Inventory", *, referenced: set[str], read_by_templates: bool = False
+) -> list[str]:
+    """Return one inventory's findings: stale notice, orphans, orphan creds, creds modes.
+
+    With *read_by_templates* (a ``jsonnet`` source names the inventory in
+    its ``inventories``) the unused-records finding is left out: which
+    records a template reads is known only by evaluating it, which the
+    doctor never does, so no record can be called unused. The records are
+    still listed, as the stale notice and a listing failure come from that
+    read (:func:`~otto.inventory.doctor.orphan_warning` does no other).
+    """
     from ..inventory.cache import snapshot_cache_of
     from ..inventory.doctor import creds_mode_warnings, orphan_creds_warning, orphan_warning
     from ..inventory.errors import InventoryError
 
     try:
-        orphan = orphan_warning(inventory, referenced=referenced)
+        if read_by_templates:
+            # The read stays: it sets the stale-snapshot notice read below and
+            # is where a listing failure surfaces; only its verdict is dropped.
+            inventory.list_keys()
+            orphan = None
+        else:
+            orphan = orphan_warning(inventory, referenced=referenced)
         orphan_creds = orphan_creds_warning(inventory)
     except InventoryError as e:
         orphan = f"inventory '{inventory.label}': could not list records: {e}"

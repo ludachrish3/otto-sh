@@ -2216,3 +2216,97 @@ def test_a_declared_unavailable_lab_reads_alike_hand_written_and_templated(tmp_p
             result.exit_code,
         )
     assert outcomes["hand-written"] == outcomes["templated"] == (True, "ok", [], [], 0)
+
+
+# ── An inventory a template reads is not unused; a stale overrides entry is warned of ─
+
+
+def _physical_orphans(report: DoctorReport) -> list[str]:
+    """The unused-records warnings of the ``physical`` inventory."""
+    return [w for w in report.warnings if w.startswith("physical:") and "referenced by no" in w]
+
+
+def test_an_inventory_only_a_jsonnet_source_reads_is_not_warned_of_as_unused(tmp_path, otto_home):
+    """The template reads ``physical`` (``inventories``), and no hand-written lab references it."""
+    from tests.unit.templating._doctor_project import catalog, templated
+
+    sut = templated(tmp_path / "sut", sites=("east", "west"))
+    for view in (None, catalog(sut)):
+        report = check_project(sut.root, catalog=view)
+        assert _physical_orphans(report) == [], view
+
+
+def test_an_inventory_no_jsonnet_source_names_is_still_warned_of_as_unused(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog, templated
+
+    sut = templated(tmp_path / "sut", entry="function(otto) {}\n", inventories=[])
+    report = check_project(sut.root, catalog=catalog(sut))
+    [orphan] = _physical_orphans(report)
+    assert "referenced by no lab file here: dut-east" in orphan
+
+
+def test_a_jsonnet_read_inventory_keeps_its_other_findings(tmp_path, otto_home):
+    from tests.unit.templating._doctor_project import catalog, templated
+    from tests.unit.templating._lab_project import CREDS, table, write
+
+    store = write(
+        tmp_path / "sut" / "lab_data" / "physical-creds.json", {"dut-east": CREDS, "x": []}
+    )
+    store.chmod(0o644)
+    extra = table("[inventories.creds]", backend="json", path=str(store))
+    sut = templated(tmp_path / "sut", extra=extra)
+    report = check_project(sut.root, catalog=catalog(sut))
+    assert _physical_orphans(report) == []
+    text = "\n".join(w for w in report.warnings if w.startswith("physical:"))
+    assert "1 key(s) the inventory does not hold: x" in text
+    assert "0644" in text
+
+
+def _jsonnet_read_physical(root: Path, *, backend_table: str) -> Path:
+    """A project whose ``physical`` inventory is *backend_table* and a source that reads it."""
+    from tests.unit.templating._lab_project import jsonnet_source, project, write
+
+    entry = write(root / "lab_data" / "e.jsonnet", "function(otto) {}\n")
+    settings = backend_table + jsonnet_source(paths=[str(entry)], inventories=["physical"])
+    return project(root, settings).root
+
+
+def test_a_jsonnet_read_inventory_that_fails_to_list_still_warns_of_it(tmp_path, otto_home):
+    from tests.unit.templating._lab_project import table, write
+
+    bad = write(tmp_path / "sut" / "lab_data" / "physical.json", "{not valid json")
+    root = _jsonnet_read_physical(
+        tmp_path / "sut",
+        backend_table=table("[[inventories]]", name="physical", backend="json", path=str(bad)),
+    )
+    report = check_project(root)
+    assert any("physical:" in w and "could not list records" in w for w in report.warnings)
+
+
+def test_a_jsonnet_read_inventory_still_reports_its_stale_snapshot(tmp_path, otto_home):
+    from tests.unit.inventory.netbox_stub import TOKEN, NetBoxStub, device
+    from tests.unit.templating._lab_project import table
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setenv("NETBOX_TOKEN", TOKEN)
+    try:
+        with NetBoxStub([device(1, "nb1")]) as stub:
+            root = _jsonnet_read_physical(
+                tmp_path / "sut",
+                backend_table=table(
+                    "[[inventories]]",
+                    name="physical",
+                    backend="netbox",
+                    url=stub.base,
+                    cache_ttl="24h",
+                ),
+            )
+            assert not [w for w in check_project(root).warnings if "unreachable" in w]
+        _age_the_snapshot(otto_home, hours=31)
+        report = check_project(root)
+    finally:
+        monkey.undo()
+    stale = [w for w in report.warnings if w.startswith("physical:") and "unreachable" in w]
+    assert len(stale) == 1, report.warnings
+    assert "31h old" in stale[0]
+    assert not [w for w in report.warnings if "referenced by no" in w]
