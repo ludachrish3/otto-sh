@@ -1559,7 +1559,7 @@ def test_any_error_a_catalog_raises_is_a_problem_row(tmp_path, monkeypatch):
     assert problem == "inventory: physical: RuntimeError: backend for physical is down"
 
 
-def test_an_external_name_ignores_an_unrelated_default_disagreement(tmp_path, monkeypatch):
+def test_an_external_name_is_checked_despite_a_default_disagreement(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     default = '[inventory]\nbackend = "json"\npath = "default.json"\nsupplies = ["ip"]\n'
     a = _named_project(
@@ -1578,8 +1578,16 @@ def test_an_external_name_ignores_an_unrelated_default_disagreement(tmp_path, mo
             "physical.json": {"k": {"ip": "1.1.1.1"}},
         },
     )
-    report = check_project(a, catalog=_catalog(a, b))
-    assert report.ok, _text(report)
+    from otto.inventory.errors import InventoryError
+
+    view = _catalog(a, b)
+    with pytest.raises(InventoryError) as refused:
+        view.inventories["default"]
+    report = check_project(a, catalog=view)
+    # ``default`` is refused, as dispatch refuses it; ``physical`` is checked on its own.
+    assert not report.ok
+    assert report.verdict(name="lab").problems == [f"inventory: default: {refused.value}"]
+    assert [entry.name for entry in report.inventories] == ["physical"]
 
 
 def test_a_user_declared_name_is_known_standalone(tmp_path, monkeypatch):
@@ -1613,21 +1621,70 @@ def test_a_default_only_project_reports_as_before(tmp_path, monkeypatch):
     assert orphan.startswith(f"inventory 'json:{inv}': 1 record(s)"), orphan
 
 
-def test_existing_workspaces_keep_todays_default(tmp_path, monkeypatch):
-    """Task 0's three doctor workspaces, each checked against the active catalog: unchanged."""
-    from otto.init import doctor as doctor_module
+def _workspace(tmp_path, monkeypatch, name: str):
+    """One of the pinned doctor setup's two-project workspaces: ``(A, B, the dispatch view)``."""
     from tests.unit.labs import test_unchanged_loading as pins
 
-    real = doctor_module.check_project
-    checked: list[Path] = []
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    projects = pins._workspaces(tmp_path)[name]
+    return projects["A"], projects["B"], _catalog(projects["A"], projects["B"])
 
-    def against_the_catalog(root: Path) -> DoctorReport:
-        checked.append(root)
-        return real(root, catalog=_catalog(*sorted(root.parent.iterdir())))
 
-    monkeypatch.setattr(doctor_module, "check_project", against_the_catalog)
-    assert pins.doctor(tmp_path) == json.loads(pins.DOCTOR_GOLDEN.read_text())
-    assert len(checked) == 6
+def test_a_project_without_an_inventory_resolves_through_the_active_ones(tmp_path, monkeypatch):
+    """Row (a): B loads through A's inventory under dispatch, and so does the doctor."""
+    a, b, view = _workspace(tmp_path, monkeypatch, "a-bare-references-without-inventory")
+    dispatch_default = view.inventories["default"]
+    report = check_project(b, catalog=view)
+    assert report.ok, _text(report)
+    assert report.inventory_label == dispatch_default.label == f"json:{a / 'inventory.json'}"
+    # Without the catalog B is not an active project: the project-local rule stays.
+    assert not check_project(b).ok
+
+
+def test_a_project_with_only_creds_composes_with_the_active_inventory(tmp_path, monkeypatch):
+    """Row (a'): A's inventory composes with B's [creds], as dispatch builds them."""
+    a, b, view = _workspace(tmp_path, monkeypatch, "a2-creds-without-inventory")
+    dispatch_default = view.inventories["default"]
+    report = check_project(b, catalog=view)
+    assert report.ok, _text(report)
+    assert report.inventory_label == dispatch_default.label == f"json:{a / 'inventory.json'}"
+    assert report.creds_label == f"json:{b / 'creds.json'}"
+    assert not check_project(b).ok
+
+
+def test_two_projects_declaring_different_inventories_fail_as_dispatch_refuses(
+    tmp_path, monkeypatch
+):
+    """Row (b): each project's doctor reports the refusal dispatch raises, in its words."""
+    from otto.inventory.errors import InventoryError
+
+    a, b, view = _workspace(tmp_path, monkeypatch, "b-different-inventories")
+    with pytest.raises(InventoryError, match="two active projects declare different") as refused:
+        view.inventories["default"]
+    for root in (a, b):
+        report = check_project(root, catalog=view)
+        assert not report.ok
+        assert f"inventory: {refused.value}" in report.verdict(name="lab").problems
+        assert report.inventory_label is None
+        assert check_project(root).ok  # not an active project: the project-local rule stays
+
+
+def test_an_orphan_only_another_active_project_references_is_not_reported(tmp_path, monkeypatch):
+    """A's doctor counts B's bare references: k2 is B's, so it is not an orphan of A's inventory."""
+    a, _b, view = _workspace(tmp_path, monkeypatch, "a-bare-references-without-inventory")
+    assert any("record(s) referenced by no lab file" in w for w in check_project(a).warnings)
+    report = check_project(a, catalog=view)
+    assert report.ok, _text(report)
+    assert not any("referenced by no lab file" in w for w in report.warnings), report.warnings
+
+
+def test_a_catalog_that_does_not_list_the_root_keeps_the_local_rule(tmp_path, monkeypatch):
+    """The root is not one of the catalog's projects: its own tables decide, as before."""
+    a, b, _ = _workspace(tmp_path, monkeypatch, "a-bare-references-without-inventory")
+    report = check_project(b, catalog=_catalog(a))
+    assert not report.ok
+    assert "no inventory is configured" in _text(report)
+    assert report.inventory_label is None
 
 
 # ── The same, through ``otto init``: the CLI hands the active catalog over ──────
@@ -1690,6 +1747,24 @@ def test_a_catalog_conflict_is_a_problem_row_from_the_cli(tmp_path, monkeypatch)
     passed = _init(a)
     assert passed.exit_code == 0, passed.output
     assert f"inventory physical: json:{a / 'physical.json'}" in passed.output
+
+
+def test_the_exit_code_follows_dispatch_through_the_cli(tmp_path, monkeypatch):
+    """``otto init`` passes where dispatch loads (row a) and fails where it refuses (row b)."""
+    from tests.unit.labs import test_unchanged_loading as pins
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    spaces = pins._workspaces(tmp_path)
+    shared = spaces["a-bare-references-without-inventory"]
+    _activate(monkeypatch, shared["A"], shared["B"])
+    passed = _init(shared["B"])
+    assert passed.exit_code == 0, passed.output
+    assert f"inventory: json:{shared['A'] / 'inventory.json'}" in passed.output
+    split = spaces["b-different-inventories"]
+    _activate(monkeypatch, split["A"], split["B"])
+    refused = _init(split["B"])
+    assert refused.exit_code == 1, refused.output
+    assert "two active projects declare different [inventory] tables" in refused.output
 
 
 def test_a_named_creds_row_lines_up_with_its_inventory_row(tmp_path, monkeypatch):
@@ -2018,7 +2093,7 @@ def test_any_render_the_doctor_triggers_holds_the_catalogs_protection(
 
 
 def test_doctor_checks_keep_their_own_inventories(tmp_path, monkeypatch):
-    """The golden workspaces against a member catalog: today's rows, and nothing rendered."""
+    """The golden workspaces against a member catalog: dispatch's outcomes, and nothing rendered."""
     from otto.init import doctor as doctor_module
     from tests.unit.labs import test_unchanged_loading as pins
     from tests.unit.templating._render_helpers import count_evaluations
@@ -2030,7 +2105,14 @@ def test_doctor_checks_keep_their_own_inventories(tmp_path, monkeypatch):
         return real(root, catalog=_catalog(*sorted(root.parent.iterdir())))
 
     monkeypatch.setattr(doctor_module, "check_project", against_the_catalog)
-    assert pins.doctor(tmp_path) == json.loads(pins.DOCTOR_GOLDEN.read_text())
+    got = pins.doctor(tmp_path)
+    assert {
+        name: {label: report["ok"] for label, report in rows.items()} for name, rows in got.items()
+    } == {
+        "a-bare-references-without-inventory": {"A": True, "B": True},
+        "a2-creds-without-inventory": {"A": True, "B": True},
+        "b-different-inventories": {"A": False, "B": False},
+    }
     assert evaluations() == 0
 
 
@@ -2488,3 +2570,39 @@ def test_a_source_whose_read_has_a_problem_gets_no_stale_overrides_warning(
     report = check_project(root, catalog=catalog(Project(root=root)))
     assert not report.ok
     assert _stale_overrides(report) == []
+
+
+def _broken_sibling(root: Path, kind: str) -> Path:
+    """An active sibling: broken as *kind* names, or ``healthy`` and referencing nothing."""
+    tables = '[os_profiles.bad]\nbase = "nonexistent"\n' if kind == "settings" else ""
+    paths = "" if kind == "unprepared" else 'paths = ["lab"]\n'
+    sources = f'\n[[lab.sources]]\nbackend = "json"\n{paths}'
+    files = {"lab/lab.json": "{ this is not json" if kind == "not-json" else "{}"}
+    return make_project(root, name="proj-a", extra=tables + sources, files=files)
+
+
+@pytest.mark.parametrize("kind", ["settings", "unprepared", "not-json"])
+def test_a_broken_sibling_leaves_the_checked_project_alone(tmp_path, monkeypatch, kind):
+    """B's whole report with a broken sibling equals its report beside a healthy, silent one.
+
+    Per case: ``unprepared`` (a json source without ``paths``) is the one that
+    raises ``ValueError`` in the sibling's lab parse, which
+    ``_sibling_references`` catches; ``settings`` (a data profile over an
+    unknown base, so the sibling's own doctor is ``blocked``) and ``not-json``
+    (a lab file that is not JSON, which the source read reports as a problem)
+    never raise there and are read as no references.
+    """
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    inventory = '[inventory]\nbackend = "json"\npath = "inventory.json"\nsupplies = ["ip"]\n'
+    b = _named_project(
+        tmp_path / "B",
+        name="proj-b",
+        tables=inventory,
+        records={"inventory.json": {"k": {"ip": "10.0.0.1"}}},
+        references=["k"],
+    )
+    healthy = _broken_sibling(tmp_path / "H", "healthy")
+    broken = _broken_sibling(tmp_path / "A", kind)
+    expected = check_project(b, catalog=_catalog(healthy, b))
+    assert expected.ok, _text(expected)
+    assert check_project(b, catalog=_catalog(broken, b)) == expected

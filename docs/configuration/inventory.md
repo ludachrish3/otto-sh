@@ -316,6 +316,8 @@ qualified `{"name": "default", ...}` reference is always allowed.
 inventory; the two are declared, named and resolved separately, which is why
 the reference's field is `name` and never `source`.
 
+(inventory-resolution-order)=
+
 ### Resolution order
 
 `default`, the inventory bare references resolve through, is found first hit
@@ -344,10 +346,11 @@ tables are compared among themselves the same way. Otherwise bootstrap fails
 naming both settings files.
 
 ```{note}
-The doctor (`otto init`) validates **this** project's declaration against the user
-file; it never sees the other projects in your workspace. A disagreement between
-two projects is a bootstrap error — you meet it the first time you run otto with
-both of them active, not when you run the doctor in one.
+Run in an active project, the doctor (`otto init`) takes `default` and
+`[creds]` from this same walk, over every active project
+({ref}`what the doctor checks <doctor-default-inventory>`), so a disagreement
+between two projects fails the doctor in each of them, with bootstrap's own
+message.
 ```
 
 ### Paths
@@ -849,10 +852,18 @@ and a second row, `creds: json:/…/creds.json`, when a store resolves.
 The doctor checks every inventory the project uses, not only `default`
 ({ref}`named-inventories`):
 
-- `default` is the project's own `[inventory]` (or its `[[inventories]]`
-  entry named `default`), else the user file's. That is how the doctor chose
-  it before named inventories, even where `otto` run with several active
-  projects resolves `default` differently; see #1186.
+(doctor-default-inventory)=
+
+- `default` is the one dispatch resolves
+  ({ref}`inventory-resolution-order`) when the project is active (one
+  `OTTOPATH` names): the first active project that declares it, else the user
+  file, with `[creds]` composed the same way. So a project that declares no
+  `[inventory]`, or only `[creds]`, passes when a sibling's inventory serves
+  its references, and two active projects that declare different
+  `[inventory]` tables fail the doctor in each of them, with the refusal
+  bootstrap gives. A project that is not active has `default` from its own
+  `[inventory]` (or its `[[inventories]]` entry named `default`), else the
+  user file's.
 - Each name the project's own settings file declares is built from that file
   alone, so `otto init` checks exactly what it just wrote.
 - Any other name a lab file references, such as a `physical` another active
@@ -914,8 +925,10 @@ settings file declares.
   unreachable, naming its age and the `otto inventory refresh` that replaces
   it. `otto init` reports it in the table itself, as the `otto inventory` verbs
   do.
-- **Orphan records** — keys no lab file in this project references, up to ten
-  of them by name and a count for the rest. Only the references that select
+- **Orphan records** — keys no lab file references, up to ten of them by name
+  and a count for the rest. The files counted are this project's and, when it
+  is active, every other active project's whose references resolve through
+  that inventory. Only the references that select
   that inventory count: `{"name": "physical", "key": "a"}` counts for
   `physical` alone, and never for a `virtual` that also holds `a`. During the bridge the inventory is
   expected to be wider than any one project, so this is information, not a
