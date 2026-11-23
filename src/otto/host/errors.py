@@ -360,6 +360,24 @@ class MountNotFoundError(OttoError, ValueError):
     """
 
 
+class StageCollisionError(OttoError, ValueError):
+    """Two entries on one host would stage one file into one directory.
+
+    Raised by :func:`~otto.host.product.check_stage_collisions` at lab load,
+    and again once a host's login home is known, when an entry that falls back
+    to the home meets one that declares that path
+    (:func:`~otto.host.product.resolve_entry_stage_dir`). The message names the
+    host, both entries and the directory, and says to give one its own
+    ``stage_dir``; one would overwrite the other's file and a cleanup of one
+    would remove the other's.
+
+    ``ValueError`` as well, because lab-load callers and tests catch the
+    refusal as one, and it is a statement the lab made that the reader has to
+    go and edit. An :class:`~otto.errors.OttoError`, so the CLI prints it as
+    one line instead of a crash.
+    """
+
+
 class UnsupportedOptionError(OttoError, NotImplementedError):
     """An option of ``run``, ``exec`` or a session that this host cannot honour.
 

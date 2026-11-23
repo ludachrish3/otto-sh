@@ -45,6 +45,7 @@ class _DockerHost(SimpleNamespace):
     """
 
     def __init__(self, answers=None, **attrs):
+        attrs.setdefault("products", [])
         super().__init__(**attrs)
         self.id = attrs.get("id", "test3")
         self.default_dest_dir = attrs.get("default_dest_dir", Path("/tmp"))

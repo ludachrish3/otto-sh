@@ -33,6 +33,7 @@ def test_the_staged_path_of_an_entry_resolves_its_directory_through_the_host():
     class _Home:
         id = "h1"
         default_dest_dir = Path()
+        products = ()
 
         async def login_home(self):
             return Path("/home/u")
@@ -527,3 +528,55 @@ async def test_the_probe_is_true_to_a_real_shell(tmp_path):
     assert not emptied.exists()
     assert (kept / "other").exists()
     assert sticky.is_dir()
+
+
+# ── two entries staging one file into the discovered home (#1251) ────────────
+
+
+def _colliding_home_host(recording_host):
+    """A host that discovers ``/home/u``, with one entry falling back to it and one declaring it."""
+    from otto.host.declared_product import DeclaredProduct
+
+    recording_host.cached_login_home = None
+
+    async def _home():
+        if recording_host.cached_login_home is None:
+            recording_host.cached_login_home = Path("/home/u")
+        return recording_host.cached_login_home
+
+    recording_host.login_home = _home
+    fallback = DeclaredProduct(artifact=Path("a/app.bin"), name="alpha")
+    declared = DeclaredProduct(artifact=Path("b/app.bin"), name="beta", stage_dir=Path("/home/u"))
+    recording_host.products = [fallback, declared]
+    return fallback, declared
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry_point", ["staged_path", "remove_staged", "staged_files_left"])
+async def test_every_staging_and_cleanup_entry_point_refuses_the_colliding_pair_each_time(
+    recording_host, entry_point
+):
+    """One input through every entry point, twice: the home is cached after the first attempt."""
+    from otto.host.errors import HostCommandError
+    from otto.host.product import staged_path
+    from otto.host.staged_files import remove_staged, staged_files_left
+
+    fallback, declared = _colliding_home_host(recording_host)
+    for _ in range(2):
+        if entry_point == "staged_path":
+            with pytest.raises(ValueError, match=r"(?s)alpha.*beta.*overwrite"):
+                await staged_path(fallback, recording_host)
+        elif entry_point == "remove_staged":
+            result = await remove_staged(recording_host, [fallback, declared])
+            assert result.status is Status.Error
+            assert "cannot tell where the staged files are" in result.msg
+            assert "alpha" in result.msg
+            assert "beta" in result.msg
+        else:
+            # the same wording remove_staged uses, as the OttoError the CLI prints in one line
+            with pytest.raises(
+                HostCommandError, match=r"(?s)cannot tell where the staged files are.*alpha.*beta"
+            ):
+                await staged_files_left(recording_host, [fallback, declared])
+    # the removal never ran: nothing was sent to the host
+    assert recording_host.exec_calls == []

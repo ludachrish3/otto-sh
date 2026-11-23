@@ -327,7 +327,7 @@ async def resolve_stage_dir(stage_dir: Path, host: "Host", who: str = "product")
 
 
 class StagedEntry(Protocol):
-    """What a product or dev tool that stages a file has: a name, its artifact and its stage dir.
+    """What a staging product or dev tool has: a name, artifact, stage dir and lab-load key.
 
     The shape :func:`staged_path`, :func:`has_stage_destination` and
     :func:`~otto.host.staged_files.staged_entries` work over: a shell-class
@@ -342,6 +342,10 @@ class StagedEntry(Protocol):
 
     async def resolved_stage_dir(self, host: "Host") -> Path:
         """Return :attr:`stage_dir` resolved against *host* (:func:`resolve_stage_dir`)."""
+        ...
+
+    def stage_key(self, *, host: "Host") -> str:
+        """Return :attr:`stage_dir` as a lab-load key (:func:`stage_dir_key`)."""
         ...
 
 
@@ -374,13 +378,114 @@ def places_staged_file(item: object) -> "TypeIs[StagedEntry]":
 
     ``stages_artifact`` true, an ``artifact``, and a ``stage_key``: the one
     test of "this entry places a file", asked by
-    :func:`~otto.host.factory.check_stage_collisions` (two entries, one file)
+    :func:`~otto.host.product.check_stage_collisions` (two entries, one file)
     and :func:`~otto.host.staged_files.staged_entries` (cleanup's removal).
     """
     return (
         bool(getattr(item, "stages_artifact", False))
         and getattr(item, "artifact", None) is not None
         and hasattr(item, "stage_key")
+    )
+
+
+def check_stage_collisions(host: "Host | Any") -> None:
+    """Refuse two things on THIS host that stage one basename into one directory.
+
+    The second ``put`` would land on the first's file, and whichever
+    installed later would silently get the other's build — two ``demo.ko``
+    from different trees, two ``app.tar`` images. The key is the RESOLVED
+    staging directory plus the artifact's basename
+    (:meth:`~otto.host.product.Product.resolved_stage_dir`), so the same
+    basename under different directories is fine, and so is the same product
+    on two hosts: a per-board build of one name is the normal shape, not a
+    collision. Anything that places no file at all
+    (:attr:`~otto.host.product.Product.stages_artifact`) is skipped — an
+    ``llext`` extension and a pulled image have nothing to overwrite.
+
+    BOTH seams are checked together. A ``kmod`` dev tool stages its ``.ko``
+    through the very same ``host.load(dest_dir=...)`` a ``kmod`` product
+    does, and by the time this runs both lists are populated — checking
+    products alone would let a tool and a product overwrite each other in
+    exactly the way this exists to stop. The message names each side's seam
+    so the entry is findable.
+
+    Runs at lab load, where nothing is connected: an entry that falls back to
+    the login home is keyed on :data:`LOGIN_HOME` and meets only another
+    fallback entry. It runs again from :func:`resolve_entry_stage_dir` once the
+    home is known (``cached_login_home`` is then the real path), which is when
+    an entry declaring that very directory is caught too.
+    """
+    from .errors import StageCollisionError  # function-local: off the product import path
+
+    seen: dict[tuple[str, str], str] = {}
+    for item, seam in _staged_file_entries(host):
+        key = (item.stage_key(host=host), Path(item.artifact).name)
+        first = seen.get(key)
+        if first is not None:
+            raise StageCollisionError(
+                f"host {host.id}: {first} and {seam} {item.name!r} both stage "
+                f"{key[1]!r} into {key[0]} — one would overwrite the other; give one of them "
+                "its own 'stage_dir'"
+            )
+        seen[key] = f"{seam} {item.name!r}"
+
+
+def _staged_file_entries(host: "Host | Any") -> "list[tuple[StagedEntry, str]]":
+    """Return every entry on *host* that places a file, with its seam, products then dev tools.
+
+    The one population :func:`check_stage_collisions` compares and
+    :func:`resolve_entry_stage_dir` asks about, so the two cannot disagree on
+    which entries count. A host that carries neither list (a product author's
+    stand-in in their own test) has no entries, so nothing can collide on it.
+    """
+    entries = [(p, "product") for p in getattr(host, "products", [])] + [
+        (t, "dev tool") for t in getattr(host, "dev_tools", [])
+    ]
+    return [(item, seam) for item, seam in entries if places_staged_file(item)]
+
+
+async def resolve_entry_stage_dir(item: object, stage_dir: Path, host: "Host", who: str) -> Path:
+    """Resolve *item*'s staging directory, first refusing a collision that needs the home to see.
+
+    The entry-level twin of :func:`resolve_stage_dir`, called by
+    :meth:`Product.resolved_stage_dir` and the dev tool's, so every staging
+    and cleanup path goes through it. At lab load an entry that falls back to
+    the login home is keyed on a placeholder, so a pair where one falls back
+    and the other declares the home's real path passes. A collision is
+    possible only when this entry and another staged-file entry share an
+    artifact basename and exactly one of them falls back; the question is
+    answered in memory. Only then is the home read (``host.login_home()``,
+    cached per host object) so :func:`check_stage_collisions` can compare real
+    paths. An entry that falls back is checked too, since it reads the home
+    anyway. An ordinary install therefore costs no extra host command.
+
+    The check repeats on every call, because the home is cached after the
+    first read and a refusal made once would let the next attempt through. An
+    ad-hoc ``host.load`` with no ``dest_dir`` belongs to no entry and calls
+    :func:`resolve_stage_dir` alone.
+    """
+    if places_staged_file(item) and _may_collide_through_home(item, host, who):
+        discover = getattr(host, "login_home", None)
+        if discover is not None:
+            await discover()
+        check_stage_collisions(host)
+    return await resolve_stage_dir(stage_dir, host, who)
+
+
+def _may_collide_through_home(item: StagedEntry, host: "Host", who: str) -> bool:
+    """Whether *item* could share a file with another entry only once the login home is known.
+
+    That is when it falls back to the home, or when another staged-file entry
+    with the same artifact basename does while *item* does not.
+    """
+    if _declared_or_default(item.stage_dir, host, who) is None:
+        return True
+    name = Path(item.artifact).name
+    return any(
+        other is not item
+        and Path(other.artifact).name == name
+        and _declared_or_default(other.stage_dir, host, f"entry {other.name!r}") is None
+        for other, _seam in _staged_file_entries(host)
     )
 
 
@@ -572,7 +677,9 @@ class Product(ABC):
         downstream resolves it again — applying the rule twice is how a
         relative answer became ``<home>/<home>/x.ko``.
         """
-        return await resolve_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
+        return await resolve_entry_stage_dir(
+            self, self.stage_dir, host, who=f"product {self.name!r}"
+        )
 
     def stage_key(self, *, host: "Host") -> str:
         """:attr:`stage_dir` as a comparable key at lab load (:func:`stage_dir_key`)."""

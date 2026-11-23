@@ -96,7 +96,7 @@ class DevTool(ABC):
         :attr:`Product.stages_artifact <otto.host.product.Product.stages_artifact>`,
         and it must exist HERE rather than only on the concrete kinds: the
         per-host staging-collision check
-        (:func:`otto.host.factory.check_stage_collisions`) reads it off both
+        (:func:`otto.host.product.check_stage_collisions`) reads it off both
         seams, and a tool that simply lacked the attribute would be skipped
         silently — exempting the very thing the check is for. False on the
         base: a tool is free to install itself from a package feed and place

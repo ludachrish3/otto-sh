@@ -182,6 +182,7 @@ class _RunHost(SimpleNamespace):
     """Host double recording run()/put() calls; run returns a canned Result."""
 
     def __init__(self, *, run_status=Status.Success, **attrs):
+        attrs.setdefault("products", [])
         super().__init__(**attrs)
         self.run_calls: list = []
         self.put_calls: list = []

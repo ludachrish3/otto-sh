@@ -128,7 +128,7 @@ def _double(default=Path(), home="/home/tester"):
     async def _home():
         return Path(home)
 
-    return SimpleNamespace(id="h1", default_dest_dir=default, login_home=_home)
+    return SimpleNamespace(id="h1", default_dest_dir=default, login_home=_home, products=[])
 
 
 @pytest.mark.asyncio
@@ -164,7 +164,9 @@ async def test_the_login_home_is_asked_for_only_when_nothing_else_answers():
         asked.append(1)
         return Path("/home/tester")
 
-    host = SimpleNamespace(id="h1", default_dest_dir=Path("/srv/stage"), login_home=_home)
+    host = SimpleNamespace(
+        id="h1", default_dest_dir=Path("/srv/stage"), login_home=_home, products=[]
+    )
     p = _DummyShellProduct(artifact=Path("/builds/app.bin"))
     assert await _resolve(p, host) == Path("/srv/stage")
     assert asked == []  # a declared default is not worth a round trip
@@ -193,7 +195,7 @@ async def test_a_host_with_no_login_home_concept_is_refused():
 
     p = _DummyShellProduct(artifact=Path("/builds/app.bin"))
     with pytest.raises(ValueError, match=r"(?s)host board1.*no login home"):
-        await _resolve(p, SimpleNamespace(id="board1", default_dest_dir=Path()))
+        await _resolve(p, SimpleNamespace(id="board1", default_dest_dir=Path(), products=[]))
 
 
 def test_the_lab_load_key_stands_in_for_an_undiscovered_home():
