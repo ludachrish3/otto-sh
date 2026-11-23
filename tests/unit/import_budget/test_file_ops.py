@@ -242,9 +242,10 @@ def test_a_report_row_carries_the_harness_s_ending_verdict():
     lab_error = {"file_ops": ops, "exit_code": 1, "exception": None, "modules": ["otto"]}
     row = harness.report_row(_ssh_exec(), lab_error)
     assert set(row) == {
-        "surface", "tier", "file_ops", "workspace", "exit", "ending", "by_bucket", "by_process",
-        "by_path",
+        "surface", "tier", "file_ops", "workspace", "exit", "ending", "proofs_skipped",
+        "by_bucket", "by_process", "by_path",
     }  # fmt: skip
+    assert row["proofs_skipped"] == []
     assert row["exit"] == 1
     assert row["ending"] == harness.check_exit(_ssh_exec(), lab_error)
     assert "asyncssh.connection" in row["ending"][0]

@@ -111,6 +111,18 @@ set. ``tests``: when the test tables were last checked; a test-name TAB starts
 the collect child once it is older than the shim's check window
 (``otto._shim_complete.CHECK_WINDOW_SECONDS``). Pinned equal to
 `otto._shim_complete.MARKER_FILENAMES` by tests/unit/shim."""
+
+
+def marker_path(cache_dir: Path, which: str) -> Path:
+    """Return the *which* marker (``names`` or ``tests``) in the cache's *cache_dir*.
+
+    otto.config's one join of a marker's path. The shim has its own
+    (``otto._shim_complete.marker_path``), since ``otto.config`` may not import
+    the shim; tests/unit/shim pins the two equal for every marker.
+    """
+    return cache_dir / MARKER_FILENAMES[which]
+
+
 SHIM_WINDOW_SECONDS = 60
 """How long the ``names`` marker is trusted (Chris, 2026-09-04: one minute). Mirrored in
 otto._shim_complete."""

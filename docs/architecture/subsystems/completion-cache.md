@@ -670,8 +670,17 @@ pins these on a generated project shaped like a real one:
   `test_completion_handover_io_does_not_scale_with_corpus_size`,
   `test_dispatch_io_does_not_scale_with_corpus_size`,
   `test_a_test_name_tab_does_not_scale_with_corpus_size` (a bash test-name
-  TAB the shim answers) and `test_cold_rebuild_does_not_scale_with_corpus_size`
-  (a cold rebuild; its `workspace` count only).
+  TAB the shim answers), `test_host_tab_does_not_scale_with_corpus_size` (a
+  host TAB the shim answers in a templated project),
+  `test_remote_hit_does_not_scale_with_corpus_size` and
+  `test_remote_reserved_hit_does_not_scale_with_corpus_size` (a remote-path
+  TAB on a cached listing, without and with cached reservations), and
+  `test_cold_rebuild_does_not_scale_with_corpus_size` (a cold rebuild; its
+  `workspace` count only). The TAB pins measure a gated TAB surface at both
+  sizes; the test-name, host and remote-path pins also require each
+  measurement to pass that surface's validity verdict, so they cannot hold
+  on a TAB that took a cheaper path. The TAB surfaces themselves are on
+  {doc}`completion` ("What a TAB costs, and how it is measured").
 - The `test_project` surface gates a repeated `otto test TestTop0`: its seed is
   the same command, so the measured run finds a current table, and its
   session imports the whole generated tree, as every run does.

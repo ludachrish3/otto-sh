@@ -10,9 +10,10 @@ only ``os`` and ``typing``), and nothing else: not
 syscalls per TAB on an NFS home) and not ``pathlib`` (``os.path`` by design;
 ``.ruff.toml`` exempts this file from ``PTH``). ``subprocess`` is imported only by
 :func:`spawn_refresh`, after the answer is written. ``tests/unit/test_shim.py`` pins
-the warm module set; the ``completion_project_warm`` budget surface denies typer, click,
-rich and pydantic. Every function that mirrors product code names what it mirrors;
-change both or neither: ``tests/unit/shim/test_differential.py`` is the net.
+the warm module set; the shim's budget surfaces deny the module roots named by
+``SHIM_DENY`` in ``scripts/import_budget.py``. Every function that mirrors
+product code names what it mirrors; change both or neither:
+``tests/unit/shim/test_differential.py`` is the net.
 
 A test-name or ``-m`` TAB (a *tests site*) is answered from each project's per-file
 table (``otto.config.collected_tests``), which pytest's collections write, with
@@ -54,6 +55,18 @@ CHECK_WINDOW_SECONDS = 10 * 60
 2026-09-28). The ``tests`` marker records the check: the collect child's start, and every
 write of a table (each writer classified the whole table first)."""
 MARKER_FILENAMES = {"names": "completion_cache.names.ok", "tests": "completion_cache.tests.ok"}
+
+
+def marker_path(cache_dir: str, which: str) -> str:
+    """Return the path of the *which* marker (``names`` or ``tests``) in the cache's *cache_dir*.
+
+    The shim's one spelling of where a marker lives; ``scripts/import_budget.py`` backdates
+    and checks the same file through it. ``otto.config``, which may not import the shim,
+    joins through ``otto.config.cache_maintenance.marker_path``, pinned equal by tests/unit/shim.
+    """
+    return os.path.join(cache_dir, MARKER_FILENAMES[which])
+
+
 TABLES_KEY = "__collected_tests__"
 TABLE_SCHEMA = 5
 """``otto.config.collected_tests.RECORDS_SCHEMA_VERSION``."""
@@ -948,7 +961,7 @@ def _touch(marker: str) -> bool:
 
 def _check_names(payload: dict[str, Any], cache_dir: str, cache_mtime_ns: int, now: float) -> str:
     """Check the ``names`` key set and the inventory, unless the marker window vouches for them."""
-    marker = os.path.join(cache_dir, MARKER_FILENAMES["names"])
+    marker = marker_path(cache_dir, "names")
     if _marker_fresh(marker, cache_mtime_ns, now):
         return "marker"
     _stat_pass(payload["keys"])
@@ -1073,7 +1086,7 @@ def table_view(cache_path: str, data: dict[str, Any], now: float) -> TestNames:
             markers.update(record["markers"])
             for classes, name in record["tests"]:
                 names.update(selectable_names(classes, name))
-    marker = os.path.join(os.path.dirname(cache_path), MARKER_FILENAMES["tests"])
+    marker = marker_path(os.path.dirname(cache_path), "tests")
     age = _check_age(marker, now)
     return TestNames(sorted(names), sorted(markers), age is None or age >= CHECK_WINDOW_SECONDS)
 
@@ -1134,7 +1147,7 @@ def spawn_refresh(cache_dir: str, environ: dict[str, str], now: float | None = N
     otto_bin = os.path.join(os.path.dirname(sys.executable), "otto")
     if not os.path.exists(otto_bin):
         return False
-    if not _touch(os.path.join(cache_dir, MARKER_FILENAMES["tests"])):
+    if not _touch(marker_path(cache_dir, "tests")):
         # With no record of this check, every TAB of a burst would start one.
         return False
     import subprocess
@@ -1249,7 +1262,7 @@ def inspect_shim(cache_path: Any, now: float | None = None) -> str:
         how = validate_keys(cache_path, data, now)
         if how == "stat":
             return "served (validated now)"
-        marker = os.path.join(os.path.dirname(str(cache_path)), MARKER_FILENAMES["names"])
+        marker = marker_path(os.path.dirname(str(cache_path)), "names")
         ago = int(now - os.stat(marker).st_mtime)
     except Handover as e:
         return f"handing over — {e.reason}"
@@ -1284,7 +1297,7 @@ def inspect_tests(cache_path: Any, now: float | None = None) -> str:
         return f"handing over — error: {type(e).__name__}: {e}"
     count = len(found.names)
     noun = "name" if count == 1 else "names"
-    age = _check_age(os.path.join(os.path.dirname(str(cache_path)), MARKER_FILENAMES["tests"]), now)
+    age = _check_age(marker_path(os.path.dirname(str(cache_path)), "tests"), now)
     if age is None:
         when = "no check recorded, a check is due"
     elif found.check_due:

@@ -341,6 +341,13 @@ command exits as expected, but it has no baseline and no ceiling. A verb nobody 
 yet is tracked; it becomes gated when someone optimizes it and wants the win
 pinned.
 
+**TAB surfaces.** A TAB costs what the path that answers it costs, so the
+budget gates one warm TAB surface per cost profile: each way the shim
+validates its cache, and each kind of hand-over to the full CLI. A test fails
+when a completion site maps to none of them. The surfaces, what each proves
+about its path, and what stays unmeasured on purpose are on
+{doc}`subsystems/completion` ("What a TAB costs, and how it is measured").
+
 **Target ratios.** A ceiling pins today's cost; it does not say how low a
 verb should go. A gated surface may also carry a `target_ratio`: its
 `file_ops` may be at most that multiple of `otto --version`'s (the

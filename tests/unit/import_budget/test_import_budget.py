@@ -72,6 +72,12 @@ def test_surfaces_table_well_formed():
         "dispatch_project_warm",
         "completion_project_warm",
         "completion_project_handover",
+        "completion_host_warm",
+        "completion_test_warm",
+        "completion_docker_observed_warm",
+        "completion_hosts_past_sep_handover",
+        "completion_remote_path_hit",
+        "completion_remote_path_hit_reserved",
         "test_project",
         "host_local_exec",
         "host_local_put",
@@ -100,7 +106,6 @@ def test_surfaces_table_well_formed():
         ),
         "tracked_host_probe",
         "tracked_host_power",
-        "tracked_tab_warm_templated",
     }
     assert set(keys) == gated | tracked
     assert {s.key for s in harness.SURFACES if s.tracked} == tracked
@@ -845,6 +850,54 @@ def test_bootstrap_project_is_the_project_bearing_sibling():
     assert with_project["workspace"] > 0, with_project
 
 
+def test_measure_file_ops_refuses_a_result_that_names_an_ending(monkeypatch):
+    """A surface that ended unmeasured has zero counts; no count consumer may read them."""
+    ended = {"ending": "the seed left no cache", "file_ops": {"total": 0, "workspace": 0}}
+    monkeypatch.setattr(harness, "measure_surface", lambda _s: ended)
+    with pytest.raises(harness.UnmeasuredSurfaceError, match="the seed left no cache"):
+        harness.measure_file_ops(harness.surface_by_key("completion_project_warm"))
+
+
+def test_the_ssh_surfaces_name_the_generated_projects_ssh_host():
+    """One spelling of ``ssh_lab``'s host: the generated project's, read by every SSH surface."""
+    from tests._fixtures.generated_project import BUDGET_SSH_HOST
+
+    assert harness.BUDGET_SSH_HOST == BUDGET_SSH_HOST
+    for key in ("host_ssh_exec", "host_ssh_login"):
+        assert harness.surface_by_key(key).argv[2] == BUDGET_SSH_HOST, key
+    for key in ("completion_remote_path_hit", "completion_remote_path_hit_reserved"):
+        words = dict(harness.surface_by_key(key).env_extra)["COMP_WORDS"]
+        assert words.split()[2] == BUDGET_SSH_HOST, key
+
+
+def _tab_surfaces() -> list:
+    """Every surface that measures a TAB: its env carries click's completion protocol."""
+    return [s for s in harness.SURFACES if "_OTTO_COMPLETE" in dict(s.env_extra)]
+
+
+def test_the_tab_host_timeout_names_otto_s_own_variable():
+    from otto.config.completion_cache import HOST_SUMMARY_DEADLINE_ENV_VAR
+
+    name, value = harness.TAB_HOST_TIMEOUT
+    assert name == HOST_SUMMARY_DEADLINE_ENV_VAR
+    assert float(value) >= 60, "far past any traced seed's enumeration"
+
+
+def test_every_tab_surface_lifts_the_host_enumeration_deadline():
+    """A cold seed TAB enumerates the hosts under strace against a 2 s deadline.
+
+    A missed deadline caches ``hosts: ["local"]`` and the measured TAB answers
+    from it, so a loaded machine would fail the verdict (or move the count) for
+    a reason that is no regression. Every TAB surface, the seed and the run
+    alike, carries :data:`TAB_HOST_TIMEOUT`; reading one variable is no file
+    operation, so the counts stay as they were.
+    """
+    tabs = _tab_surfaces()
+    assert len(tabs) >= 8, [s.key for s in tabs]
+    missing = [s.key for s in tabs if harness.TAB_HOST_TIMEOUT not in s.env_extra]
+    assert missing == []
+
+
 def test_completion_env_reaches_the_child():
     """``env_extra`` is what makes the completion surface a completion surface.
 
@@ -884,26 +937,7 @@ def test_completion_io_does_not_scale_with_corpus_size():
     and the installed dists add, they add to both sides. The shim's stat pass
     is over the NAMES key set on this site, which is O(top-level).
     """
-    import dataclasses
-
-    base = harness.surface_by_key("completion_project_warm")
-    small = dataclasses.replace(
-        base, key="completion_small", project_files=50, project_dirs_count=5
-    )
-    large = dataclasses.replace(
-        base, key="completion_large", project_files=200, project_dirs_count=20
-    )
-
-    ops_small = harness.measure_surface(small)["file_ops"]
-    ops_large = harness.measure_surface(large)["file_ops"]
-
-    assert ops_large["workspace"] - ops_small["workspace"] <= 5, (
-        f"completion workspace I/O scales with corpus: "
-        f"{ops_small['workspace']} -> {ops_large['workspace']}"
-    )
-    assert ops_large["total"] - ops_small["total"] <= 15, (
-        f"completion file ops scale with corpus: {ops_small['total']} -> {ops_large['total']}"
-    )
+    _tab_does_not_scale("completion_project_warm", "completion")
 
 
 def test_completion_handover_io_does_not_scale_with_corpus_size():
@@ -919,27 +953,7 @@ def test_completion_handover_io_does_not_scale_with_corpus_size():
     shim's cheapness on the warm path would otherwise let slip past
     unnoticed, so it needs its own pin.
     """
-    import dataclasses
-
-    base = harness.surface_by_key("completion_project_handover")
-    small = dataclasses.replace(
-        base, key="completion_handover_small", project_files=50, project_dirs_count=5
-    )
-    large = dataclasses.replace(
-        base, key="completion_handover_large", project_files=200, project_dirs_count=20
-    )
-
-    ops_small = harness.measure_surface(small)["file_ops"]
-    ops_large = harness.measure_surface(large)["file_ops"]
-
-    assert ops_large["workspace"] - ops_small["workspace"] <= 5, (
-        f"completion handover workspace I/O scales with corpus: "
-        f"{ops_small['workspace']} -> {ops_large['workspace']}"
-    )
-    assert ops_large["total"] - ops_small["total"] <= 15, (
-        f"completion handover file ops scale with corpus: "
-        f"{ops_small['total']} -> {ops_large['total']}"
-    )
+    _tab_does_not_scale("completion_project_handover", "completion_handover")
 
 
 def test_dispatch_io_does_not_scale_with_corpus_size():
@@ -995,43 +1009,104 @@ def test_cold_rebuild_does_not_scale_with_corpus_size():
 def test_a_test_name_tab_does_not_scale_with_corpus_size():
     """A test-name TAB answered by the shim is O(1) in the corpus: it never stats the test tree.
 
-    The seed is the same TAB on a cold home: it hands over, and the full path
-    rebuilds the sections and waits once for the collect child's whole-tree
-    table, which starts the check window. The measured TAB is answered by the
-    shim from that table (no typer): it reads the table and stats the
-    ``env`` (the pytest configs, the settings, site-packages), and the check
-    of what the table tracks is the detached collect child's, once a window
-    has lapsed. Between 50 files/5 dirs and 200 files/20 dirs its I/O holds,
-    with the tolerance the other O(1) pins use (Chris, 2026-09-28: a warm
-    TAB's file ops must not grow with the corpus; on NFS each is a round
-    trip).
+    ``completion_test_warm`` at two corpus sizes. Its seed is the same TAB on
+    a cold home: it hands over, and the full path rebuilds the sections and
+    waits once for the collect child's whole-tree table, which starts the
+    check window. The measured TAB is answered by the shim from that table:
+    it reads the table and stats the ``env`` (the pytest configs, the
+    settings, site-packages), and the check of what the table tracks is the
+    detached collect child's, once a window has lapsed. Each measurement's
+    verdict proves the shim answered and started no collect child. Between
+    50 files/5 dirs and 200 files/20 dirs its I/O holds, with the tolerance
+    the other O(1) pins use (Chris, 2026-09-28: a warm TAB's file ops must
+    not grow with the corpus; on NFS each is a round trip).
+    """
+    _tab_does_not_scale("completion_test_warm", "tests_tab")
+
+
+def test_host_tab_does_not_scale_with_corpus_size():
+    """A host TAB in a templated project is O(1) in the corpus, like ``otto <TAB>``.
+
+    ``completion_host_warm`` at two corpus sizes, with the same two deltas as
+    ``test_completion_io_does_not_scale_with_corpus_size``. Its stat pass is
+    over the ``names`` key set, which holds the lab files and the jsonnet
+    source's entry, import root and inventory, and no test file. Each
+    measurement's verdict proves the shim answered, with a json and a
+    templated host.
+    """
+    _tab_does_not_scale("completion_host_warm", "host_tab")
+
+
+def _tab_does_not_scale(key: str, label: str) -> None:
+    """Measure the TAB surface *key* at two corpus sizes and pin it O(1) in the corpus.
+
+    The one scaling pin for every TAB surface: the same surface at 50 files in 5
+    dirs and at 200 files in 20, each its own measurement with its own seed and
+    post-seed writer (``measure_surface`` runs them; a remote hit's listing,
+    and reservation answer, are written per measurement). Both measurements
+    must pass the surface's verdict (:func:`check_exit`), so an unmeasured or
+    wrong-path run cannot pass with a small delta. A DELTA between two
+    measurements taken in one environment is comparable where an absolute
+    number is not: whatever the bytecode cache and the installed dists add,
+    they add to both sides. The workspace may grow by at most 5 and the whole
+    tree by at most 15, the tolerances of the help and dispatch pins.
     """
     import dataclasses
 
-    base = harness.surface_by_key("completion_project_warm")
-    tab = (("_OTTO_COMPLETE", "complete_bash"), ("COMP_WORDS", "otto test T"), ("COMP_CWORD", "2"))
-    small = dataclasses.replace(
-        base, key="tests_tab_small", project_files=50, project_dirs_count=5, env_extra=tab
-    )
+    base = harness.surface_by_key(key)
+    small = dataclasses.replace(base, key=f"{label}_small", project_files=50, project_dirs_count=5)
     large = dataclasses.replace(
-        base, key="tests_tab_large", project_files=200, project_dirs_count=20, env_extra=tab
+        base, key=f"{label}_large", project_files=200, project_dirs_count=20
     )
     measured_small = harness.measure_surface(small)
     measured_large = harness.measure_surface(large)
-    for measured in (measured_small, measured_large):
-        loaded = measured["non_stdlib_modules"]
-        assert not any(m == "typer" or m.startswith("typer.") for m in loaded), (
-            "the shim did not answer the measured TAB"
-        )
+    for surface, measured in ((small, measured_small), (large, measured_large)):
+        assert harness.check_exit(surface, measured) == [], surface.key
     ops_small, ops_large = measured_small["file_ops"], measured_large["file_ops"]
     assert ops_large["workspace"] - ops_small["workspace"] <= 5, (
-        f"a test-name TAB's workspace I/O scales with the corpus: "
+        f"{key}'s workspace I/O scales with the corpus: "
         f"{ops_small['workspace']} -> {ops_large['workspace']}"
     )
     assert ops_large["total"] - ops_small["total"] <= 15, (
-        f"a test-name TAB's file ops scale with the corpus: "
-        f"{ops_small['total']} -> {ops_large['total']}"
+        f"{key}'s file ops scale with the corpus: {ops_small['total']} -> {ops_large['total']}"
     )
+
+
+def test_remote_hit_does_not_scale_with_corpus_size():
+    """``otto host budget-ssh get <TAB>`` on a cached listing is O(1) in the corpus."""
+    _tab_does_not_scale("completion_remote_path_hit", "remote_hit")
+
+
+def test_remote_reserved_hit_does_not_scale_with_corpus_size():
+    """The same TAB with ``[reservations]`` and the answer cached is O(1) in the corpus too."""
+    _tab_does_not_scale("completion_remote_path_hit_reserved", "remote_reserved_hit")
+
+
+def test_reserved_hit_without_reservations_fails_its_verdict():
+    """The control: the reserved surface with the listing cached and no reservations fails.
+
+    With ``[reservations]`` declared and no cached answer, the gate builds the
+    JSON backend (``otto.reservations.registry`` loads), stores what it
+    reported in the sidecar, finds the user holds nothing the lab requires,
+    and the TAB answers nothing. Each breaks the verdict; the registry import
+    is the one asserted, since it proves the table applies and the gate
+    missed, so the reserved surface cannot quietly measure the unreserved hit.
+    """
+    import dataclasses
+
+    base = harness.surface_by_key("completion_remote_path_hit_reserved")
+    control = dataclasses.replace(
+        base,
+        key="remote_reserved_hit_control",
+        post_seed="remote_listing_reserved_without_reservations",
+    )
+    result = harness.measure_surface(control)
+    # Measured, so the failure is the TAB's and not a writer's.
+    assert result.get("measured") is not False, result["ending"]
+    violations = harness.check_exit(control, result)
+    assert violations, "the control measured a clean reserved hit"
+    # The gate built the backend: the table applied, and the gate missed.
+    assert any("otto.reservations.registry" in v for v in violations), violations
 
 
 def test_env_extra_is_applied_after_the_sanitizer(monkeypatch):
@@ -1622,10 +1697,10 @@ def test_a_failure_while_staging_leaves_every_file_byte_identical(
     before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
     real_text = harness._ceilings_text
 
-    def text(minor, results):
+    def text(minor, results, kept=None):
         if minor == "3.11":
             raise OSError("No space left on device")
-        return real_text(minor, results)
+        return real_text(minor, results, kept)
 
     monkeypatch.setattr(harness, "_ceilings_text", text)
     assert harness.main(["--update"]) == 1
@@ -1854,3 +1929,145 @@ def test_a_stray_file_in_the_ceilings_directory_is_refused_by_name(
     assert harness.main(["--update"]) == 1
     assert "notes.json" in capsys.readouterr().out
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+
+
+def _entry_result(*, modules=(), stdout=""):
+    """A real-entry measurement that ended cleanly, carrying *modules* and the TAB's *stdout*."""
+    return {"exit_code": 0, "exception": None, "modules": list(modules), "stdout": stdout}
+
+
+def test_check_exit_rejects_a_denied_root():
+    """A denied root matches its submodules too: ``typer`` denies ``typer.core``."""
+    surface = harness.Surface("x", ["otto"], real_entry=True, expect_not_loaded=("typer",))
+    [violation] = harness.check_exit(surface, _entry_result(modules=["otto", "typer.core"]))
+    assert "typer.core" in violation
+    assert harness.check_exit(surface, _entry_result(modules=["otto", "typerish"])) == []
+
+
+def test_check_exit_rejects_a_missing_candidate():
+    """A candidate is a whole stdout line: ``test1`` is not ``plain,test1x``."""
+    surface = harness.Surface("x", ["otto"], real_entry=True, expect_answer=("test1",))
+    [violation] = harness.check_exit(surface, _entry_result(stdout="plain,test1x\n"))
+    assert "test1" in violation
+    assert harness.check_exit(surface, _entry_result(stdout="test0\ntest1\n")) == []
+
+
+def test_check_exit_rejects_a_wrong_exact_set():
+    surface = harness.Surface(
+        "x", ["otto"], real_entry=True, expect_answer_exact=frozenset({"test1,test2"})
+    )
+    [violation] = harness.check_exit(surface, _entry_result(stdout="test1,test2\ntest1,test4\n"))
+    assert "test1,test4" in violation
+    assert harness.check_exit(surface, _entry_result(stdout="test1,test2\n")) == []
+
+
+def test_check_exit_requires_every_expected_root():
+    surface = harness.Surface("x", ["otto"], real_entry=True, expect_loaded=("asyncssh", "otto"))
+    [violation] = harness.check_exit(surface, _entry_result(modules=["otto.cli"]))
+    assert "asyncssh" in violation
+    assert harness.check_exit(surface, _entry_result(modules=["asyncssh.connection", "otto"])) == []
+
+
+def test_loaded_root_matches_the_root_or_a_dotted_child_only():
+    assert harness.loaded_root("typer", ("typer",))
+    assert harness.loaded_root("typer.core", ("rich", "typer"))
+    assert not harness.loaded_root("typerx", ("typer",))
+    assert not harness.loaded_root("otto.client", ("otto.cli",))
+    assert not harness.loaded_root("typer", ())
+
+
+def test_default_fields_check_nothing_new():
+    """The new checks default to "no check", so no existing surface's verdict moves."""
+    surface = harness.Surface("x", ["otto"])
+    assert surface.expect_loaded == ()
+    assert surface.expect_not_loaded == ()
+    assert surface.expect_answer == ()
+    assert surface.expect_answer_exact is None
+    assert surface.seed_env_remove == ()
+    assert surface.post_seed is None
+    assert (surface.cache_unchanged, surface.stat_leg) == (False, False)
+    proven = {s.key: (s.cache_unchanged, s.stat_leg) for s in harness.SURFACES}
+    assert {k: v for k, v in proven.items() if v != (False, False)} == {
+        "completion_project_warm": (True, True),
+        "completion_project_handover": (True, False),
+        "completion_host_warm": (True, True),
+        "completion_test_warm": (True, True),
+        "completion_docker_observed_warm": (True, True),
+        "completion_hosts_past_sep_handover": (True, False),
+        "completion_remote_path_hit": (True, False),
+        "completion_remote_path_hit_reserved": (True, False),
+    }
+    assert {s.key: s.post_seed for s in harness.SURFACES if s.post_seed is not None} == {
+        "completion_docker_observed_warm": "docker_containers",
+        "completion_remote_path_hit": "remote_listing",
+        "completion_remote_path_hit_reserved": "remote_listing_reserved",
+    }
+    assert {s.key for s in harness.SURFACES if s.reservations} == {
+        "completion_remote_path_hit_reserved"
+    }
+    seed_removed = {s.key: s.seed_env_remove for s in harness.SURFACES if s.seed_env_remove}
+    assert seed_removed == {
+        "completion_remote_path_hit": ("_OTTO_COMPLETE", "COMP_WORDS", "COMP_CWORD"),
+        "completion_remote_path_hit_reserved": ("_OTTO_COMPLETE", "COMP_WORDS", "COMP_CWORD"),
+    }
+    for s in harness.SURFACES:
+        if s.key.startswith("completion_"):
+            continue
+        assert s.expect_not_loaded == (), s.key
+        assert s.expect_answer == (), s.key
+        assert s.expect_answer_exact is None, s.key
+    with_loaded = {s.key: s.expect_loaded for s in harness.SURFACES if s.expect_loaded}
+    assert with_loaded == {
+        "host_ssh_exec": ("asyncssh.connection",),
+        "host_ssh_login": ("asyncssh.connection",),
+        "completion_project_handover": ("otto.cli.tunnel",),
+        "completion_hosts_past_sep_handover": ("otto.cli.tunnel",),
+        "completion_remote_path_hit": ("otto.cli.remote_completion",),
+        "completion_remote_path_hit_reserved": ("otto.cli.remote_completion",),
+    }
+
+
+def test_the_shim_surface_denies_the_shim_roots_and_names_its_answer():
+    warm = harness.surface_by_key("completion_project_warm")
+    assert warm.expect_not_loaded == harness.SHIM_DENY
+    assert warm.expect_answer
+    assert harness.SHIM_DENY == ("typer", "rich", "pydantic", "otto.cli", "otto.config")
+
+
+@pytest.mark.parametrize(
+    ("modules", "stdout"),
+    [(["otto", "typer.core"], "run\n"), (["otto"], "init\n")],
+    ids=["denied-root", "missing-candidate"],
+)
+def test_regeneration_refuses_an_invalid_measurement(
+    measured, tmp_path, monkeypatch, capsys, modules, stdout
+):
+    """``--update`` writes nothing when a measurement's validity verdict fails."""
+    _update_world(monkeypatch, tmp_path, ["3.10"])
+    surface = harness.Surface(
+        "completion_x",
+        ["otto"],
+        real_entry=True,
+        expect_not_loaded=("typer",),
+        expect_answer=("run",),
+    )
+    monkeypatch.setattr(harness, "SURFACES", [surface, harness.surface_by_key(harness.RATIO_FLOOR)])
+
+    def measure_surface(s):
+        return {**_gated_results(100), "modules": modules, "stdout": stdout}
+
+    monkeypatch.setattr(harness, "measure_surface", measure_surface)
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    assert harness.main(["--update"]) == 1
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+    assert "nothing written" in capsys.readouterr().out
+
+
+def test_check_exit_reads_the_tab_answer_a_result_file_child_printed():
+    """A child that writes its payload to the result file still has its stdout kept."""
+    code = (
+        "import json, os\n"
+        f"open(os.environ[{harness.RESULT_PATH_ENV_VAR!r}], 'w').write(json.dumps({{'a': 1}}))\n"
+        "print('init')\nprint('run')\n"
+    )
+    assert json.loads(harness._run_child(code)) == {"a": 1, "stdout": "init\nrun\n"}

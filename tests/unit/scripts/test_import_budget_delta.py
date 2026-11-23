@@ -681,6 +681,55 @@ def test_a_canary_the_base_cannot_run_lists_every_repo_surface(tmp_path: Path, c
     assert "| help_project |" not in out, "an unmeasurable surface is not tabled"
 
 
+def test_delta_reports_an_ending(tmp_path: Path, capsys):
+    """A base tag that lacks a surface's post-seed writer is listed by its reason, not a traceback.
+
+    The row is the harness's own: ``measure_surface``'s result for an ending
+    before the measured run, through ``report_row``, as ``--report-json``
+    writes it.
+    """
+    surface = import_budget.surface_by_key(REAL)
+    why = "the post-seed writer 'x' failed: ModuleNotFoundError: no store_listing at this tag"
+    row = import_budget.report_row(surface, import_budget._ended_before_measuring(why))
+    base = _side(tmp_path, "base")
+    _edit(base / "3.10.json", lambda t: t.__setitem__(
+        next(i for i, r in enumerate(t) if r["surface"] == REAL), row))  # fmt: skip
+    assert validate_side(base, "3.10", PROV) == []
+    tip = _side(tmp_path, "tip")
+    v = judge_minor(base, tip, "3.10", NONE)
+    assert list(v.unmeasurable) == [REAL]
+    assert why in v.unmeasurable[REAL]
+    assert (v.stop, v.grown) == ([], [])
+    args = ["judge", *_judge_args(tmp_path), "--pair", str(base), str(tip), "--minors", "3.10"]
+    assert main(args) == 0
+    assert f"not measurable at base:\n  {REAL}: " in capsys.readouterr().out
+
+
+def test_delta_judges_a_base_row_whose_proof_was_skipped_and_says_so(tmp_path: Path, capsys):
+    """A base otto with no ``marker_path`` is still judged; the skipped proof is printed."""
+    skipped = [import_budget.SKIPPED_STAT_LEG]
+    base = _side(tmp_path, "base")
+    _edit(base / "3.10.json", lambda t: next(r for r in t if r["surface"] == REAL).update(
+        proofs_skipped=skipped))  # fmt: skip
+    assert validate_side(base, "3.10", PROV) == []
+    tip = _side(tmp_path, "tip")
+    v = judge_minor(base, tip, "3.10", NONE)
+    assert v.unmeasurable == {}
+    assert v.proofs_skipped == {REAL: skipped}
+    args = ["judge", *_judge_args(tmp_path), "--pair", str(base), str(tip), "--minors", "3.10"]
+    assert main(args) == 0
+    out = capsys.readouterr().out
+    assert f"judged without a proof at base:\n  {REAL}: {skipped[0]}" in out, out
+
+
+def test_a_misshapen_proofs_skipped_is_refused(tmp_path: Path):
+    base = _side(tmp_path, "base")
+    _edit(base / "3.10.json", lambda t: t[0].update(proofs_skipped="no"))
+    assert any(
+        "proofs_skipped is not a list of str" in p for p in validate_side(base, "3.10", PROV)
+    )
+
+
 # --- reproduced, decide, stale -----------------------------------------------
 
 
@@ -2118,7 +2167,6 @@ def test_the_harness_measures_an_otto_that_has_no_command_list_helper(tmp_path: 
     assert done.returncode == 0, done.stderr
     assert done.stdout.split() == [
         "tracked_init", "tracked_docker", "tracked_host_probe", "tracked_host_power",
-        "tracked_tab_warm_templated",
     ]  # fmt: skip
 
 

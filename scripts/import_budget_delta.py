@@ -99,11 +99,14 @@ KNOWN_SURFACES = [
     "import_otto", "help", "run", "host", "reservation", "docker", "schema", "monitor", "test",
     "cov", "run_bootstrapped", "version_project", "help_project", "help_project_warm",
     "bootstrap_project", "dispatch_project_warm", "completion_project_warm",
-    "completion_project_handover", "test_project", "host_local_exec", "host_local_put",
-    "host_local_get", "host_ssh_exec", "host_ssh_login", "dispatch_local_warm", "tracked_init",
-    "tracked_env", "tracked_cache", "tracked_docker", "tracked_link", "tracked_tunnel",
-    "tracked_monitor", "tracked_cov", "tracked_reservation", "tracked_inventory", "tracked_lab",
-    "tracked_schema", "tracked_host_probe", "tracked_host_power", "tracked_tab_warm_templated",
+    "completion_project_handover", "completion_host_warm", "completion_test_warm",
+    "completion_docker_observed_warm", "completion_hosts_past_sep_handover",
+    "completion_remote_path_hit", "completion_remote_path_hit_reserved", "test_project",
+    "host_local_exec", "host_local_put", "host_local_get", "host_ssh_exec", "host_ssh_login",
+    "dispatch_local_warm", "tracked_init", "tracked_env", "tracked_cache", "tracked_docker",
+    "tracked_link", "tracked_tunnel", "tracked_monitor", "tracked_cov", "tracked_reservation",
+    "tracked_inventory", "tracked_lab", "tracked_schema", "tracked_host_probe",
+    "tracked_host_power",
 ]  # fmt: skip
 """The surfaces scripts/import_budget.py measures, literally: every record must hold each once.
 
@@ -116,11 +119,13 @@ tests/unit/scripts/test_import_budget_delta.py pins it to import_budget.SURFACES
 REPO_SURFACES = [
     "version_project", "help_project", "help_project_warm", "bootstrap_project",
     "dispatch_project_warm", "completion_project_warm", "completion_project_handover",
-    "test_project", "host_local_exec", "host_local_put", "host_local_get", "host_ssh_exec",
-    "host_ssh_login", "dispatch_local_warm", "tracked_init", "tracked_env", "tracked_cache",
-    "tracked_docker", "tracked_link", "tracked_tunnel", "tracked_monitor", "tracked_cov",
-    "tracked_reservation", "tracked_inventory", "tracked_lab", "tracked_schema",
-    "tracked_host_probe", "tracked_host_power", "tracked_tab_warm_templated",
+    "completion_host_warm", "completion_test_warm", "completion_docker_observed_warm",
+    "completion_hosts_past_sep_handover", "completion_remote_path_hit",
+    "completion_remote_path_hit_reserved", "test_project", "host_local_exec", "host_local_put",
+    "host_local_get", "host_ssh_exec", "host_ssh_login", "dispatch_local_warm", "tracked_init",
+    "tracked_env", "tracked_cache", "tracked_docker", "tracked_link", "tracked_tunnel",
+    "tracked_monitor", "tracked_cov", "tracked_reservation", "tracked_inventory", "tracked_lab",
+    "tracked_schema", "tracked_host_probe", "tracked_host_power",
 ]  # fmt: skip
 """The surfaces that run inside the harness's generated repo (a `project_files` surface).
 
@@ -190,6 +195,9 @@ class Record:
     """The harness's reasons the run did not end as the surface expects; empty when it did."""
     by_path: "dict[str, int]"
     """Calls per path key as scripts/import_budget.py records them; attribution only."""
+    proofs_skipped: "list[str]" = field(default_factory=list)
+    """Each warm proof the harness skipped because this side's otto cannot support it
+    (`stat_leg: marker_path unavailable at base`); the record is still judged."""
 
 
 @dataclass(frozen=True)
@@ -264,6 +272,9 @@ def _end_problem(row: "dict[str, object]") -> "str | None":
     ending = row["ending"]
     if not isinstance(ending, list) or not all(isinstance(r, str) for r in ending):
         return "ending is not a list of str"
+    skipped = row.get("proofs_skipped", [])
+    if not isinstance(skipped, list) or not all(isinstance(r, str) for r in skipped):
+        return "proofs_skipped is not a list of str"
     return None
 
 
@@ -318,6 +329,7 @@ def rows(side: Path, minor: str) -> "dict[str, Record]":
             dict(row["by_bucket"]),
             list(row["ending"]),
             dict(row["by_path"]),
+            list(row.get("proofs_skipped", [])),
         )
         for row in table
     }
@@ -473,6 +485,8 @@ class Verdict:
     """Each surface whose buckets moved beyond the noise at an unchanged total."""
     unmeasurable: "dict[str, str]" = field(default_factory=dict)
     """Each base surface not judged, by name, with why (sorted by surface)."""
+    proofs_skipped: "dict[str, list[str]]" = field(default_factory=dict)
+    """Each judged base surface whose harness skipped a warm proof, with the notes."""
     grown: "list[tuple[str, str]]" = field(default_factory=list)
     """Each (surface, minor) that grew in the deciding pair, approved or not; staleness reads it."""
     used: "list[Approval]" = field(default_factory=list)
@@ -654,6 +668,11 @@ def judge_minor(base: Path, tip: Path, minor: str, approvals: "list[Approval]") 
     """Compare one measured pair on *minor*. Both sides validated by the caller."""
     before, after = rows(base, minor), rows(tip, minor)
     v = Verdict(minor, unmeasurable=_unmeasurable(before, expected_exits(), base.name))
+    v.proofs_skipped = {
+        k: r.proofs_skipped
+        for k, r in sorted(before.items())
+        if r.proofs_skipped and k not in v.unmeasurable
+    }
     for key in sorted(k for k in before if k not in v.unmeasurable):
         b, a = before[key], after[key]
         delta = a.file_ops - b.file_ops
@@ -872,6 +891,9 @@ def print_verdict(v: Verdict, base_name: str, other: "Path | None" = None) -> No
     if v.unmeasurable:
         why = (f"{k}: {reason}" for k, reason in v.unmeasurable.items())
         print(f"not measurable at {base_name}:\n  " + "\n  ".join(why))
+    if v.proofs_skipped:
+        notes = (f"{k}: {'; '.join(why)}" for k, why in v.proofs_skipped.items())
+        print(f"judged without a proof at {base_name}:\n  " + "\n  ".join(notes))
     if v.declined:
         print("DECLINED:\n  " + "\n  ".join(v.declined))
     if v.named:

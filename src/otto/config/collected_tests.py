@@ -409,9 +409,9 @@ def mark_tables_checked(cache_dir: Path) -> bool:
     check can ignore it: with no marker, the next TAB checks again, which is
     only early.
     """
-    from .cache_maintenance import MARKER_FILENAMES
+    from .cache_maintenance import marker_path
 
-    marker = cache_dir / MARKER_FILENAMES["tests"]
+    marker = marker_path(cache_dir, "tests")
     # Not Path.touch: it swallows a refused utime and reports success.
     try:
         os.utime(marker, None)
@@ -432,10 +432,10 @@ def tables_check_due(cache_dir: Path) -> bool:
     stepped back), or older than the check window; see
     :func:`mark_tables_checked`.
     """
-    from .cache_maintenance import CHECK_WINDOW_SECONDS, MARKER_FILENAMES
+    from .cache_maintenance import CHECK_WINDOW_SECONDS, marker_path
 
     try:
-        age = time.time() - (cache_dir / MARKER_FILENAMES["tests"]).stat().st_mtime
+        age = time.time() - marker_path(cache_dir, "tests").stat().st_mtime
     except OSError:
         return True
     return not 0 <= age < CHECK_WINDOW_SECONDS

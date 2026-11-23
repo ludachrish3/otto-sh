@@ -22,6 +22,7 @@ from otto.cli.main import _completion_collectors
 from otto.config import completion_cache as cc
 from otto.config.completion_tree import build_shim_payload
 from otto.config.project import PYTEST_CONFIG_NAMES
+from tests._fixtures.completion_sites import completion_nodes
 from tests._fixtures.shim_project import make_shim_project
 
 EXPECTED_HANDOVER_REASONS = {
@@ -306,22 +307,6 @@ def _shim(words: str, cword: int, env: dict[str, str]) -> tuple[str | None, str]
     return (None if out.items is None else "\n".join(out.items)), out.reason
 
 
-def _walk(node: dict, path: list[str]):
-    """Every node reachable BY NAME -- never a scoped group's subcommands.
-
-    ``otto host`` consumes its next word as the ``host_id`` positional, so a path
-    like ``["host", "cleanup"]`` never reaches the verb: Typer reads ``cleanup`` as
-    the id, every option of that verb as an unknown option of the host GROUP and
-    every word after it as an unknown command. Such a case hands over, so it
-    compares nothing. The verbs are generated under REAL ids below instead.
-    """
-    yield path, node
-    if node.get("scoped_by"):
-        return
-    for name, child in node["commands"].items():
-        yield from _walk(child, [*path, name])
-
-
 def _node_cases(add, path: list[str], node: dict) -> None:
     """Every fragment and complete-word shape this corpus knows, for one command."""
     for frag in ("", "-", "--", "="):
@@ -367,25 +352,51 @@ def _node_cases(add, path: list[str], node: dict) -> None:
             add([*path, "box"], "-")
 
 
+UNKNOWN_HOST = "ghost"
+"""A host id the cache does not know: ``otto host ghost <TAB>`` completes from the union menu."""
+
+
+def _view_ids(classes: dict[str, str]) -> dict[str | None, str]:
+    """One real host id per host-class view: the first id (sorted) of each class the cache
+    maps, and :data:`UNKNOWN_HOST` for the union menu (``None``). A class no id has is a
+    view no TAB in this project reaches, so it generates no case."""
+    ids: dict[str | None, str] = {None: UNKNOWN_HOST}
+    for host_id in sorted(classes):
+        ids.setdefault(classes[host_id], host_id)
+    return ids
+
+
 def _corpus(tree: dict, classes: dict[str, str]) -> list[tuple[str, int]]:
-    """(COMP_WORDS, COMP_CWORD) per spec §6, generated from the tree itself."""
+    """(COMP_WORDS, COMP_CWORD) per spec §6, generated from the tree itself.
+
+    Every node of the shared enumeration (:func:`completion_nodes`), the scoped
+    group's verbs included. A node reached by name alone is walked at its own path.
+    A scoped verb is never reachable by name: ``otto host`` consumes its next word as
+    the ``host_id`` positional, so ``["host", "cleanup"]`` would read ``cleanup`` as
+    the id, every option of the verb as an unknown option of the host GROUP and every
+    word after it as an unknown command -- a hand-over that compares nothing. Each
+    view's verbs are generated under a real id of that view's class instead
+    (:func:`_view_ids`).
+    """
     cases: list[tuple[str, int]] = []
 
     def add(words: list[str], frag: str) -> None:
         line = " ".join(["otto", *words, frag])
         cases.append((line, 1 + len(words)))
 
-    for path, node in _walk(tree, []):
-        _node_cases(add, path, node)
-    # The host verbs, each under a real id: the class view for an id the cache knows
-    # (`dut1` unix, `dut2` shimos, `box` zephyr), the union menu for one it does not
-    # (`ghost`). This is the only path on which a verb node is reachable at all.
-    host = tree["commands"]["host"]
-    for host_id in ("dut1", "dut2", "box", "ghost"):
-        view = tree.get("host_classes", {}).get(classes.get(host_id, ""), host["commands"])
-        for verb, vnode in view.items():
-            add(["host", host_id], verb[:2])
-            _node_cases(add, ["host", host_id, verb], vnode)
+    ids = _view_ids(classes)
+    for entry in completion_nodes(tree):
+        if entry.scope is None:
+            _node_cases(add, list(entry.path), entry.node)
+            continue
+        host_id = ids.get(entry.host_class)
+        if host_id is None:
+            continue
+        depth = len(entry.scope)
+        words = [*entry.scope, host_id, *entry.path[depth:]]
+        if len(entry.path) == depth + 1:  # a verb of the view's own menu
+            add(words[:-1], entry.path[-1][:2])
+        _node_cases(add, words, entry.node)
     return cases
 
 

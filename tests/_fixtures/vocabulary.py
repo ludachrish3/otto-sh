@@ -68,7 +68,7 @@ GIT_SENSE: dict[str, list[str]] = {
     # failure message's relative path.
     "scripts/import_budget.py": [
         "the caller's cwd handed the child the repo root, which every other test",
-        "# repo root on the path. Done lazily, here, so merely importing this module",
+        "repo root on the path for the import and takes it off again: merely",
         "repo-relative when it is inside the repo.",
     ],
     # stand-ins for scripts/api_regen.py's generate_worktree(repo, ...) and
