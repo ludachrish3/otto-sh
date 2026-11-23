@@ -61,8 +61,17 @@ moved back into a package conftest.
 # construction.
 # ---------------------------------------------------------------------------
 
+# The one xdist group every item that drives an LLEXT board's console joins:
+# the embedded coverage e2e, which collects from BOTH boards (zephyr37_llext
+# and zephyr44_llext) in one run, and the raw console rows for each board.
+# Each board's serial console takes one client at a time and answers a second
+# one with silence, so a row in a group of its own can run beside the coverage
+# e2e on another worker and read nothing. One group for the two boards, not
+# one per board, because the coverage e2e holds both at once.
+ZEPHYR_LLEXT_GROUP = "zephyr_llext"
+
 _FRONTLOAD_GROUPS: frozenset[str] = frozenset(
-    {"zephyr37_llext", "docker_e2e", "coverage_e2e", "zephyr_fanout"}
+    {ZEPHYR_LLEXT_GROUP, "docker_e2e", "coverage_e2e", "zephyr_fanout"}
 )
 
 

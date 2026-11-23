@@ -14,6 +14,7 @@ import re
 import pytest
 
 from tests._fixtures.labdata import host_data
+from tests.conftest import ZEPHYR_LLEXT_GROUP
 from tests.e2e.console._raw import nudge, raw_console, raw_direct, server_cred, strip_ansi_bytes
 
 pytestmark = [pytest.mark.timeout(120)]
@@ -23,9 +24,8 @@ _SERVER = host_data(_TEST2["server"])
 
 # The ARM Zephyr console rows. The console is single-client, so a raw nudge
 # must never race another driver: zephyr37_nofs joins the group the embedded
-# host suites stamp for it (zephyr_no_fs), zephyr37_llext the llext coverage
-# e2e's group. zephyr44_llext has no other driver in these lanes today; its
-# group is named after it so a future one serialises by joining it. These
+# host suites stamp for it (zephyr_no_fs), and both llext boards join the
+# llext coverage e2e's group, which drives the two of them in one run. These
 # rows do not get tests/integration/host's embedded protections (the shared
 # console lock, the wedge fast-fail): an 8 s read-only nudge needs neither.
 _ZEPHYR_ROWS = [
@@ -33,10 +33,10 @@ _ZEPHYR_ROWS = [
         "zephyr37_nofs", marks=pytest.mark.xdist_group("zephyr_no_fs"), id="zephyr37_nofs"
     ),
     pytest.param(
-        "zephyr37_llext", marks=pytest.mark.xdist_group("zephyr37_llext"), id="zephyr37_llext"
+        "zephyr37_llext", marks=pytest.mark.xdist_group(ZEPHYR_LLEXT_GROUP), id="zephyr37_llext"
     ),
     pytest.param(
-        "zephyr44_llext", marks=pytest.mark.xdist_group("zephyr44_llext"), id="zephyr44_llext"
+        "zephyr44_llext", marks=pytest.mark.xdist_group(ZEPHYR_LLEXT_GROUP), id="zephyr44_llext"
     ),
 ]
 
