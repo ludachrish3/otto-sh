@@ -1181,8 +1181,11 @@ _console_safety.console_access = _fake_console_access
 }
 
 
-def _run_conformance(tmp_path, *, shape: str, breakage: str):
+def _run_conformance(tmp_path, *, shape: str, breakage: str, lock_root: "str | None" = None):
     """Run the conformance tree in a subprocess with the console kind injected.
+
+    *lock_root* is where the run takes its console lock; ``None`` is the calling
+    test's own bed-lock root.
 
     A subprocess and not an in-process ``pytest.main``: what is under test is
     plugin/conftest registration and an ``flock`` held across xdist workers,
@@ -1231,10 +1234,13 @@ def _run_conformance(tmp_path, *, shape: str, breakage: str):
             # Draw the whole hermetic space, so the `local` cell is present
             # whatever seed the inner run picks.
             "OTTO_CONFORMANCE_CELLS": "all",
-            # The console lock this run takes stays under the unit test's own
-            # bed-lock root, never beside a live lab session's. Named rather
-            # than inherited so a missing unit-tree fixture is a KeyError here.
-            BED_LOCK_ROOT_ENV: os.environ[BED_LOCK_ROOT_ENV],
+            # The console lock this run takes stays under *lock_root*, or the
+            # calling unit test's own bed-lock root, never beside a live lab
+            # session's. Named rather than inherited so a missing unit-tree
+            # fixture is a KeyError here.
+            BED_LOCK_ROOT_ENV: (
+                lock_root if lock_root is not None else os.environ[BED_LOCK_ROOT_ENV]
+            ),
         },
         capture_output=True,
         text=True,
@@ -1243,8 +1249,31 @@ def _run_conformance(tmp_path, *, shape: str, breakage: str):
     )
 
 
-@pytest.mark.parametrize("shape", ["path-named", "path-less"])
-def test_the_console_protection_is_in_effect_under_both_invocation_shapes(tmp_path, shape):
+@pytest.fixture(scope="module", params=["path-named", "path-less"])
+def protected_run(request, tmp_path_factory):
+    """One whole inner conformance run per invocation shape, with the protection intact.
+
+    A fixture, so the run is bounded by its own ``timeout=600`` and not by the
+    per-test 180 s, which times a test's body only: the path-less shape collects
+    the whole repository in three processes (the controller and two workers,
+    about 25 CPU-seconds each), and under machine load that alone crossed the
+    body's budget (#1277). An inner run that stalls still ends, as a
+    ``TimeoutExpired`` naming the command and what it printed.
+
+    The lock root is the fixture's own: the unit tree's per-test root is a
+    function-scoped variable, not yet set when a module fixture runs.
+    """
+    shape = request.param
+    result = _run_conformance(
+        tmp_path_factory.mktemp("console-protection"),
+        shape=shape,
+        breakage="none",
+        lock_root=str(tmp_path_factory.mktemp("console-protection-locks")),
+    )
+    return shape, result
+
+
+def test_the_console_protection_is_in_effect_under_both_invocation_shapes(protected_run):
     """F3's check: the protection cannot depend on how the run was invoked.
 
     ``tests/integration/host/conftest.py`` learned this the expensive way --
@@ -1256,7 +1285,7 @@ def test_the_console_protection_is_in_effect_under_both_invocation_shapes(tmp_pa
 
     The `-m conformance` arm is the shape ``make conformance`` really uses.
     """
-    result = _run_conformance(tmp_path, shape=shape, breakage="none")
+    shape, result = protected_run
     items = _items_per_cell()
     assert f"{items} passed" in result.stdout, (
         f"the injected console cell did not run {items} items ({shape}) -- a "
