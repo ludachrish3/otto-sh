@@ -39,6 +39,7 @@ from otto.coverage.capture.model import Capture
 from otto.logger.mode import LogMode
 from scripts import bed_reap
 from tests._fixtures.labdata import element_for
+from tests.conftest import ZEPHYR_LLEXT_GROUP
 from tests.e2e._otto_subprocess import (
     CHECKOUT_ROOT,
     assert_output_dir,
@@ -48,7 +49,7 @@ from tests.e2e._otto_subprocess import (
 
 PROJECT3 = CHECKOUT_ROOT / "tests" / "project3"
 
-pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("zephyr37_llext")]
+pytestmark = [pytest.mark.integration, pytest.mark.xdist_group(ZEPHYR_LLEXT_GROUP)]
 
 
 def _project3_settings() -> dict:
