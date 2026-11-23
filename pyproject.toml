@@ -36,10 +36,14 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "aioftp>=0.27.2",
-    "aiosqlite>=0.21.0",
-    "asyncssh>=2.24.0",
-    "fastapi>=0.135.1",
+    # Every entry has an upper bound: the next version that may break, counted
+    # from the version in uv.lock (below the next major from 1.0, below the next
+    # minor in 0.x). A bound may be tighter than that, never looser; Dependabot
+    # widens it. The rule and its check: docs/contributing.md, "Dependency updates".
+    "aioftp>=0.27.2,<0.29",
+    "aiosqlite>=0.21.0,<0.23",
+    "asyncssh>=2.24.0,<3",
+    "fastapi>=0.135.1,<0.163",
     # Jsonnet lab and inventory templates (`otto.templating`), one binding per
     # platform, imported only inside `otto.templating.binding.load_binding`.
     # The C++ `jsonnet` ships abi3 wheels for Linux x86_64 (glibc >= 2.28 and
@@ -49,37 +53,37 @@ dependencies = [
     # the one "no binding" error (docs/installation.md, "Known gaps").
     # The `python_version < '3.15'` clause: gojsonnet 0.22.0 publishes no cp315
     # wheel. Drop it once one ships (#1210).
-    "gojsonnet>=0.22.0; python_version < '3.15' and sys_platform == 'linux' and platform_machine == 'aarch64'",
-    "jsonnet>=0.22.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64') or (sys_platform == 'darwin' and platform_machine == 'arm64')",
+    "gojsonnet>=0.22.0,<0.23; python_version < '3.15' and sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "jsonnet>=0.22.0,<0.23; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64') or (sys_platform == 'darwin' and platform_machine == 'arm64')",
     # Requirement/marker/specifier evaluation for the dependency preflight
     # (`otto.env.preflight`). Already resolved transitively (pytest);
     # declared directly because we now import it directly.
-    "packaging>=24.0",
+    "packaging>=24.0,<27",
     "pydantic>=2.10.4,<3",
     "pydantic-settings>=2.7.0,<3",
     # NetBox client for the `netbox` inventory backend (spec 2026-08-28
     # host-inventory §9.2). A plain runtime dependency — otto ships as ONE
     # package with no extras — imported lazily inside otto.inventory.netbox.
-    "pynetbox>=7.4.0",
+    "pynetbox>=7.4.0,<8",
     # SNMP manager for embedded / separate-channel performance monitoring.
-    "pysnmp>=7.1.21",
+    "pysnmp>=7.1.21,<8",
     # pytest + pytest-asyncio + pytest-timeout are runtime deps because otto
     # imports user test files at runtime (orchestration introspection), those
     # files commonly `import pytest` / use `pytest_asyncio` markers, and
     # `otto test` relies on pytest-timeout to honor `@pytest.mark.timeout(N)`.
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.4.0",
+    "pytest>=9.1.1,<10",
+    "pytest-asyncio>=1.4.0,<2",
     # pytest-randomly is a runtime dep because `otto test` shuffles user
     # suites by default (`--random`, `--seed N` to reproduce): pytest
     # auto-loads it, and a runner whose ordering depends on which extras
     # happen to be installed is not a feature, it is an accident.
-    "pytest-randomly>=4.1.0",
-    "pytest-timeout>=2.3.1",
+    "pytest-randomly>=4.1.0,<6",
+    "pytest-timeout>=2.3.1,<3",
     # `otto.docker.staging` parses a rendered compose file's YAML to collect
     # `env_file:` sidecar references (spec §8); imported function-scope to
     # keep the import budget light, but a package otto imports at runtime is
     # a package otto declares regardless of where the import sits.
-    "pyyaml>=6.0.3",
+    "pyyaml>=6.0.3,<7",
     # `otto.tls` imports `requests.adapters.HTTPAdapter` BY NAME to mount the
     # OS-store context and the per-request timeout on the session it hands any
     # HTTP-speaking backend (NetBox's pynetbox client among them, which owns
@@ -88,17 +92,17 @@ dependencies = [
     # dependency already resolves it. The floor is the first requests that
     # allows urllib3 2 (below), measured by the floor smoke and the TLS tests
     # (#1181). Imported lazily, inside `os_trust_session`.
-    "requests>=2.30.0",
-    "rich>=15.0.0",
-    "sse-starlette>=3.3.3",
+    "requests>=2.30.0,<3",
+    "rich>=15.0.0,<16",
+    "sse-starlette>=3.3.3,<4",
     # Imported directly in monitor/server.py (starlette.requests.Request);
     # declared explicitly rather than relying on the transitive fastapi/sse-starlette pull.
-    "starlette>=0.52.1",
-    "telnetlib3>=5.0.1",
-    "tomli>=2.4.0",
+    "starlette>=0.52.1,<2",
+    "telnetlib3>=5.0.1,<6",
+    "tomli>=2.4.0,<3",
     # `otto cache enable` / `disable` edit settings.toml in place, keeping its comments;
     # imported only inside `set_cache_enabled`, never on a read path.
-    "tomlkit>=0.14",
+    "tomlkit>=0.14,<0.16",
     # `otto.tls` builds a `truststore.SSLContext` so every HTTP-speaking
     # backend (NetBox's pynetbox client among them) verifies against the
     # OPERATING SYSTEM's certificate store — the same trust a browser on the
@@ -108,24 +112,24 @@ dependencies = [
     # directly. 0.10.0 calls `wrap_bio` without a server_hostname at import,
     # which CPython 3.10.22 deprecates: a DeprecationWarning for users, an
     # error under otto's own suite. 0.10.1 skips that probe on CPython.
-    "truststore>=0.10.1",
-    "typer>=0.29",
+    "truststore>=0.10.1,<0.11",
+    "typer>=0.29,<0.30",
     # `override` (PEP 698) lives in `typing` only from 3.12; our floor is 3.10,
     # so it is imported from typing_extensions. Already resolved transitively
     # (pydantic/typer); declared directly because we now import it directly.
-    "typing-extensions>=4.13.2",
+    "typing-extensions>=4.13.2,<5",
     # `otto.tls` hands its OS-store SSLContext to urllib3's pools through
     # requests. urllib3 1.x rejects that context ("check_hostname requires
     # server_hostname"), so every HTTPS fetch through `os_trust_session` (the
     # `netbox` backend) fails there. otto relies on urllib3 2's behaviour, so
     # it declares it rather than leave the major to requests' range (#1181).
     # 2.0.0 and 2.0.1 are yanked: they truncate a large compressed body.
-    "urllib3>=2.0.2",
+    "urllib3>=2.0.2,<3",
     # `otto env` runs the uv installed with otto (`otto.env.backends`), never
     # a PATH uv. The cap exists because each uv minor is a compatibility claim
     # otto tests (the floor lane); Dependabot widens it one minor at a time.
     "uv>=0.11,<0.14",
-    "uvicorn>=0.42.0",
+    "uvicorn>=0.42.0,<0.55",
 ]
 
 [project.scripts]

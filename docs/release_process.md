@@ -24,6 +24,10 @@ and, end to end, about two hours: `make release` (about an hour), the release
 pull request's CI (about 25 minutes) and the merge, then `make release-tag`,
 which waits the 25 minutes of `main`'s own CI run before it tags.
 
+Before step 1, land the outstanding dependency bound-widening pull requests
+(the rule is in {ref}`Dependency updates <dependency-bounds>`), so the release
+does not ship a bound below a version that was already out.
+
 1. **Branch from `main`'s tip and push the branch.**
 
    ```bash

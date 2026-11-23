@@ -716,6 +716,29 @@ Dependabot may rebase its pull request (on a conflict, a newer release, or
 an `@dependabot rebase` comment). That makes a new head the status does not
 cover, so gate just before the merge.
 
+(dependency-bounds)=
+
+Every runtime dependency in `[project] dependencies` has an upper bound,
+the next version that may break, counted from the version in `uv.lock`:
+below the next major from 1.0 (`requests>=2.30.0,<3`), below the next minor
+in 0.x (`typer>=0.29,<0.30`). A bound may be tighter than that for a known
+break, never looser, and a floor never changes with it. The bound is what
+keeps a new release of a dependency from breaking an otto release that is
+already published, as happened to 0.20.0.
+`scripts/check_docs_dependency_table.py` fails `make docs-lint` and
+`nox -s docs` on a missing or looser bound, on a locked version outside the
+declared range, and on a docs table bound that differs from `pyproject.toml`.
+
+Dependabot widens a bound when the dependency releases a version past it
+(`versioning-strategy: widen` in `.github/dependabot.yml` keeps the floor and
+raises the bound). Its pull request is the test that the new version works:
+CI runs the hostless lanes on it, `make gate-tip` the bed lanes, and the bound
+moves only when both pass. A bump that needs code fixes takes them on its
+branch, as below. Before a release, land the outstanding bound-widening pull
+requests (see [Cutting a release](release_process.md#cutting-a-release)), so a
+release does not ship a bound below a version that was already out and could
+have been tested.
+
 `.github/dependabot.yml` sorts the bumps into pull requests by what landing
 them costs. Its comments name the members of each kind and cite the
 history behind each choice:
@@ -1940,7 +1963,8 @@ Python changes the badge with no docs edit.
 
 Two tables on {doc}`installation` are gated rather than hand-maintained, both
 in `make docs-lint` and `nox -s docs`. `scripts/check_docs_dependency_table.py`
-checks the *Direct runtime dependencies* table against `pyproject.toml`.
+checks the *Direct runtime dependencies* table (floors and
+[upper bounds](#dependency-bounds)) against `pyproject.toml`.
 `scripts/check_docs_wheel_matrix.py` re-derives the *Native-extension
 dependencies* table — the package set, each wheel-matrix label, and the
 per-version wheel coverage — plus the air-gap download loop's Python list from
