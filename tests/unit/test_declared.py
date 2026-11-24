@@ -98,11 +98,11 @@ def test_metadata_path_never_falls_through_to_python_attributes():
 
 
 def test_unknown_key_raises_naming_the_key_and_the_valid_set():
-    with pytest.raises(ValueError, match=r"is_virtual"):
-        host_matches({"is_virtual": True}, _host())
+    with pytest.raises(ValueError, match=r"hop"):
+        host_matches({"hop": "test1"}, _host())
     with pytest.raises(ValueError, match=r"metadata\."):
         # the error must teach the dotted escape hatch
-        host_matches({"is_virtual": True}, _host())
+        host_matches({"hop": "test1"}, _host())
 
 
 def test_unparseable_host_version_is_a_no_match_with_one_warning(caplog):
@@ -126,7 +126,7 @@ def test_validate_accepts_a_well_formed_table():
 @pytest.mark.parametrize(
     ("match", "fragment"),
     [
-        ({"is_virtual": True}, "is_virtual"),  # unknown key
+        ({"hop": "test1"}, "hop"),  # unknown key: a real host field that is not matchable
         ({"id": "bb["}, "bb["),  # regex that does not compile
         ({"os_version": ">=not.a.version"}, "not.a.version"),  # bad specifier
         ({"metadata": "x"}, "metadata"),  # bare metadata without a dotted path
@@ -150,10 +150,77 @@ def test_match_keys_is_the_documented_provider_surface():
                 "os_version",
                 "ip",
                 "source_lab",
+                "name",
+                "board",
+                "slot",
+                "site",
+                "rack",
+                "shelf",
+                "hw_version",
+                "sw_version",
+                "is_virtual",
+                "docker_capable",
+                "filesystem",
+                "loader",
             }
         )
         == MATCH_KEYS
     )
+
+
+@pytest.mark.parametrize(
+    ("match", "attrs", "expected"),
+    [
+        ({"board": "qemu"}, {"board": "qemu"}, True),
+        ({"board": "qemu"}, {"board": "nrf52"}, False),
+        ({"is_virtual": True}, {"is_virtual": True}, True),
+        ({"is_virtual": True}, {"is_virtual": False}, False),
+        # a falsy host value is a value, not an absent attribute
+        ({"is_virtual": False}, {"is_virtual": False}, True),
+        ({"slot": 0}, {"slot": 0}, True),
+        ({"slot": 0}, {"slot": 1}, False),
+        ({"site": "lab-.*"}, {"site": "lab-a"}, True),
+        ({"site": "lab-.*"}, {"site": "annex"}, False),
+        # a digit-string site/rack is an int on the host
+        ({"rack": 1}, {"rack": 1}, True),
+        ({"rack": 1}, {"rack": 2}, False),
+        ({"shelf": [3, 4]}, {"shelf": 4}, True),
+        ({"hw_version": "rev2"}, {"hw_version": "rev2"}, True),
+        ({"sw_version": ">=1.31"}, {"sw_version": "1.35.0"}, True),
+        ({"sw_version": ">=1.31"}, {"sw_version": "1.16.1"}, False),
+        ({"name": "dut.*"}, {"name": "dut-main"}, True),
+        ({"name": "dut.*"}, {"name": "spare"}, False),
+        ({"docker_capable": True}, {"docker_capable": True}, True),
+        # a family without the attribute never matches, and never raises
+        ({"docker_capable": True}, {}, False),
+        ({"board": "qemu"}, {"board": None}, False),
+    ],
+)
+def test_fixed_facts_match(match, attrs, expected):
+    validate_match_table(match)
+    assert host_matches(match, _host(**attrs)) is expected
+
+
+def test_object_keys_read_the_registered_name():
+    """``filesystem`` and ``loader`` are host objects; a table names them as a lab file does."""
+    host = _host(filesystem=SimpleNamespace(type_name="littlefs"), loader=None)
+    assert host_matches({"filesystem": "littlefs"}, host)
+    assert not host_matches({"filesystem": "fat-ram"}, host)
+    # no loader on this host: an absent value never matches
+    assert not host_matches({"loader": ".*"}, host)
+    loaded = _host(loader=SimpleNamespace(type_name="llext-hex"))
+    assert host_matches({"loader": "llext-hex"}, loaded)
+    # a unix host has neither attribute: no match, and no error
+    assert not host_matches({"filesystem": ".*"}, _host())
+    assert not host_matches({"loader": ".*"}, _host())
+
+
+def test_metadata_paths_ignore_the_object_key_table():
+    host = _host(metadata={"filesystem": "x", "loader": {"type_name": "y"}})
+    assert host_matches({"metadata.filesystem": "x"}, host)
+    assert not host_matches({"metadata.filesystem": "littlefs"}, host)
+    element = Element(name="e", metadata={"loader": "x"})
+    assert host_matches({"element.metadata.loader": "x"}, _host(element=element))
 
 
 def _element_host(**overrides):

@@ -31,6 +31,7 @@ import pytest
 from otto.host.os_profile import registered_host_specs
 from otto.models.inventory import InventoryRecord
 from otto.models.lab import HOISTED_HOST_KEYS, ElementSpec, LabEntrySpec
+from tests._fixtures.docs_sections import page_section
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 _CONFIG = CHECKOUT_ROOT / "docs" / "configuration"
@@ -46,20 +47,6 @@ def _read(page: Path) -> str:
     if page.is_dir():
         return "\n".join(p.read_text() for p in sorted(page.glob("*.md")))
     return page.read_text()
-
-
-def _section(text: str, heading: "str | None", page: Path) -> str:
-    """Return *heading*'s section — up to the next ``## `` — or the whole page.
-
-    Fails loudly on a heading that is not there: a renamed section must not
-    quietly widen the search back to the whole page, which is the failure this
-    scoping exists to prevent.
-    """
-    if heading is None:
-        return text
-    assert heading in text, f"{page.name}: no {heading!r} heading to scope the search to"
-    rest = text.split(heading, 1)[1]
-    return rest.split("\n## ", 1)[0]
 
 
 @pytest.mark.parametrize(
@@ -93,7 +80,7 @@ def _section(text: str, heading: "str | None", page: Path) -> str:
 def test_every_field_has_a_row(
     page: Path, heading: "str | None", owner: str, fields: list[str]
 ) -> None:
-    text = _section(_read(page), heading, page)
+    text = page_section(_read(page), heading, page)
     missing = [f for f in fields if f"| `{f}`" not in text]
     where = f"{page.name}" if heading is None else f"{page.name} under {heading!r}"
     assert not missing, f"{owner}: undocumented in {where}: {missing}"

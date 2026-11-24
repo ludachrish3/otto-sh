@@ -901,7 +901,7 @@ def test_declared_entry_requires_a_name():
 @pytest.mark.parametrize(
     ("match", "fragment"),
     [
-        ({"is_virtual": True}, "is_virtual"),
+        ({"hop": "test1"}, "hop"),
         ({"id": "bb["}, r"entry 'fw': match key 'id'"),
         ({"os_version": ">=not.a.version"}, "not a valid version specifier"),
     ],
