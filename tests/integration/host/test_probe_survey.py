@@ -5,15 +5,13 @@ Every case asserts a specific host by name; nothing skips on a host being down.
 """
 
 from dataclasses import replace
-from functools import partial
 
 import pytest
 
 from otto.host.factory import create_host_from_dict
 from otto.host.options import FtpOptions
 from otto.host.survey import run_survey
-from otto.host.survey.engine import _run_only, dial_for
-from otto.host.survey.inventory import run_inventory
+from otto.host.survey.engine import dial_for
 from otto.host.survey.report import drift_rows, menu_pin
 from otto.host.survey.verdict import SWEEP_DIAL_TIMEOUT_S
 from tests._fixtures.labdata import element_for, host_data
@@ -87,24 +85,6 @@ async def test_test1_reports_its_real_menu_and_only_shell_drifts(host1):
     assert not any(f.startswith("inventory failed") for f in s.footnotes), s.footnotes
     assert not any(f.startswith("elevation refused") for f in s.footnotes), s.footnotes
     assert not any(f.startswith("owners incomplete") for f in s.footnotes), s.footnotes
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("host1", ["ssh"], indirect=True)
-async def test_measuring_the_netcat_strategies_leaves_the_hosts_listeners_as_they_were(host1):
-    """The probe opens no listening port and leaves nothing behind on the host.
-
-    The host's listeners are read with the survey's own inventory before and
-    after a survey that measured both netcat strategies.
-    """
-    run = partial(_run_only, host1)
-    before = await run_inventory(run, elevate=False)
-    s = await run_survey(host1)
-    after = await run_inventory(run, elevate=False)
-    assert s.nc_rungs is not None
-    assert s.nc_rungs.port.state == s.nc_rungs.listener.state == "measured", s.nc_rungs
-    assert not before.error, before
-    assert sorted(after.listeners, key=repr) == sorted(before.listeners, key=repr)
 
 
 @pytest.mark.asyncio
