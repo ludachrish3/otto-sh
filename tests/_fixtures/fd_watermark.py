@@ -67,6 +67,17 @@ freed inside this test's window it can offset a real leak of the same size.
 which have the noisy heaps, keep ``"always"``. On the unit lane the two
 policies were compared directly over 1426 tests and disagreed on nothing.
 
+Descriptors a runtime owns
+--------------------------
+A failure names the descriptors that are open now and were not at the
+baseline, so a red run says what leaked.
+
+One pair is taken out of the count before the verdict: the network poller of
+the Go runtime inside the ``gojsonnet`` binding, which the runtime opens once
+per process when it chooses and never closes (:func:`go_runtime_poller` says
+how it is recognised). It is not a tolerance: it is two named descriptors,
+once per process, and a descriptor leaked beside them is still charged.
+
 Consumers import ``_fd_watermark`` by name into their conftest — pytest
 registers imported fixtures exactly as if defined there — or define a local
 fixture that ``yield from``s the generator below when they need non-default
@@ -76,6 +87,7 @@ fails if any consumer conftest re-grows a local copy of the logic.
 """
 
 import gc
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
@@ -92,6 +104,73 @@ def open_fd_count() -> int:
     return len(list(Path("/proc/self/fd").iterdir()))
 
 
+def _target(entry: Path) -> "str | None":
+    """What the descriptor *entry* points at, or None if it is closed by now."""
+    try:
+        return str(entry.readlink())
+    except OSError:
+        return None
+
+
+def open_fds() -> dict[int, str]:
+    """Each descriptor open in this process and what it points at.
+
+    The descriptor the listing itself held is closed by the time it is read
+    back, and is left out.
+    """
+    entries = list(Path("/proc/self/fd").iterdir())  # listed whole, so its descriptor is closed
+    targets = {int(entry.name): _target(entry) for entry in entries}
+    return {fd: target for fd, target in targets.items() if target is not None}
+
+
+_EPOLL = "anon_inode:[eventpoll]"
+_EVENTFD = "anon_inode:[eventfd]"
+_GO_BINDING = "_gojsonnet"
+
+_go_pollers_accounted: list[frozenset[int]] = []
+"""The Go runtime's poller, once a bracket in this process has taken it out of a count."""
+
+
+def _epoll_watched(fd: int) -> list[int]:
+    """The descriptors the epoll descriptor *fd* watches, from its ``fdinfo``."""
+    try:
+        text = Path(f"/proc/self/fdinfo/{fd}").read_text()
+    except OSError:
+        return []
+    return [int(line.split()[1]) for line in text.splitlines() if line.startswith("tfd:")]
+
+
+def go_runtime_poller(new: dict[int, str]) -> frozenset[int]:
+    """The Go runtime's network poller among the descriptors *new*, or nothing.
+
+    The Go runtime that lives inside the ``gojsonnet`` binding opens two
+    descriptors of its own, once per process, and keeps them for the life of
+    the process: an epoll descriptor and the eventfd that wakes it. It opens
+    them on its own threads at a moment no test controls. On the aarch64 dev VM
+    that is within two seconds of the import, with no evaluation at all. On an
+    x86_64 CI runner the moment is not measured: two sightings of a leak of
+    this size were charged to a test in a later file, so it can be that late.
+    Whichever test is running then did not leak them.
+
+    They are recognised by all of: the Go binding is loaded in this process, no
+    bracket in this process has accounted a poller before (the runtime has
+    one, and a bracket that finds it open at its baseline accounts it too),
+    and *new* holds an epoll descriptor whose ``fdinfo`` names exactly one
+    watched descriptor, an eventfd that is also in *new*. An event loop's selector watches a
+    socket or a pipe, so a leaked loop does not have this shape.
+    """
+    if _go_pollers_accounted or sys.modules.get(_GO_BINDING) is None:
+        return frozenset()
+    eventfds = {fd for fd, target in new.items() if target == _EVENTFD}
+    for fd, target in new.items():
+        if target != _EPOLL:
+            continue
+        watched = _epoll_watched(fd)
+        if len(watched) == 1 and watched[0] in eventfds:
+            return frozenset({fd, watched[0]})
+    return frozenset()
+
+
 def fd_watermark_bracket(
     tolerance: int = FD_TOLERANCE, *, gc_policy: GcPolicy = "always"
 ) -> Iterator[None]:
@@ -105,6 +184,11 @@ def fd_watermark_bracket(
     if gc_policy == "always":
         gc.collect()
     before = open_fd_count()
+    known = open_fds()
+    already_open = go_runtime_poller(known)
+    if already_open:
+        # The runtime has one poller and it is open: nothing later is its.
+        _go_pollers_accounted.append(already_open)
     yield
     if gc_policy == "always":
         gc.collect()
@@ -116,8 +200,19 @@ def fd_watermark_bracket(
         # to yet.
         gc.collect()
         after = open_fd_count()
+    new: dict[int, str] = {}
+    if after > before + tolerance:
+        # Still over: say what is open now that was not, and take out of the
+        # count the one pair this process's Go runtime owns.
+        new = {fd: target for fd, target in open_fds().items() if fd not in known}
+        poller = go_runtime_poller(new)
+        if poller:
+            _go_pollers_accounted.append(poller)
+            after -= len(poller)
+            new = {fd: target for fd, target in new.items() if fd not in poller}
     assert after <= before + tolerance, (
-        f"local fd leak across test: {before} -> {after} open fds (tolerance {tolerance})"
+        f"local fd leak across test: {before} -> {after} open fds (tolerance {tolerance}); "
+        f"descriptors that were not open before: {new}"
     )
 
 

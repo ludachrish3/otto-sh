@@ -171,3 +171,47 @@ def test_importing_the_package_loads_no_binding() -> None:
         [sys.executable, "-c", probe], check=True, capture_output=True, text=True
     ).stdout
     assert out.strip() == "[]"
+
+
+def test_the_bindings_runtime_opens_no_descriptor_a_test_would_be_charged_for() -> None:
+    """What the installed binding's runtime opens is what the leak bracket takes out.
+
+    A fresh interpreter loads the binding and evaluates once. The C++ binding
+    opens nothing. The Go runtime inside ``gojsonnet`` opens its network poller
+    when it chooses (at once on aarch64, later or not yet on x86_64); when it
+    has, the bracket's recogniser
+    (:func:`tests._fixtures.fd_watermark.go_runtime_poller`) must name exactly
+    those descriptors. A runtime that opened anything else, or a poller of
+    another shape, would be charged to whichever test was running, and fails
+    here instead.
+    """
+    probe = (
+        "import json\n"
+        "from otto.templating import binding\n"
+        "from tests._fixtures.fd_watermark import go_runtime_poller, open_fds\n"
+        "known = open_fds()\n"
+        "loaded = binding.load_binding()\n"
+        "loaded.evaluate_snippet(\n"
+        "    'probe', '1 + 1', tla_codes={},\n"
+        "    import_callback=lambda directory, rel: (rel, b''),\n"
+        "    max_stack=200, max_trace=20,\n"
+        ")\n"
+        "new = {fd: target for fd, target in open_fds().items() if fd not in known}\n"
+        "poller = go_runtime_poller(new)\n"
+        "print(json.dumps({\n"
+        "    'binding': loaded.name,\n"
+        "    'new': {str(fd): target for fd, target in new.items()},\n"
+        "    'charged': {str(fd): t for fd, t in new.items() if fd not in poller},\n"
+        "}))\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=CHECKOUT_ROOT,
+    ).stdout
+    seen = json.loads(out.strip().splitlines()[-1])
+    assert seen["charged"] == {}, seen
+    if seen["binding"] != "gojsonnet":
+        assert seen["new"] == {}, seen
