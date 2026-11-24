@@ -15,9 +15,9 @@ Measured on the bed (test2 via test1, one connection), concurrent
     N=12  refused=2      N=32  refused=22
 
 Exactly ``refused = N - 10``. The same ceiling reached from the other side shows
-up as ``Remote nc listener on port P not ready within 5.0s``: the readiness poll
-needs a channel too, so when the budget is gone the listener cannot be confirmed
-and the transfer fails on a healthy listener.
+up as ``remote readiness: not ready within 5.0s (nc listener on HOST port P;
+...)``: the readiness poll needs a channel too, so when the budget is gone the
+listener cannot be confirmed and the transfer fails on a healthy listener.
 
 Found 2026-08-11: the 3.14 leg of ``make nox-full`` lost one file of eight in
 ``test_a_bulk_hop_put_does_not_strand_a_forward_per_file``, ~1-2 runs in 3, and

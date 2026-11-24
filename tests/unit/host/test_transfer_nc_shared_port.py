@@ -31,11 +31,14 @@ import pytest
 
 import otto.host.transfer.nc as transfer_mod
 from otto.host.connections import ConnectionManager
+from otto.host.exec_route import ExecRoute
+from otto.host.exit_status import NO_RETURN_CODE, no_return_code_result
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
-from otto.host.transfer.nc import NcPortSharedError
+from otto.host.transfer.nc import NcListenerAnswerError, NcPortSharedError
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.nc_listings import tool_failed as _tool_failed
 
 
 def _ok(output: str = "") -> CommandResult:
@@ -183,12 +186,13 @@ class TestTheWaitCountsListeners:
         assert exec_cmd.await_count == 3
 
     @pytest.mark.asyncio
-    async def test_unparseable_output_is_not_ready(self) -> None:
-        """A check whose tool is missing prints no count; that is a timeout, not a crash."""
+    async def test_unparseable_output_is_refused_at_once(self) -> None:
+        """Text that is not a count is never read as "not ready yet": it is quoted at once."""
         exec_cmd = AsyncMock(return_value=_fail("sh: ss: not found"))
         ft = _make_ft(exec_cmd)
-        with pytest.raises(ConnectionError, match="not ready within"):
-            await ft._wait_for_remote_listener(8080, timeout=0.05, interval=0.01)
+        with pytest.raises(NcListenerAnswerError, match="sh: ss: not found"):
+            await ft._wait_for_remote_listener(8080, timeout=5.0, interval=0.01)
+        assert exec_cmd.await_count == 1
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -401,3 +405,200 @@ class TestTheScanStartsAtARandomOffset:
         with _fixed_scan_start(9123):
             assert await ft._find_free_port() == 9123
         assert "p=9123;" in exec_cmd.call_args[0][0]
+
+
+class _CheckBed:
+    """A host whose listener check answers from *answers*, one per poll (the last repeats).
+
+    The listener spawn parks until it is cancelled, so every attempt reaches
+    its own way out; ``spawns`` counts the attempts.
+    """
+
+    def __init__(
+        self,
+        answers: list[CommandResult],
+        *,
+        scan: CommandResult | None = None,
+        stat: CommandResult | None = None,
+    ) -> None:
+        self.answers = answers
+        # `is None`, not `or`: a failed result is falsy.
+        self.scan = _ok("9000\n") if scan is None else scan
+        self.stat = _ok("5 regular file\n") if stat is None else stat
+        self.spawns = 0
+        self.checks = 0
+        self.scans = 0
+        self.stats = 0
+
+    async def exec_side(self, cmd: str, *a, **kw) -> CommandResult:
+        if " -l -p " in cmd:
+            self.spawns += 1
+            await asyncio.Event().wait()
+        await asyncio.sleep(0)
+        if "sport = :" in cmd:
+            answer = self.answers[min(self.checks, len(self.answers) - 1)]
+            self.checks += 1
+            return answer
+        if cmd.startswith("stat"):
+            self.stats += 1
+            return self.stat
+        if 'reserved="' in cmd:
+            self.scans += 1
+            return self.scan
+        return _ok()
+
+
+async def _transfer(
+    direction: str,
+    tmp_path: Path,
+    answers: list[CommandResult],
+    connect: AsyncMock,
+    *,
+    bed: _CheckBed | None = None,
+    has_tunnel: bool = True,
+) -> tuple[str, _CheckBed, AsyncMock]:
+    """Run one put or tunnelled get against a `_CheckBed`; return the message, bed and reaps."""
+    tmp_path.mkdir(exist_ok=True)
+    bed = bed or _CheckBed(answers)
+    reaps = AsyncMock(return_value=None)
+    ft = _make_ft(AsyncMock(side_effect=bed.exec_side), has_tunnel=has_tunnel)
+    ft._connections.forward_port = AsyncMock(return_value=15000)
+    with (
+        _fixed_scan_start(9000),
+        patch.object(transfer_mod, "_NC_LISTENER_READY_TIMEOUT", 0.05),
+        patch.object(transfer_mod, "_connect_with_retry", new=connect),
+        patch.object(NcFileTransfer, "_reap_nc_listener", new=reaps),
+    ):
+        if direction == "put":
+            src = tmp_path / "payload.bin"
+            src.write_bytes(b"x" * 5)
+            per_file = await asyncio.wait_for(ft._put_files_nc([src], tmp_path / "dst"), 5.0)
+        else:
+            src = Path("/remote/data.bin")
+            (tmp_path / "dst").mkdir()
+            per_file = await asyncio.wait_for(ft._get_files_nc([src], tmp_path / "dst"), 5.0)
+    assert per_file[src].status is Status.Error
+    assert not ft._reserved_ports
+    return per_file[src].msg or "", bed, reaps
+
+
+_DIRECTIONS = pytest.mark.parametrize("direction", ["put", "get"])
+_NO_CONNECT = AsyncMock(side_effect=AssertionError("must not connect"))
+
+
+class TestBothDirectionsShareTheWaitAndTheRetry:
+    @pytest.mark.asyncio
+    @_DIRECTIONS
+    async def test_a_failed_tool_stops_the_transfer_after_one_attempt(
+        self, direction: str, tmp_path: Path
+    ) -> None:
+        message, bed, reaps = await _transfer(direction, tmp_path, [_tool_failed()], _NO_CONNECT)
+        assert bed.spawns == 1, "a failed tool is not retried"
+        assert "listener check's 'ss' rung failed on test2" in message
+        assert "nc_options.listener_check" in message
+        assert "two attempts" not in message
+        assert reaps.await_count == 1, "the spawned listener is reaped"
+
+    @pytest.mark.asyncio
+    @_DIRECTIONS
+    async def test_text_that_is_not_a_count_is_retried_once(
+        self, direction: str, tmp_path: Path
+    ) -> None:
+        message, bed, reaps = await _transfer(
+            direction, tmp_path, [_ok("ss: weird\n1")], _NO_CONNECT
+        )
+        assert bed.spawns == 2
+        assert "not a count" in message
+        assert message.endswith("(two attempts were made)")
+        assert reaps.await_count == 2
+
+    @pytest.mark.asyncio
+    @_DIRECTIONS
+    async def test_a_readiness_timeout_is_retried_once_and_names_its_stage(
+        self, direction: str, tmp_path: Path
+    ) -> None:
+        message, bed, _ = await _transfer(direction, tmp_path, [_fail("0\n")], _NO_CONNECT)
+        assert bed.spawns == 2
+        assert "remote readiness" in message
+        assert message.endswith("(two attempts were made)")
+
+    @pytest.mark.asyncio
+    @_DIRECTIONS
+    async def test_a_forwarded_connect_failure_names_its_stage_and_cause(
+        self, direction: str, tmp_path: Path
+    ) -> None:
+        connect = AsyncMock(side_effect=ConnectionError("the connect's own words"))
+        message, bed, _ = await _transfer(direction, tmp_path, [_ok("1\n")], connect)
+        assert bed.spawns == 2
+        assert "forwarded connect" in message
+        assert "nc listener on test2 port 9000 through localhost:15000" in message
+        assert "'ss'" in message
+        assert "nc_options.listener_check" in message
+        assert "the listener process was still running" in message
+        assert "the connect's own words" in message
+        assert message.endswith("(two attempts were made)")
+
+    @pytest.mark.asyncio
+    async def test_a_direct_connect_failure_names_its_stage_and_the_host(
+        self, tmp_path: Path
+    ) -> None:
+        connect = AsyncMock(side_effect=ConnectionError("the connect's own words"))
+        message, bed, _ = await _transfer("put", tmp_path, [_ok("1\n")], connect, has_tunnel=False)
+        assert bed.spawns == 2
+        assert "forwarded" not in message
+        assert ": connect: " in message
+        assert "nc listener on test2 port 9000;" in message
+        assert "the connect's own words" in message
+        assert message.endswith("(two attempts were made)")
+
+    @pytest.mark.asyncio
+    async def test_both_directions_end_on_the_same_words(self, tmp_path: Path) -> None:
+        answers = [_ok("0\n"), _ok("not a count")]
+        put, _, _ = await _transfer("put", tmp_path / "p", answers, _NO_CONNECT)
+        get, _, _ = await _transfer("get", tmp_path / "g", answers, _NO_CONNECT)
+        assert put.split(": ", 1)[1] == get.split(": ", 1)[1]
+
+    @pytest.mark.asyncio
+    @_DIRECTIONS
+    async def test_a_check_that_never_ran_is_polled_again_not_quoted(
+        self, direction: str, tmp_path: Path
+    ) -> None:
+        """The first attempt polls past it and reaches its connect, as the second does."""
+        never_ran = no_return_code_result(cmd="check", route=ExecRoute.SSH_CHANNEL)
+        connect = AsyncMock(side_effect=ConnectionError("refused"))
+        message, bed, _ = await _transfer(direction, tmp_path, [never_ran, _ok("1\n")], connect)
+        assert bed.spawns == 2
+        assert connect.await_count == 2, "the first attempt spent itself on a poll that never ran"
+        assert NO_RETURN_CODE not in message
+
+
+class TestAPinnedPortRungIsNotRetried:
+    @pytest.mark.asyncio
+    @_DIRECTIONS
+    async def test_the_port_finder_runs_once_and_the_failure_names_the_rung(
+        self, direction: str, tmp_path: Path
+    ) -> None:
+        bed = _CheckBed([_ok("1\n")], scan=_tool_failed())
+        message, _, _ = await _transfer(direction, tmp_path, [], _NO_CONNECT, bed=bed)
+        assert bed.scans == 1
+        assert bed.spawns == 0
+        assert "pinned 'ss' rung failed on test2" in message
+        assert "two attempts" not in message
+
+
+class TestARefusalBeforeAnyAttemptReadsTheSameOnBothGetArms:
+    @pytest.mark.asyncio
+    async def test_a_directory_is_refused_once_and_unsuffixed(self, tmp_path: Path) -> None:
+        messages = []
+        for has_tunnel in (True, False):
+            bed = _CheckBed([_ok("1\n")], stat=_ok("4096 directory\n"))
+            message, _, _ = await _transfer(
+                "get", tmp_path / str(has_tunnel), [], _NO_CONNECT, bed=bed, has_tunnel=has_tunnel
+            )
+            assert bed.stats == 1
+            assert bed.scans == 0
+            assert bed.spawns == 0
+            assert "not a regular file" in message
+            assert "two attempts" not in message
+            messages.append(message)
+        assert messages[0] == messages[1]

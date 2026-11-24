@@ -30,7 +30,7 @@ configurable strategy that defaults to ``auto``.
 | ``ss``       | Parse ``ss -tln`` output to find unused ports.                                  |
 | ``netstat``  | Parse ``netstat -tln`` output (fallback for hosts without ss).                  |
 | ``python``   | Bind a socket to port 0 via a ``python``/``python3`` one-liner.                 |
-| ``proc``     | Read ``/proc/net/tcp`` directly (Linux-only, always available).                 |
+| ``proc``     | Read ``/proc/net/tcp`` and ``tcp6`` directly (Linux-only; the last resort).     |
 | ``custom``   | Run the command in ``nc_options.port_cmd``; must print a free port to stdout.   |
 
 The auto cascade order is: ss → netstat → python → proc.
@@ -42,7 +42,7 @@ The auto cascade order is: ss → netstat → python → proc.
 | ``auto``     | Probe for ss, then netstat, falling back to proc. Cache the result.                                   |
 | ``ss``       | Count LISTEN sockets via ``ss -tln sport = :<port>``.                                                 |
 | ``netstat``  | Count the port's lines in ``netstat -tln``.                                                           |
-| ``proc``     | Count ``/proc/net/tcp`` rows in LISTEN state on the port (Linux-only, always available).              |
+| ``proc``     | Count ``/proc/net/tcp`` and ``tcp6`` rows in LISTEN state on the port (Linux-only; the last resort).  |
 | ``custom``   | Run the command in ``nc_options.listener_cmd`` with ``{port}`` placeholder. Must exit 0 if listening. |
 
 The built-in checks count listeners rather than merely detecting one. A port
@@ -66,3 +66,55 @@ when auto-detection isn't appropriate for a particular host:
     }
 }
 ```
+
+The full option list is in {doc}`../../configuration/host-options`.
+
+### When a strategy fails
+
+Most hosts never see a failure: ``auto`` picks a tool that works and keeps
+using it. A kernel built without IPv6 is supported too: its tools complain
+that ``/proc/net/tcp6`` is missing but still answer, and otto ignores the
+complaint.
+
+When a port-finding strategy fails under ``auto``, otto warns once and tries
+the next one in the order. When a strategy that worked earlier fails later,
+otto tries every other strategy in the order, so one that failed before and
+works now is used again. The warning names the strategy and the option that
+pins another:
+
+```text
+<host>: the netcat port finder's 'ss' rung failed (<error>); trying the next rung. Set nc_options.port_strategy to pin another.
+```
+
+If every strategy fails, the error reads ``All port-finding strategies failed
+on <host>: ...`` and ends ``Set nc_options.port_strategy to pin one.``
+
+When you pin a port strategy and it fails, the transfer fails with an error
+that names the strategy, for example ``The netcat port finder's pinned 'ss'
+rung failed on <host>: ...``. otto does not try another strategy behind your
+back.
+
+The listener check never falls back to another strategy, even under ``auto``.
+If its tool fails, the transfer stops at once with an error that names the
+strategy and ``nc_options.listener_check``. If the check prints something
+that is not a count, the attempt fails with an error that quotes what came
+back.
+
+otto waits for the remote listener and then connects to it. A failure names
+the stage it happened in, and the connect's stage depends on the route:
+
+- ``remote readiness``: the listener check has not seen the listener yet.
+- ``connect``: otto could not connect to the listener directly.
+- ``forwarded connect``: otto could not connect to the listener through an SSH
+  port forward.
+
+Each message names the host, the remote port and the listener check, and says
+whether the listener process was still running. A ``forwarded connect``
+message also names the forward's local end, ``localhost:<port>``.
+
+A failed attempt (a timeout, a port another listener shares, or an answer that
+is not a count) is retried once on a fresh port, and the message then ends
+``(two attempts were made)``. A failure a second attempt cannot change ends the
+file without a retry: a listener check whose tool failed, a pinned port
+strategy that failed, every port strategy failing, and a file the backend
+cannot send.

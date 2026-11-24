@@ -1114,9 +1114,10 @@ class TestGetFilesNcTunneled:
             )
 
         assert status is Status.Error, msg
-        # Exact message from the connect-failure branch.
-        assert "nc listener on localhost:" in msg
-        assert "not ready" in msg
+        # The connect-failure branch names its stage and keeps the cause.
+        assert "forwarded connect" in msg
+        assert "nc listener on test2 port 9000 through localhost:15000" in msg
+        assert "refused" in msg
 
     @pytest.mark.asyncio
     async def test_listen_task_timeout_returns_status_error(self, tmp_path: Path) -> None:

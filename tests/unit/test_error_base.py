@@ -107,7 +107,13 @@ from otto.host.loop_owner import HostLoopError
 from otto.host.power import PowerConstructionError, PowerControlError
 from otto.host.recursive_transfer import ListingError
 from otto.host.telnet import ReadGateClosed
-from otto.host.transfer.nc import NcPortRungError, NcPortSharedError, NcRungToolError
+from otto.host.transfer.nc import (
+    NcListenerAnswerError,
+    NcListenerToolError,
+    NcPortRungError,
+    NcPortSharedError,
+    NcRungToolError,
+)
 from otto.host.transfer.registry import TransferBackendError, TransferConstructionError
 from otto.host.transport import HopTransportTornDownError
 from otto.init.errors import InitInputError
@@ -280,6 +286,8 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ConsoleError, ConnectionError),
     (ConsoleLoggedInError, ConnectionError),
     (NcPortSharedError, ConnectionError),
+    (NcListenerToolError, ConnectionError),
+    (NcListenerAnswerError, ConnectionError),
     (ReadGateClosed, ConnectionError),
     (LabRepositoryError, Exception),
     (LabNotFoundError, Exception),
