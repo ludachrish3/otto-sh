@@ -957,6 +957,7 @@ for what happens when the resolved tool cannot actually read the build's
 counters.
 
 
+(nc-options-reference)=
 ## `nc_options` reference
 
 The `nc_options` object accepts all eight fields of {class}`~otto.host.options.NcOptions`:
@@ -965,9 +966,9 @@ The `nc_options` object accepts all eight fields of {class}`~otto.host.options.N
 |------------------------------|------------|---------------------------------------------------------------------------|
 | ``exec_name``                | ``"nc"``   | Netcat binary on both sides (e.g. ``ncat``, ``netcat``).                  |
 | ``port``                     | ``9000``   | Base port; the ss/netstat/proc scans start at a random offset above it.   |
-| ``port_strategy``            | ``"auto"`` | Strategy for finding a free remote port (see {doc}`../cli/host/netcat`).                |
+| ``port_strategy``            | ``"auto"`` | Strategy for finding a free remote port (see {doc}`../cli/host/netcat`; {ref}`measured by the probe <netcat-strategy-probe>`). |
 | ``port_cmd``                 | ``null``   | Shell command printing a free port; used when ``port_strategy="custom"``. |
-| ``listener_check``           | ``"auto"`` | Strategy for verifying the remote listener is ready (see {doc}`../cli/host/netcat`).    |
+| ``listener_check``           | ``"auto"`` | Strategy for verifying the remote listener is ready (see {doc}`../cli/host/netcat`; {ref}`measured by the probe <netcat-strategy-probe>`). |
 | ``listener_cmd``             | ``null``   | Shell command (``{port}``); exits 0 when ``listener_check="custom"``.     |
 | ``listener_timeout``         | ``30.0``   | Seconds otto waits for the remote listener to exit after a transfer ends. |
 | ``max_concurrent_transfers`` | ``null``   | Files in flight at once; ``null`` fits a default sshd (see below).        |

@@ -12,13 +12,25 @@ import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
+from ...errors import OttoError
 from ...logger.mode import LogMode
 from ...models.base import cred_identity
+from ...result import CommandResult
+from ...utils import Status
 from ..connections import TERM_BACKENDS, TermMetadata
 from ..login_proxy import cred_for
 from ..options import SnmpOptions
+from ..transfer.nc import available_rungs, run_listener_rung, run_port_rung
+from ..transfer.nc_scripts import (
+    CONTROL_AUTO,
+    CONTROL_CUSTOM,
+    LISTENER_LADDER,
+    LISTENER_OPTION,
+    PORT_LADDER,
+    PORT_OPTION,
+)
 from ..transfer.registry import TRANSFER_BACKENDS, connection_protocol
 from ..transfer.sftp import open_sftp_or_attribute
 from ..userland import APPLET_PRESENT, applet_capability
@@ -54,7 +66,6 @@ from .verdict import (
 )
 
 if TYPE_CHECKING:
-    from ...result import CommandResult
     from ..host import BaseHost
     from ..remote_host import RemoteHost
     from ..unix_host import UnixHost
@@ -79,6 +90,57 @@ login tier, whose own outcome becomes the row.
 """
 
 
+@dataclass
+class NcLadderResult:
+    """What the survey found for one netcat strategy (``port_strategy`` or ``listener_check``).
+
+    Attributes:
+        state: ``measured`` when a strategy was run and worked, ``declared``
+            when the host entry pins one (it is not run), ``unmeasured`` when
+            no measurement succeeded: nothing could be run, or every strategy
+            whose tool is on the host failed.
+        rung: The strategy that worked (``measured``) or the entry's value
+            (``declared``); ``None`` when ``unmeasured``.
+        note: One sentence saying why the strategy was not measured.
+    """
+
+    state: Literal["measured", "declared", "unmeasured"]
+    rung: "str | None" = None
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class NcFailedStrategy:
+    """A netcat strategy whose tool is on the host and whose script failed in the probe.
+
+    Attributes:
+        ladder: ``port`` (``nc_options.port_strategy``) or ``listener``
+            (``nc_options.listener_check``).
+        strategy: The strategy's name, as the option spells it.
+        reason: What went wrong, a timeout included.
+    """
+
+    ladder: Literal["port", "listener"]
+    strategy: str
+    reason: str
+
+
+@dataclass
+class NcRungs:
+    """The netcat strategies the survey measured on the host.
+
+    Attributes:
+        port: The free-port strategy (``nc_options.port_strategy``).
+        listener: The listener check (``nc_options.listener_check``).
+        failed: Each strategy met on the way whose tool is on the host and
+            whose script failed, in the order they were tried.
+    """
+
+    port: NcLadderResult
+    listener: NcLadderResult
+    failed: list[NcFailedStrategy] = field(default_factory=list)
+
+
 @dataclass(slots=True)
 class Survey:
     """The whole survey result: rows plus the footnotes and pins the report renders."""
@@ -97,6 +159,8 @@ class Survey:
     The first session on a term is the one recorded. An observation only:
     there is no host field to pin it in, because the handshake measures it on
     every session at no cost, and a stale pin would corrupt output silently."""
+    nc_rungs: "NcRungs | None" = None
+    """The netcat strategies measured on the host; ``None`` where no unix session opened."""
 
 
 class _Deadline:
@@ -173,6 +237,65 @@ async def _open_own_session(
 
 async def _run_only(host: "BaseHost", cmd: str, *, sudo: bool = False) -> "CommandResult":
     return (await host.run(cmd, sudo=sudo, timeout=INVENTORY_TIMEOUT_S, log=LogMode.NEVER)).only
+
+
+async def _exec_only(host: "BaseHost", cmd: str, *, user: "str | None") -> "CommandResult":
+    """Run *cmd* the way a netcat transfer runs its control scripts: ``host.exec``.
+
+    Never ``host.run``: over ssh that is a different shell and ``PATH``.
+    """
+    return await host.exec(cmd, timeout=INVENTORY_TIMEOUT_S, log=LogMode.NEVER, user=user)
+
+
+class _BudgetSpent(Exception):  # noqa: N818 — a private signal, not an error a caller sees
+    """The survey's budget ran out while the netcat strategies were being measured."""
+
+
+_NcRunner = Callable[[str], Coroutine[Any, Any, "CommandResult"]]
+_NC_BUDGET_SPENT = "the survey budget ran out before it ran"
+
+
+def _nc_unmeasured(note: str) -> NcRungs:
+    """Both netcat strategies unmeasured, for one reason."""
+    return NcRungs(NcLadderResult("unmeasured", note=note), NcLadderResult("unmeasured", note=note))
+
+
+def _nc_declared(value: str) -> "NcLadderResult | None":
+    """Return a ladder the entry pins (any value but ``auto``) as ``declared``; ``None`` if not."""
+    return None if value == CONTROL_AUTO else NcLadderResult("declared", value)
+
+
+def _nc_error(exc: Exception) -> str:
+    """Word a runner's error: otto's own by its text, any other by its type and text."""
+    if isinstance(exc, OttoError):
+        return str(exc)
+    text = str(exc)
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+_NC_NO_TOOL_REMEDY = {
+    PORT_OPTION: f'set nc_options.{PORT_OPTION} to "{CONTROL_CUSTOM}" with a port_cmd that'
+    " prints a free port",
+    LISTENER_OPTION: f'set nc_options.{LISTENER_OPTION} to "{CONTROL_CUSTOM}" with a'
+    " listener_cmd that exits 0 when {port} is listening",
+}
+"""What a user can do when no strategy's tool is on the host: the ``custom`` contract."""
+
+_NC_NO_LISTENER = (
+    "the inventory found no TCP listener to check;"
+    " this is not a fault, and a transfer picks its listener check when it runs"
+)
+_NC_NO_INVENTORY = (
+    "the inventory of listeners did not run;"
+    " this is not a fault, and a transfer picks its listener check when it runs"
+)
+
+
+def _no_rung_note(available: frozenset[str], ladder: "tuple[Any, ...]", option: str) -> str:
+    """Why a walked ladder found no strategy: none had its tool, or every one that did failed."""
+    if any(rung.name in available for rung in ladder):
+        return "every strategy whose tool is on the host failed"
+    return f"no strategy's tool is on the host; {_NC_NO_TOOL_REMEDY[option]}"
 
 
 def dialling_terms() -> dict[str, TermMetadata]:
@@ -381,6 +504,7 @@ class _UnixSurvey:
 
     async def run(self) -> Survey:
         await self.declared_logins()
+        inventory: "Inventory | None" = None
         if self.own_ok:
             await self.session_tier()
             # Frozen before discovery: a port discovered for a protocol whose
@@ -399,6 +523,10 @@ class _UnixSurvey:
             self.no_session_rows()
         await self.snmp_tier()
         await self.extra_dials()
+        if self.own_ok:
+            # Last: it reads only the nc row and the inventory, and a host
+            # whose exec hangs must not starve the older tiers of the budget.
+            self.survey.nc_rungs = await self.nc_rung_tier(inventory)
         self.survey.verdicts = merge_verdicts(self.rows)
         _resolve(self.survey)
         return self.survey
@@ -743,6 +871,142 @@ class _UnixSurvey:
         self._inventory_footnotes(inv, elevation_refused=refused)
         self._declared_inventory_rows(inv)
         return inv
+
+    async def nc_rung_tier(self, inventory: "Inventory | None") -> NcRungs:
+        """Measure which netcat strategies work on the host, by running the ladders' own scripts.
+
+        Runs only when the session tier found ``nc`` supported and the session
+        is not a console. A strategy the entry pins is reported ``declared``
+        and not run, whatever fails afterwards; with both pinned no command
+        runs. Each ``auto`` ladder is walked in its table order and stops at
+        the first strategy that works; one whose tool is present and whose
+        script failed, by any error of the runner, is named in ``failed``.
+        Nothing listens and nothing is left on the host: the only scripts run
+        are the table's.
+
+        Args:
+            inventory: The host's listeners, for the listener check to count.
+        """
+        host = self.host
+        if host.term == "console":
+            return _nc_unmeasured("the session is a console, where netcat cannot be used")
+        if not any(v.protocol == "nc" and v.state == "supported" for v in self.rows):
+            return _nc_unmeasured("nc is not supported on this host")
+
+        async def run(cmd: str) -> "CommandResult":
+            got = await _bounded(
+                self.deadline, INVENTORY_TIMEOUT_S, _exec_only(host, cmd, user=self.user)
+            )
+            if got is not None:
+                return got
+            if self.deadline.spent:
+                raise _BudgetSpent
+            # This script's own bound ran out, not the survey's: the strategy
+            # running it failed, and the walk goes on to the next one.
+            return CommandResult(
+                status=Status.Error,
+                command=cmd,
+                value=f"timed out after {INVENTORY_TIMEOUT_S:g}s",
+                timed_out=True,
+            )
+
+        opts = host.nc_options
+        declared_port = _nc_declared(opts.port_strategy)
+        declared_listener = _nc_declared(opts.listener_check)
+        if declared_port is not None and declared_listener is not None:
+            return NcRungs(declared_port, declared_listener)
+
+        def unmeasured(note: str, failed: "list[NcFailedStrategy] | None" = None) -> NcRungs:
+            """Report the ladders still to be measured as ``unmeasured``; a declared pin stays."""
+            missing = NcLadderResult("unmeasured", note=note)
+            return NcRungs(declared_port or missing, declared_listener or missing, failed or [])
+
+        try:
+            available = await available_rungs(run)
+        except _BudgetSpent:
+            return unmeasured(_NC_BUDGET_SPENT)
+        except Exception as exc:  # noqa: BLE001 — a raw runner error must not lose the survey's rows
+            return unmeasured(f"the check for each strategy's tool failed: {_nc_error(exc)}")
+        failed: list[NcFailedStrategy] = []
+        try:
+            port = declared_port or await self._port_ladder(run, available, failed)
+        except _BudgetSpent:
+            return unmeasured(_NC_BUDGET_SPENT, failed)
+        try:
+            listener = declared_listener or await self._listener_ladder(
+                run, available, failed, inventory
+            )
+        except _BudgetSpent:
+            listener = NcLadderResult("unmeasured", note=_NC_BUDGET_SPENT)
+        return NcRungs(port, listener, failed)
+
+    async def _port_ladder(
+        self, run: "_NcRunner", available: frozenset[str], failed: list[NcFailedStrategy]
+    ) -> NcLadderResult:
+        """Walk the port ladder in its order; the first strategy that works is measured."""
+        opts = self.host.nc_options
+        for rung in PORT_LADDER:
+            if rung.name not in available:
+                continue
+            try:
+                await run_port_rung(rung, run, base_port=opts.port, reserved="")
+            except _BudgetSpent:
+                raise
+            except Exception as exc:  # noqa: BLE001 — any runner error fails this strategy only
+                failed.append(NcFailedStrategy("port", rung.name, _nc_error(exc)))
+                continue
+            return NcLadderResult("measured", rung.name)
+        return NcLadderResult("unmeasured", note=_no_rung_note(available, PORT_LADDER, PORT_OPTION))
+
+    async def _listener_ladder(
+        self,
+        run: "_NcRunner",
+        available: frozenset[str],
+        failed: list[NcFailedStrategy],
+        inventory: "Inventory | None",
+    ) -> NcLadderResult:
+        """Walk the listener ladder in its order, each strategy asked about one inventory port.
+
+        The port is a TCP listener the inventory lists other than the
+        session's own (behind a forward the declared port may be the
+        forwarder's); when the session's port is the only one, it is used,
+        since a port the inventory lists is on the host.
+        """
+        if inventory is None:
+            return NcLadderResult("unmeasured", note=_NC_NO_INVENTORY)
+        own = _declared_port_unix(self.host, "shell", "transfer")
+        tcp = [lis.port for lis in inventory.listeners if lis.transport == "tcp"]
+        port = next((p for p in tcp if p != own), tcp[0] if tcp else None)
+        if port is None:
+            return NcLadderResult("unmeasured", note=_NC_NO_LISTENER)
+        for rung in LISTENER_LADDER:
+            if rung.name not in available:
+                continue
+            try:
+                count = await run_listener_rung(rung, run, port)
+            except _BudgetSpent:
+                raise
+            except Exception as exc:  # noqa: BLE001 — any runner error fails this strategy only
+                failed.append(NcFailedStrategy("listener", rung.name, _nc_error(exc)))
+                continue
+            if count is None:
+                failed.append(
+                    NcFailedStrategy(
+                        "listener",
+                        rung.name,
+                        f"no answer about :{port}; it timed out or printed nothing",
+                    )
+                )
+                continue
+            if count < 1:
+                failed.append(
+                    NcFailedStrategy("listener", rung.name, f"counted no listener on :{port}")
+                )
+                continue
+            return NcLadderResult("measured", rung.name)
+        return NcLadderResult(
+            "unmeasured", note=_no_rung_note(available, LISTENER_LADDER, LISTENER_OPTION)
+        )
 
     def _inventory_footnotes(self, inv: Inventory, *, elevation_refused: bool) -> None:
         """In the Interfaces order: owners-incomplete, loopback-dropped, then the failures."""

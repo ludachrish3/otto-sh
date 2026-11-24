@@ -13,11 +13,12 @@ from rich import box
 from rich.table import Table
 from rich.text import Text
 
+from ..transfer.nc_scripts import LADDER_OPTION, LISTENER_OPTION, PORT_OPTION
 from .engine import dialling_terms
 
 if TYPE_CHECKING:
     from ..host import BaseHost
-    from .engine import Survey
+    from .engine import NcFailedStrategy, NcLadderResult, Survey
 
 _DEAD = frozenset({"login-failed", "service-mismatch", "closed"})
 _COLUMNS = ["protocol", "kind", "port", "state", "tier", "vantage", "detail"]
@@ -163,10 +164,12 @@ def _dead_names(menu: list[str], survey: "Survey") -> set[str]:
 
 
 def menu_pin(host_terms: list[str], host_transfers: list[str], survey: "Survey") -> list[str]:
-    """Build the plain-text pin lines: differing menu lists, then one options fragment per port.
+    """Build the plain-text pin lines: differing menu lists, then one options fragment per protocol.
 
     Only a menu the survey has evidence to change is emitted, and it keeps the
-    host's own order (:func:`_pinned_menu`).
+    host's own order (:func:`_pinned_menu`). A fragment holds the protocol's
+    moved ``port``; the ``nc_options`` one also holds ``port_strategy`` and
+    ``listener_check`` for each netcat strategy the survey measured.
     """
     supported = set(survey.supported)
     dialling = dialling_terms()
@@ -196,10 +199,75 @@ def menu_pin(host_terms: list[str], host_transfers: list[str], survey: "Survey")
         lines.append(f"valid_terms = {json.dumps(pinned_terms)}")
     if pinned_transfers != host_transfers:
         lines.append(f"valid_transfers = {json.dumps(pinned_transfers)}")
-    for proto in sorted(survey.working_ports):
+    fragments: dict[str, dict[str, object]] = {
+        proto: {"port": port} for proto, port in survey.working_ports.items()
+    }
+    strategies = _measured_nc_strategies(survey)
+    if strategies:
+        fragments.setdefault("nc", {}).update(strategies)
+    for proto in sorted(fragments):
         key = "snmp" if proto == "snmp" else f"{proto}_options"
-        lines.append(f'"{key}": {json.dumps({"port": survey.working_ports[proto]})}')
+        lines.append(f'"{key}": {json.dumps(fragments[proto])}')
     return lines
+
+
+def _nc_ladders(survey: "Survey") -> "list[tuple[str, NcLadderResult]]":
+    """Each netcat ladder's option name with what the survey found, in the option's order."""
+    rungs = survey.nc_rungs
+    if rungs is None:
+        return []
+    return [(PORT_OPTION, rungs.port), (LISTENER_OPTION, rungs.listener)]
+
+
+def _measured_nc_strategies(survey: "Survey") -> dict[str, object]:
+    """Return the ``nc_options`` keys a measured strategy pins; other states add none.
+
+    None under ``--user``: the strategies were measured as that user, and the
+    fragment applies to every login of the host, with no fall-through.
+    """
+    if survey.user is not None:
+        return {}
+    return {opt: got.rung for opt, got in _nc_ladders(survey) if got.state == "measured"}
+
+
+def nc_strategy_lines(survey: "Survey") -> list[Text]:
+    """One line per netcat strategy declared, not measured, or failed on the way.
+
+    A measured strategy prints no line here: it is in the pin. Under
+    ``--user`` it is not, so it prints its line, and one more says why it is
+    not offered as a pin. Two ladders not measured for one reason share a line.
+    """
+    ladders = _nc_ladders(survey)
+    unmeasured = [got for _opt, got in ladders if got.state == "unmeasured"]
+    if ladders and len(unmeasured) == len(ladders) and len({u.note for u in unmeasured}) == 1:
+        ladders = [(", ".join(opt for opt, _got in ladders), unmeasured[0])]
+    lines: list[Text] = []
+    measured_as = survey.user
+    for opt, got in ladders:
+        if got.state == "declared":
+            said = f"{json.dumps(got.rung)} is declared in nc_options, so it was not measured"
+            lines.append(Text(f"nc {opt}: {said}"))
+        elif got.state == "unmeasured":
+            lines.append(Text(f"nc {opt}: not measured: {got.note}"))
+        elif measured_as is not None:
+            said = f"{json.dumps(got.rung)} works when measured as {json.dumps(measured_as)}"
+            lines.append(Text(f"nc {opt}: {said}"))
+    if measured_as is not None and any(got.state == "measured" for _opt, got in ladders):
+        lines.append(
+            Text(
+                f"nc: the strategies were measured as {json.dumps(measured_as)} and are not"
+                " offered as a pin; run the probe without --user for one"
+            )
+        )
+    failed = survey.nc_rungs.failed if survey.nc_rungs is not None else []
+    lines.extend(Text(_failed_strategy_line(f)) for f in failed)
+    return lines
+
+
+def _failed_strategy_line(f: "NcFailedStrategy") -> str:
+    """Return the one line that names a failed netcat strategy, its option and its reason."""
+    option = LADDER_OPTION[f.ladder]
+    return f"nc strategy {json.dumps(f.strategy)} failed for {option}: {f.reason}"
 
 
 def survey_report(host: "BaseHost", survey: "Survey") -> "list[str | Table | Text]":
@@ -207,6 +275,7 @@ def survey_report(host: "BaseHost", survey: "Survey") -> "list[str | Table | Tex
     out: "list[str | Table | Text]" = [
         protocol_table(survey),
         *footnote_lines(survey),
+        *nc_strategy_lines(survey),
         *terminal_mapping_lines(survey),
     ]
     terms = list(getattr(host, "valid_terms", []))
