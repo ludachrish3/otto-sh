@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from ..result import Result
 from ..utils import Status
+from .exit_status import gave_no_exit_status
 from .product import (
     LEFTOVERS_SHOWN,
     GcdaFindError,
@@ -428,7 +429,7 @@ async def _remove_batch(
         if cmd.status is Status.NotRun:
             return None
     output, retcode = _command_value(cmd)
-    if cmd.timed_out or retcode == -1:
+    if gave_no_exit_status(cmd):
         detail = "timed out" if cmd.timed_out else failure_detail(output, retcode)
         return {p.name: f"{group} removal batch failed: {detail}" for p in products}
     parsed = _parse_removal(output, dirs, retcode)

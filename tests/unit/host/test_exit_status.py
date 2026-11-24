@@ -15,7 +15,13 @@ from typing import Any
 import pytest
 
 from otto.host.command_frame import BashFrame
-from otto.host.exit_status import NO_RETURN_CODE, exit_status_of
+from otto.host.exec_route import ExecRoute
+from otto.host.exit_status import (
+    NO_RETURN_CODE,
+    exit_status_of,
+    gave_no_exit_status,
+    no_return_code_result,
+)
 from otto.host.local_host import LocalHost
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
@@ -133,3 +139,42 @@ def test_no_return_code_result_says_so_in_its_msg():
 
     r = no_return_code_result(cmd="c", route=ExecRoute.LOCAL_SUBPROCESS)
     assert r.msg == NO_RETURN_CODE == r.value
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        pytest.param(
+            CommandResult(command="c", value="", status=Status.Success, retcode=0),
+            False,
+            id="exit-0",
+        ),
+        pytest.param(
+            CommandResult(command="c", value="no", status=Status.Failed, retcode=1),
+            False,
+            id="exit-1",
+        ),
+        pytest.param(
+            CommandResult(command="c", value="", status=Status.Failed, retcode=137),
+            False,
+            id="killed-by-a-signal",
+        ),
+        pytest.param(
+            CommandResult(command="c", value="", status=Status.Error, retcode=-1),
+            True,
+            id="never-ran",
+        ),
+        pytest.param(
+            CommandResult(command="c", value="", status=Status.Error, retcode=124, timed_out=True),
+            True,
+            id="timed-out",
+        ),
+    ],
+)
+def test_gave_no_exit_status(result: CommandResult, expected: bool):
+    assert gave_no_exit_status(result) is expected
+
+
+def test_the_no_return_code_result_gave_no_exit_status():
+    """The one result a process route builds for "no status" is read back as that."""
+    assert gave_no_exit_status(no_return_code_result(cmd="c", route=ExecRoute.LOCAL_SUBPROCESS))

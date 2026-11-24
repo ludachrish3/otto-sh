@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 
 from ..result import Result
 from ..utils import Status
+from .exit_status import gave_no_exit_status
 from .product import (
     StagedEntry,
     _creates_stage_dir,
@@ -332,9 +333,7 @@ async def remove_staged(host: "Host", items: "Iterable[Product | DevTool]") -> R
     if cmd.status is Status.NotRun:
         return Result(status=Status.NotRun)
     output, retcode = cmd.value or "", cmd.retcode
-    parsed = (
-        None if cmd.timed_out or retcode == -1 else _parse_removal(output, len(paths), len(dirs))
-    )
+    parsed = None if gave_no_exit_status(cmd) else _parse_removal(output, len(paths), len(dirs))
     if parsed is None:
         detail = "timed out" if cmd.timed_out else failure_detail(output, retcode)
         return Result(

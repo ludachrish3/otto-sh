@@ -25,7 +25,7 @@ on that side.
 | Type checking | `ty` (pinned exactly; the version is the `ty` entry in `pyproject.toml`'s dev group and `uv.lock`) | `tsc --noEmit` via `scripts/typecheck_web.sh` (vendored Untitled UI diagnostics filtered) |
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
 | Module layering | `tach` against `tach.toml` (role layers, every dependency declared) + the import-string audit | — none today |
-| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — thirty-four Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
+| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — thirty-nine Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
 | Import cost | `scripts/import_budget.py` — per-surface, per-interpreter file-operation ceilings (whole process tree, strace-counted) and target ratios to `otto --version`; `scripts/import_budget_delta.py` — the delta against the previous tag, per pull request in CI (the required job `import-budget` over its `import-budget-delta (<minor>)` legs) and in the release (`make budget-delta`); import bans in `ast-grep` and `tests/unit/test_import_contracts.py` name the edge | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest`, run under `build_web_no_warnings.sh`: any stderr output fails (see *Built-bundle gates*) |
 | Coverage floor | `coverage.py` / `pytest-cov` — combined line+branch totals (`.coveragerc` sets `branch = true`): 96 for the full local run (96 since 2026-11-11, from 95.5; 96.92 % measured at 0.20.0), 94.75 for the hostless CI slice, judged on the fold of the primary's three sessions (96.43 on the landing's pull request, run 41596661346, against the 94.75 floor; both pinned as codified minimums by `tests/unit/test_coverage_floors.py`, which also pins the branch setting) | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
@@ -112,8 +112,8 @@ with its class, and a new site fails until someone reads it.
 
 ### The ast-grep rules
 
-`.ast-grep/rules/` holds forty rules (thirty-six Python, four
-TypeScript) — thirty-nine at `severity: error`,
+`.ast-grep/rules/` holds forty-three rules (thirty-nine Python, four
+TypeScript) — forty-two at `severity: error`,
 plus one deliberate `severity: warning` review prompt
 (`no-awaited-close-in-finally`, below). The scan roots
 are `src/otto web/src tests scripts` — tests/ joined in the test-infra remediation
@@ -146,8 +146,11 @@ fixture projects (`tests/project1..project3`, `project_broken`, `project_e2e`) a
 | `no-bare-status-return` | `src/otto/**` |
 | `no-branching-on-import-state` | `src/otto/**/*.py` — no read of `sys.modules` (`in`, `.get`, a read subscript, a view method, iteration) decides behaviour; writes that install or evict a module pass; see [Never branch on import state](../contributing.md#never-branch-on-import-state) and [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/no-branching-on-import-state.yml) |
 | `no-cli-import-outside-cli` | `src/otto/**` minus `src/otto/cli/**`, `src/otto/__init__.py` and `src/otto/_shim.py` — an import ban: the CLI projects the libraries, and no library reaches up into it; see [Import bans](../contributing.md#import-bans) |
+| `no-exit-status-through-helper` | `src/otto/**` minus `src/otto/host/exit_status.py` and `src/otto/result.py` — no comparison of a `retcode` with `-1`: whether a command gave no exit status (its timeout killed it, or it never ran) is asked of `otto.host.exit_status.gave_no_exit_status`, the one reader |
 | `no-handrolled-deadline-poll` | `src/otto/**` + `tests/**` minus fixture projects — poll-until-deadline grew 21 copies in three incompatible shapes with divergent expiry behavior; `otto.utils.wait_for` / `wait_for_async` is the one spelling, and expiry always raises (silent expiry is the defect class); `src/otto/host/shell_liveness.py` is ignored as the sanctioned fused probe-response primitive |
 | `no-hidden-cli-options` | `src/otto/**` — no `hidden=`: a removed option or command is deleted, never hidden from `--help` |
+| `no-junit-record-fixtures-in-tests` | `tests/**` minus fixture projects — no test requests `record_property`, `record_xml_attribute` or `record_testsuite_property`; a diagnostic goes in the assertion's message |
+| `no-number-from-command-value` | `src/otto/**` — no `int()` or `float()` over a command's stripped value; a number a command returned is read with `otto.host.value_reader.read_value`, which names the command and the text it could not read |
 | `no-parents-arithmetic-in-tests` | `tests/**` minus fixture projects — `Path(__file__).parents[N]` encodes the file's own depth, so moving the file silently re-anchors every path built from it; import `TESTS_ROOT`/`CHECKOUT_ROOT` from `tests/_fixtures/paths.py` (the one sanctioned derivation point) |
 | `no-plan-coordinates` | `src/otto/**` |
 | `no-plan-coordinates-ts` / `no-plan-coordinates-tsx` | `web/src/**` |
