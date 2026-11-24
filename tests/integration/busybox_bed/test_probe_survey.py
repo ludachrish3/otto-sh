@@ -7,13 +7,20 @@ the survey three live facts to prove: the netstat arm parses on every
 version, the owner column is read (root, so it is populated), and, on the
 four with no daemon, the permanently dead, undeclared ssh is a drift
 true-negative rather than a false supported.
+
+The guests are also where a whole-host comparison is sound. Only this bed's
+one xdist worker touches them, so the check that the probe's netcat
+measurement leaves the host's listeners as they were is made here, not on
+the shared ``test1``.
 """
+
+from functools import partial
 
 import pytest
 
 from otto.host.survey import run_survey
-from otto.host.survey.engine import dial_for
-from otto.host.survey.inventory import INVENTORY_SCRIPT, parse_inventory
+from otto.host.survey.engine import _run_only, dial_for
+from otto.host.survey.inventory import INVENTORY_SCRIPT, parse_inventory, run_inventory
 from otto.host.survey.verdict import DIAL_TIMEOUT_S
 from scripts.build_busybox_guest_images import GUEST_TABLE
 
@@ -120,3 +127,35 @@ async def test_the_survey_reports_telnet_supported_and_ssh_as_the_drift_true_neg
     assert live.state == "open", (version, live)
     assert live.service == "telnet", (version, live)
     assert live.banner, (version, live)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("guest", ["bb1350"], indirect=True)
+async def test_measuring_the_netcat_strategies_leaves_the_guests_listeners_as_they_were(
+    hop_on_this_loop, guest
+):
+    """The probe opens no listening port and leaves nothing behind on the host.
+
+    The guest's listeners are read with the survey's own inventory before and
+    after a survey that measured both netcat strategies, and the two lists are
+    the same.
+
+    The comparison is of every listener on the host, so it is made on a guest
+    and not on ``test1``. Every test that touches the guests runs in one xdist
+    group on one worker (the conftest's stamp), so nothing else in the lane
+    can open or close a listener on the guest between the two reads. On
+    ``test1``, the bed's shared host, a sibling worker's netcat transfer or
+    socat tunnel starts and stops listeners all the time, and the same
+    comparison failed whenever one did so in between.
+    """
+    host, version = guest
+    run = partial(_run_only, host)
+    before = await run_inventory(run, elevate=False)
+    s = await run_survey(host)
+    after = await run_inventory(run, elevate=False)
+    assert s.nc_rungs is not None, version
+    assert s.nc_rungs.port.state == s.nc_rungs.listener.state == "measured", (version, s.nc_rungs)
+    assert not before.error, (version, before)
+    assert not after.error, (version, after)
+    assert before.listeners, (version, before)
+    assert sorted(after.listeners, key=repr) == sorted(before.listeners, key=repr), version
