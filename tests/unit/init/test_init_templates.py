@@ -5,6 +5,7 @@ import re
 
 import tomli
 
+from otto.host.os_profile import BUILTIN_PROFILES, registered_host_specs
 from otto.init.templates import (
     CREDS_JSON_TEMPLATE,
     EXAMPLE_HOST_ENTRY,
@@ -218,3 +219,8 @@ def test_commented_inventory_tables_uncomment_to_the_default_tables() -> None:
     assert "#[inventory]" in inline
     assert "#[creds]" in inline
     assert uncommented(inline) == uncommented(INVENTORY_TABLES_TEMPLATE)
+
+
+def test_the_settings_template_names_every_builtin_profile():
+    for name in [*registered_host_specs(builtins_only=True), *BUILTIN_PROFILES]:
+        assert f'"{name}"' in SETTINGS_TEMPLATE, name

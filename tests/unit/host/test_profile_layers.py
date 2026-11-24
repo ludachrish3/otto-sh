@@ -27,6 +27,7 @@ from otto.host.os_profile import (
     register_os_profile,
     registered_profile_names,
     resolve_os_profile,
+    selects_builtin,
 )
 from otto.host.unix_host import UnixHost
 from otto.registry import DuplicateRegistration, FrozenMap
@@ -365,3 +366,29 @@ def test_settings_parse_does_not_import_os_profile(tmp_path):
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True
     )
     assert child.stdout.strip() == "False", child.stderr
+
+
+class _OtherUnixHost(UnixHost):
+    """A re-registration of ``unix``: the name no longer selects otto's own class."""
+
+
+def test_selects_builtin_is_true_only_for_ottos_own_unshadowed_names():
+    empty = ProfileContext.empty()
+    assert selects_builtin(name="unix", data=empty)
+    assert selects_builtin(name="busybox", data=empty)
+    assert not selects_builtin(name="mine", data=empty)
+    for name in ("unix", "busybox"):
+        assert not selects_builtin(name=name, data=_data(**{name: OsProfile(name, "unix")}))
+    register_os_profile(
+        "busybox", "unix", defaults={"has_bash": False}
+    )  # undone by `_isolate_registries`, tests/conftest.py
+    assert not selects_builtin(name="busybox", data=empty)
+
+
+def test_selects_builtin_holds_before_and_after_the_entry_is_resolved():
+    empty = ProfileContext.empty()
+    assert selects_builtin(name="unix", data=empty)
+    HOST_CLASSES.get(name="unix")  # resolves the entry's Ref fields in place
+    assert selects_builtin(name="unix", data=empty)
+    register_host_class("unix", _OtherUnixHost, overwrite=True)
+    assert not selects_builtin(name="unix", data=empty)

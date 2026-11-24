@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from rich.table import Table
 from rich.text import Text
 
@@ -15,6 +16,7 @@ from otto.host.survey.report import (
     protocol_table,
 )
 from otto.host.survey.verdict import UNKNOWN_STATES, ProtocolVerdict
+from tests._fixtures.host_build import build_host
 
 
 def _v(protocol, port, state, *, kind="term", tier="login", detail=""):
@@ -345,3 +347,22 @@ def test_no_session_means_no_terminal_mapping_line():
     from otto.host.survey.report import terminal_mapping_lines
 
     assert terminal_mapping_lines(_survey()) == []
+
+
+@pytest.mark.parametrize(
+    "declared", [["shell", "scp"], ["scp", "sftp"]], ids=["with-shell", "without-shell"]
+)
+def test_the_suggested_valid_transfers_line_builds_a_busybox_profile_host(declared):
+    s = _survey(
+        verdicts=[
+            _v("ssh", 22, "supported"),
+            *[_v(n, 22, "supported", kind="transfer") for n in declared if n != "shell"],
+            _v("ftp", 21, "supported", kind="transfer"),
+        ],
+        supported=["ftp", "scp", "sftp", "ssh"],
+    )
+    (line,) = [ln for ln in menu_pin(["ssh"], declared, s) if ln.startswith("valid_transfers = ")]
+    suggested = json.loads(line.split(" = ", 1)[1])
+    host = build_host({"os_type": "busybox", "ip": "10.0.0.1", "valid_transfers": suggested})
+    assert host.transfer == suggested[0]
+    assert host.valid_transfers == suggested

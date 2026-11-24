@@ -36,7 +36,7 @@ stage_dir = "/opt/agent"
 uninstall = "/opt/agent/agent --uninstall; rm -f /opt/agent/agent"
 check = "test -x /opt/agent/agent"
 cov_dir = "/var/cov/agent"
-match = { os_type = "unix" }
+match = { os_type = ["unix", "busybox"] }
 # doc: end product
 
 # doc: begin dev-tool
@@ -48,5 +48,5 @@ stage_dir = "/opt/agent/tools"
 install = "chmod +x /opt/agent/tools/probe.sh"
 uninstall = "rm -f /opt/agent/tools/probe.sh"
 check = "test -x /opt/agent/tools/probe.sh"
-match = { os_type = "unix" }
+match = { os_type = ["unix", "busybox"] }
 # doc: end dev-tool

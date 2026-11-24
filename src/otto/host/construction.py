@@ -270,15 +270,20 @@ def check_coverage(where: str, cls: type, spec: type) -> None:
         )
 
 
-def _declared_default(cls: object, name: str) -> object:
-    """Return the plain default *cls* declares for dataclass field *name*, else ``None``.
+def _declared_default(cls: object, name: str, *, call_factory: bool = False) -> object:
+    """Return the default *cls* declares for dataclass field *name*, else ``None``.
 
-    ``None`` too when the field is absent or declares a default factory.
+    ``None`` too when the field is absent, or declares a default factory and
+    *call_factory* is false; with *call_factory*, the factory's fresh value.
     """
     declared = getattr(cls, "__dataclass_fields__", {}).get(name)
-    if declared is None or declared.default is dataclasses.MISSING:
+    if declared is None:
         return None
-    return declared.default
+    if declared.default is not dataclasses.MISSING:
+        return declared.default
+    if call_factory and declared.default_factory is not dataclasses.MISSING:
+        return declared.default_factory()
+    return None
 
 
 def _effective_default(spec: object, cls: object, name: str) -> object:

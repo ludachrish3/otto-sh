@@ -3,19 +3,25 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from otto.host.capability import menu_capabilities
 from otto.host.command_frame import ZephyrFrame
 from otto.host.element import Element
 from otto.host.embedded_filesystem import FatRamFileSystem
 from otto.host.embedded_host import EmbeddedHost, ZephyrHost
 from otto.host.factory import (
+    _merge_host_dict,
     create_host_from_dict,
     validate_host_dict,
 )
 from otto.host.login_proxy import Cred
 from otto.host.options import SnmpOptions
-from otto.host.os_profile import register_os_profile
+from otto.host.os_profile import OsProfile, ProfileContext, ProfileFields, register_os_profile
+from otto.host.provenance import HOST_RANK, PROFILE_RANK
+from otto.host.specs import UnixHostSpec
 from otto.host.toolchain import Toolchain
 from otto.host.unix_host import UnixHost
+from otto.registry import FrozenMap
+from tests._fixtures.host_build import build_host
 
 
 class TestCreateHostFromDict:
@@ -1121,3 +1127,53 @@ def test_embedded_preference_path():
         element=Element(name="d"),
     )
     assert h.transfer == "tftp"
+
+
+def _profile(**defaults):
+    return OsProfile("p", "unix", ProfileFields(defaults=FrozenMap.freeze_json(value=defaults)))
+
+
+@pytest.mark.parametrize("cap", menu_capabilities("unix"), ids=lambda c: c.pin_field)
+def test_a_profile_pin_is_not_carried_under_an_entry_list(cap):
+    head, other = cap.default_menu[0], "x"
+    profile = _profile(**{cap.pin_field: head, cap.menu_field: [head, other]})
+    sources: dict[str, int] = {}
+    merged = _merge_host_dict(
+        {cap.menu_field: [other]}, None, profile, UnixHostSpec, sources=sources
+    )
+    assert cap.pin_field not in merged
+    assert cap.pin_field not in sources
+    assert sources[cap.menu_field] == HOST_RANK
+    # the entry's own pin stays, and with no entry list the profile's pin stays
+    both = _merge_host_dict(
+        {cap.menu_field: [other], cap.pin_field: other}, None, profile, UnixHostSpec
+    )
+    assert both[cap.pin_field] == other
+    sources = {}
+    kept = _merge_host_dict({}, None, profile, UnixHostSpec, sources=sources)
+    assert kept[cap.pin_field] == head
+    assert sources[cap.pin_field] == PROFILE_RANK
+
+
+def test_a_users_profile_pin_and_list_yield_to_an_entry_list():
+    profiles = ProfileContext(
+        profiles=FrozenMap(
+            mapping={
+                "mine": OsProfile(
+                    "mine",
+                    "unix",
+                    ProfileFields(
+                        defaults=FrozenMap.freeze_json(
+                            value={"transfer": "sftp", "valid_transfers": ["sftp", "scp"]}
+                        )
+                    ),
+                )
+            }
+        ),
+        owners=FrozenMap(mapping={"mine": "proj"}),
+    )
+    host = build_host(
+        {"os_type": "mine", "ip": "10.0.0.1", "valid_transfers": ["nc", "ftp"]},
+        profiles=profiles,
+    )
+    assert host.transfer == "nc"

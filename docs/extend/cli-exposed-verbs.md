@@ -200,13 +200,15 @@ otto applies them to each host as it is ingested from lab data:
     from otto.host import register_product_provider
 
     def _provide(host):
-        if host.os_type == "unix":
+        if host.os_type in ("unix", "busybox"):
             return [MyApp(artifact=Path("dist/myapp.tgz"), stage_dir=Path("/opt"))]
         return None
 
     register_product_provider(_provide)
 
-The provider runs once per lab-ingested host. Key on product-agnostic host
+The provider runs once per lab-ingested host. `os_type` is the entry's
+selector, so a host on the built-in `busybox` profile reads `"busybox"`,
+not `"unix"`. Key on product-agnostic host
 attributes — `element.name`, `element.id`, `os_type`, `id`, `ip`, `source_lab`
 (the component lab the host came from), the two opaque tables `metadata` (the
 host entry's) and `element.metadata` (its element's), and the two reservation
@@ -270,7 +272,7 @@ a `DevTool` implements `stage`, `install`, `uninstall` and `is_installed`:
     from otto.host import register_dev_tool_provider
 
     def _provide(host):
-        if host.os_type == "unix":
+        if host.os_type in ("unix", "busybox"):
             return [TraceHelper()]
         return None
 

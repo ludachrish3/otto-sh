@@ -301,7 +301,7 @@ def test_the_worked_examples_agent_is_a_declared_class_entry() -> None:
         {
             "id": "bb1350-qemu",
             "source_lab": "",
-            "os_type": "unix",
+            "os_type": "busybox",
             "default_dest_dir": None,
             "cached_login_home": None,
         },
@@ -372,7 +372,7 @@ def test_the_agent_install_passes_the_elements_role(element_metadata, role) -> N
     class FakeHost:
         id = "bb1350-qemu"
         source_lab = ""
-        os_type = "unix"
+        os_type = "busybox"
         default_dest_dir = "/opt/agent"
         cached_login_home = "/root"
 

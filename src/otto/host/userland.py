@@ -157,6 +157,7 @@ if TYPE_CHECKING:
     from rich.text import Text
 
     from .host import BaseHost
+    from .os_profile import ProfileContext
 
 _logger = logging.getLogger(__name__)
 
@@ -1413,6 +1414,57 @@ _SOURCE_LEGEND = (
 )
 
 
+_BUSYBOX_PROFILE_HINT = (
+    "This session's shell is not bash. If this host is a BusyBox system, otto's built-in "
+    '"busybox" profile (os_type: "busybox") supplies the ash framing, has_bash: false and, '
+    "when the entry writes no valid_transfers, a transfer list that starts with shell. An "
+    "entry that keeps its own valid_transfers should put shell first or remove the list: "
+    "https://otto-sh.readthedocs.io/en/stable/configuration/os-profiles.html"
+)
+"""The probe's prose pointer to the ``busybox`` profile; never a pasteable line."""
+
+
+def _busybox_profile_hint(
+    host: object, userland: "Userland | None", *, data: "ProfileContext"
+) -> "list[str | Text]":
+    """Return the ``busybox`` profile hint and a blank line, or ``[]``.
+
+    Given only to a host on otto's own default ``unix`` profile whose shell
+    this probe measured (not declared) as something other than bash, and only
+    while ``busybox`` still names otto's built-in profile. It does not claim
+    the host is BusyBox: nothing measures that.
+    """
+    from rich.text import Text
+
+    from .os_profile import selects_builtin
+
+    if getattr(host, "os_type", None) != "unix" or userland is None:
+        return []
+    if not userland.is_settled(name="command_frame"):
+        return []
+    declared = userland._declared("command_frame")  # noqa: SLF001 -- same-module read
+    if declared is not None or userland.command_frame == "bash":
+        return []
+    if not (selects_builtin(name="unix", data=data) and selects_builtin(name="busybox", data=data)):
+        return []
+    return [Text(_BUSYBOX_PROFILE_HINT), ""]
+
+
+def _published_profiles() -> "ProfileContext":
+    """Return the project profile tables of this run's published composition.
+
+    The projects :mod:`otto.run_context` builds the lab from; empty when
+    nothing is published. Never starts composition.
+    """
+    from ..declared import published_result
+    from .os_profile import ProfileContext
+
+    result = published_result()
+    if result is None:
+        return ProfileContext.empty()
+    return ProfileContext.from_projects(projects=result.projects)
+
+
 def _probe_report(
     userland: "Userland", *, sudo_login: "str | None" = None
 ) -> "list[str | Table | Text]":
@@ -1771,7 +1823,13 @@ class UserlandHost:
         # two sibling mixins can compose it.
         as_host = cast("BaseHost", self)
         survey = await run_survey(as_host, user=user, scan_ports=scan_ports)
-        value: "list[str | Table | Text]" = [*lines, "", *survey_report(as_host, survey)]
+        hint = _busybox_profile_hint(self, userland, data=_published_profiles())
+        value: "list[str | Table | Text]" = [
+            *lines,
+            "",
+            *hint,
+            *survey_report(as_host, survey),
+        ]
         return Result(status=Status.Success, value=value)
 
 

@@ -508,7 +508,7 @@
           "logins": [
             "root"
           ],
-          "os_type": "unix",
+          "os_type": "busybox",
           "resources": [],
           "source_lab": "busybox"
         },

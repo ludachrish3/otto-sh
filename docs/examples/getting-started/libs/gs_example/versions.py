@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def agents_for(host: Host) -> list[Product] | None:
     """One product per version the host's metadata asks for, built for the run's variant."""
-    if host.os_type != "unix":
+    if host.os_type not in ("unix", "busybox"):
         return None
     suffix = "-field" if variant() == "field" else "-debug"
     return [

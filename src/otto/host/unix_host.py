@@ -70,7 +70,7 @@ from ..utils import (
     cli_exposed,
     wait_for_async,
 )
-from .capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
+from .capability import menu_capability, settle_selections
 from .capability_grid import HostCapabilities, OptionSupport, SessionIdentity, UserSupport
 from .command_frame import ExecInput, build_command_frame
 from .connections import (
@@ -301,7 +301,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     docker_priority: int = 0
     """Rank of this host as a default docker parent; highest wins."""
 
-    impairer: str = "netem"
+    impairer: str = menu_capability(family="unix", name="impairer").default_pin
     """Active impairer used for link-impairment placements on this host."""
 
     cached_login_home: Path | None = field(default=None, init=False, repr=False)
@@ -312,7 +312,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     and never reaches staging), and the probe costs a command. ``None`` means
     "not asked yet", never "no home" — a probe that cannot answer raises."""
 
-    valid_impairers: list[str] = field(default_factory=lambda: ["netem"])
+    valid_impairers: list[str] = field(
+        default_factory=menu_capability(family="unix", name="impairer").fresh_menu
+    )
     """Closed menu of impairers this host supports (active is ``impairer``)."""
 
     ssh_options: SshOptions = field(default_factory=SshOptions, repr=False)
@@ -479,9 +481,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
         self.power_control = power_control_from_spec(value=self.power_control, host_id=self.id)
 
-        TERM_RESOLVER.validate_choice(self.valid_terms, self.term)
-        TRANSFER_RESOLVER.validate_choice(self.valid_transfers, self.transfer)
-        IMPAIRER_RESOLVER.validate_choice(self.valid_impairers, self.impairer)
+        settle_selections(self, family="unix")
 
         self._connections = self._build_connections()
         self._session_mgr = self._build_session_mgr()

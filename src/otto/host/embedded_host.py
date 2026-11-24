@@ -58,7 +58,7 @@ from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .binary_loader import BinaryLoader
-from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
+from .capability import menu_capability, settle_selections
 from .capability_grid import HostCapabilities, OptionSupport, SessionIdentity, UserSupport
 from .command_frame import CommandFrame, ExecInput, ZephyrFrame
 from .connections import ConnectionManager, TermContext, build_term_backend
@@ -185,13 +185,17 @@ class EmbeddedHost(UserlandHost, RemoteHost):
 
     has_bash: bool = False
 
-    term: str = "telnet"
+    term: str = menu_capability(family="embedded", name="term").default_pin
 
-    transfer: str = "console"
+    transfer: str = menu_capability(family="embedded", name="transfer").default_pin
 
-    valid_terms: list[str] = field(default_factory=lambda: ["telnet"])
+    valid_terms: list[str] = field(
+        default_factory=menu_capability(family="embedded", name="term").fresh_menu
+    )
 
-    valid_transfers: list[str] = field(default_factory=lambda: ["console"])
+    valid_transfers: list[str] = field(
+        default_factory=menu_capability(family="embedded", name="transfer").fresh_menu
+    )
 
     filesystem: EmbeddedFileSystem = field(default_factory=NoFileSystem)
     """On-device filesystem variant — e.g. :class:`~otto.host.embedded_filesystem.FatRamFileSystem`,
@@ -276,8 +280,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         if self.default_dest_dir == Path() and self.filesystem.mount is not None:
             self.default_dest_dir = Path(self.filesystem.mount)
 
-        TERM_RESOLVER.validate_choice(self.valid_terms, self.term)
-        TRANSFER_RESOLVER.validate_choice(self.valid_transfers, self.transfer)
+        settle_selections(self, family="embedded")
 
         # An RTOS shell has no login step — force ``login=False`` on both the
         # telnet and the console options so the connection never blocks

@@ -62,6 +62,9 @@ host's own key ({doc}`../../../configuration/lab/host-fields`): a host that
 declares it is never probed for it, and it is also what frames the host's
 sessions. A measured shell does not change how sessions are framed: sessions on a host
 that declares no `command_frame` are framed as bash until you paste the pin.
+On an `os_type: unix` host whose measured shell is not bash, the probe also
+prints a note that the built-in `busybox` profile exists ({doc}`../../../configuration/os-profiles`); the note
+is prose, never part of the pin.
 
 **Assumed values are absent from the payload.** The reading above the payload
 is where those values are visible, labelled for what they are. A host that

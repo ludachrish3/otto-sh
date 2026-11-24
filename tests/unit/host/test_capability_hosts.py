@@ -1,10 +1,14 @@
 """Runtime host menu fields + active resolution via to_host."""
 
+from dataclasses import dataclass, field
+
 import pytest
 
+from otto.host.capability import is_default_selection
 from otto.host.element import Element
 from otto.host.embedded_host import ZephyrHost
 from otto.host.login_proxy import Cred
+from otto.host.options import ConsoleOptions
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from tests._fixtures.host_build import build_host
@@ -114,3 +118,57 @@ def test_make_host_id_matches_built_host_id():
         slot=2,
     )
     assert make_host_id("Test", "BoardX", 2) == h.id
+
+
+def _direct(cls=UnixHost, **kw):
+    return cls(
+        ip="1.1.1.1",
+        element=Element(name="x"),
+        creds=[Cred(login="u", password="p")],
+        log=LogMode.QUIET,
+        **kw,
+    )
+
+
+def test_a_list_passed_to_the_constructor_selects_its_first_entry():
+    h = _direct(valid_transfers=["nc", "sftp"])  # #1295, direct construction
+    assert h.transfer == "nc"
+    assert h.valid_transfers == ["nc", "sftp"]
+    assert is_default_selection(h.transfer)
+
+
+def test_an_explicit_pin_equal_to_the_class_default_is_a_pin():
+    h = _direct(transfer="scp", valid_transfers=["nc", "scp"])
+    assert h.transfer == "scp"
+    assert not is_default_selection(h.transfer)
+    with pytest.raises(ValueError, match="transfer 'scp' is not in this host's transfer menu"):
+        _direct(transfer="scp", valid_transfers=["nc", "sftp"])
+
+
+def test_a_subclass_plain_default_is_a_pin_and_a_redeclared_list_yields():
+    @dataclass(slots=True, kw_only=True)
+    class Pinned(UnixHost):
+        transfer: str = "ftp"
+
+    @dataclass(slots=True, kw_only=True)
+    class Yielding(UnixHost):
+        valid_transfers: list[str] = field(default_factory=lambda: ["ftp", "scp"])
+
+    with pytest.raises(ValueError, match="transfer 'ftp' is not in this host's transfer menu"):
+        _direct(Pinned, valid_transfers=["nc", "scp"])
+    assert _direct(Yielding).transfer == "ftp"
+    assert is_default_selection(_direct(Yielding).transfer)
+    assert _direct(Yielding, valid_transfers=["nc", "scp"]).transfer == "nc"
+
+
+def test_the_console_rule_holds_in_the_constructor():
+    console = {
+        "valid_terms": ["console"],
+        "console_options": ConsoleOptions(server="hub", port=4001),
+    }
+    h = _direct(valid_transfers=["nc", "shell"], **console)
+    assert (h.term, h.transfer, h.valid_transfers) == ("console", "shell", ["nc", "shell"])
+    with pytest.raises(ValueError, match="transfer 'nc' cannot run on a console term"):
+        _direct(valid_transfers=["nc", "shell"], transfer="nc", **console)
+    with pytest.raises(ValueError, match="leaves a console term no transfer"):
+        _direct(valid_transfers=["nc"], **console)

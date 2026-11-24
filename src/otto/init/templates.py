@@ -97,6 +97,9 @@ paths = ["lab_data"]
 # accepts from lab data may follow as a default applied to every host that
 # selects this profile. See
 # https://otto-sh.readthedocs.io/en/stable/configuration/os-profiles.html
+# Built-in os_type values need no table: "unix" (the default), "busybox" (a
+# BusyBox userland: ash framing, no bash, the shell transfer first),
+# "embedded", "zephyr".
 #[os_profiles.my-os]
 #base = "unix"
 #valid_terms = ["ssh"]
@@ -417,8 +420,9 @@ exists and reserves nothing.
 - **`inventory`** or **`ip`** — a referenced host names its inventory key;
   an inline host carries its own address in `ip` instead.
 - **`os_type`** — `"unix"` for a UnixHost-backed entry (SSH/telnet-capable
-  Linux/BSD-like systems) or `"embedded"` for an EmbeddedHost-backed entry
-  (Zephyr and similar). Determines which spec class validates the rest of
+  Linux/BSD-like systems), `"busybox"` for a BusyBox userland (ash framing,
+  no bash, the shell transfer first) or `"embedded"` for an
+  EmbeddedHost-backed entry (Zephyr and similar). Determines which spec class validates the rest of
   the entry.
 - **`valid_terms`** — the ordered menu of term backends this host supports
   (e.g. `"ssh"`, `"telnet"`). The first entry is the default unless a

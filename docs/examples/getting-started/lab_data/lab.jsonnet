@@ -96,18 +96,22 @@ local busyboxPin = {
   timeout_style: 'dash-t',
 };
 
+// Two ways to say "BusyBox". busyboxProfile selects otto's built-in profile,
+// which supplies the ash framing and has_bash: false. ashOnUnix writes the
+// same shell by hand on a plain unix host.
+local busyboxProfile = { os_type: 'busybox' };
+local ashOnUnix = { os_type: 'unix', command_frame: 'ash' };
+
 // BusyBox guest k, a QEMU guest behind test1. Its network is the /30
 // 198.51.100.(4k)/30, and the guest is that network's first address,
 // 198.51.100.(4k+1). Its element is named after its version, so 1.16.1 is
 // bb1161. *pin* is its userland_options; a guest given none has every
-// capability probed.
-local busybox(k, version, pin=null, host={}, element={}) = {
+// capability probed. *os* says how the host names its shell (see above).
+local busybox(k, version, pin=null, host={}, element={}, os=ashOnUnix) = {
   name: 'bb' + std.strReplace(version, '.', ''),
   labs: ['busybox'],
-  hosts: [{
+  hosts: [os + {
     ip: '198.51.100.' + (4 * k + 1),
-    os_type: 'unix',
-    command_frame: 'ash',
     board: 'qemu',
     sw_version: version,
     valid_terms: ['telnet'],
@@ -200,7 +204,7 @@ local bb1161 = busybox(0, '1.16.1', pin=busyboxPin {
 // doc: end bb1161
 
 // doc: begin bb1350
-local bb1350 = busybox(4, '1.35.0', pin=busyboxPin { timeout_style: 'coreutils' }, host={
+local bb1350 = busybox(4, '1.35.0', pin=busyboxPin { timeout_style: 'coreutils' }, os=busyboxProfile, host={
   valid_terms: ['telnet', 'ssh', 'console'],
   console_options: { server: 'test1', port: 2450, escapes_iac: false },
   resources: ['bb1350-slot'],

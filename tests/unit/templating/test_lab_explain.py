@@ -328,6 +328,22 @@ def test_profile_default_vs_lab_data_vs_preferences(tmp_path, otto_home):
     assert layers[("os_type", None)] == "lab file"
 
 
+def test_a_profile_pin_under_an_entry_list_is_credited_to_the_list(tmp_path, otto_home):
+    root = tmp_path / "sut"
+    host = {"ip": "10.0.0.9", "os_type": "alpha", "creds": CREDS, "valid_transfers": ["nc", "scp"]}
+    settings = (
+        '[os_profiles.alpha]\nbase = "unix"\ntransfer = "sftp"\n'
+        'valid_transfers = ["sftp", "scp"]\n\n' + json_source(_lab_file(root, [host]))
+    )
+    with recording() as trace:
+        built = build_lab_and_view([project(root, settings)], labs=["bench"])
+    explained = explain_host(host_id="dut", lab=built.lab, view=built.view, trace=trace)
+    assert built.lab.hosts["dut"].transfer == "nc"
+    layers = _layers(explained)
+    assert layers[("valid_transfers", None)] == "lab file"
+    assert ("transfer", "alpha") not in layers
+
+
 def test_capability_preferences_are_attributed(tmp_path, otto_home):
     root = tmp_path / "sut"
     settings = (

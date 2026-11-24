@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING, Any
 from ..layout import validate_product_name
 from ..registry import resolved
 from .capability import (
+    menu_capabilities,
     option_default_selectors,
     preference_selectors,
     select_option_defaults,
     select_preferences,
 )
-from .construction import HostContext, HostSpecInContext, _effective_default
+from .construction import HostContext, HostSpecInContext, _declared_default, _effective_default
 from .dev_tool import apply_declared_dev_tools, apply_dev_tool_providers
 from .element import Element
 from .inventory_ref import InventoryRef, recording_fields
@@ -100,13 +101,23 @@ def _merge_host_dict(
     profile: OsProfile,
     spec_cls: "type[HostSpec]",
     *,
+    host_cls: "type[RemoteHost] | None" = None,
     sources: "dict[str, int] | None" = None,
 ) -> dict[str, Any]:
     """Precedence-merge profile defaults, host fields, and product option defaults into one dict.
 
-    Scalars: host > profile. ``*_options`` tables, per key, lowest→highest:
-    profile default < host field < product ``[host_preferences]`` value. Only
-    option keys the target spec declares are merged.
+    Scalars: host > profile, with one exception: when the host entry writes a
+    capability list (``valid_transfers`` and so on) but not its pin, the
+    profile's pin for that capability is dropped, so the entry's list is
+    honoured as written and its first entry is the default. ``*_options``
+    tables, per key, lowest→highest: profile default < host field < product
+    ``[host_preferences]`` value. Only option keys the target spec declares
+    are merged.
+
+    A capability list neither the entry nor the profile writes is *host_cls*'s
+    own default list when the class redeclared it and the spec did not, so a
+    host class that redeclares only its list selects the same default here as
+    when built directly.
 
     The layers are overlaid by :func:`_overlay`, in the order of
     :data:`~otto.host.provenance.PROFILE_RANK`,
@@ -115,7 +126,12 @@ def _merge_host_dict(
     recorded build), is filled with each merged value's layer.
     """
     defaults = profile.fields.defaults.thaw_json()
+    for cap in menu_capabilities(getattr(spec_cls, "_host_family", None)):
+        if cap.menu_field in host_data and cap.pin_field not in host_data:
+            defaults.pop(cap.pin_field, None)
     merged = _overlay((defaults, host_data), sources=sources)
+    if host_cls is not None:
+        _fill_class_menus(merged, host_cls, spec_cls)
 
     option_defaults = option_defaults or {}
     opt_keys = OPTIONS_KEYS & set(spec_cls.model_fields)
@@ -139,6 +155,28 @@ def _merge_host_dict(
         else:
             merged.pop(key, None)
     return merged
+
+
+def _fill_class_menus(
+    merged: dict[str, Any], host_cls: "type[RemoteHost]", spec_cls: "type[HostSpec]"
+) -> None:
+    """Set each unwritten capability list in *merged* to *host_cls*'s own default list.
+
+    Only where the class redeclared the list and the spec did not: a spec that
+    declares its own default list keeps it, and a stock host's entry stays as
+    written.
+
+    This is the lab path's counterpart of the constructor, where the class's
+    field default applies by itself; :func:`~otto.host.construction._effective_default`
+    is the same idea for a scalar field.
+    """
+    for cap in menu_capabilities(getattr(spec_cls, "_host_family", None)):
+        if cap.menu_field in merged:
+            continue
+        spec_default = spec_cls.model_fields[cap.menu_field].get_default(call_default_factory=True)
+        own = _declared_default(host_cls, cap.menu_field, call_factory=True)
+        if spec_default == cap.default_menu and own is not None and own != spec_default:
+            merged[cap.menu_field] = own
 
 
 def _attributing() -> bool:
@@ -271,7 +309,10 @@ def _pipeline(
     # A recorded build (`otto lab explain`) collects each value's layer from
     # the merge that decides it, and notes the final merge's once, below.
     sources: "dict[str, int] | None" = {} if _attributing() else None
-    merged = _merge_host_dict(host_data, None, profile, spec_cls, sources=sources)
+    host_cls = resolved(entry.cls)
+    merged = _merge_host_dict(
+        host_data, None, profile, spec_cls, host_cls=host_cls, sources=sources
+    )
     merged["os_type"] = selector
     spec = spec_cls.model_validate(merged)
     # The id composes from the VALIDATED spec: a profile may default board or
@@ -285,7 +326,7 @@ def _pipeline(
         if option_defaults:
             sources = None if sources is None else {}
             merged = _merge_host_dict(
-                host_data, option_defaults, profile, spec_cls, sources=sources
+                host_data, option_defaults, profile, spec_cls, host_cls=host_cls, sources=sources
             )
             merged["os_type"] = selector
             spec = spec_cls.model_validate(merged)

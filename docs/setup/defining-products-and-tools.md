@@ -33,7 +33,7 @@ stage_dir = "/opt/agent"
 install = "chmod +x /opt/agent/agent && /opt/agent/agent --install"
 uninstall = "/opt/agent/agent --uninstall; rm -f /opt/agent/agent"
 check = "test -x /opt/agent/agent"
-match = { os_type = "unix" }
+match = { os_type = ["unix", "busybox"] }
 ```
 
 `match` picks the hosts; `install`/`uninstall`/`check` run on each. Leave a

@@ -364,7 +364,9 @@ def test_bed_kind_is_not_read_off_the_lab_name():
 
 
 def test_bed_kind_is_not_read_off_os_type():
-    """The five BusyBox guests declare ``os_type: "unix"`` in the lab data.
+    """Four BusyBox guests declare ``os_type: "unix"`` (with ``command_frame: "ash"``).
+
+    Only bb1350 selects the ``busybox`` profile.
 
     A kind read off ``os_type`` files them as plain unix hosts, and the
     pinned-userland axis -- the entire reason those guests exist -- vanishes.

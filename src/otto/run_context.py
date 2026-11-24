@@ -280,13 +280,6 @@ def _apply_option_overrides(host: "RemoteHost", **overrides: Unpack[HostOverride
     applied = {k: v for k, v in candidates.items() if k in host_fields}
     if not applied:
         return host
-    effective_term = applied.get("term", getattr(host, "term", None))
-    if effective_term == "console" and "transfer" in applied:
-        # An nc pin on a console is a config error, raised here as the
-        # ValueError every override caller already maps (the CLI to a
-        # --transfer parameter error) rather than as the ConsoleError the
-        # copy's transfer backend would raise.
-        console_transfer_menu(host.name, getattr(host, "valid_transfers", []), applied["transfer"])
     if (
         applied.get("term") == "console"
         and "transfer" not in applied

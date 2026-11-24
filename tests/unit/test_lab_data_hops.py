@@ -17,11 +17,14 @@ guests are carved out by their ``busybox`` lab membership and then held to the
 exact roster and hop the bed provisions.
 
 Note: hosts with no ``os_type`` key default to ``"unix"`` per the HostSpec
-model, so the guard treats missing ``os_type`` as ``"unix"``.
+model, so the guard treats missing ``os_type`` as ``"unix"``. A host is
+classified by the family of the profile its ``os_type`` selects, not by the
+selector string: ``os_type: "busybox"`` names a Unix-family host.
 """
 
 import pytest
 
+from otto.host.os_profile import build_host_spec, build_os_profile
 from tests._fixtures.labdata import flat_hosts
 
 _TECHS = ("tech1", "tech2")
@@ -42,6 +45,12 @@ _BUSYBOX_GUESTS = ("bb1161", "bb1211", "bb1281", "bb1310", "bb1350")
 _BUSYBOX_HOP = "test1"
 _CHAOS_GUESTS = ("ubu2404",)
 _CHAOS_HOP = "test4"
+
+
+def _is_unix_family(host: dict) -> bool:
+    """Whether the profile the entry's ``os_type`` selects builds a Unix-family host."""
+    spec = build_host_spec(build_os_profile(name=host.get("os_type", "unix")).base)
+    return spec._host_family == "unix"
 
 
 def _is_busybox_guest(host: dict) -> bool:
@@ -68,9 +77,7 @@ def _is_bed_guest(host: dict) -> bool:
 def test_no_unix_host_defines_a_hop(tech: str) -> None:
     hosts = flat_hosts(tech, with_labs=True)
     offenders = [
-        h["element"]
-        for h in hosts
-        if h.get("os_type", "unix") == "unix" and "hop" in h and not _is_bed_guest(h)
+        h["element"] for h in hosts if _is_unix_family(h) and "hop" in h and not _is_bed_guest(h)
     ]
     assert not offenders, (
         f"{tech}: Unix VMs must be directly reachable (no hop) — "
@@ -108,7 +115,7 @@ def test_the_chaos_guest_hops_through_test4(tech: str) -> None:
 @pytest.mark.parametrize("tech", _TECHS)
 def test_embedded_hops_are_preserved(tech: str) -> None:
     hosts = flat_hosts(tech, with_labs=True)
-    embedded = [h for h in hosts if h.get("os_type", "unix") != "unix"]
+    embedded = [h for h in hosts if not _is_unix_family(h)]
     expectation = (
         "missing — the over-eager-sweep accident this guard exists to catch"
         if tech in _EMBEDDED_TECHS

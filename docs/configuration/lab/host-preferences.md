@@ -63,6 +63,17 @@ instead of silently no-opping.
    selector wins on the same key).
 4. CLI `--term` / `--transfer` — final word, applied at invocation time.
 
+(selection-rule)=
+**Which term, transfer and impairer a host gets.** The selection is the
+first `[host_preferences]` entry that is in the host's list, else the pin the
+lab entry writes (`term`, `transfer`, `impairer`), else the first entry of
+the list. The list is the entry's `valid_terms`, `valid_transfers` or
+`valid_impairers`; with none written, it is the one the host's os profile or
+host class supplies. A profile's or host class's own default applies only
+when the entry writes no list: a list you write is honoured as written, and
+its first entry is the default. A pin the entry writes must be in the list,
+or the lab fails to load.
+
 Merging happens **per key** at every option-table layer.  Setting only
 `port` on a host in `lab.json` still inherits `connect_timeout` from the
 product preference, and so on down to the dataclass default.

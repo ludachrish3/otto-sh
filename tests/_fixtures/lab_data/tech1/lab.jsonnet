@@ -448,8 +448,7 @@ local test4 = ubuntuVm(4, {
       hosts: [
         {
           ip: '198.51.100.17',
-          os_type: 'unix',
-          command_frame: 'ash',
+          os_type: 'busybox',
           board: 'qemu',
           sw_version: '1.35.0',
           valid_terms: ['telnet', 'ssh', 'console'],
