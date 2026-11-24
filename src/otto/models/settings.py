@@ -837,15 +837,9 @@ class CoverageTierToolchainSpec(OttoModel):
     @field_validator("lcov_args")
     @classmethod
     def _validate_lcov_args(cls, v: list[str]) -> list[str]:
-        # The host rule: one argument per entry. otto quotes each one, so a glob
-        # or another shell metacharacter reaches lcov as written.
-        for arg in v:
-            if not arg or any(c.isspace() or not c.isprintable() for c in arg):
-                raise ValueError(
-                    f"each entry is one argument; {arg!r} is empty or contains white space "
-                    'or a control character — write it as ["--ignore-errors", "source"]'
-                )
-        return v
+        from ..host.toolchain import one_lcov_argument_each  # as _toolchain_value imports
+
+        return one_lcov_argument_each(v)
 
 
 class CoverageTierSpec(OttoModel):

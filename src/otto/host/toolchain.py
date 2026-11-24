@@ -42,6 +42,26 @@ def shell_unsafe(value: str) -> str | None:
     return None
 
 
+def one_lcov_argument_each(args: list[str]) -> list[str]:
+    """Return *args*, refusing an entry that is not exactly one lcov argument.
+
+    The one rule for every ``lcov_args`` list, a host's and a coverage tier's
+    alike. otto quotes each entry, so a glob or another shell metacharacter
+    reaches lcov as written, and a whole command line in one entry would reach
+    it as a single unknown argument.
+
+    Raises:
+        ValueError: an entry is empty or holds white space or a control character.
+    """
+    for arg in args:
+        if not arg or any(c.isspace() or not c.isprintable() for c in arg):
+            raise ValueError(
+                f"each entry is one argument; {arg!r} is empty or contains white space "
+                'or a control character — write it as ["--ignore-errors", "source"]'
+            )
+    return args
+
+
 @final
 @dataclass(slots=True)
 class ToolchainTool:
