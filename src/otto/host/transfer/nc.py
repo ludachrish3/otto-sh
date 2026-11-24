@@ -263,6 +263,10 @@ class NcPortSharedError(OttoError, ConnectionError):
     success on both sides. A ``ConnectionError`` so the existing readiness
     handlers turn it into this file's ``Error``, which the per-file retry
     answers with a fresh port.
+
+    "More than one" is per address family
+    (:mod:`~otto.host.transfer.nc_scripts`): a netcat that binds an IPv4 and
+    an IPv6 socket for its port is one listener, not a shared port.
     """
 
 
