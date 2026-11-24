@@ -14,6 +14,8 @@ its docstring claimed "Same shape as…").
 import ast
 import gc
 import os
+import select
+import sys
 
 import pytest
 
@@ -43,6 +45,169 @@ def test_leak_past_tolerance_trips() -> None:
     finally:
         for fd in leaked:
             os.close(fd)
+
+
+def test_a_leak_names_the_descriptors_that_were_not_open_before() -> None:
+    """The failure says what leaked, so a red run is read without a second run."""
+    gen = fd_watermark_bracket(tolerance=0, gc_policy="on-suspicion")
+    next(gen)
+    leaked = os.open(os.devnull, os.O_RDONLY)
+    try:
+        with pytest.raises(AssertionError, match="fd leak") as failure:
+            next(gen)
+    finally:
+        os.close(leaked)
+    assert f"{leaked}: '/dev/null'" in str(failure.value), failure.value
+
+
+_GO_BINDING = "_gojsonnet"
+
+
+@pytest.fixture
+def no_poller_yet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A process whose Go runtime, if it has one, has opened no poller yet.
+
+    Where ``gojsonnet`` is the installed binding this very process may hold the
+    real runtime's poller already. The descriptors open now are hidden from
+    the bracket's listing, so each test below starts from a process with none,
+    and no poller is accounted.
+    """
+    here = frozenset(fdw.open_fds())
+    listing = fdw.open_fds
+    monkeypatch.setattr(
+        fdw, "open_fds", lambda: {fd: t for fd, t in listing().items() if fd not in here}
+    )
+    monkeypatch.setattr(fdw, "_go_pollers_accounted", [])
+
+
+@pytest.fixture
+def go_binding_loaded(monkeypatch: pytest.MonkeyPatch, no_poller_yet: None) -> None:
+    """A process that has the Go binding loaded and has accounted no poller yet."""
+    monkeypatch.setitem(sys.modules, _GO_BINDING, object())
+
+
+def _go_shaped_poller() -> tuple[select.epoll, int]:
+    """One epoll descriptor that watches one eventfd.
+
+    The kernel objects the Go runtime's network poller is made of, measured in
+    a process that loaded ``_gojsonnet``: ``anon_inode:[eventpoll]`` whose
+    ``fdinfo`` holds one ``tfd:`` line, naming an ``anon_inode:[eventfd]``.
+    """
+    poller = select.epoll()
+    event = os.eventfd(0)
+    poller.register(event, select.EPOLLIN)
+    return poller, event
+
+
+@pytest.mark.usefixtures("go_binding_loaded")
+def test_the_go_runtimes_poller_is_not_charged_to_the_test_it_opens_in() -> None:
+    """The runtime opens it once, when it chooses, and keeps it: no test leaked it."""
+    gen = fd_watermark_bracket(tolerance=0, gc_policy="on-suspicion")
+    next(gen)
+    poller, event = _go_shaped_poller()
+    try:
+        with pytest.raises(StopIteration):
+            next(gen)
+    finally:
+        poller.close()
+        os.close(event)
+
+
+@pytest.mark.usefixtures("go_binding_loaded")
+def test_a_second_poller_in_the_same_process_is_charged() -> None:
+    """The runtime has one poller. A second pair of the same shape is a leak."""
+    opened: list[tuple[select.epoll, int]] = []
+    try:
+        first = fd_watermark_bracket(tolerance=0, gc_policy="on-suspicion")
+        next(first)
+        opened.append(_go_shaped_poller())
+        with pytest.raises(StopIteration):
+            next(first)
+        second = fd_watermark_bracket(tolerance=0, gc_policy="on-suspicion")
+        next(second)
+        opened.append(_go_shaped_poller())
+        with pytest.raises(AssertionError, match="fd leak"):
+            next(second)
+    finally:
+        for poller, event in opened:
+            poller.close()
+            os.close(event)
+
+
+@pytest.mark.usefixtures("go_binding_loaded")
+def test_a_poller_open_before_the_bracket_spends_the_allowance() -> None:
+    """A runtime whose poller is already open has none left to open.
+
+    The pair is open at the baseline, so no bracket ever trips on it. Were the
+    allowance left unspent, a pair of the same shape leaked later would be
+    forgiven as the runtime's.
+    """
+    opened = [_go_shaped_poller()]
+    try:
+        gen = fd_watermark_bracket(tolerance=0, gc_policy="on-suspicion")
+        next(gen)
+        opened.append(_go_shaped_poller())
+        with pytest.raises(AssertionError, match="fd leak"):
+            next(gen)
+    finally:
+        for poller, event in opened:
+            poller.close()
+            os.close(event)
+
+
+@pytest.mark.usefixtures("no_poller_yet")
+def test_a_poller_is_charged_when_the_go_binding_is_not_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a Go runtime in the process the same descriptors are somebody's leak."""
+    monkeypatch.setitem(sys.modules, _GO_BINDING, None)
+    gen = fd_watermark_bracket(tolerance=0, gc_policy="on-suspicion")
+    next(gen)
+    poller, event = _go_shaped_poller()
+    try:
+        with pytest.raises(AssertionError, match="fd leak"):
+            next(gen)
+    finally:
+        poller.close()
+        os.close(event)
+
+
+@pytest.mark.usefixtures("go_binding_loaded")
+def test_an_epoll_that_watches_something_else_is_charged() -> None:
+    """An event loop's selector watches a socket or a pipe, never only an eventfd."""
+    gen = fd_watermark_bracket(tolerance=0, gc_policy="on-suspicion")
+    next(gen)
+    poller = select.epoll()
+    event = os.eventfd(0)
+    read_end, write_end = os.pipe()
+    poller.register(read_end, select.EPOLLIN)
+    try:
+        with pytest.raises(AssertionError, match="fd leak"):
+            next(gen)
+    finally:
+        poller.close()
+        for fd in (event, read_end, write_end):
+            os.close(fd)
+
+
+@pytest.mark.usefixtures("go_binding_loaded")
+def test_a_descriptor_leaked_beside_the_go_poller_is_charged_and_named() -> None:
+    """The poller is taken out of the count; what a test leaked beside it is not."""
+    gen = fd_watermark_bracket(tolerance=0, gc_policy="on-suspicion")
+    next(gen)
+    poller, event = _go_shaped_poller()
+    leaked = os.open(os.devnull, os.O_RDONLY)
+    try:
+        with pytest.raises(AssertionError, match="fd leak") as failure:
+            next(gen)
+    finally:
+        poller.close()
+        os.close(event)
+        os.close(leaked)
+    message = str(failure.value)
+    assert f"{leaked}: '/dev/null'" in message, message
+    assert "eventpoll" not in message, message
+    assert "eventfd" not in message, message
 
 
 def test_baseline_gc_keeps_prior_garbage_out_of_the_tolerance() -> None:
