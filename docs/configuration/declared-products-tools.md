@@ -25,7 +25,7 @@ collection ({ref}`project-scope-effects`).
 name = "firmware"
 kind = "shell"
 artifact = "build/fw-rev2.bin"
-match = { "metadata.hw_version" = "rev2" }
+match = { hw_version = "rev2" }
 
 [[products]]                 # fallback: declared last, wins only when rev2 didn't
 name = "firmware"
@@ -65,12 +65,52 @@ command can install.
 
 ## Matching
 
-`match` is a table ANDed across keys; a key IS the path on the host. Name
-`id`, `element.name`, `element.id`, `os_type`, `os_name`, `os_version`, `ip`,
-`source_lab` — or a dotted `metadata.<key>` / `element.metadata.<key>` path.
-Anything else is a settings error at bootstrap; a retired spelling
-(`element`, `element_id`, `element_metadata.<key>`) is refused with the
-key that replaced it. Values are typed:
+`match` is a table ANDed across keys. A key names a fixed fact of a lab host:
+
+| Key | Type | Lab hosts | When nothing sets it |
+|---|---|---|---|
+| `id` | string | all | always set: otto computes it |
+| `name` | string | all | always set: a label made from the element, board and slot |
+| `element.name` | string | all | always set |
+| `element.id` | integer | all | never matches |
+| `os_type` | string | all | `unix` |
+| `os_name` | string | all | `Linux` on a unix host, `Zephyr` on a zephyr host; never matches on a bare `embedded` host |
+| `os_version` | string | all | never matches |
+| `hw_version` | string | all | never matches |
+| `sw_version` | string | all | never matches |
+| `ip` | string | all | always set: a host entry requires it |
+| `board` | string | all | never matches |
+| `slot` | integer | all | never matches |
+| `site` | string or integer | all | never matches |
+| `rack` | string or integer | all | never matches |
+| `shelf` | integer | all | never matches |
+| `is_virtual` | boolean | all | `false` |
+| `docker_capable` | boolean | unix | `false` |
+| `filesystem` | string | embedded | `none` |
+| `loader` | string | embedded | never matches |
+| `source_lab` | string | all | always set: the lab the host was loaded from |
+
+Each key reads the host field of the same name ({doc}`lab/host-fields`), and
+`element.name` / `element.id` read the host's element. A value counts as set
+whether the lab entry, the host's OS profile or its inventory record supplies
+it.
+
+- `filesystem` and `loader` take the registered name a lab file writes, such
+  as `filesystem = "littlefs"`.
+- A `site` or `rack` written as digits is an integer on the host.
+- A key the host's family does not have never matches: `docker_capable` on an
+  embedded host, `filesystem` on a unix host.
+
+A container host that otto starts is matched too, and it has only four of
+these keys: `id`, `name` (`<parent id>:<service>`), `is_virtual` (always
+`true`) and `source_lab` (its parent's). Every other key never matches a
+container. An entry that matches on `is_virtual = true` alone therefore also
+applies to containers.
+
+Anything else a lab carries is reached as a dotted `metadata.<key>` /
+`element.metadata.<key>` path. Any other key is a settings error at bootstrap;
+a retired spelling (`element`, `element_id`, `element_metadata.<key>`) is
+refused with the key that replaced it. Values are typed:
 
 | Value | Meaning |
 |---|---|
@@ -84,13 +124,16 @@ not `os_version = 3.7`. The bare number is a TOML float, which `match`
 compares by equality against the host's `os_version`, never as a version; it
 will not do what a specifier-prefixed string does.
 
+A boolean key takes a bare `true` or `false`. A quoted `"true"` is a regex,
+and it never matches a boolean.
+
 An entry with no `match` at all — and an entry whose `match` is an empty
 table — applies to every host: there is no clause to fail, so the entry is the
 project's blanket declaration, bounded only by its `[project]` targeting below.
 
-An attribute that is unset (or a metadata key a lab doesn't carry) never
-matches — declare a fallback entry last if one should apply. When several
-entries share a `name`, the first matching one wins, in declaration order.
+A key with no value on the host never matches, and neither does a metadata
+key the lab does not carry. Declare a fallback entry last if one should apply.
+When several entries share a `name`, the first matching one wins, in declaration order.
 Across projects this means DISCOVERY order decides which entry is "first": when
 two projects each declare the same name, the one from the project earlier in
 `OTTOPATH` wins — not init-module registration order, which the dependency

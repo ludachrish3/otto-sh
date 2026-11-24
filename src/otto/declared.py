@@ -64,13 +64,46 @@ MatchValue = MatchLeaf | list[MatchLeaf]
 """One match-table value — a single leaf, or a list meaning any-of."""
 
 MATCH_KEYS = frozenset(
-    {"id", "element.name", "element.id", "os_type", "os_name", "os_version", "ip", "source_lab"}
+    {
+        "id",
+        "name",
+        "element.name",
+        "element.id",
+        "os_type",
+        "os_name",
+        "os_version",
+        "hw_version",
+        "sw_version",
+        "ip",
+        "board",
+        "slot",
+        "site",
+        "rack",
+        "shelf",
+        "is_virtual",
+        "docker_capable",
+        "filesystem",
+        "loader",
+        "source_lab",
+    }
 )
-"""Host attribute paths a match table may name directly (spec 2026-09-05
-§8.1): a key IS the path on the host — ``element.id`` reads
-``host.element.id``. Everything else is reached as a dotted ``metadata.`` /
-``element.metadata.`` path; an unlisted key is a settings error, never a
-silent no-match."""
+"""Host attribute paths a match table may name directly.
+
+A key IS the path on the host (``element.id`` reads ``host.element.id``),
+except the two object-valued keys, ``filesystem`` and ``loader``, which read
+the name the object is registered under. Everything else is reached as a
+dotted ``metadata.`` / ``element.metadata.`` path; an unlisted key is a
+settings error, never a silent no-match.
+
+A key is added here by decision, never by default. A unit test,
+``tests/unit/test_match_key_guards.py``, fails on a host or element spec
+field that is neither here nor in its not-matchable set."""
+
+_OBJECT_KEY_PATHS = {"filesystem": "filesystem.type_name", "loader": "loader.type_name"}
+"""Match keys whose host attribute is an object, each with the path that reads
+the name it is registered under. A match table names these the way a lab file
+does (``filesystem = "littlefs"``), so the walk reads ``type_name`` instead of
+the object."""
 
 _SPECIFIER_PREFIXES = (">=", "<=", "==", "~=", "!=", ">", "<")
 _METADATA_ROOTS = ("metadata", "element.metadata")
@@ -199,7 +232,8 @@ def _resolve_key(host: Any, key: str) -> Any:
     """Walk *key* as a path from *host*: attributes, then dict keys, None when absent.
 
     A key IS the host attribute path (spec 2026-09-05 §8.1), so
-    ``element.metadata.rev`` and ``element.name`` share this one walk. An
+    ``element.metadata.rev`` and ``element.name`` share this one walk. The
+    keys of ``_OBJECT_KEY_PATHS`` walk the path named there. An
     unvalidated table (library use skipping the settings boundary) gets the
     same loud complaint the boundary would have raised, before any attribute
     is read.
@@ -213,7 +247,7 @@ def _resolve_key(host: Any, key: str) -> Any:
     if key not in MATCH_KEYS and not _is_metadata_path(key):
         _reject_key(key)
     root = next((r for r in _METADATA_ROOTS if key.startswith(r + ".")), None)
-    prefix = root.split(".") if root else key.split(".")
+    prefix = root.split(".") if root else _OBJECT_KEY_PATHS.get(key, key).split(".")
     value: Any = host
     for part in prefix:
         value = getattr(value, part, None)
