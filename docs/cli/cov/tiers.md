@@ -340,8 +340,8 @@ That is not a host's `toolchain` ({ref}`per-host-toolchain`), whose `gcov` and
 here name a file under the project root. `coverage_tool` and `lcov` must each
 be one plain word — no white space and no shell metacharacter — because lcov
 runs the reader through a shell of its own; name the `llvm-cov` binary alone,
-never `"llvm-cov gcov"`. Each `lcov_args` entry is one argument with no white
-space, and otto quotes it, so a glob such as `["--exclude", "*/tests/*"]`
+never `"llvm-cov gcov"`. Each `lcov_args` entry is one argument (not empty, no white
+space or control character), and otto quotes it, so a glob such as `["--exclude", "*/tests/*"]`
 reaches lcov as written. Settings refuse a bad value when they load, naming
 `coverage.tiers.<tier>.toolchain.<field>`. Whether a tool exists is checked
 only when a report runs, so a missing one never breaks `otto run`.

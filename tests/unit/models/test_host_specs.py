@@ -95,7 +95,7 @@ def test_toolchain_spec_lcov_args_reach_runtime():
 def test_toolchain_spec_rejects_an_entry_holding_a_whole_command_line():
     # One argv token per entry: otto quotes each entry, so a shell-style
     # "--ignore-errors source" would reach lcov as ONE unknown argument.
-    with pytest.raises(ValidationError, match=r"'--ignore-errors source' contains whitespace"):
+    with pytest.raises(ValidationError, match=r"'--ignore-errors source' is empty or contains"):
         ToolchainSpec(lcov_args=["--ignore-errors source"])
 
 
@@ -103,7 +103,29 @@ def test_toolchain_spec_rejects_a_whitespace_entry_naming_the_list_form():
     with pytest.raises(ValidationError, match="each entry is one argument") as exc:
         ToolchainSpec(lcov_args=["--rc", "geninfo_adjust_src_path=/a /b"])
     assert 'write it as ["--ignore-errors", "source"]' in str(exc.value)
-    assert "toolchain.lcov_args" in str(exc.value)
+    assert "lcov_args" in str(exc.value)
+
+
+@pytest.mark.parametrize("entry", ["", "--ignore-errors source", "a\tb", "a\x07b"])
+def test_a_host_and_a_coverage_tier_refuse_the_same_lcov_argument_alike(entry):
+    """One rule for ``lcov_args`` wherever it is declared: the same entry, the same refusal."""
+    from otto.models.settings import CoverageTierToolchainSpec
+
+    messages = []
+    for spec in (ToolchainSpec, CoverageTierToolchainSpec):
+        with pytest.raises(ValidationError, match="each entry is one argument") as exc:
+            spec(lcov_args=["--rc", entry])
+        messages.append(exc.value.errors()[0]["msg"])
+    assert messages[0] == messages[1]
+    assert "each entry is one argument" in messages[0]
+
+
+def test_a_host_and_a_coverage_tier_accept_the_same_lcov_arguments():
+    from otto.models.settings import CoverageTierToolchainSpec
+
+    args = ["--rc", "geninfo_unexecuted_blocks=1", "--exclude", "*/tests/*"]
+    assert ToolchainSpec(lcov_args=args).lcov_args == args
+    assert CoverageTierToolchainSpec(lcov_args=args).lcov_args == args
 
 
 def test_toolchain_tool_spec_forbids_unknown():

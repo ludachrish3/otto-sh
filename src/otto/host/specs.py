@@ -95,7 +95,7 @@ from .option_specs import (
 from .os_profile import constructing_with
 from .power import POWER_CONTROLLERS, PowerConstructionError, PowerEnv
 from .remote_host import RemoteHost, make_host_id
-from .toolchain import Toolchain, ToolchainTool
+from .toolchain import Toolchain, ToolchainTool, one_lcov_argument_each
 from .transfer import TRANSFER_BACKENDS
 
 
@@ -173,13 +173,7 @@ class ToolchainSpec(OttoModel):
     @field_validator("lcov_args")
     @classmethod
     def _validate_lcov_args(cls, v: list[str]) -> list[str]:
-        for arg in v:
-            if any(c.isspace() for c in arg):
-                raise ValueError(
-                    f"toolchain.lcov_args: each entry is one argument; {arg!r} "
-                    f'contains whitespace — write it as ["--ignore-errors", "source"]'
-                )
-        return v
+        return one_lcov_argument_each(v)
 
     def to_runtime(self) -> Toolchain:
         """Build the runtime ``Toolchain`` dataclass from the validated fields."""
