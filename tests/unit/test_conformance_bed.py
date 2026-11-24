@@ -38,7 +38,7 @@ from otto.host.embedded_filesystem import build_filesystem
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.options import UNESCAPED_IAC, ConsoleOptions
 from otto.host.remote_host import RemoteHost
-from otto.result import CommandResult, Results, Status
+from otto.result import CommandResult, Result, Results, Status
 from otto.testing import EXACT_OUTPUT_CASES, OutputCase
 from tests._fixtures._console_lock import GATE_NAME, RESOURCE_NAME, console_access
 from tests._fixtures.bed_locks import BED_LOCK_ROOT_ENV
@@ -3441,3 +3441,116 @@ def test_zephyr_declares_no_blocking_signal_stdin_state_terminal_or_mark_stimulu
         ]:
             assert getattr(words, name) is None, name
         assert "{token}" in words.distinct_answer_template
+
+
+# --- the netcat rung contract's table and cells (hostless) ---------------------
+
+
+def test_build_bed_host_merges_an_nc_options_override_and_none_changes_nothing():
+    """An ``nc_options`` override reaches the host; omitting it builds the lab's entry."""
+    cell = Cell("test2", "ssh", "nc")
+    plain = build_bed_host(cell)
+    pinned = build_bed_host(
+        cell, options={"nc_options": {"port_strategy": "proc", "listener_check": "netstat"}}
+    )
+    same = build_bed_host(cell, options=None)
+    assert (pinned.nc_options.port_strategy, pinned.nc_options.listener_check) == (
+        "proc",
+        "netstat",
+    )
+    assert plain.nc_options.port_strategy != "proc"
+    assert same.nc_options == plain.nc_options
+
+
+def test_the_nc_rung_cells_are_every_host_and_rung_of_both_ladders():
+    """63 cells, 9 hosts x 7 rungs, each named ``nc-rung[<element>:<ladder>:<rung>]``."""
+    from otto.host.transfer.nc_scripts import LISTENER_LADDER, PORT_LADDER
+    from tests.conformance._nc_rungs import BED_NC_RUNGS, NC_RUNG_CELLS, nc_rung_id
+
+    assert len(NC_RUNG_CELLS) == 63
+    assert len(set(NC_RUNG_CELLS)) == 63
+    expected = {
+        (element, ladder, rung.name)
+        for element in BED_NC_RUNGS
+        for ladder, rungs in (("port", PORT_LADDER), ("listener", LISTENER_LADDER))
+        for rung in rungs
+    }
+    assert set(NC_RUNG_CELLS) == expected
+    assert nc_rung_id(("bb1161", "port", "proc")) == "nc-rung[bb1161:port:proc]"
+
+
+def test_the_nc_rung_table_names_exactly_the_hosts_with_an_nc_cell():
+    """Every bed host with an ``nc`` cell has a row, no other does, and rows hold only rungs."""
+    from otto.host.transfer.nc_scripts import LISTENER_LADDER, PORT_LADDER
+    from tests.conformance._nc_rungs import BED_NC_RUNGS
+
+    with_nc = {r.cell.element for r in bed_space() if r.cell.transfer == "nc"}
+    assert set(BED_NC_RUNGS) == with_nc
+    assert len(with_nc) == 9
+    ladders = {
+        "port": tuple(r.name for r in PORT_LADDER),
+        "listener": tuple(r.name for r in LISTENER_LADDER),
+    }
+    for element, row in BED_NC_RUNGS.items():
+        assert set(row) == set(ladders), element
+        for ladder, rungs in row.items():
+            assert rungs, f"{element}: no {ladder} rung listed, so no companion can be pinned"
+            order = [r for r in ladders[ladder] if r in rungs]
+            assert list(rungs) == order, f"{element}: {ladder} row {rungs} is not in ladder order"
+
+
+def test_no_nc_rung_cell_is_a_support_matrix_contract():
+    """The rung contract is not folded into the support matrix."""
+    assert not [n for n in discover_contracts() if "nc_rung" in n]
+
+
+@pytest.mark.parametrize(
+    ("ran", "status", "msg"),
+    [
+        (["ss"], Status.Success, ""),
+        (
+            ["ss"],
+            Status.Error,
+            (
+                "nc put to /tmp/f: remote readiness: not ready within 10s (nc listener on bb1350"
+                " port 9001; listener check 'ss', set nc_options.listener_check to pin another)"
+            ),
+        ),
+        (
+            [],
+            Status.Error,
+            (
+                "The netcat listener check's 'ss' rung failed on bb1350: the tool is missing."
+                " Set nc_options.listener_check to pin another."
+            ),
+        ),
+    ],
+    ids=["passing-result", "readiness-timeout", "rung-never-ran"],
+)
+def test_control_an_unlisted_rung_cell_rejects_what_is_not_its_tool_failure(ran, status, msg):
+    """A pass, a readiness timeout naming the rung and the option, or a rung that never ran."""
+    from tests.conformance._nc_rungs import LISTENER, assert_failed_as_the_pin
+
+    with pytest.raises(AssertionError):
+        assert_failed_as_the_pin(
+            Result(status=status, msg=msg), ran, "control", LISTENER, "ss", "put"
+        )
+
+
+def test_control_an_unlisted_rung_cell_accepts_its_tool_failure():
+    from tests.conformance._nc_rungs import LISTENER, PORT, assert_failed_as_the_pin
+
+    tool = (
+        "The netcat listener check's 'ss' rung failed on bb1350: the tool is missing."
+        " Set nc_options.listener_check to pin another."
+    )
+    assert_failed_as_the_pin(
+        Result(status=Status.Error, msg=tool), ["ss"], "control", LISTENER, "ss", "put"
+    )
+    port = (
+        "The netcat port finder's pinned 'python' rung failed on bb1350: python3 printed"
+        " nothing (exit status 127). Set nc_options.port_strategy to pin another, or to auto."
+    )
+    assert_failed_as_the_pin(
+        Result(status=Status.Error, msg=port), ["python"], "control", PORT, "python", "put"
+    )

@@ -26,6 +26,10 @@ other process's listener and two streams crossed. The caller reads the count
 and refuses a port more than one process holds.
 """
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Final
+
 from ..shell_quote import path_operand
 
 TOOL_FAILED = "OTTO_NC_TOOL_FAILED"
@@ -161,3 +165,182 @@ def python_port_command(exe: str) -> str:
     complaint dropped).
     """
     return f'{exe} -c "{_PYTHON_PORT}" 2>/dev/null'
+
+
+_PYTHONS = ("python", "python3")
+"""The interpreters the python port rung tries, in order."""
+
+_PROC_NET = "/proc/net"
+
+
+def _tool_present(tool: str) -> str:
+    return f"command -v {tool} >/dev/null 2>&1"
+
+
+def _proc_present(proc_net: str) -> str:
+    return f"test -r {path_operand(f'{proc_net}/tcp')}"
+
+
+@dataclass(frozen=True)
+class PortRung:
+    """One rung of the netcat port finder's ladder.
+
+    Attributes:
+        name: The rung's name, as ``nc_options.port_strategy`` spells it.
+        present: A shell test that exits 0 when the rung can run on the host.
+        scripts: ``(base_port, reserved) -> scripts``, tried in order; the
+            next runs only after a non-zero exit or a timeout.
+        failed: The text that opens this rung's failure message.
+        sentinel: Whether the rung's scripts keep the listing contract and
+            print :data:`TOOL_FAILED`; ``False`` for python, whose exit status
+            is its answer.
+        scans: Whether the scripts read the scan's base port and the reserved
+            ports; ``False`` for python, where the kernel picks the port, so a
+            caller need not work either out.
+    """
+
+    name: str
+    present: str
+    scripts: Callable[[int, str], tuple[str, ...]]
+    failed: str
+    sentinel: bool
+    scans: bool = True
+
+
+@dataclass(frozen=True)
+class ListenerRung:
+    """One rung of the netcat listener check's ladder.
+
+    Attributes:
+        name: The rung's name, as ``nc_options.listener_check`` spells it.
+        present: A shell test that exits 0 when the rung can run on the host.
+        script: ``port -> script`` that prints how many listeners hold it.
+    """
+
+    name: str
+    present: str
+    script: Callable[[int], str]
+
+
+def _ss_port_scripts(base_port: int, reserved: str) -> tuple[str, ...]:
+    return (ss_port_script(base_port=base_port, reserved=reserved),)
+
+
+def _netstat_port_scripts(base_port: int, reserved: str) -> tuple[str, ...]:
+    return (netstat_port_script(base_port=base_port, reserved=reserved),)
+
+
+def _python_port_scripts(base_port: int, reserved: str) -> tuple[str, ...]:
+    del base_port, reserved  # the kernel picks the port
+    return tuple(python_port_command(exe) for exe in _PYTHONS)
+
+
+def _proc_port_scripts(base_port: int, reserved: str) -> tuple[str, ...]:
+    return (proc_port_script(base_port=base_port, reserved=reserved),)
+
+
+PORT_LADDER: tuple[PortRung, ...] = (
+    PortRung("ss", _tool_present("ss"), _ss_port_scripts, "ss port scan failed", True),
+    PortRung(
+        "netstat",
+        _tool_present("netstat"),
+        _netstat_port_scripts,
+        "netstat port scan failed",
+        True,
+    ),
+    PortRung(
+        "python",
+        " || ".join(_tool_present(exe) for exe in _PYTHONS),
+        _python_port_scripts,
+        "python port discovery failed",
+        False,
+        scans=False,
+    ),
+    PortRung(
+        "proc",
+        _proc_present(_PROC_NET),
+        _proc_port_scripts,
+        "/proc/net/tcp port scan failed",
+        True,
+    ),
+)
+"""The port finder's rungs, in the order ``auto`` tries them: the one place it is spelt."""
+
+LISTENER_LADDER: tuple[ListenerRung, ...] = (
+    ListenerRung("ss", _tool_present("ss"), ss_listener_script),
+    ListenerRung("netstat", _tool_present("netstat"), netstat_listener_script),
+    ListenerRung("proc", _proc_present(_PROC_NET), proc_listener_script),
+)
+"""The listener check's rungs, in the order ``auto`` tries them: the one place it is spelt."""
+
+CONTROL_AUTO: Final = "auto"
+"""The strategy value that walks a ladder in its order."""
+
+CONTROL_CUSTOM: Final = "custom"
+"""The strategy value that runs the user's own command."""
+
+CONTROL_VALUES: tuple[str, ...] = (CONTROL_AUTO, CONTROL_CUSTOM)
+"""The strategy values that are not rungs: ``auto`` walks a ladder, ``custom`` runs the user's."""
+
+PORT_OPTION: Final = "port_strategy"
+"""The ``nc_options`` field that pins a rung of :data:`PORT_LADDER`."""
+
+LISTENER_OPTION: Final = "listener_check"
+"""The ``nc_options`` field that pins a rung of :data:`LISTENER_LADDER`."""
+
+LADDER_OPTION: dict[str, str] = {"port": PORT_OPTION, "listener": LISTENER_OPTION}
+"""Each ladder's label (``port``, ``listener``) -> the ``nc_options`` field that pins it."""
+
+
+def _first_present(var: str, ladder: "tuple[PortRung, ...] | tuple[ListenerRung, ...]") -> str:
+    """Set ``$<var>`` to the first rung of *ladder* whose ``present`` test passes.
+
+    The last rung is the fallback and is not tested.
+    """
+    *tested, fallback = ladder
+    branches = "".join(
+        f"{'if' if at == 0 else 'elif'} {rung.present}; then {var}={rung.name}; "
+        for at, rung in enumerate(tested)
+    )
+    return f"{var}={fallback.name}; " + (f"{branches}fi; " if tested else "")
+
+
+def presence_probe(
+    *,
+    port_ladder: "tuple[PortRung, ...]" = PORT_LADDER,
+    listener_ladder: "tuple[ListenerRung, ...]" = LISTENER_LADDER,
+) -> str:
+    """Build the one line ``prepare`` runs; it prints ``"<port rung> <listener rung>"``.
+
+    Each ladder picks its own rung, in its own order: the first whose
+    ``present`` test passes. The last rung of each ladder is the fallback and
+    is not tested here (see :func:`availability_probe`). Both picks are one
+    remote command.
+
+    Args:
+        port_ladder: The port finder's rungs, in the order ``auto`` tries them.
+        listener_ladder: The listener check's rungs, in the order ``auto``
+            tries them.
+    """
+    return (
+        _first_present("port", port_ladder)
+        + _first_present("listener", listener_ladder)
+        + 'echo "$port $listener"'
+    )
+
+
+def availability_probe(*, proc_net: str = _PROC_NET) -> str:
+    """Build a probe that prints every rung whose ``present`` test passes, space separated.
+
+    Each name is printed once, in ladder order, the port ladder's first. It
+    is the one place the ``proc`` rungs' readability is asked.
+
+    Args:
+        proc_net: The directory the ``proc`` rungs read, for a stand-in.
+    """
+    tests: dict[str, str] = {}
+    for rung in (*PORT_LADDER, *LISTENER_LADDER):
+        present = rung.present.replace(_proc_present(_PROC_NET), _proc_present(proc_net))
+        tests.setdefault(rung.name, present)
+    checks = "".join(f'if {test}; then out="$out {name}"; fi; ' for name, test in tests.items())
+    return f'out=""; {checks}echo $out'

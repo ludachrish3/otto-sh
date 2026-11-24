@@ -12,6 +12,7 @@ from otto.host.exec_route import ExecRoute
 from otto.host.exit_status import no_return_code_result
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
+from otto.host.transfer import nc as nc_module
 from otto.host.transfer.nc import (
     NcListenerAnswerError,
     NcListenerToolError,
@@ -610,7 +611,7 @@ class TestFindFreePortAutoSelfHeal:
     async def test_self_heal_resets_and_cascades(self) -> None:
         """Cached strategy fails → every OTHER rung is tried, in the declared order.
 
-        _PORT_STRATEGY_ORDER = ["ss", "netstat", "python", "proc"].
+        PORT_LADDER's order is ss, netstat, python, proc.
         With "netstat" pre-cached, the expected call sequence is:
           1. "netstat" — cached attempt (raises), never run a second time
           2. "ss"      — first in the order (raises)
@@ -690,10 +691,10 @@ class TestResolveListenerStrategyCascade:
 
     @pytest.mark.asyncio
     async def test_type_cascade_picks_ss_when_available(self) -> None:
-        """When type ss succeeds in the cascade, returns 'ss' and caches it."""
+        """When ss's present test succeeds in the cascade, returns 'ss' and caches it."""
 
         async def mock_exec(cmd: str, **kw: object) -> CommandResult:
-            if "type ss" in cmd:
+            if cmd == "command -v ss >/dev/null 2>&1":  # ss's present test
                 return _ok("/usr/sbin/ss")
             # compound probe fails (command -v)
             return _fail("not found")
@@ -937,6 +938,23 @@ class TestPortFinderPinnedIsNamed:
 
 
 class TestPythonRung:
+    @pytest.mark.parametrize(("strategy", "draws"), [("python", 0), ("ss", 1)])
+    @pytest.mark.asyncio
+    async def test_only_a_scanning_rung_draws_a_scan_start(
+        self, monkeypatch: pytest.MonkeyPatch, strategy: str, draws: int
+    ):
+        """The kernel picks python's port, so no random start is drawn for it."""
+        drawn: list[int] = []
+
+        def randrange(stop: int) -> int:
+            drawn.append(stop)
+            return 0
+
+        monkeypatch.setattr(nc_module.random, "randrange", randrange)
+        ft = make_ft(nc_port_strategy=strategy, exec_cmd=AsyncMock(return_value=_ok("40006\n")))
+        assert await ft._find_free_port() == 40006
+        assert len(drawn) == draws
+
     @pytest.mark.asyncio
     async def test_python_fails_python3_answers(self):
         exec_cmd = AsyncMock(side_effect=[_fail("not found"), _ok("40004\n")])
