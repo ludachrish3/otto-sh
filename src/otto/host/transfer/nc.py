@@ -35,6 +35,7 @@ from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
 from ..errors import HostCommandError, HostUnreachableError
 from ..shell_quote import path_operand
+from ..value_reader import Integer, cut_for_message, read_value
 from .base import (
     SSH_CHANNEL_HEADROOM,
     SSHD_DEFAULT_MAX_SESSIONS,
@@ -46,6 +47,16 @@ from .base import (
     TransferProgressHandler,
     derive_concurrency_limit,
     resolve_concurrency_limit,
+)
+from .nc_scripts import (
+    TOOL_FAILED,
+    netstat_listener_script,
+    netstat_port_script,
+    proc_listener_script,
+    proc_port_script,
+    python_port_command,
+    ss_listener_script,
+    ss_port_script,
 )
 from .unix_base import UnixFileTransfer
 
@@ -202,86 +213,8 @@ def _probe_failure(timed_out: bool, message: str) -> HostUnreachableError | Host
     return HostUnreachableError(message) if timed_out else HostCommandError(message)
 
 
-# ---------------------------------------------------------------------------
-# Shell script templates for port-finding strategies
-# ---------------------------------------------------------------------------
-
-# Port scripts run inside `( ... )` so their `exit 0` / `exit 1` only
-# terminates the subshell. Without the subshell wrap, a failure-path `exit`
-# kills the whole telnet control session, forcing a 1-2 s reopen on every
-# subsequent call.
-_SS_PORT_SCRIPT = (
-    '( used=$(ss -tln | grep -oE ":[0-9]+ " | tr -d ": " | sort -un); '
-    'reserved=" {reserved} "; '
-    "p={base_port}; "
-    "while [ $p -le 65535 ]; do "
-    '  case "$reserved" in *" $p "*) p=$((p+1)); continue;; esac; '
-    '  echo "$used" | grep -qx "$p" || {{ echo $p; exit 0; }}; '
-    "  p=$((p+1)); "
-    "done; "
-    "exit 1 )"
-)
-
-_NETSTAT_PORT_SCRIPT = (
-    '( used=$(netstat -tln | grep -oE ":[0-9]+ " | tr -d ": " | sort -un); '
-    'reserved=" {reserved} "; '
-    "p={base_port}; "
-    "while [ $p -le 65535 ]; do "
-    '  case "$reserved" in *" $p "*) p=$((p+1)); continue;; esac; '
-    '  echo "$used" | grep -qx "$p" || {{ echo $p; exit 0; }}; '
-    "  p=$((p+1)); "
-    "done; "
-    "exit 1 )"
-)
-
-_PYTHON_PORT_CMD = (
-    "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()"
-)
-
-_PROC_PORT_SCRIPT = (
-    '( used=""; '
-    "while read line; do "
-    "  set -- $line; "
-    '  case $2 in *:*) h=${{2##*:}}; used="$used $(printf "%d" "0x$h")";; esac; '
-    "done < /proc/net/tcp; "
-    'reserved=" {reserved} "; '
-    "p={base_port}; "
-    "while [ $p -le 65535 ]; do "
-    '  case "$reserved" in *" $p "*) p=$((p+1)); continue;; esac; '
-    '  case " $used " in *" $p "*) ;; *) echo $p; exit 0;; esac; '
-    "  p=$((p+1)); "
-    "done; "
-    "exit 1 )"
-)
-
-# ---------------------------------------------------------------------------
-# Shell script templates for listener-check strategies
-# ---------------------------------------------------------------------------
-
-# Every built-in check prints HOW MANY listeners hold the port, not whether
-# one does. Measured 2026-09-11 on the bed (nc.openbsd 1.226): the listener
-# binds with SO_REUSEPORT, so a second `nc -l -p PORT` from another process
-# does not fail with EADDRINUSE -- it coexists on the same 0.0.0.0:PORT and
-# the kernel hands each incoming connection to whichever listener it hashes
-# to. A presence check ("some listener is up") was satisfied by the OTHER
-# process's listener, and the two streams crossed: A's bytes in B's file, B's
-# in A's, rc 0 on both sides, and a byte-count verify blind to it whenever the
-# two files were the same length. `_wait_for_remote_listener` reads the count
-# and refuses a port more than one process holds.
-#
-# `grep -c` prints the count and exits 1 when it is zero, so the count is read
-# from stdout and the exit code is not the signal.
-_SS_LISTENER_CHECK = "ss -tln sport = :{port} | grep -c LISTEN"
-_NETSTAT_LISTENER_CHECK = 'netstat -tln | grep -c ":{port} "'
-
-# Precompute hex port in Python, then count /proc/net/tcp rows in LISTEN
-# state (0A) on it.
-_PROC_LISTENER_CHECK = (
-    "n=0; while read line; do "
-    "set -- $line; "
-    "case $2 in *:{hex_port}) case $4 in 0A) n=$((n+1));; esac;; esac; "
-    "done < /proc/net/tcp; echo $n"
-)
+# The rung scripts, and the contract each keeps (one line on stdout, a
+# sentinel when the tool failed, stderr dropped), live in ``nc_scripts``.
 
 # The scan for a free port starts at `port + randrange(SPREAD)` rather than at
 # `port` itself. Two otto processes scanning one host from the same base in
@@ -323,6 +256,58 @@ class NcPortSharedError(OttoError, ConnectionError):
     handlers turn it into this file's ``Error``, which the per-file retry
     answers with a fresh port.
     """
+
+
+class NcPortRungError(HostCommandError, ValueError):
+    """A pinned port-finder rung failed.
+
+    Raised when ``nc_options.port_strategy`` names one rung and that rung's
+    tool is missing or failed, its command exited non-zero, or it answered
+    with text that is not a port. The message names the ladder, the rung,
+    the host and what came back. A ``HostCommandError``, which is what the
+    port finder raised for a failed rung before it had a name, and a
+    ``ValueError``, which is what it raised for an answer that was not a
+    port, so a handler written for either still catches it.
+    """
+
+
+class NcRungToolError(OttoError, RuntimeError):
+    """A rung's tool is missing or failed: its script printed the sentinel.
+
+    An internal signal that never leaves the netcat ladders: the ``auto``
+    port finder treats it as a failed rung, a pinned port rung turns it into
+    :class:`NcPortRungError`.
+    """
+
+
+_PORT = Integer(minimum=1, maximum=65535)
+"""What a port-finder rung must answer."""
+
+
+def _printed_tool_failed(text: str | None) -> bool:
+    """Return whether a rung's script printed the tool-failed sentinel, and nothing else."""
+    return text is not None and text.strip() == TOOL_FAILED
+
+
+def read_rung_answer(text: str | None, *, rung: str, what: str, kind: Integer) -> int:
+    """Return the integer a rung printed.
+
+    The one place a built-in rung's answer is read.
+
+    Args:
+        text: What the rung's script printed.
+        rung: The rung's name, for the message.
+        what: What the caller asked for, for the message.
+        kind: The integer asked for.
+
+    Raises:
+        NcRungToolError: if *text* is the scripts' tool-failed sentinel.
+        ~otto.host.errors.CommandValueError: if *text* is anything else that
+            is not one value of *kind*.
+    """
+    if _printed_tool_failed(text):
+        raise NcRungToolError(f"{rung}: the tool is missing or failed")
+    return read_value(text, kind, what=what)
 
 
 def _listener_fed_by_another(verb: str, path: Path, port: int) -> str:
@@ -519,6 +504,9 @@ class NcFileTransfer(UnixFileTransfer):
         self._get_local_ip = get_local_ip
         self._userland = userland
         self._resolved_port_strategy: NcPortStrategy | None = None
+        # The ``auto`` port-finder rungs already reported as failed, so each
+        # is warned about once per transfer backend.
+        self._warned_port_rungs: set[NcPortStrategy] = set()
         self._resolved_listener_check: NcListenerCheck | None = None
         self._reserved_ports: set[int] = set()
         # Serializes nc control-plane ops (port-find, listener probe, strategy
@@ -887,52 +875,85 @@ class NcFileTransfer(UnixFileTransfer):
             if strategy == "auto":
                 port = await self._find_free_port_auto()
             else:
-                port = await self._find_free_port_with(strategy)
+                port = await self._find_free_port_pinned(strategy)
             self._reserved_ports.add(port)
             return port
+
+    async def _find_free_port_pinned(self, strategy: NcPortStrategy) -> int:
+        """Run the one rung ``nc_options.port_strategy`` pins, and name it if it fails.
+
+        A timeout (``HostUnreachableError``) and a missing ``port_cmd`` (a
+        ``ValueError``, a configuration error) pass through unchanged.
+        """
+        try:
+            return await self._find_free_port_with(strategy)
+        except HostUnreachableError:
+            raise
+        except (NcRungToolError, HostCommandError) as e:
+            raise NcPortRungError(
+                f"The netcat port finder's pinned '{strategy}' rung failed on {self._name}: {e}. "
+                "Set nc_options.port_strategy to pin another, or to auto."
+            ) from e
 
     async def _find_free_port_auto(self) -> int:
         """Resolve the port-finding strategy (via the compound probe) and run it.
 
         First call goes through `prepare()` so both the port and listener
-        strategies resolve in one round-trip. If the probe's chosen strategy
-        somehow fails on execution, fall back to the full cascade — keeps
-        the original robustness guarantee.
+        strategies resolve in one round-trip. The cached rung and the cascade
+        are one loop: the cached rung first, then every OTHER rung of
+        ``_PORT_STRATEGY_ORDER`` in its declared order, so no rung runs twice
+        in one call and an earlier rung that has recovered since it failed is
+        used again. With no cached rung all four run in order. The first rung
+        that answers is cached. A rung that fails is warned about once per
+        transfer backend, naming the option that pins another.
 
         The cascade exists to survive a host that LACKS a tool, so an
         unreachable host is not a cascade case and stops it: the next strategy
         will not get an answer either, and trying all four burns four more
         timeouts before reporting the wrong cause ("all port-finding
         strategies failed", a HostCommandError, for a host that never
-        answered). Both catch sites re-raise it ahead of their collector arm.
+        answered). ``NcPortSharedError`` and cancellation stop it too; neither
+        is caught here.
         """
         if self._resolved_port_strategy is None:
             await self.prepare()
-        if self._resolved_port_strategy is not None:
-            try:
-                return await self._find_free_port_with(self._resolved_port_strategy)
-            except HostUnreachableError:
-                raise
-            except (RuntimeError, ValueError) as e:
-                _logger.debug(
-                    f"{self._name}: cached port strategy "
-                    f"'{self._resolved_port_strategy}' failed ({e}); cascading"
-                )
-                self._resolved_port_strategy = None
+        cached = self._resolved_port_strategy
+        order = list(_PORT_STRATEGY_ORDER)
+        if cached in order:
+            order.remove(cached)
+            order.insert(0, cached)
         errors: list[str] = []
-        for strategy in _PORT_STRATEGY_ORDER:
+        for at, strategy in enumerate(order):
             try:
                 port = await self._find_free_port_with(strategy)
-                self._resolved_port_strategy = strategy
-                _logger.debug(f"{self._name}: cached port strategy '{strategy}'")
             except HostUnreachableError:  # noqa: PERF203 — per-item resilience
                 raise
             except (RuntimeError, ValueError) as e:
                 errors.append(f"{strategy}: {e}")
+                self._warn_failed_port_rung(strategy, e, another_follows=at + 1 < len(order))
             else:
+                if strategy != cached:
+                    _logger.debug(f"{self._name}: cached port strategy '{strategy}'")
+                self._resolved_port_strategy = strategy
                 return port
+        self._resolved_port_strategy = None
         raise HostCommandError(
-            f"All port-finding strategies failed on {self._name}: " + "; ".join(errors)
+            f"All port-finding strategies failed on {self._name}: "
+            + "; ".join(errors)
+            + ". Set nc_options.port_strategy to pin one."
+        )
+
+    def _warn_failed_port_rung(
+        self, strategy: NcPortStrategy, error: Exception, *, another_follows: bool
+    ) -> None:
+        """Warn that an ``auto`` port-finder rung failed, once per rung per backend."""
+        if strategy in self._warned_port_rungs:
+            return
+        self._warned_port_rungs.add(strategy)
+        next_step = "; trying the next rung." if another_follows else "."
+        _logger.warning(
+            f"{self._name}: the netcat port finder's '{strategy}' rung failed ({error})"
+            f"{next_step} Set nc_options.port_strategy to pin another."
         )
 
     async def _find_free_port_with(self, strategy: NcPortStrategy) -> int:
@@ -966,52 +987,62 @@ class NcFileTransfer(UnixFileTransfer):
             return self._nc_port
         return self._nc_port + random.randrange(min(_NC_PORT_SCAN_SPREAD, ceiling))  # noqa: S311 — collision spreading, not a secret
 
-    async def _find_free_port_ss(self) -> int:
-        script = _SS_PORT_SCRIPT.format(base_port=self._scan_start(), reserved=self._reserved_str())
+    async def _run_port_scan(self, rung: str, script: str, failed: str) -> int:
+        """Run a built-in rung's scan *script* and read the port it printed.
+
+        A timeout raises ``HostUnreachableError``; the sentinel raises
+        :class:`NcRungToolError`; any other non-zero exit raises
+        ``HostCommandError`` with *failed* and the output; a zero exit whose
+        output is not a port raises ``CommandValueError``.
+        """
         result = await self._control_run(script)
-        if result.retcode != 0:
-            raise _probe_failure(result.timed_out, f"ss port scan failed: {result.value}")
-        return int(result.value.strip())
+        if result.timed_out or (result.retcode != 0 and not _printed_tool_failed(result.value)):
+            raise _probe_failure(result.timed_out, f"{failed}: {cut_for_message(result.value)}")
+        return read_rung_answer(result.value, rung=rung, what=f"{rung} free port", kind=_PORT)
+
+    async def _find_free_port_ss(self) -> int:
+        script = ss_port_script(base_port=self._scan_start(), reserved=self._reserved_str())
+        return await self._run_port_scan("ss", script, "ss port scan failed")
 
     async def _find_free_port_netstat(self) -> int:
-        script = _NETSTAT_PORT_SCRIPT.format(
-            base_port=self._scan_start(), reserved=self._reserved_str()
-        )
-        result = await self._control_run(script)
-        if result.retcode != 0:
-            raise _probe_failure(result.timed_out, f"netstat port scan failed: {result.value}")
-        return int(result.value.strip())
+        script = netstat_port_script(base_port=self._scan_start(), reserved=self._reserved_str())
+        return await self._run_port_scan("netstat", script, "netstat port scan failed")
 
     async def _find_free_port_python(self) -> int:
-        """Try ``python``, then ``python3`` for the bind-to-0 one-liner."""
-        last_output = ""
-        last_timed_out = False
-        for exe in ("python", "python3"):
-            result = await self._control_run(f'{exe} -c "{_PYTHON_PORT_CMD}"')
-            if result.retcode == 0:
-                return int(result.value.strip())
-            last_output = result.value
-            last_timed_out = result.timed_out
-        raise _probe_failure(last_timed_out, f"python port discovery failed: {last_output}")
+        """Try ``python``, then ``python3`` for the bind-to-0 one-liner.
+
+        ``python3`` is tried whatever way ``python`` failed, a timeout
+        included; the error is the last interpreter's. Its stderr is dropped
+        (see :func:`~otto.host.transfer.nc_scripts.python_port_command`), so a
+        failure that printed nothing is reported by its exit status.
+        """
+        result = await self._control_run(python_port_command("python"))
+        if result.retcode != 0 or result.timed_out:
+            result = await self._control_run(python_port_command("python3"))
+        if result.retcode == 0 and not result.timed_out:
+            return read_rung_answer(
+                result.value, rung="python", what="python free port", kind=_PORT
+            )
+        if result.timed_out:
+            detail = "python3 timed out"
+        elif result.value.strip():
+            detail = cut_for_message(result.value)
+        else:
+            detail = f"python3 printed nothing (exit status {result.retcode})"
+        raise _probe_failure(result.timed_out, f"python port discovery failed: {detail}")
 
     async def _find_free_port_proc(self) -> int:
-        script = _PROC_PORT_SCRIPT.format(
-            base_port=self._scan_start(), reserved=self._reserved_str()
-        )
-        result = await self._control_run(script)
-        if result.retcode != 0:
-            raise _probe_failure(
-                result.timed_out, f"/proc/net/tcp port scan failed: {result.value}"
-            )
-        return int(result.value.strip())
+        script = proc_port_script(base_port=self._scan_start(), reserved=self._reserved_str())
+        return await self._run_port_scan("proc", script, "/proc/net/tcp port scan failed")
 
     async def _find_free_port_custom(self) -> int:
+        """Run the user's ``port_cmd``; its stdout must be one port (no sentinel is asked of it)."""
         if self._nc_port_cmd is None:
             raise ValueError("nc_port_strategy is 'custom' but nc_port_cmd is None")
         result = await self._control_run(self._nc_port_cmd)
         if result.retcode != 0:
             raise _probe_failure(result.timed_out, f"Custom port command failed: {result.value}")
-        return int(result.value.strip())
+        return read_value(result.value, _PORT, what="custom port command's port")
 
     def _release_port(self, port: int) -> None:
         """Remove *port* from the reserved set after a transfer completes."""
@@ -1043,7 +1074,7 @@ class NcFileTransfer(UnixFileTransfer):
         pay the full *interval* tax on the very first miss.
 
         AN OWNERSHIP CHECK, NOT A PRESENCE CHECK. The built-in strategies
-        print how many listeners hold *port* (see ``_SS_LISTENER_CHECK``);
+        print how many listeners hold *port* (see ``nc_scripts``);
         one is ours and ready, none is not yet, and more than one means
         another process bound the same port beside us, which raises
         :class:`NcPortSharedError` at once rather than waiting anything out.
@@ -1121,12 +1152,11 @@ class NcFileTransfer(UnixFileTransfer):
         """Build the check command for a concrete (non-auto) strategy."""
         match strategy:
             case "ss":
-                return _SS_LISTENER_CHECK.format(port=port)
+                return ss_listener_script(port)
             case "netstat":
-                return _NETSTAT_LISTENER_CHECK.format(port=port)
+                return netstat_listener_script(port)
             case "proc":
-                hex_port = f"{port:04X}"
-                return _PROC_LISTENER_CHECK.format(hex_port=hex_port)
+                return proc_listener_script(port)
             case "custom":
                 if self._nc_listener_cmd is None:
                     raise ValueError("nc_listener_check is 'custom' but nc_listener_cmd is None")

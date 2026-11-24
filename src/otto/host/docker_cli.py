@@ -236,12 +236,12 @@ async def parent_clock(host: "Host") -> ParentClock:
     never enter and two runners sharing a daemon agree.
     """
     from ..utils import Status
+    from .value_reader import Integer, read_value_or_none
 
     result = await host.exec(_CLOCK_COMMAND, timeout=60)
     if result.status is Status.NotRun or not result.status.is_ok:
         return ParentClock(None, result)
-    text = str(result.value).strip()
-    return ParentClock(int(text) if text.isdigit() else None, result)
+    return ParentClock(read_value_or_none(str(result.value), Integer()), result)
 
 
 @dataclass(frozen=True)

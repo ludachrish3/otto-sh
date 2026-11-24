@@ -1,0 +1,49 @@
+id: no-number-from-command-value
+language: python
+severity: error
+message: read a number a command returned with otto.host.value_reader.read_value, not int()/float() over its stripped value; a strip keeps a tool's complaint and the cast fails with a bare ValueError that names nothing.
+note: >
+  Why: #1296. The netcat port finder parsed a BusyBox netstat's stderr
+  complaint as its answer because int() ran straight over the stripped
+  value. read_value takes the text and a kind, rejects anything that is
+  not exactly that kind, and raises one named error that quotes what came
+  back. What the rule matches and leaves alone is pinned in
+  .ast-grep/rule-tests/no-number-from-command-value-test.yml.
+
+  What the rule cannot see: a value stripped into a name first
+  (`v = r.value.strip(); int(v)`), a split or indexed line, or a helper
+  that takes the value under another name. Those sites are not
+  syntactically distinguishable from intended code; they are on the
+  audit list (#1300).
+
+  Arms: int(...) and float(...) over each of the twelve stripped-value
+  forms that no-stripped-command-value matches. 0 hits when the rule
+  landed.
+files:
+- src/otto/**
+rule:
+  any:
+  - pattern: int($X.value.strip($$$))
+  - pattern: int($X.value.rstrip($$$))
+  - pattern: int($X.value.lstrip($$$))
+  - pattern: int(str($X.value).strip($$$))
+  - pattern: int(str($X.value).rstrip($$$))
+  - pattern: int(str($X.value).lstrip($$$))
+  - pattern: int(($X.value or $Y).strip($$$))
+  - pattern: int(($X.value or $Y).rstrip($$$))
+  - pattern: int(($X.value or $Y).lstrip($$$))
+  - pattern: int(str($X.value or $Y).strip($$$))
+  - pattern: int(str($X.value or $Y).rstrip($$$))
+  - pattern: int(str($X.value or $Y).lstrip($$$))
+  - pattern: float($X.value.strip($$$))
+  - pattern: float($X.value.rstrip($$$))
+  - pattern: float($X.value.lstrip($$$))
+  - pattern: float(str($X.value).strip($$$))
+  - pattern: float(str($X.value).rstrip($$$))
+  - pattern: float(str($X.value).lstrip($$$))
+  - pattern: float(($X.value or $Y).strip($$$))
+  - pattern: float(($X.value or $Y).rstrip($$$))
+  - pattern: float(($X.value or $Y).lstrip($$$))
+  - pattern: float(str($X.value or $Y).strip($$$))
+  - pattern: float(str($X.value or $Y).rstrip($$$))
+  - pattern: float(str($X.value or $Y).lstrip($$$))

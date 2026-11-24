@@ -80,7 +80,13 @@ from .connections import (
     build_term_backend,
     teardown_step,
 )
-from .errors import ConsoleError, ForgetResult, HostCommandError, UnsupportedOnUserlandError
+from .errors import (
+    CommandValueError,
+    ConsoleError,
+    ForgetResult,
+    HostCommandError,
+    UnsupportedOnUserlandError,
+)
 from .exec_route import ExecRoute
 from .file_ops import PosixFileOps
 from .host import (
@@ -122,6 +128,7 @@ from .userland import (
     applet_capability,
     refuse_if_gapped,
 )
+from .value_reader import AbsolutePath, read_value
 
 if TYPE_CHECKING:
     # `otto.host.console` stays off the CLI startup import graph: the console
@@ -1371,20 +1378,25 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         if self.cached_login_home is not None:
             return self.cached_login_home
         probe = await self.exec('printf %s "$HOME"', log=LogMode.QUIET)
-        answer = probe.value.strip() if probe.status.is_ok else ""
-        # A newline SURVIVES the strip when it is interior — a login shell
-        # that prints a banner after the value, an `exec` that folded two
-        # lines together. `Path("/home/v\nmotd")` is a perfectly legal Path,
-        # so nothing downstream would object; it would simply be cached and
-        # staged into forever.
-        if not probe.status.is_ok or not answer.startswith("/") or "\n" in answer:
-            raise HostCommandError(
+
+        def refused(answer: str | None) -> HostCommandError:
+            return HostCommandError(
                 f"{self.id}: could not read the login user's home directory "
                 f'(`printf %s "$HOME"` answered {answer!r}); otto needs an absolute '
                 "directory to stage artifacts in. Declare `default_dest_dir` on the host, "
                 "or an absolute `stage_dir` on the entry."
             )
-        self.cached_login_home = Path(answer)
+
+        if not probe.status.is_ok:
+            raise refused(probe.value)  # whatever it printed, an absolute path included
+        try:
+            # One absolute path on one line: a banner printed after the value
+            # leaves an INTERIOR newline, and `Path("/home/v\nmotd")` is a
+            # legal Path that would simply be cached and staged into forever.
+            home = read_value(probe.value, AbsolutePath(), what="the login home")
+        except CommandValueError as err:
+            raise refused(err.text) from err
+        self.cached_login_home = Path(home)
         return self.cached_login_home
 
     @cli_exposed(

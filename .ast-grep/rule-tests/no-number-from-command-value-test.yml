@@ -1,0 +1,24 @@
+# Rule test for .ast-grep/rules/no-number-from-command-value.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`).
+id: no-number-from-command-value
+valid:
+- |
+  n = read_value(result.value, Integer(), what="x")
+- |
+  n = int(text)
+- |
+  n = int(line.split()[0])
+- |
+  n = float(seconds)
+invalid:
+- |
+  n = int(result.value.strip())
+- |
+  n = int((result.value or "").strip())
+- |
+  n = float(r.value.strip())
+- |
+  n = int(str(r.value).strip())
+- |
+  n = int(r.only.value.rstrip())

@@ -39,6 +39,7 @@ host internals
    daemon
    address
    shell_quote
+   value_reader
    cov_sweep
    staged_files
    toolchain

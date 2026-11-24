@@ -753,13 +753,17 @@ NcPortStrategy = Literal["auto", "ss", "netstat", "python", "proc", "custom"]
 Available strategies:
 
 - ``'auto'`` (default) — try each built-in strategy in order (ss → netstat →
-  python → proc) and cache the first one that succeeds.
+  python → proc) and cache the first one that succeeds. The cached strategy is
+  tried first; if it fails, every other strategy is tried in that order. A
+  strategy that fails is warned of once; a pinned strategy that fails raises
+  an error naming it.
 - ``'ss'`` — parse ``ss -tln`` output to find unused ports.
 - ``'netstat'`` — parse ``netstat -tln`` output (fallback for hosts without ss).
 - ``'python'`` — bind a socket to port 0 via a ``python``/``python3`` one-liner
   and let the OS assign a free port.
-- ``'proc'`` — read ``/proc/net/tcp`` directly (Linux-only, always available as
-  a last resort).
+- ``'proc'`` — read ``/proc/net/tcp`` and, where the kernel has one,
+  ``/proc/net/tcp6`` directly (Linux-only; the last resort, and it fails
+  where ``/proc/net/tcp`` is unreadable).
 - ``'custom'`` — run the shell command specified in ``nc_port_cmd``; the command
   must print a free port number to stdout.
 """
@@ -772,9 +776,12 @@ Available strategies:
 - ``'auto'`` (default) — probe for ss, then netstat, falling back to proc.
   The first tool found is cached and reused for subsequent checks.
 - ``'ss'`` — count LISTEN sockets via ``ss -tln sport = :<port>``; more than one is refused.
-- ``'netstat'`` — grep ``netstat -tln`` output for the port.
-- ``'proc'`` — scan ``/proc/net/tcp`` for LISTEN state (0A) on the port
-  (Linux-only, always available as a last resort).
+- ``'netstat'`` — count the ``netstat -tln`` rows whose local port is the port;
+  more than one is refused.
+- ``'proc'`` — count the ``/proc/net/tcp`` and ``tcp6`` rows in LISTEN state
+  (0A) on the port, ``tcp6`` only where the kernel has one; more than one is
+  refused (Linux-only; the last resort, and it fails where ``/proc/net/tcp``
+  is unreadable).
 - ``'custom'`` — run the shell command specified in ``nc_listener_cmd`` with a
   ``{port}`` placeholder. Must exit 0 when the port is listening.
 """

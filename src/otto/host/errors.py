@@ -94,6 +94,25 @@ class StagingRefusedError(HostCommandError):
     """
 
 
+class CommandValueError(HostCommandError):
+    """A command answered with text that is not the value asked for.
+
+    Raised by :func:`~otto.host.value_reader.read_value` when what came back
+    is not exactly one value of the expected kind (a count, a word, an
+    absolute path): a stderr line merged ahead of a number, a banner after a
+    path, an empty answer. Nothing is guessed out of such text.
+
+    Attributes:
+        what: What the caller asked for, as the message names it.
+        text: What came back, unmodified (``None`` when there was no text).
+    """
+
+    def __init__(self, message: str, *, what: str, text: str | None) -> None:
+        super().__init__(message)
+        self.what = what
+        self.text = text
+
+
 class RawLandingError(OttoError, RuntimeError):
     """A framed operation was attempted in a ``raw`` landing.
 
