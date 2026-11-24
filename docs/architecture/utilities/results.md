@@ -356,7 +356,9 @@ included. A process that ends with no return code at all (an ssh channel that
 closed with neither an exit status nor a signal, or with a signal name the ssh
 library does not know) gives one named error result instead: `status`
 `Error`, `retcode` `-1` and the `value` `Process did not provide a return
-code`. The rule is `otto.host.exit_status.exit_status_of`. A shell route (`run`,
+code`. The rule is `otto.host.exit_status.exit_status_of`, and otto's own
+code asks `otto.host.exit_status.gave_no_exit_status` whether a result is one
+of these or a timed-out one before it parses the `value`. A shell route (`run`,
 and an `exec` that otto types into a shell session) reports what the shell
 itself reports for its command, which is the same `128 + N` on a POSIX shell.
 Such an `exec` runs in a subshell. Of the shells measured, only ksh93 reports

@@ -34,6 +34,7 @@ from ...errors import OttoError
 from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
 from ..errors import CommandValueError, HostCommandError, HostUnreachableError
+from ..exit_status import gave_no_exit_status
 from ..shell_quote import path_operand
 from ..value_reader import Integer, cut_for_message, read_value
 from .base import (
@@ -217,14 +218,12 @@ def _probe_failure(timed_out: bool, message: str) -> HostUnreachableError | Host
 def _never_answered(result: CommandResult) -> bool:
     """Return whether a listener-check poll gave no answer to read.
 
-    A poll that timed out, or whose command never ran, carries otto's text
-    rather than the rung's. "Never ran" is ``retcode == -1``, the field's
-    documented meaning (:attr:`~otto.result.CommandResult.retcode`; a shell
-    cannot exit -1), which otto's own results for a dead transport carry:
-    :func:`~otto.host.exit_status.no_return_code_result` and a session that
-    died mid-command. An empty answer is no answer either.
+    A poll that gave no exit status
+    (:func:`~otto.host.exit_status.gave_no_exit_status`: it timed out, or
+    its command never ran) carries otto's text rather than the rung's. An
+    empty answer is no answer either.
     """
-    return result.timed_out or result.retcode == -1 or not result.value.strip()
+    return gave_no_exit_status(result) or not result.value.strip()
 
 
 # The rung scripts, and the contract each keeps (one line on stdout, a

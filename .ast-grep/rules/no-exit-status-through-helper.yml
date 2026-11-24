@@ -1,0 +1,40 @@
+id: no-exit-status-through-helper
+language: python
+severity: error
+message: Ask otto.host.exit_status.gave_no_exit_status(result) whether a command gave no exit status; do not compare a retcode with -1 here.
+note: >
+  Why: "the command gave no exit status" (its timeout killed it, or it never
+  ran) is one decision. It was spelt `cmd.timed_out or retcode == -1` at
+  three sites (the coverage sweep, the staged-file removal and the netcat
+  listener poll), each with its own comment, so a change to what marks
+  "never ran" had to find every copy by hand (#1306).
+  `gave_no_exit_status` is the one reader. `retcode == -1` is that marker's
+  own spelling, so it stays in the helper and in the field's definition
+  (`CommandResult.exit_code`, src/otto/result.py), which the `ignores`
+  below name.
+
+  Arms: `$X.retcode == -1`, a bare `retcode == -1`, the `!=` forms and the
+  reversed operand order. What the rule matches and leaves alone is pinned
+  in .ast-grep/rule-tests/no-exit-status-through-helper-test.yml.
+
+  Accepted residuals, not matched: a retcode held under another name
+  (`rc = r.retcode; rc == -1`), a range test (`retcode < 0`), and building a
+  result with `retcode=-1`, which is not a reading.
+
+  Baseline 3 sites across 3 files at b2551b3ae, moved onto the helper in the
+  change that added the rule; 0 when the rule landed.
+files:
+- src/otto/**
+ignores:
+- src/otto/host/exit_status.py
+- src/otto/result.py
+rule:
+  any:
+  - pattern: $X.retcode == -1
+  - pattern: $X.retcode != -1
+  - pattern: retcode == -1
+  - pattern: retcode != -1
+  - pattern: -1 == $X.retcode
+  - pattern: -1 != $X.retcode
+  - pattern: -1 == retcode
+  - pattern: -1 != retcode

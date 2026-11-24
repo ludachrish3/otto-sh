@@ -1,0 +1,38 @@
+# Rule test for .ast-grep/rules/no-exit-status-through-helper.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`).
+id: no-exit-status-through-helper
+valid:
+- |
+  if gave_no_exit_status(cmd):
+      return None
+# Building a result that never ran is not reading one.
+- |
+  r = CommandResult(command="c", value="", retcode=-1)
+# Any other comparison of a retcode is the caller's own business.
+- |
+  ok = result.retcode == 0
+- |
+  failed = result.retcode != 0
+- |
+  missing = text.find("x") == -1
+invalid:
+- |
+  if cmd.timed_out or retcode == -1:
+      return None
+- |
+  never_ran = result.retcode == -1
+- |
+  ran = result.retcode != -1
+- |
+  ran = retcode != -1
+- |
+  never_ran = -1 == result.retcode
+- |
+  ran = -1 != result.retcode
+- |
+  never_ran = -1 == retcode
+- |
+  ran = -1 != retcode
+- |
+  x = None if cmd.timed_out or retcode == -1 else parse(output)
