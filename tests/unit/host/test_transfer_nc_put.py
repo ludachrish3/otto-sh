@@ -702,7 +702,36 @@ class TestPutFilesNcConnectFailure:
             status, msg = _only(await ft._put_files_nc([src], tmp_path / "dst"), src)
 
         assert status is Status.Error
-        assert "not ready" in msg
+        # A direct route: no tunnel, so the stage is the plain connect.
+        assert ": connect: " in msg
+        assert "forwarded" not in msg
+        assert "nc listener on test2 port 9000" in msg
+        assert "nope" in msg, "the connect's own error is the cause"
+
+    @pytest.mark.asyncio
+    async def test_a_tunnelled_connect_failure_names_the_forward(self, tmp_path: Path) -> None:
+        src = tmp_path / "file.bin"
+        src.write_bytes(b"hello")
+
+        ft = _make_ft(AsyncMock(return_value=_ok("9000\n")), has_tunnel=True)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=ConnectionError("nope")),
+            ),
+        ):
+            status, msg = _only(await ft._put_files_nc([src], tmp_path / "dst"), src)
+
+        assert status is Status.Error
+        assert "forwarded connect" in msg
+        assert "nc listener on test2 port 9000 through localhost:15000" in msg
+        assert "nope" in msg
 
 
 class TestNcPutCancellationReap:

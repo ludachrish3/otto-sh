@@ -8,9 +8,13 @@ import pytest
 
 from otto.host.connections import ConnectionManager
 from otto.host.errors import CommandValueError, HostCommandError, HostUnreachableError
+from otto.host.exec_route import ExecRoute
+from otto.host.exit_status import no_return_code_result
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
 from otto.host.transfer.nc import (
+    NcListenerAnswerError,
+    NcListenerToolError,
     NcPortRungError,
     NcPortSharedError,
     NcRungToolError,
@@ -976,6 +980,122 @@ class TestReadRungAnswer:
 
     def test_a_number_is_read(self):
         assert read_rung_answer(" 12\n", rung="ss", what="count", kind=Integer()) == 12
+
+
+# ============================================================================
+# The listener check fails loudly
+# ============================================================================
+
+_COMPLAINT_AND_COUNT = f"{COMPLAINT}\n1"
+
+
+class TestListenerCheckIsLoud:
+    @pytest.mark.asyncio
+    async def test_the_sentinel_is_a_tool_error_after_one_command(self):
+        exec_cmd = AsyncMock(return_value=_tool_failed())
+        ft = make_ft(nc_listener_check="netstat", exec_cmd=exec_cmd)
+        with pytest.raises(NcListenerToolError) as info:
+            await ft._wait_for_remote_listener(8080, timeout=5.0, interval=0.01)
+        assert exec_cmd.await_count == 1, "a failed tool is not something to wait out"
+        message = str(info.value)
+        assert "'netstat'" in message
+        assert "test" in message
+        assert "nc_options.listener_check" in message
+        assert isinstance(info.value, ConnectionError)
+
+    @pytest.mark.asyncio
+    async def test_text_that_is_not_a_count_is_an_answer_error_quoting_it(self):
+        exec_cmd = AsyncMock(return_value=_ok(_COMPLAINT_AND_COUNT))
+        ft = make_ft(nc_listener_check="netstat", exec_cmd=exec_cmd)
+        with pytest.raises(NcListenerAnswerError) as info:
+            await ft._wait_for_remote_listener(8080, timeout=5.0, interval=0.01)
+        assert exec_cmd.await_count == 1
+        assert repr(_COMPLAINT_AND_COUNT) in str(info.value)
+        assert isinstance(info.value, ConnectionError)
+
+    @pytest.mark.asyncio
+    async def test_a_digit_string_too_long_to_convert_is_an_answer_error(self):
+        exec_cmd = AsyncMock(return_value=_ok("9" * 5000))
+        ft = make_ft(nc_listener_check="ss", exec_cmd=exec_cmd)
+        with pytest.raises(NcListenerAnswerError):
+            await ft._wait_for_remote_listener(8080, timeout=5.0, interval=0.01)
+        assert exec_cmd.await_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "never_ran",
+        [
+            no_return_code_result(cmd="check", route=ExecRoute.SSH_CHANNEL),
+            CommandResult(
+                status=Status.Error,
+                value="Session died unexpectedly (EOF)",
+                command="check",
+                retcode=-1,
+            ),
+        ],
+        ids=["no-return-code", "session-died"],
+    )
+    async def test_a_check_that_never_ran_is_no_answer_and_is_polled_again(self, never_ran):
+        exec_cmd = AsyncMock(side_effect=[never_ran, _ok("1\n")])
+        ft = make_ft(nc_listener_check="ss", exec_cmd=exec_cmd)
+        await ft._wait_for_remote_listener(8080, timeout=5.0, interval=0.01)
+        assert exec_cmd.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_zero_count_with_a_non_zero_exit_is_polled(self):
+        exec_cmd = AsyncMock(side_effect=[_fail("0\n"), _ok("1\n")])
+        ft = make_ft(nc_listener_check="ss", exec_cmd=exec_cmd)
+        await ft._wait_for_remote_listener(8080, timeout=5.0, interval=0.01)
+        assert exec_cmd.await_count == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("partial", ["1\n", f"{TOOL_FAILED}\n"], ids=["one", "sentinel"])
+    async def test_a_timed_out_check_is_no_answer_whatever_it_printed(self, partial):
+        exec_cmd = AsyncMock(side_effect=[_timed_out(partial), _ok("1\n")])
+        ft = make_ft(nc_listener_check="ss", exec_cmd=exec_cmd)
+        await ft._wait_for_remote_listener(8080, timeout=5.0, interval=0.01)
+        assert exec_cmd.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_check_that_never_answered_says_so_and_names_the_stage(self):
+        exec_cmd = AsyncMock(return_value=_fail(""))
+        ft = make_ft(nc_listener_check="proc", exec_cmd=exec_cmd)
+        with pytest.raises(ConnectionError) as info:
+            await ft._wait_for_remote_listener(8080, timeout=0.05, interval=0.01)
+        assert type(info.value) is ConnectionError
+        message = str(info.value)
+        assert "remote readiness" in message
+        assert "'proc'" in message
+        assert "nc_options.listener_check" in message
+        assert "never answered" in message
+        assert "8080" in message
+
+    @pytest.mark.asyncio
+    async def test_a_check_that_answered_zero_does_not_claim_it_never_answered(self):
+        exec_cmd = AsyncMock(return_value=_fail("0\n"))
+        ft = make_ft(nc_listener_check="ss", exec_cmd=exec_cmd)
+        with pytest.raises(ConnectionError) as info:
+            await ft._wait_for_remote_listener(8080, timeout=0.05, interval=0.01)
+        assert "never answered" not in str(info.value)
+
+    @pytest.mark.asyncio
+    async def test_the_timeout_says_whether_the_listener_had_exited(self):
+        async def done() -> None:
+            return None
+
+        listener = asyncio.ensure_future(done())
+        await listener
+        exec_cmd = AsyncMock(return_value=_fail("0\n"))
+        ft = make_ft(nc_listener_check="ss", exec_cmd=exec_cmd)
+        with pytest.raises(ConnectionError, match="had already exited"):
+            await ft._wait_for_remote_listener(8080, timeout=0.05, interval=0.01, listener=listener)
+
+    @pytest.mark.asyncio
+    async def test_a_custom_check_exiting_non_zero_is_polled(self):
+        exec_cmd = AsyncMock(side_effect=[_fail(f"{TOOL_FAILED}\n"), _fail("junk"), _ok("")])
+        ft = make_ft(nc_listener_check="custom", nc_listener_cmd="chk {port}", exec_cmd=exec_cmd)
+        await ft._wait_for_remote_listener(8080, timeout=5.0, interval=0.01)
+        assert exec_cmd.await_count == 3
 
 
 class TestPortFinderTriesEveryOtherRungAfterTheCachedOne:

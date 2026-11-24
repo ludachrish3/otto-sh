@@ -774,7 +774,9 @@ NcListenerCheck = Literal["auto", "ss", "netstat", "proc", "custom"]
 Available strategies:
 
 - ``'auto'`` (default) — probe for ss, then netstat, falling back to proc.
-  The first tool found is cached and reused for subsequent checks.
+  The first tool found is cached and reused for subsequent checks. The check
+  never falls through to another strategy: a built-in check whose tool fails
+  stops the transfer at once.
 - ``'ss'`` — count LISTEN sockets via ``ss -tln sport = :<port>``; more than one is refused.
 - ``'netstat'`` — count the ``netstat -tln`` rows whose local port is the port;
   more than one is refused.

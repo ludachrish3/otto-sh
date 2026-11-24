@@ -1041,8 +1041,8 @@ remote ``nc -l``, and the listener-readiness poll opens another while it is
 held. A default OpenSSH server allows ``MaxSessions 10`` channels per
 *connection* and **refuses** the excess rather than queueing it, so an
 unbounded bulk transfer turns "many files" into ``open failed`` — or into
-``Remote nc listener on port N not ready`` when it is the readiness poll that
-loses its channel.
+``remote readiness: not ready within ...`` when it is the readiness poll that
+loses its channel (see {doc}`../cli/host/netcat` for the stages).
 
 otto therefore caps the files in flight per host connection, for ``nc``,
 ``scp`` and ``sftp`` alike. The default is derived from the OpenSSH default

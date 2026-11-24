@@ -720,8 +720,9 @@ per-backend suite:
   ten days before this venue first drove it — but the observation that one
   registered gap refused loudly in one direction (`get` raised
   `UnsupportedOnUserlandError` before the wire) and timed out in the other
-  (`put` returned `Status.Error` after 5s: `Remote nc listener on port 9000
-  not ready`), from one host build, measured on `bb1161:telnet:nc`. That is
+  (`put` returned `Status.Error` after 5s, worded then as `Remote nc listener
+  on port 9000 not ready`; the same wait now fails as `remote readiness: not
+  ready within 5.0s`), from one host build, measured on `bb1161:telnet:nc`. That is
   the observation the 2026-08-25 fix was written against: both directions now
   emit the universal spelling and neither refuses, so the finding is spent —
   which is what a venue's findings are for.

@@ -33,7 +33,7 @@ from typing_extensions import final, override
 from ...errors import OttoError
 from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
-from ..errors import HostCommandError, HostUnreachableError
+from ..errors import CommandValueError, HostCommandError, HostUnreachableError
 from ..shell_quote import path_operand
 from ..value_reader import Integer, cut_for_message, read_value
 from .base import (
@@ -171,9 +171,9 @@ _TIMEOUT_STYLE_PREFIXES = {
 # `refused = N - 10`: N=10 refuses none, N=12 refuses 2, N=32 refuses 22.
 #
 # The same ceiling reached from the other side reads as
-# "Remote nc listener on port P not ready within 5.0s": the readiness poll needs
-# a channel too, so once the budget is gone a perfectly healthy listener cannot
-# be confirmed.
+# "remote readiness: not ready within 5.0s (nc listener on HOST port P; ...)":
+# the readiness poll needs a channel too, so once the budget is gone a
+# perfectly healthy listener cannot be confirmed.
 #
 # The four names stay local to this module because they say what THIS backend
 # spends, but each is the shared derivation's answer rather than a second
@@ -211,6 +211,19 @@ def _probe_failure(timed_out: bool, message: str) -> HostUnreachableError | Host
     sockets, a timeout is about reaching it at all.
     """
     return HostUnreachableError(message) if timed_out else HostCommandError(message)
+
+
+def _never_answered(result: CommandResult) -> bool:
+    """Return whether a listener-check poll gave no answer to read.
+
+    A poll that timed out, or whose command never ran, carries otto's text
+    rather than the rung's. "Never ran" is ``retcode == -1``, the field's
+    documented meaning (:attr:`~otto.result.CommandResult.retcode`; a shell
+    cannot exit -1), which otto's own results for a dead transport carry:
+    :func:`~otto.host.exit_status.no_return_code_result` and a session that
+    died mid-command. An empty answer is no answer either.
+    """
+    return result.timed_out or result.retcode == -1 or not result.value.strip()
 
 
 # The rung scripts, and the contract each keeps (one line on stdout, a
@@ -255,6 +268,26 @@ class NcPortSharedError(OttoError, ConnectionError):
     success on both sides. A ``ConnectionError`` so the existing readiness
     handlers turn it into this file's ``Error``, which the per-file retry
     answers with a fresh port.
+    """
+
+
+class NcListenerToolError(OttoError, ConnectionError):
+    """A built-in listener check's tool is missing or failed.
+
+    Raised at once, naming the rung, the host and
+    ``nc_options.listener_check``: a second poll, or a second attempt on a
+    fresh port, would meet the same tool. A ``ConnectionError``, as
+    :class:`NcPortSharedError` is, so a transfer reports it as the file's
+    failed result.
+    """
+
+
+class NcListenerAnswerError(OttoError, ConnectionError):
+    """A built-in listener check answered with text that is not a count.
+
+    Raised at once and quoting what came back: it is never read as "not ready
+    yet". Its cause is not known, so the transfer keeps its one retry on a
+    fresh port.
     """
 
 
@@ -308,6 +341,41 @@ def read_rung_answer(text: str | None, *, rung: str, what: str, kind: Integer) -
     if _printed_tool_failed(text):
         raise NcRungToolError(f"{rung}: the tool is missing or failed")
     return read_value(text, kind, what=what)
+
+
+_LISTENER_COUNT = Integer(minimum=0)
+"""What a built-in listener-check rung must answer."""
+
+_NC_LISTENER_READY_TIMEOUT = 5.0
+"""How long the put and tunnelled-get paths wait for the remote listener."""
+
+
+def _nc_wait_failure(
+    stage: str, where: str, rung: str, listener: "asyncio.Task[Any] | None", detail: str
+) -> str:
+    """Word a failed wait on the remote listener, for any stage.
+
+    The one formatter for the readiness wait and the connect, so they read
+    alike. The listener's state is read now, when the failure is being
+    reported.
+
+    Args:
+        stage: ``remote readiness``, ``connect`` or ``forwarded connect``.
+        where: The host and port that were waited on.
+        rung: The listener-check rung that was polled.
+        listener: The spawned listener's task, if the caller has one.
+        detail: What went wrong.
+    """
+    if listener is None:
+        process = ""
+    elif listener.done():
+        process = "; the listener process had already exited"
+    else:
+        process = "; the listener process was still running"
+    return (
+        f"{stage}: {detail} (nc listener on {where}; listener check '{rung}', "
+        f"set nc_options.listener_check to pin another{process})"
+    )
 
 
 def _listener_fed_by_another(verb: str, path: Path, port: int) -> str:
@@ -1055,8 +1123,10 @@ class NcFileTransfer(UnixFileTransfer):
     async def _wait_for_remote_listener(
         self,
         port: int,
-        timeout: float = 5.0,
+        timeout: float = _NC_LISTENER_READY_TIMEOUT,
         interval: float = 0.1,
+        *,
+        listener: "asyncio.Task[Any] | None" = None,
     ) -> None:
         """Poll the remote host until a TCP listener appears on *port*.
 
@@ -1080,6 +1150,29 @@ class NcFileTransfer(UnixFileTransfer):
         :class:`NcPortSharedError` at once rather than waiting anything out.
         The ``custom`` strategy is a 0/1 exit by its documented contract and
         cannot count, so it stays a presence check.
+
+        A built-in check is read by :func:`read_rung_answer`, and only a
+        count is an answer. A check that timed out, never ran (``retcode``
+        -1, otto's own result for a transport that gave no exit status) or
+        printed nothing is no answer and is polled again; one whose tool failed raises
+        :class:`NcListenerToolError`, and one that printed text that is not
+        a count raises :class:`NcListenerAnswerError`, both at once.
+
+        Args:
+            port: The remote port the listener binds.
+            timeout: How long to poll.
+            interval: The poll interval after the first fast polls.
+            listener: The spawned listener's task, so a timeout can say
+                whether the process had already exited.
+
+        Raises:
+            NcPortSharedError: if more than one listener holds *port*.
+            NcListenerToolError: if a built-in check's tool failed.
+            NcListenerAnswerError: if a built-in check printed text that is
+                not a count.
+            ConnectionError: if no listener appeared within *timeout*; the
+                text names the stage, the rung, the option that pins another
+                and, when no poll was answered, that the check never answered.
         """
         strategy = self._nc_listener_check
         if strategy == "auto":
@@ -1087,18 +1180,33 @@ class NcFileTransfer(UnixFileTransfer):
         check = self._listener_cmd_for(strategy, port)
         fast_interval = min(0.05, interval)
         counts = strategy != "custom"
+        answered = False
 
         async def listening() -> bool:
+            nonlocal answered
             result = await self._control_run(check)
             if not counts:
                 return result.retcode == 0
-            try:
-                holders = int(result.value.strip())
-            except ValueError:
-                # The tool printed no count (missing, or a shell error):
-                # nothing is known, so keep polling until the deadline says
-                # the listener never came.
+            if _never_answered(result):
                 return False
+            answered = True
+            try:
+                holders = read_rung_answer(
+                    result.value,
+                    rung=strategy,
+                    what=f"{strategy} listener count",
+                    kind=_LISTENER_COUNT,
+                )
+            except NcRungToolError as e:
+                raise NcListenerToolError(
+                    f"The netcat listener check's '{strategy}' rung failed on {self._name}: {e}. "
+                    "Set nc_options.listener_check to pin another."
+                ) from e
+            except CommandValueError as e:
+                raise NcListenerAnswerError(
+                    f"The netcat listener check's '{strategy}' rung on {self._name} answered "
+                    f"with text that is not a count: {e}"
+                ) from e
             if holders > 1:
                 raise NcPortSharedError(
                     f"Remote port {port} is shared: {holders} listeners hold it, so another "
@@ -1106,15 +1214,109 @@ class NcFileTransfer(UnixFileTransfer):
                 )
             return holders == 1
 
+        def not_ready() -> str:
+            detail = f"not ready within {timeout}s"
+            if counts and not answered:
+                detail += ", and the check never answered"
+            return _nc_wait_failure(
+                "remote readiness", f"{self._name} port {port}", strategy, listener, detail
+            )
+
         try:
             await wait_for_async(
                 listening,
                 timeout,
                 interval=lambda i: fast_interval if i < _NC_LISTENER_FAST_POLL_ITERS else interval,
-                on_timeout=f"Remote nc listener on port {port} not ready within {timeout}s",
+                on_timeout=not_ready,
             )
         except WaitTimeoutError as expiry:
             raise ConnectionError(str(expiry)) from None
+
+    def _polled_listener_rung(self) -> str:
+        """Return the listener-check rung the readiness wait polls (``auto`` until resolved)."""
+        if self._nc_listener_check != "auto":
+            return self._nc_listener_check
+        return self._resolved_listener_check or "auto"
+
+    async def _await_remote_listener(
+        self, port: int, listener: "asyncio.Task[Any]", label: str
+    ) -> Result | None:
+        """Wait for this attempt's remote listener; return the attempt's failure, if any.
+
+        Shared by the put and tunnelled-get attempts. A readiness failure that
+        a fresh port can change (a timeout, a shared port, an answer that is
+        not a count) becomes the attempt's ``Result``, which the retry
+        answers. :class:`NcListenerToolError` is not caught: a second port
+        would meet the same tool, so it leaves the attempt, whose ``finally``
+        reaps the listener, and ``dispatch_per_file`` reports it as the
+        file's failed result with its text unchanged.
+
+        Args:
+            port: The remote port.
+            listener: The spawned listener's task.
+            label: The attempt's subject, e.g. ``put to /dst/file``.
+        """
+        try:
+            await self._wait_for_remote_listener(
+                port, timeout=_NC_LISTENER_READY_TIMEOUT, listener=listener
+            )
+        except NcListenerToolError:
+            raise
+        except ConnectionError as not_ours:
+            return Result(status=Status.Error, msg=f"nc {label}: {not_ours}")
+        return None
+
+    def _connect_failure(
+        self,
+        label: str,
+        port: int,
+        local_port: int | None,
+        listener: "asyncio.Task[Any]",
+        error: ConnectionError,
+    ) -> Result:
+        """Return the attempt's failure when connecting to the remote listener gave up.
+
+        The one wording for put and get. The stage is named by the route:
+        ``connect`` on a direct route, ``forwarded connect`` through a
+        tunnel, whose local end *local_port* is named too.
+
+        Args:
+            label: The attempt's subject, e.g. ``put to /dst/file``.
+            port: The remote port the listener binds.
+            local_port: The tunnel's local port, or ``None`` on a direct route.
+            listener: The spawned listener's task.
+            error: Why the connect gave up.
+        """
+        where = f"{self._name} port {port}"
+        if local_port is None:
+            stage = "connect"
+        else:
+            stage = "forwarded connect"
+            where += f" through localhost:{local_port}"
+        return Result(
+            status=Status.Error,
+            msg=f"nc {label}: "
+            + _nc_wait_failure(stage, where, self._polled_listener_rung(), listener, str(error)),
+        )
+
+    async def _attempt_twice(self, attempt: Callable[[], Coroutine[Any, Any, Result]]) -> Result:
+        """Run *attempt*; if it fails, run it once more on a fresh port.
+
+        The put and tunnelled-get paths' one retry, for the listener-readiness
+        race. A failure a second try cannot change is raised out of the
+        attempt instead and never reaches here, and a refusal decided before
+        any attempt (a stat that says the file cannot be sent) is returned by
+        the caller without calling this. So every failure here is a second
+        network attempt's, and its message says two attempts were made.
+        """
+        result = await attempt()
+        if result.is_ok:
+            return result
+        _logger.debug(f"{self._name}: NC retry after: {result.msg}")
+        result = await attempt()
+        if result.is_ok:
+            return result
+        return Result(status=Status.Error, msg=f"{result.msg} (two attempts were made)")
 
     async def _get_listener_check_cmd(self, port: int) -> str:
         """Return the shell command string for checking a listener on *port*."""
@@ -1519,12 +1721,6 @@ class NcFileTransfer(UnixFileTransfer):
                 stat_failures[src] = verdict
 
         async def _attempt(src: Path, dst: Path) -> Result:
-            # Inside `_attempt` rather than above it, so the fresh-port retry
-            # re-enters the refusal rather than a transfer: a missing size is
-            # not the accept-window race that retry exists for, and nothing
-            # about a second port would change the answer.
-            if src in stat_failures:
-                return stat_failures[src]
             total = sizes[src]
             handler = progress_factory() if progress_factory is not None else None
 
@@ -1582,10 +1778,9 @@ class NcFileTransfer(UnixFileTransfer):
                     )
                 )
 
-                try:
-                    await self._wait_for_remote_listener(port)
-                except ConnectionError as not_ours:
-                    return Result(status=Status.Error, msg=f"nc get of {src}: {not_ours}")
+                not_ready = await self._await_remote_listener(port, listen_task, f"get of {src}")
+                if not_ready is not None:
+                    return not_ready
                 if listen_task.done():
                     return Result(
                         status=Status.Error, msg=_listener_fed_by_another("get of", src, port)
@@ -1611,9 +1806,9 @@ class NcFileTransfer(UnixFileTransfer):
                         local_port,
                         timeout=5.0,
                     )
-                except ConnectionError:
-                    return Result(
-                        status=Status.Error, msg=f"nc listener on localhost:{local_port} not ready"
+                except ConnectionError as gave_up:
+                    return self._connect_failure(
+                        f"get of {src}", port, local_port, listen_task, gave_up
                     )
 
                 bytes_done = 0
@@ -1760,16 +1955,14 @@ class NcFileTransfer(UnixFileTransfer):
                 self._release_port(port)
 
         async def _get_one(src: Path) -> Result:
+            # Before the retry, as on the direct arm: a stat refusal is
+            # decided before any attempt, and a second port would not change
+            # it, so it is returned once, unretried.
+            if src in stat_failures:
+                return stat_failures[src]
             dst = dest_dir / src.name
             _logger.debug(f"{self._name}: NC get (tunneled) {src} -> {dst}")
-            result = await _attempt(src, dst)
-            if not result.is_ok:
-                # One retry on the narrow listener-readiness race, on a fresh
-                # port — mirrors `_put_one`. A second failure is almost
-                # certainly a real problem and should propagate.
-                _logger.debug(f"{self._name}: NC get retry after: {result.msg}")
-                result = await _attempt(src, dst)
-            return result
+            return await self._attempt_twice(lambda: _attempt(src, dst))
 
         return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
 
@@ -1931,11 +2124,11 @@ class NcFileTransfer(UnixFileTransfer):
                 # Caught HERE, not left to `dispatch_per_file`'s per-file
                 # wrapper: an exception out of `_attempt` folds into the file's
                 # Error without passing `_put_one`, whose fresh-port retry is
-                # the whole answer to a port another process shares.
-                try:
-                    await self._wait_for_remote_listener(port)
-                except ConnectionError as not_ours:
-                    return Result(status=Status.Error, msg=f"nc put to {dst}: {not_ours}")
+                # the whole answer to a port another process shares. Only a
+                # failed tool leaves the attempt, since no retry can change it.
+                not_ready = await self._await_remote_listener(port, listen_task, f"put to {dst}")
+                if not_ready is not None:
+                    return not_ready
                 if listen_task.done():
                     return Result(
                         status=Status.Error, msg=_listener_fed_by_another("put to", dst, port)
@@ -1956,9 +2149,11 @@ class NcFileTransfer(UnixFileTransfer):
                         )
                     connect_host = "localhost"
                     connect_port = local_port
+                    tunnel_port: int | None = local_port
                 else:
                     connect_host = self._connections.ip
                     connect_port = port
+                    tunnel_port = None
 
                 # Adaptive retry — connects as soon as the remote nc listener is
                 # ready. Allow more time when tunneled (extra hop latency).
@@ -1973,10 +2168,9 @@ class NcFileTransfer(UnixFileTransfer):
                         connect_port,
                         timeout=timeout,
                     )
-                except ConnectionError:
-                    return Result(
-                        status=Status.Error,
-                        msg=f"nc listener on {connect_host}:{connect_port} not ready",
+                except ConnectionError as gave_up:
+                    return self._connect_failure(
+                        f"put to {dst}", port, tunnel_port, listen_task, gave_up
                     )
 
                 total = src.stat().st_size
@@ -2084,14 +2278,7 @@ class NcFileTransfer(UnixFileTransfer):
         async def _put_one(src: Path) -> Result:
             dst = dest_dir / src.name
             _logger.debug(f"{self._name}: NC put {src} -> {dst}")
-            result = await _attempt(src, dst)
-            if not result.is_ok:
-                # One retry on the narrow listener-readiness race. A second
-                # failure is almost certainly a real problem (bad port,
-                # permissions, disk full) and should propagate.
-                _logger.debug(f"{self._name}: NC put retry after: {result.msg}")
-                result = await _attempt(src, dst)
-            return result
+            return await self._attempt_twice(lambda: _attempt(src, dst))
 
         per_file = await self.dispatch_per_file(
             src_files, transfer_one=_put_one, concurrent=concurrent
