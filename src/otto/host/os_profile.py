@@ -60,7 +60,7 @@ import re
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 from typing_extensions import final
 
@@ -378,8 +378,10 @@ def _builtin_profiles() -> "FrozenMap[str, OsProfile]":
         the wire today; it labels the host correctly in diagnostics and gives a
         future ash-only divergence a home.
 
-    ``transfer`` defaults to ``"shell"`` (:mod:`otto.host.transfer.shell`),
-    the phase 4 backend built for exactly this device class: PUT, GET, and
+    ``shell`` (:mod:`otto.host.transfer.shell`) is the first entry of the
+    profile's ``valid_transfers``, so it is what a host that writes no list
+    transfers with. It is
+    the backend built for exactly this device class: PUT, GET, and
     integrity verification all move bytes with nothing but command
     execution — no ``scp``, ``sftp-server``, or ``nc`` required on the
     device. That default exists *because* a real BusyBox device typically
@@ -395,7 +397,10 @@ def _builtin_profiles() -> "FrozenMap[str, OsProfile]":
     ``ssh_options`` list at all is :doc:`/architecture/ssh-algorithms`.
     ``scp``/``sftp``/``ftp``/``nc`` stay in ``valid_transfers`` even so — a
     lab entry whose device runs a real OpenSSH-compatible server opts into
-    one by pinning ``transfer`` itself.
+    another backend by writing its own ``valid_transfers`` (honoured as
+    written: its first entry is the default) or a ``transfer`` pin. The
+    profile sets no ``transfer`` pin, so a list the entry writes is never
+    overridden by it.
     **Keeping ``scp`` here is what makes the refusal a question about the
     DEVICE rather than about this profile.**
     ``otto.host.transfer.scp.refuse_if_scp_is_absent`` declines a transfer
@@ -406,19 +411,19 @@ def _builtin_profiles() -> "FrozenMap[str, OsProfile]":
     that way here: ``sftp``/``ftp``/``nc`` reach the device with no upfront
     probe, so their failure lands at transfer time on the real device
     rather than at the cheaper host-build time where a wrong
-    ``command_frame`` or ``has_bash`` would be caught. ``shell`` as the
-    *default* is what avoids that exposure for the common case.
+    ``command_frame`` or ``has_bash`` would be caught. ``shell`` at the
+    head of the default list is what avoids that exposure for the common case.
 
     Naming a backend here is validated shallowly by design:
     :func:`register_os_profile`'s checks cover only that ``defaults``'s *keys*
     are inputs the base's spec accepts, never that its *values* make sense — a
     typo'd or unregistered transfer name would register cleanly and only
     surface later, at host-build time, not here.
-    ``TestBusyBoxProfile.test_busybox_names_the_shell_transfer_backend_and_it_is_registered``
+    ``TestBusyBoxProfile.test_busybox_lists_shell_first_and_every_listed_backend_is_registered``
     (``tests/unit/host/test_os_profile.py``) closes that gap for
-    ``transfer`` the same way
+    ``valid_transfers`` the same way
     ``test_the_frame_the_profile_names_is_actually_registered`` closes it
-    for ``command_frame``: asserting not just the name but that the named
+    for ``command_frame``: asserting not just the names but that each listed
     backend is actually registered in ``TRANSFER_BACKENDS``.
     """
     return FrozenMap(
@@ -431,7 +436,6 @@ def _builtin_profiles() -> "FrozenMap[str, OsProfile]":
                         value={
                             "has_bash": False,
                             "command_frame": "ash",
-                            "transfer": "shell",
                             "valid_transfers": ["shell", "scp", "sftp", "ftp", "nc"],
                         }
                     ),
@@ -781,6 +785,25 @@ def _layer_names(data: ProfileContext) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def _answering_layer(
+    *, name: str, data: ProfileContext
+) -> 'Literal["code", "data", "host_class", "builtin"] | None':
+    """Return the layer that answers to *name*, or ``None`` when no layer holds it.
+
+    The one statement of the layer order: code profiles first, then the
+    project data in *data*, then a host class's own profile, then a built-in.
+    """
+    if name in OS_PROFILES:
+        return "code"
+    if name in data.profiles:
+        return "data"
+    if name in HOST_CLASSES:
+        return "host_class"
+    if name in BUILTIN_PROFILES:
+        return "builtin"
+    return None
+
+
 def resolve_os_profile(*, name: str, data: ProfileContext) -> OsProfile:
     """Return the profile *name* selects: the first layer holding it supplies the whole profile.
 
@@ -792,15 +815,16 @@ def resolve_os_profile(*, name: str, data: ProfileContext) -> OsProfile:
             suggests a near miss), or the project table it selects fails
             :func:`check_os_profile` (the message names the table and project).
     """
-    if name in OS_PROFILES:
+    layer = _answering_layer(name=name, data=data)
+    if layer == "code":
         return OS_PROFILES.get(name)
-    if name in data.profiles:
+    if layer == "data":
         profile = data.profiles[name]
         _check_data_profile(profile, owner=data.owners[name])
         return profile
-    if name in HOST_CLASSES:
+    if layer == "host_class":
         return OsProfile(name, name, HOST_CLASSES.peek(name=name).profile)
-    if name in BUILTIN_PROFILES:
+    if layer == "builtin":
         return BUILTIN_PROFILES[name]
     import difflib
 
@@ -811,6 +835,24 @@ def resolve_os_profile(*, name: str, data: ProfileContext) -> OsProfile:
         f"Unknown os_type profile {name!r}.{suggestion} Registered: {', '.join(names)}. "
         f"Custom entries can be added via otto.host.os_profile.register_os_profile()."
     )
+
+
+def selects_builtin(*, name: str, data: ProfileContext) -> bool:
+    """Return whether *name* selects otto's own built-in profile under *data*.
+
+    True when the layer answering to *name* is the built-in one, or is the
+    host-class one and the class registered under the name is otto's own
+    (compared by identity once both are resolved; a stored record changes
+    from ``Ref`` to class when read, so records are never compared).
+    """
+    layer = _answering_layer(name=name, data=data)
+    if layer == "builtin":
+        return True
+    if layer != "host_class" or name not in _BUILTIN_CLASS_NAMES:
+        return False
+    own = dict(_builtin_host_classes())[name].cls
+    own_cls = own.resolve() if isinstance(own, Ref) else own
+    return build_host_class(name=name) is own_cls
 
 
 def build_os_profile(*, name: str, data: ProfileContext | None = None) -> OsProfile:

@@ -138,9 +138,10 @@ def _kind_for_userland(userland: str) -> str:
     - the lab: ``test4`` declares membership in ``embedded`` and is a plain
       GNU unix VM (measured: ``axes_for("test4").userland == "gnu"``), so a
       kind read off the lab name calls it a Zephyr guest;
-    - ``os_type``: the five BusyBox guests declare ``os_type: "unix"``
+    - ``os_type``: four of the five BusyBox guests declare ``os_type: "unix"``
+      with ``command_frame: "ash"`` and bb1350 selects the ``busybox`` profile
       (measured, ``tests/_fixtures/lab_data/tech1/lab.jsonnet``), so a kind read
-      off it calls them plain unix hosts and the pinned-userland axis
+      off it calls four of them plain unix hosts and the pinned-userland axis
       disappears.
 
     An unrecognised userland RAISES rather than falling into a default
@@ -165,7 +166,8 @@ def bed_vocabulary(element: str) -> "Vocabulary":
     THE SAME AXIS ``bed_kind`` SPLITS ON, and for the same three measured
     reasons: the element name is a naming convention, the lab is wrong
     (``test4`` is in ``embedded`` and is a plain GNU VM), and ``os_type`` is
-    wrong (the BusyBox guests declare ``os_type: "unix"``). Two questions, one
+    wrong (four BusyBox guests declare ``os_type: "unix"`` with
+    ``command_frame: "ash"``; only bb1350 selects the ``busybox`` profile). Two questions, one
     fact about the host.
 
     DERIVED, NOT TABULATED, which is the whole reason this is a function of

@@ -15,7 +15,8 @@ From lowest to highest, a higher layer's value replacing a lower one's:
    `creds` sub-table ({ref}`credentials-layered`). It holds credentials only.
 2. **The OS profile**: the defaults of the host's `os_type` profile
    ({doc}`os-profiles`). A profile fills only the fields nothing above it
-   states.
+   states, and its `term`, `transfer` or `impairer` default yields to a list
+   the entry writes ({ref}`the selection rule <selection-rule>`).
 3. **The inventory record**: the machine facts of a host entry that
    references an inventory, and the credentials the record states
    ({doc}`inventory`).

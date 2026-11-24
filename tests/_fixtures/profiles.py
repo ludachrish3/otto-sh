@@ -60,8 +60,9 @@ class HostAxes:
 def _userland(data: dict) -> str:
     """``"gnu"`` | ``"busybox-<ver>"`` | ``"zephyr-<ver>"`` from a lab entry.
 
-    Deliberately not derived from ``os_type``: the BusyBox guests report
-    ``os_type: unix``, so the flavor lives in the userland layer instead;
+    Deliberately not derived from ``os_type``: four BusyBox guests report
+    ``os_type: unix`` with ``command_frame: ash`` (only bb1350 selects the
+    ``busybox`` profile), so the flavor lives in the userland layer instead;
     and ``os_type`` is a profile SELECTOR, not a family (a project can name
     a profile ``zephyr-3.7`` with ``base = "embedded"``), so a Zephyr guest
     can select a renamed profile whose ``os_type`` never equals -- or even

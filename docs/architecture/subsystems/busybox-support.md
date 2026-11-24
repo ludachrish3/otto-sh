@@ -433,8 +433,9 @@ daemon is not the authority, the device's userland is. Use the `shell` backend.
 Three things worth knowing if you operate one of these devices. **The refusal is
 about your device and never about its profile:** the `busybox` os_profile keeps
 `scp` in `valid_transfers` deliberately, so a BusyBox box with a real `scp`
-installed alongside can still pin `transfer: scp` and it keeps working — only
-the applet answer decides. **A probe round otto could not get an answer to is
+installed alongside can put `scp` first in its `valid_transfers` (or pin
+`transfer: scp`) and it keeps working ({ref}`the selection rule <selection-rule>`) — only the
+applet answer decides. **A probe round otto could not get an answer to is
 not a refusal:** the guard asks `is_settled` first, so an sshd at its
 `MaxSessions` ceiling cannot be mistaken for a device with no `scp`. And **this
 is the one guard on this page that adds a probe round to a path that had none** —

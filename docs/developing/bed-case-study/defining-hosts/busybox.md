@@ -2,16 +2,25 @@
 
 A BusyBox guest is a Unix host whose userland answers most of the probe
 questions differently: `ash` instead of `bash`, `su` instead of `sudo`, a
-`base64` that may or may not exist. The bed runs five versions, 1.16.1 to
-1.35.0, each a QEMU guest behind `test1`. Like the Ubuntu VMs on the
-{doc}`first page <index>`, they share one shape, so one function in the lab
-file writes them:
+`base64` that may or may not exist. A BusyBox host is `os_type: 'busybox'`:
+that selects otto's built-in `busybox` profile, which supplies the `ash` shell
+framing and records that the host has no `bash`
+({doc}`../../../configuration/os-profiles` lists what each profile sets). The
+bed runs five versions, 1.16.1 to 1.35.0, each a QEMU guest behind `test1`.
+Like the Ubuntu VMs on the {doc}`first page <index>`, they share one shape, so
+one function in the lab file writes them:
 
 ```{literalinclude} ../../../examples/getting-started/lab_data/lab.jsonnet
 :language: jsonnet
 :start-after: "// doc: begin busybox"
 :end-before: "// doc: end busybox"
 ```
+
+`busyboxProfile` is that spelling. `ashOnUnix` is the long one the four older
+guests still use: a plain `unix` host with `command_frame: 'ash'` written by
+hand. The two build the same shell framing; only `busyboxProfile` also tells
+otto the host has no `bash`. `busybox()` takes either as its `os=` argument
+and uses `ashOnUnix` when it is given none.
 
 `busyboxPin` is the probe's answers on a 1.21.1 guest, written down: a
 **pin**, every value declared, none left for the probe. `busybox()` writes
@@ -29,7 +38,8 @@ Notice `hop: 'test1'` in the function: otto reaches the guest through the
 VM that hosts it.
 
 The newest guest, `bb1350`, differs from the others in more than its pin.
-It also takes SSH and a serial console that `test1` serves, and its `eth0`
+It passes `os=busyboxProfile`, so it selects the `busybox` profile. It also
+takes SSH and a serial console that `test1` serves, and its `eth0`
 is wired to `test1`'s `bbeth-1350` interface (the document's `links` join
 the two):
 

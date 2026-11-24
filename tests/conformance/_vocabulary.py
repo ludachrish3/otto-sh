@@ -706,8 +706,9 @@ def vocabulary_for(*, userland: str, element: str) -> Vocabulary:
     measured reasons ``tests/conformance/_bed.py``'s ``_kind_for_userland``
     gives: the element NAME is a naming convention rather than a fact about
     the host, the LAB is wrong (``test4`` is in the ``embedded`` lab and is a
-    plain GNU VM), and ``os_type`` is wrong (the five BusyBox guests declare
-    ``os_type: "unix"``). *element* only picks WHICH Zephyr guest's recorded
+    plain GNU VM), and ``os_type`` is wrong (four BusyBox guests declare
+    ``os_type: "unix"`` with ``command_frame: "ash"``; only bb1350 selects the
+    ``busybox`` profile). *element* only picks WHICH Zephyr guest's recorded
     output the output contract compares (:data:`ZEPHYR_SHELLS`); it never
     decides the dialect.
 

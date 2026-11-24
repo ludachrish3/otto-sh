@@ -13,7 +13,7 @@ def test_userland_reads_gnu_for_a_plain_unix_host() -> None:
 
 
 def test_userland_reads_busybox_from_the_userland_layer_not_from_os_type() -> None:
-    """BusyBox guests report ``os_type: unix`` — the flavor is NOT readable off it."""
+    """Four BusyBox guests report ``os_type: unix`` — the flavor is NOT readable off it."""
     data = {"os_type": "unix", "sw_version": "1.35.0", "userland_options": {"elevation": "su"}}
     assert _userland(data) == "busybox-1.35.0"
 
@@ -84,12 +84,13 @@ def test_axes_for_a_zephyr_guest_gets_terms_it_never_declared() -> None:
     assert axes.hop_depth == 1
 
 
-def test_axes_for_a_busybox_guest_is_not_gnu_despite_os_type_unix() -> None:
-    """This pins the userland flavor only; bb1350 declares all its menus, so
+def test_axes_for_the_profiled_busybox_guest_reads_its_userland_layer() -> None:
+    """bb1350 selects the ``busybox`` profile; its userland still comes from
+    the userland layer. This pins the userland flavor only; bb1350 declares all its menus, so
     it does NOT discriminate raw-vs-host reading. The alt1 and zephyr37_fat
     tests carry that."""
     axes = axes_for("bb1350")
-    assert axes.os_type == "unix"
+    assert axes.os_type == "busybox"
     assert axes.userland == "busybox-1.35.0"
     assert axes.hop_depth == 1
     assert axes.docker_capable is False

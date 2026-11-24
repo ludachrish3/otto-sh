@@ -625,6 +625,32 @@ class TestPerCallOptionOverrides:
         with pytest.raises(ValueError, match="leaves a console term no transfer"):
             _apply_option_overrides(nc_only, term="console")
 
+    def test_a_term_override_to_console_reselects_a_default_and_a_second_copy_keeps_it(self):
+        from otto.host.capability import is_default_selection
+        from otto.host.element import Element
+        from otto.host.login_proxy import Cred
+        from otto.host.options import ConsoleOptions
+        from otto.host.os_profile import copy_host
+        from otto.logger.mode import LogMode
+        from otto.run_context import _apply_option_overrides
+
+        host = UnixHost(
+            ip="10.0.0.2",
+            element=Element(name="test2"),
+            log=LogMode.QUIET,
+            creds=[Cred(login="u", password="p")],
+            valid_terms=["ssh", "console"],
+            valid_transfers=["nc", "shell"],
+            console_options=ConsoleOptions(server="test1", port=4001),
+        )
+        assert host.transfer == "nc"
+        on_console = _apply_option_overrides(host, term="console")
+        assert on_console.transfer == "shell"
+        assert is_default_selection(on_console.transfer)
+        again = copy_host(on_console, shell_history=True)
+        assert (again.term, again.transfer) == ("console", "shell")
+        assert host.valid_transfers == on_console.valid_transfers == ["nc", "shell"]
+
     def test_term_override_out_of_menu_raises(self, three_hosts):
         # 'bogus' is not in valid_terms -> __post_init__ validate_choice fails loud
         with pytest.raises(ValueError, match="term menu"):

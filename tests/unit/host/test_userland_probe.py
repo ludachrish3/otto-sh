@@ -40,6 +40,7 @@ from rich.text import Text
 from otto.host.errors import PasswordRefusedError
 from otto.host.local_host import LocalHost
 from otto.host.options import UserlandOptions
+from otto.host.os_profile import OsProfile, ProfileContext
 from otto.host.specs import UnixHostSpec
 from otto.host.userland import (
     _APPLET_CONTROL,
@@ -49,9 +50,11 @@ from otto.host.userland import (
     Userland,
     UserlandHost,
     _applet_probe_command,
+    _busybox_profile_hint,
     applet_capability,
 )
 from otto.logger.mode import LogMode
+from otto.registry import FrozenMap
 from otto.result import CommandResult, Result
 from otto.utils import Status
 
@@ -648,6 +651,33 @@ async def test_the_survey_section_follows_the_userland_section(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_profile_hint_sits_between_the_pin_and_the_survey(monkeypatch):
+    """The hint is prose after the pin block, and no pasteable line names the profile."""
+    from rich.table import Table
+
+    from otto.host.survey.engine import Survey
+
+    async def fake_run_survey(host, *, user=None, scan_ports=None):
+        return Survey()
+
+    monkeypatch.setattr("otto.host.survey.engine.run_survey", fake_run_survey)
+    host = _ScriptedHost(_userland(retcode=1, applets=list(PROBED_APPLETS)))
+    host.os_type = "unix"
+    result = await host.probe()
+
+    value = result.value
+    hint_at = next(
+        i for i, item in enumerate(value) if isinstance(item, Text) and '"busybox"' in item.plain
+    )
+    last_pin = max(i for i, item in enumerate(value[:hint_at]) if isinstance(item, str) and item)
+    survey_at = next(
+        i for i, item in enumerate(value) if isinstance(item, Table) and item.title == "protocols"
+    )
+    assert last_pin < hint_at < survey_at
+    assert not any(isinstance(item, str) and "busybox" in item for item in value)
+
+
+@pytest.mark.asyncio
 async def test_bad_scan_ports_is_an_error_before_any_contact():
     """A malformed sweep list is the user's typo, answered without spending a round trip."""
     device = _Device(retcode=0)
@@ -769,3 +799,102 @@ async def test_a_declared_sudo_form_is_reported_declared_and_never_asked():
     lines = await _report(userland, AssertionError("asked"))
     assert ("sudo_form", "validate", "declared") in _capability_rows(userland)
     assert _pinned(lines)["sudo_form"] == "validate"
+
+
+class _H:  # the two attributes the hint reads
+    def __init__(self, os_type):
+        self.os_type = os_type
+
+
+def _table(name: str) -> ProfileContext:
+    return ProfileContext(
+        profiles=FrozenMap(mapping={name: OsProfile(name, "unix")}),
+        owners=FrozenMap(mapping={name: "proj-a"}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_unix_host_whose_measured_shell_is_not_bash_is_told_of_the_profile():
+    userland = _userland(retcode=1, applets=list(PROBED_APPLETS))  # measures ash
+    await userland.resolve()
+    hint = _busybox_profile_hint(_H("unix"), userland, data=ProfileContext.empty())
+    assert [type(i) for i in hint] == [Text, str]
+    assert hint[1] == ""
+    assert '"busybox"' in hint[0].plain
+    assert "os-profiles.html" in hint[0].plain
+    assert "when the entry writes no valid_transfers" in hint[0].plain
+    assert "put shell first or remove the list" in hint[0].plain
+    assert "is a BusyBox" not in hint[0].plain.replace("If this host is a BusyBox", "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    [
+        "bash",
+        "declared",
+        "busybox",
+        "own-profile",
+        "shadowed-busybox",
+        "shadowed-unix",
+        "unresolved",
+        "no-userland",
+    ],
+)
+async def test_no_hint(case):
+    os_type = {"busybox": "busybox", "own-profile": "mine"}.get(case, "unix")
+    data = {"shadowed-busybox": _table("busybox"), "shadowed-unix": _table("unix")}.get(
+        case, ProfileContext.empty()
+    )
+    ash = _Device(retcode=1, applets=list(PROBED_APPLETS))
+    userland: "Userland | None"
+    if case == "no-userland":
+        userland = None
+    elif case == "bash":
+        userland = _userland(retcode=0, applets=list(PROBED_APPLETS))
+    elif case == "declared":
+        userland = Userland(UserlandOptions(), ash, command_frame="ash")
+    else:
+        userland = Userland(UserlandOptions(), ash)
+    if userland is not None and case != "unresolved":
+        await userland.resolve()
+    if case == "bash":
+        assert userland is not None
+        assert userland.command_frame == "bash"
+    if case not in {"bash", "no-userland", "unresolved"}:
+        assert userland is not None
+        assert userland.command_frame != "bash"
+    assert _busybox_profile_hint(_H(os_type), userland, data=data) == []
+
+
+@pytest.mark.asyncio
+async def test_a_published_project_table_named_busybox_withholds_the_verbs_hint(
+    monkeypatch, tmp_path
+):
+    """The verb reads this run's published projects: a project's own ``busybox`` gets no hint."""
+    from types import SimpleNamespace
+
+    from otto.config.project import Project
+    from otto.host.survey.engine import Survey
+    from tests._fixtures.project_scaffold import make_project
+
+    async def fake_run_survey(host, *, user=None, scan_ports=None):
+        return Survey()
+
+    monkeypatch.setattr("otto.host.survey.engine.run_survey", fake_run_survey)
+
+    async def probe() -> list:
+        host = _ScriptedHost(_userland(retcode=1, applets=list(PROBED_APPLETS)))
+        host.os_type = "unix"
+        return (await host.probe()).value
+
+    def hinted(value: list) -> bool:
+        return any(isinstance(item, Text) and '"busybox"' in item.plain for item in value)
+
+    assert hinted(await probe()), "nothing published: the hint is given"
+    root = make_project(
+        tmp_path / "proj-a", name="proj-a", extra='[os_profiles.busybox]\nbase = "unix"\n'
+    )
+    published = SimpleNamespace(projects=[Project(root=root)])
+    monkeypatch.setattr("otto.declared.published_result", lambda: published)
+    assert not hinted(await probe())

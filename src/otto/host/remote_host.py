@@ -39,6 +39,7 @@ from typing_extensions import override
 from ..models.base import Cred
 from ..result import CommandResult
 from ..utils import Status
+from .capability import menu_capability
 from .connections import LOGINLESS, ConsoleEndpoint, connect_and_describe
 from .construction import RuntimeOnly
 from .errors import ConsoleError
@@ -237,18 +238,22 @@ class RemoteHost(BaseHost):
     :class:`~otto.host.unix_host.UnixHost` alone since spec 2026-08-28
     host-inventory §4."""
 
-    term: str = "ssh"
+    term: str = menu_capability(family="unix", name="term").default_pin
     """Protocol used to issue terminal commands (active member of
     :attr:`valid_terms`)."""
 
-    transfer: str = "scp"
+    transfer: str = menu_capability(family="unix", name="transfer").default_pin
     """Protocol used to transfer files (active member of
     :attr:`valid_transfers`)."""
 
-    valid_terms: list[str] = field(default_factory=lambda: ["ssh", "telnet"])
+    valid_terms: list[str] = field(
+        default_factory=menu_capability(family="unix", name="term").fresh_menu
+    )
     """Closed menu of term backends this host supports (active is ``term``)."""
 
-    valid_transfers: list[str] = field(default_factory=lambda: ["scp", "sftp", "ftp", "nc"])
+    valid_transfers: list[str] = field(
+        default_factory=menu_capability(family="unix", name="transfer").fresh_menu
+    )
     """Closed menu of transfer backends this host supports (active is ``transfer``)."""
 
     is_virtual: bool = False

@@ -308,6 +308,27 @@ Re-declare a base field only to change its *value policy*: a different default,
 line — so the override cannot shift the positional signature.  An override
 carries **no docstring**: the docstring lives with the field's one home.
 
+To change a class's default term, transfer or impairer, redeclare its list
+with the default first and leave the pin field alone. The first entry of the
+class's list is its default:
+
+```python
+from dataclasses import dataclass, field
+
+from otto.host import UnixHost
+
+
+@dataclass(slots=True, kw_only=True)
+class MyHost(UnixHost):
+    valid_transfers: list[str] = field(default_factory=lambda: ["ftp", "scp"])
+```
+
+A lab entry's or a caller's own list still wins over the class's
+({ref}`the selection rule <selection-rule>`). Do not redeclare `transfer: str = "ftp"` for this:
+a redeclared pin is a pin, exactly as if every caller had passed it, and a
+list written without `ftp` is then refused. The same holds for `term` and
+`impairer`.
+
 ### Migrating a subclass written before the bases became dataclasses
 
 Three things moved when the bases became dataclasses:

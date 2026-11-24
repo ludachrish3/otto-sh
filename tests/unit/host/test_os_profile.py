@@ -17,6 +17,7 @@ from otto.host.os_profile import (
 )
 from otto.host.unix_host import UnixHost
 from otto.registry import DuplicateRegistration, FrozenMap
+from tests._fixtures.host_build import build_host
 
 
 class TestBuiltins:
@@ -283,6 +284,40 @@ class TestBusyBoxProfile:
     change which code paths otto is allowed to take at all.
     """
 
+    def _bb(self, selections=None, **fields):
+        return build_host(
+            {"os_type": "busybox", "ip": "10.0.0.1", "creds": [{"login": "v", "password": "v"}]}
+            | fields,
+            element=Element(name="bb1"),
+            selections=selections,
+        )
+
+    def test_a_written_list_selects_its_first_entry(self):
+        host = self._bb(valid_transfers=["nc", "shell"])
+        assert host.transfer == "nc"
+        assert host.valid_transfers == ["nc", "shell"]
+
+    def test_a_written_list_without_shell_builds(self):
+        assert self._bb(valid_transfers=["scp", "sftp"]).transfer == "scp"
+
+    def test_a_scalar_list_is_a_written_list(self):
+        assert self._bb(valid_transfers="nc").transfer == "nc"
+
+    def test_no_list_still_gets_shell(self):
+        host = self._bb()
+        assert host.transfer == "shell"
+        assert host.valid_transfers == ["shell", "scp", "sftp", "ftp", "nc"]
+
+    def test_a_written_pin_is_checked_against_the_written_list(self):
+        with pytest.raises(
+            ValueError, match="transfer 'shell' is not in this host's transfer menu"
+        ):
+            self._bb(valid_transfers=["scp"], transfer="shell")
+
+    def test_a_preference_outside_the_written_list_falls_to_its_first_entry(self):
+        host = self._bb(selections={"transfer": ["shell"]}, valid_transfers=["nc", "sftp"])
+        assert host.transfer == "nc"
+
     def test_busybox_resolves_to_the_unix_base(self):
         """No new host class — the spec's central decision, asserted."""
         from otto.host.os_profile import build_os_profile
@@ -328,8 +363,8 @@ class TestBusyBoxProfile:
             f"the busybox profile names frame {named!r}, which is not registered"
         )
 
-    def test_busybox_names_the_shell_transfer_backend_and_it_is_registered(self):
-        """The deferral is over: `shell` is the default, and both registries agree.
+    def test_busybox_lists_shell_first_and_every_listed_backend_is_registered(self):
+        """`shell` heads the default list, no pin overrides a written one, both registries agree.
 
         `register_os_profile` validates default *keys* against the base
         class's fields, never values (see `_builtin_profiles`),
@@ -340,19 +375,20 @@ class TestBusyBoxProfile:
         listed in `valid_transfers`; `CapabilityResolver`'s menu-membership
         check raises if it is not -- neither at registration). Same shape
         as `test_the_frame_the_profile_names_is_actually_registered`:
-        assert BOTH that the profile names `shell` and that `shell` is
-        actually in `TRANSFER_BACKENDS`, so a naming mistake is caught here
+        assert BOTH that the profile lists `shell` first and that every
+        listed name is actually in `TRANSFER_BACKENDS`, so a naming mistake is caught here
         instead of on a real lab device.
         """
         from otto.host.os_profile import build_os_profile
         from otto.host.transfer import TRANSFER_BACKENDS
 
         defaults = build_os_profile(name="busybox").fields.defaults
-        assert defaults["transfer"] == "shell"
-        assert "shell" in defaults["valid_transfers"]
-        assert "shell" in TRANSFER_BACKENDS, (
-            f"the busybox profile names transfer {defaults['transfer']!r}, which is not registered"
-        )
+        assert "transfer" not in defaults
+        assert defaults["valid_transfers"][0] == "shell"
+        for name in defaults["valid_transfers"]:
+            assert name in TRANSFER_BACKENDS, (
+                f"the busybox profile lists transfer {name!r}, which is not registered"
+            )
 
     def test_busybox_is_a_builtin_so_overriding_it_warns(self, caplog):
         """The other built-ins warn on override; a profile absent from the set

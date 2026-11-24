@@ -49,12 +49,10 @@ from ..models.base import (
 from .address import validate_address
 from .binary_loader import LOADER_CLASSES, build_binary_loader
 from .capability import (
-    IMPAIRER_RESOLVER,
-    TERM_RESOLVER,
-    TRANSFER_RESOLVER,
-    CapabilityResolver,
     authenticating_protocols,
-    console_transfer_menu,
+    menu_capabilities,
+    menu_capability,
+    resolve_selections,
 )
 from .command_frame import FRAME_CLASSES, BashFrame, build_command_frame
 from .connections import TERM_BACKENDS
@@ -234,7 +232,7 @@ class InterfaceSpec(OttoModel):
         return Interface(ip=self.ip, subnet=self.subnet)
 
 
-def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
+def _validate_transfer_for_family(v: str, family: str | None, host_label: str) -> str:
     """Validate a transfer selector against the registry and host-family applicability."""
     if v not in TRANSFER_BACKENDS:
         known = ", ".join(sorted(TRANSFER_BACKENDS.names()))
@@ -246,7 +244,7 @@ def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
     return v
 
 
-def _validate_term_for_family(v: str, family: str, host_label: str) -> str:
+def _validate_term_for_family(v: str, family: str | None, host_label: str) -> str:
     """Validate a term selector against the registry and host-family applicability."""
     if v not in TERM_BACKENDS:
         known = ", ".join(sorted(TERM_BACKENDS.names()))
@@ -263,13 +261,13 @@ def _coerce_menu(v: object) -> object:
     return [v] if isinstance(v, str) else v
 
 
-def _validate_term_menu(v: list[str], family: str, label: str) -> list[str]:
+def _validate_term_menu(v: list[str], family: str | None, label: str) -> list[str]:
     if not v:
         raise ValueError("valid_terms must be a non-empty list of term backends")
     return [_validate_term_for_family(t, family, label) for t in v]
 
 
-def _validate_transfer_menu(v: list[str], family: str, label: str) -> list[str]:
+def _validate_transfer_menu(v: list[str], family: str | None, label: str) -> list[str]:
     if not v:
         raise ValueError("valid_transfers must be a non-empty list of transfer backends")
     return [_validate_transfer_for_family(t, family, label) for t in v]
@@ -472,14 +470,12 @@ def _class_supplies_frame(cls: object) -> bool:
     return declared.default is not dataclasses.MISSING and declared.default is not None
 
 
-def _check_pins_in_menus(
-    spec: "HostSpec", pins: "list[tuple[CapabilityResolver, str, str]]"
-) -> None:
-    """Refuse a pin outside its menu, per (resolver, pin field, menu field)."""
-    for resolver, pin_field, menu_field in pins:
-        pin = getattr(spec, pin_field)
+def _check_pins_in_menus(spec: "HostSpec") -> None:
+    """Refuse a pin outside its menu, for each of *spec*'s family's menu capabilities."""
+    for cap in menu_capabilities(spec._host_family):  # noqa: SLF001 — the spec's own family
+        pin = getattr(spec, cap.pin_field)
         if pin is not None:
-            resolver.validate_choice(getattr(spec, menu_field), pin)
+            cap.resolver.validate_choice(getattr(spec, cap.menu_field), pin)
 
 
 def name_slugs_nonempty(v: str) -> str:
@@ -512,6 +508,9 @@ class HostSpec(OttoModel):
     The element is not a host field: it reaches the host through the context,
     from the factory's ``element=`` argument (spec 2026-09-05 §2.6).
     """
+
+    _host_family: ClassVar[str | None] = None
+    """The host family whose menu capabilities this spec carries; ``None`` for none."""
 
     # --- required addressing (both families) ---
     ip: str
@@ -921,10 +920,19 @@ class HostSpec(OttoModel):
     def _resolve_selections(self, preferences: FlatPreferences) -> dict[str, str]:
         """Return the selections construction uses under *preferences*.
 
-        The base spec has no menus, so none; a family with menus overrides it.
+        Resolves each of the family's menu capabilities with
+        :func:`~otto.host.capability.resolve_selections`: the first preference
+        in the list wins, else the pin, else the list's first entry. A spec
+        with no family has no menus, so none.
         """
-        del preferences  # the base spec has no menus to select from
-        return {}
+        caps = menu_capabilities(self._host_family)
+        return resolve_selections(
+            caps,
+            label=self._label(),
+            menus={c.pin_field: getattr(self, c.menu_field) for c in caps},
+            pins={c.pin_field: getattr(self, c.pin_field) for c in caps},
+            preferences=preferences,
+        )
 
     def _label(self) -> str:
         return self.name or self.ip
@@ -932,9 +940,13 @@ class HostSpec(OttoModel):
     def _selection_menus(self) -> dict[str, list[str]]:
         """Return the menus a preference may choose from, in selection order.
 
-        The base spec has none; a family with menus overrides it.
+        One per witnessed menu capability of the family; none for no family.
         """
-        return {}
+        return {
+            c.pin_field: list(getattr(self, c.menu_field))
+            for c in menu_capabilities(self._host_family)
+            if c.witnessed
+        }
 
     def _check_selection(self, selection: "Mapping[str, str]") -> None:
         """Refuse a resolved *selection* the cred term-candidate check or the console rule fails.
@@ -1060,10 +1072,6 @@ class HostSpec(OttoModel):
             return ready.cls(**kw)
 
 
-_STOCK_UNIX_IMPAIRERS: list[str] = ["netem"]
-"""otto's default Unix impairer menu; while it is otto's own registration, context skips it."""
-
-
 class UnixHostSpec(HostSpec):
     """Boundary spec for a Unix host entry in ``lab.json``.
 
@@ -1077,13 +1085,13 @@ class UnixHostSpec(HostSpec):
     # optional: a loginless host needs none, and an inventory record or creds store may hold none
     creds: list[CredSpec] = Field(default_factory=list)
     valid_terms: Annotated[list[str], Resolve(fn=_menu("valid_terms"))] = Field(
-        default_factory=lambda: ["ssh", "telnet"]
+        default_factory=menu_capability(family="unix", name="term").fresh_menu
     )
     valid_transfers: Annotated[list[str], Resolve(fn=_menu("valid_transfers"))] = Field(
-        default_factory=lambda: ["scp", "sftp", "ftp", "nc"]
+        default_factory=menu_capability(family="unix", name="transfer").fresh_menu
     )
     valid_impairers: Annotated[list[str], Resolve(fn=_menu("valid_impairers"))] = Field(
-        default_factory=lambda: list(_STOCK_UNIX_IMPAIRERS)
+        default_factory=menu_capability(family="unix", name="impairer").fresh_menu
     )
     # optional active pins; resolved at to_host
     term: Annotated[str | None, Resolve(fn=_selection("term"))] = None
@@ -1116,7 +1124,7 @@ class UnixHostSpec(HostSpec):
     convention its applet speaks), so one table serves every backend. See the
     BusyBox host-support spec."""
 
-    _host_family: ClassVar[str] = "unix"
+    _host_family: ClassVar[str | None] = "unix"
 
     @model_validator(mode="before")
     @classmethod
@@ -1150,19 +1158,8 @@ class UnixHostSpec(HostSpec):
 
     @model_validator(mode="after")
     def _pins_in_menus(self) -> "UnixHostSpec":
-        _check_pins_in_menus(
-            self,
-            [
-                (TERM_RESOLVER, "term", "valid_terms"),
-                (TRANSFER_RESOLVER, "transfer", "valid_transfers"),
-                (IMPAIRER_RESOLVER, "impairer", "valid_impairers"),
-            ],
-        )
+        _check_pins_in_menus(self)
         return self
-
-    @override
-    def _selection_menus(self) -> dict[str, list[str]]:
-        return {"term": list(self.valid_terms), "transfer": list(self.valid_transfers)}
 
     @override
     def _static_contextual_checks(self, ctx: HostContext) -> None:
@@ -1171,10 +1168,11 @@ class UnixHostSpec(HostSpec):
         # otto's own fact, and resolving them would import their backend on
         # every load. A replaced registration, or a custom spec's own default,
         # is checked like any entry's menu.
+        stock_impairers = menu_capability(family="unix", name="impairer").default_menu
         stock = (
             "valid_impairers" not in self.model_fields_set
-            and list(self.valid_impairers) == _STOCK_UNIX_IMPAIRERS
-            and all(_is_unresolved_stock(name) for name in _STOCK_UNIX_IMPAIRERS)
+            and list(self.valid_impairers) == stock_impairers
+            and all(_is_unresolved_stock(name) for name in stock_impairers)
         )
         menu = [] if stock else self.valid_impairers
         for name in menu:
@@ -1194,33 +1192,6 @@ class UnixHostSpec(HostSpec):
                 f"docker-capable host can be ranked as a parent"
             )
 
-    @override
-    def _resolve_selections(self, preferences: FlatPreferences) -> dict[str, str]:
-        # Active selection precedence: the first product preference present in
-        # the menu wins; else the lab pin (self.term/.transfer/.impairer, validated
-        # against the menu); else the menu's first entry. Out-of-menu preferences
-        # are skipped by the resolver.
-        term = TERM_RESOLVER.resolve_active(
-            self.valid_terms, pin=self.term, preference=preferences.get("term")
-        )
-        # A console serves one client, so nc (whose listener needs a second
-        # session) leaves the menu there: an nc preference falls through to the
-        # next kind. Only the resolution narrows; the host keeps its full menu.
-        transfers = (
-            console_transfer_menu(self._label(), self.valid_transfers, self.transfer)
-            if term == "console"
-            else self.valid_transfers
-        )
-        return {
-            "term": term,
-            "transfer": TRANSFER_RESOLVER.resolve_active(
-                transfers, pin=self.transfer, preference=preferences.get("transfer")
-            ),
-            "impairer": IMPAIRER_RESOLVER.resolve_active(
-                self.valid_impairers, pin=self.impairer, preference=preferences.get("impairer")
-            ),
-        }
-
 
 class EmbeddedHostSpec(HostSpec):
     """Boundary spec for an embedded host entry in ``lab.json``.
@@ -1234,17 +1205,17 @@ class EmbeddedHostSpec(HostSpec):
 
     os_type: str = "embedded"
     valid_terms: Annotated[list[str], Resolve(fn=_menu("valid_terms"))] = Field(
-        default_factory=lambda: ["telnet"]
+        default_factory=menu_capability(family="embedded", name="term").fresh_menu
     )
     valid_transfers: Annotated[list[str], Resolve(fn=_menu("valid_transfers"))] = Field(
-        default_factory=lambda: ["console"]
+        default_factory=menu_capability(family="embedded", name="transfer").fresh_menu
     )
     term: Annotated[str | None, Resolve(fn=_selection("term"))] = None
     transfer: Annotated[str | None, Resolve(fn=_selection("transfer"))] = None
     filesystem: Annotated[str | None, Convert(_value_only(_to_filesystem))] = None
     loader: Annotated[str | None, Convert(_value_only(_to_loader))] = None
 
-    _host_family: ClassVar[str] = "embedded"
+    _host_family: ClassVar[str | None] = "embedded"
 
     @field_validator("valid_terms", "valid_transfers", mode="before")
     @classmethod
@@ -1263,13 +1234,7 @@ class EmbeddedHostSpec(HostSpec):
 
     @model_validator(mode="after")
     def _pins_in_menus(self) -> "EmbeddedHostSpec":
-        _check_pins_in_menus(
-            self,
-            [
-                (TERM_RESOLVER, "term", "valid_terms"),
-                (TRANSFER_RESOLVER, "transfer", "valid_transfers"),
-            ],
-        )
+        _check_pins_in_menus(self)
         return self
 
     @field_validator("loader")
@@ -1289,10 +1254,6 @@ class EmbeddedHostSpec(HostSpec):
         return v
 
     @override
-    def _selection_menus(self) -> dict[str, list[str]]:
-        return {"term": list(self.valid_terms), "transfer": list(self.valid_transfers)}
-
-    @override
     def _static_contextual_checks(self, ctx: HostContext) -> None:
         # The spec's frame counts only when it is forwarded: set by the entry (or
         # its profile) and not null. An unset field keeps the class's default.
@@ -1303,16 +1264,3 @@ class EmbeddedHostSpec(HostSpec):
                 f"os_type {self.os_type!r} builds a {cls_name}, which supplies no command_frame. "
                 f'Set os_type to a profile that supplies one (e.g. "zephyr"), or set command_frame.'
             )
-
-    @override
-    def _resolve_selections(self, preferences: FlatPreferences) -> dict[str, str]:
-        # Same precedence as UnixHostSpec: product preference present in the
-        # menu -> pin -> menu[0].
-        return {
-            "term": TERM_RESOLVER.resolve_active(
-                self.valid_terms, pin=self.term, preference=preferences.get("term")
-            ),
-            "transfer": TRANSFER_RESOLVER.resolve_active(
-                self.valid_transfers, pin=self.transfer, preference=preferences.get("transfer")
-            ),
-        }

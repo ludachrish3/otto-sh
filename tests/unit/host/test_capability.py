@@ -1,14 +1,29 @@
 """CapabilityResolver — menu validation + active-selection resolution."""
 
+import copy
+import dataclasses
+import inspect
+import json
+import pickle
+import types
+
 import pytest
 
 from otto.host.capability import (
     TERM_RESOLVER,
     TRANSFER_RESOLVER,
     CapabilityResolver,
+    default_selection,
+    is_default_selection,
+    menu_capabilities,
+    resolve_selections,
     select_option_defaults,
     select_preferences,
+    settle_selections,
+    user_pin,
 )
+from otto.host.remote_host import RemoteHost
+from otto.host.unix_host import UnixHost
 
 
 def test_validate_choice_returns_in_menu():
@@ -129,3 +144,109 @@ class TestSelectOptionDefaults:
 def test_select_preferences_ignores_option_tables():
     table = {".*": {"transfer": ["nc"], "ssh_options": {"port": 22}}}
     assert select_preferences(table, "anything") == {"transfer": ["nc"]}
+
+
+def test_a_default_selection_reads_as_the_plain_string():
+    m = default_selection(value="scp")
+    assert m == "scp"
+    assert hash(m) == hash("scp")
+    assert repr(m) == "'scp'"
+    assert f"{m}" == "scp"
+    assert json.dumps({"t": m}) == '{"t": "scp"}'
+    assert {"scp": 1}[m] == 1
+    assert is_default_selection(m)
+    assert not is_default_selection("scp")
+    assert is_default_selection(copy.deepcopy(m))
+    assert is_default_selection(pickle.loads(pickle.dumps(m)))  # noqa: S301 — round trip of a value this test just built
+
+
+def test_user_pin_reads_a_marked_value_as_no_pin():
+    assert user_pin(default_selection(value="scp")) is None
+    assert user_pin("scp") == "scp"
+    assert user_pin(None) is None
+
+
+def test_the_marked_class_default_keeps_its_recorded_value():
+    (declared,) = [f for f in dataclasses.fields(RemoteHost) if f.name == "transfer"]
+    assert declared.default == "scp"
+    assert is_default_selection(declared.default)
+    assert str(inspect.signature(UnixHost).parameters["transfer"]) == "transfer: str = 'scp'"
+
+
+UNIX = menu_capabilities("unix")
+
+
+def _select(menus, pins=None, preferences=None, caps=UNIX):
+    full = {c.pin_field: c.default_menu for c in caps} | menus
+    return resolve_selections(
+        caps, label="h", menus=full, pins=pins or {}, preferences=preferences or {}
+    )
+
+
+def test_the_table_names_each_familys_capabilities():
+    assert [(c.pin_field, c.menu_field, c.default_menu, c.witnessed) for c in UNIX] == [
+        ("term", "valid_terms", ["ssh", "telnet"], True),
+        ("transfer", "valid_transfers", ["scp", "sftp", "ftp", "nc"], True),
+        ("impairer", "valid_impairers", ["netem"], False),
+    ]
+    assert [(c.pin_field, c.default_menu) for c in menu_capabilities("embedded")] == [
+        ("term", ["telnet"]),
+        ("transfer", ["console"]),
+    ]
+    assert menu_capabilities(None) == []
+    assert menu_capabilities("nope") == []
+    for cap in [*UNIX, *menu_capabilities("embedded")]:
+        assert cap.default_pin == cap.default_menu[0]
+        assert is_default_selection(cap.default_pin)
+        assert cap.fresh_menu() == cap.default_menu
+        assert cap.fresh_menu() is not cap.default_menu
+
+
+def test_head_of_list_is_marked_and_a_pin_or_preference_is_plain():
+    assert is_default_selection(_select({"transfer": ["nc", "sftp"]})["transfer"])
+    pinned = _select({"transfer": ["nc", "sftp"]}, pins={"transfer": "sftp"})["transfer"]
+    assert pinned == "sftp"
+    assert not is_default_selection(pinned)
+    chosen = _select({"transfer": ["nc", "sftp"]}, preferences={"transfer": ["sftp"]})["transfer"]
+    assert chosen == "sftp"
+    assert not is_default_selection(chosen)
+
+
+def test_a_marked_pin_is_no_pin():
+    got = _select({"transfer": ["nc", "sftp"]}, pins={"transfer": default_selection(value="scp")})
+    assert got["transfer"] == "nc"
+
+
+def test_an_empty_list_is_refused_by_name():
+    with pytest.raises(ValueError, match="valid_transfers must be a non-empty list"):
+        _select({"transfer": []})
+
+
+def test_the_console_rule_is_applied_from_the_resolved_term():
+    console = {"term": ["console"]}
+    assert _select(console | {"transfer": ["nc", "shell"]})["transfer"] == "shell"
+    marked_nc = {"transfer": default_selection(value="nc")}
+    assert _select(console | {"transfer": ["nc", "shell"]}, pins=marked_nc)["transfer"] == "shell"
+    with pytest.raises(ValueError, match="transfer 'nc' cannot run on a console term"):
+        _select(console | {"transfer": ["nc", "shell"]}, pins={"transfer": "nc"})
+    with pytest.raises(ValueError, match="leaves a console term no transfer"):
+        _select(console | {"transfer": ["nc"]})
+    embedded = menu_capabilities("embedded")
+    assert _select({"term": ["console"]}, caps=embedded)["transfer"] == "console"
+
+
+def test_settle_selections_sets_each_pin_and_leaves_the_lists():
+    host = types.SimpleNamespace(
+        name="h",
+        term=default_selection(value="ssh"),
+        transfer=default_selection(value="scp"),
+        impairer="netem",
+        valid_terms=["telnet"],
+        valid_transfers=["nc", "sftp"],
+        valid_impairers=["netem"],
+    )
+    settle_selections(host, family="unix")
+    assert (host.term, host.transfer, host.impairer) == ("telnet", "nc", "netem")
+    assert is_default_selection(host.transfer)
+    assert not is_default_selection(host.impairer)
+    assert host.valid_transfers == ["nc", "sftp"]

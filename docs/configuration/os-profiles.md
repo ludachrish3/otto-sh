@@ -27,6 +27,25 @@ registration passes them
 `console_options`, or its first connect fails with `no login prompt
 pattern`.
 
+## A list you write wins over a profile's default
+
+A profile's `term`, `transfer` or `impairer` default yields to a list the
+host entry writes. Take a BusyBox host, which selects the built-in profile
+with `"os_type": "busybox"`. If it writes no `valid_transfers`, it
+transfers with `shell`, the first entry of the profile's list. If it writes
+`"valid_transfers": ["scp", "shell"]`, it transfers with `scp`, the first
+entry of its own list. The full rule is in
+{ref}`the selection rule <selection-rule>`.
+
+So a host you move to the `busybox` profile and that keeps its own
+`valid_transfers` (the `otto init` example host writes `["scp", "sftp"]`)
+does not get `shell`: put `shell` first in that list, or remove the list.
+
+`os_type` is also the value a `match` compares
+({doc}`declared-products-tools`). A `match = { os_type = "unix" }` no
+longer matches a host moved to `busybox`; write
+`match = { os_type = ["unix", "busybox"] }`.
+
 ## Where a profile comes from
 
 A profile can come from three places. Otto looks for the `os_type` name in

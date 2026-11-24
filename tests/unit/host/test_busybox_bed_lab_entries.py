@@ -73,6 +73,10 @@ def test_every_busybox_guest_entry_builds_a_telnet_shell_unix_host():
     for data in guests:
         host = create_host_from_dict(entry_of(data), lab_name="busybox", element=element_of(data))
         assert isinstance(host, UnixHost)
+        profiled = data["element"] == "bb1350"
+        assert host.os_type == ("busybox" if profiled else "unix")
+        assert host.has_bash is (not profiled)
+        assert type(host.command_frame).__name__ == "AshFrame"
         assert host.term == "telnet"
         assert host.transfer == "shell"
         assert host.hop == "test1"
