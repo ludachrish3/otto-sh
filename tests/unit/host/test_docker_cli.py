@@ -13,6 +13,7 @@ from otto.host.docker_cli import (
     image_id_of,
     inspect_container,
     missing,
+    parent_clock,
     rm_container_command,
     said,
 )
@@ -519,3 +520,31 @@ async def test_the_sweep_removes_through_the_shared_builders():
     assert image_rm_command(["sha256:i-old"]) in host.calls
     # One image-removal builder: the sweep and the docker verbs share it.
     assert image_verbs.image_rm_command is image_rm_command
+
+
+# ── the parent's clock ─────────────────────────────────────────────────────
+
+
+class _ClockHost:
+    def __init__(self, result):
+        self.result = result
+
+    async def exec(self, _cmd, **_kw):
+        return self.result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("result", "now"),
+    [
+        (Result(status=Status.Success, value="1700000000\n"), 1700000000),
+        (Result(status=Status.Success, value="Thu Nov 24"), None),
+        (Result(status=Status.Error, value="1700000000"), None),
+        # full-width digits: str.isdigit() and int() accept them, a clock never prints them
+        (Result(status=Status.Success, value="\uff11\uff12"), None),
+    ],
+)
+async def test_the_parent_clock_reads_only_ascii_digits_from_an_ok_answer(result, now):
+    clock = await parent_clock(_ClockHost(result))
+    assert clock.now == now
+    assert clock.result is result

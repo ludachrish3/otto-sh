@@ -89,6 +89,7 @@ from ...utils import Status
 from ..errors import UnsupportedOnUserlandError
 from ..shell_quote import path_operand
 from ..userland import APPLET_ABSENT, applet_capability
+from ..value_reader import Integer, read_value_or_none
 from .base import (
     ProgressGranularity,
     TransferContext,
@@ -2113,10 +2114,7 @@ class ShellFileTransfer(UnixFileTransfer):
         result = await self._remote_exec(cmd, step=f"the size probe of {src}")
         if not result.is_ok:
             return None
-        try:
-            return int((result.value or "").strip())
-        except ValueError:
-            return None
+        return read_value_or_none(result.value, Integer(0))
 
     def _cleanup_local_temp(self, temp: Path) -> None:
         """Best-effort removal of a staged LOCAL temp after a failed size/read/decode/write step.

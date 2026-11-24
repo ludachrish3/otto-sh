@@ -3641,6 +3641,34 @@ async def test_a_failed_login_home_probe_is_refused():
         await host.login_home()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "answer"),
+    [
+        (Status.Success, "banner\n/root"),
+        (Status.Error, "sh: printf: not found"),
+        # a failed probe is refused whatever it printed, an absolute path included
+        (Status.Error, "/root"),
+    ],
+)
+async def test_a_refused_login_home_quotes_what_the_probe_answered(status, answer):
+    from unittest.mock import AsyncMock
+
+    from otto.host.errors import HostCommandError
+
+    host = _home_probe_host()
+    host.exec = AsyncMock(
+        return_value=CommandResult(
+            status=status, value=answer, command="printf", retcode=0 if status.is_ok else 1
+        )
+    )
+    with pytest.raises(HostCommandError, match="home directory") as info:
+        await host.login_home()
+    assert repr(answer) in str(info.value)
+    assert "default_dest_dir" in str(info.value)
+    assert host.cached_login_home is None
+
+
 def _assert_staged_at(host, directory, basename):
     """The put, the sudo'd insmod and the cleanup all name one absolute file."""
     assert host.put.await_args.args[1] == Path(directory)

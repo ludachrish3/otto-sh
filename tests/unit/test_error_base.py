@@ -79,6 +79,7 @@ from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, Parse
 from otto.host.connections import TermBackendError, TermConstructionError
 from otto.host.construction import HostValidationError
 from otto.host.errors import (
+    CommandValueError,
     ConsoleError,
     ConsoleLoggedInError,
     ContainerNotRunningError,
@@ -106,7 +107,7 @@ from otto.host.loop_owner import HostLoopError
 from otto.host.power import PowerConstructionError, PowerControlError
 from otto.host.recursive_transfer import ListingError
 from otto.host.telnet import ReadGateClosed
-from otto.host.transfer.nc import NcPortSharedError
+from otto.host.transfer.nc import NcPortRungError, NcPortSharedError, NcRungToolError
 from otto.host.transfer.registry import TransferBackendError, TransferConstructionError
 from otto.host.transport import HopTransportTornDownError
 from otto.init.errors import InitInputError
@@ -251,6 +252,9 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (HostCommandError, RuntimeError),
     (PasswordRefusedError, RuntimeError),
     (StagingRefusedError, RuntimeError),
+    (CommandValueError, RuntimeError),
+    (NcPortRungError, RuntimeError),
+    (NcRungToolError, RuntimeError),
     (ContainerNotRunningError, RuntimeError),
     (CoverageToolMissingError, RuntimeError),
     (MountNotFoundError, ValueError),

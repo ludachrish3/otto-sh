@@ -192,18 +192,22 @@ class TestTheWaitCountsListeners:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("strategy", "needle"),
+        ("strategy", "tool_needle"),
         [
-            ("ss", "grep -c LISTEN"),
-            ("netstat", "grep -c "),
-            ("proc", "echo $n"),
+            ("ss", "sport = :"),
+            ("netstat", "netstat -tln"),
+            ("proc", "/tcp"),
         ],
     )
-    async def test_every_builtin_check_reports_a_count(self, strategy: str, needle: str) -> None:
+    async def test_every_builtin_check_reports_a_count(
+        self, strategy: str, tool_needle: str
+    ) -> None:
         exec_cmd = AsyncMock(return_value=_ok("1\n"))
         ft = _make_ft(exec_cmd, listener_check=strategy)
         await ft._wait_for_remote_listener(8080)
-        assert needle in exec_cmd.call_args[0][0]
+        script = exec_cmd.call_args[0][0]
+        assert "echo $n" in script
+        assert tool_needle in script
 
     @pytest.mark.asyncio
     async def test_a_custom_check_is_a_presence_check_and_says_so(self) -> None:

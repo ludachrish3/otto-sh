@@ -101,12 +101,38 @@ def version_tuple(version: str) -> tuple:
     return tuple(int(p) for p in version.split("."))
 
 
-def run_via_dash(applets: Path, script: str) -> subprocess.CompletedProcess:
-    """Run *script* under dash with PATH scoped to the applet shims."""
+def stand_in_applet(applets: Path, name: str, script: str) -> None:
+    """Put an executable ``/bin/sh`` script named *name* in the applet dir.
+
+    Replaces the applet's symlink when there is one, so a row can intercept a
+    tool (print a complaint, then run the real applet) or fake one BusyBox
+    does not ship. Only a shell that resolves names through ``PATH`` reaches
+    it: see ``test_applet_contracts.py``'s module docstring.
+    """
+    entry = applets / name
+    entry.unlink(missing_ok=True)
+    entry.write_text("#!/bin/sh\n" + script)
+    entry.chmod(0o755)
+
+
+def _streams(merge_stderr: bool) -> dict:
+    if merge_stderr:
+        return {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
+    return {"capture_output": True}
+
+
+def run_via_dash(
+    applets: Path, script: str, *, merge_stderr: bool = False
+) -> subprocess.CompletedProcess:
+    """Run *script* under dash with PATH scoped to the applet shims.
+
+    *merge_stderr* folds stderr into stdout, the one stream a pty session
+    delivers.
+    """
     return subprocess.run(
         ["/bin/sh", "-c", script],
         env={"PATH": str(applets)},
-        capture_output=True,
+        **_streams(merge_stderr),
         text=True,
         timeout=60,
         # Every caller here is MEASURING an exit status, so a raise would
@@ -120,7 +146,7 @@ SWEEP_APPLETS = ["sh", "find", "rm", "rmdir", "ls", "printf", "test", "[", "sort
 
 
 def run_in_busybox_sh(
-    release, applets: Path, script: str, *, timeout: float = 120
+    release, applets: Path, script: str, *, timeout: float = 120, merge_stderr: bool = False
 ) -> subprocess.CompletedProcess:
     """Run *script* under ``busybox sh`` with PATH holding only BusyBox applet links.
 
@@ -129,11 +155,12 @@ def run_in_busybox_sh(
     shell is on (``CONFIG_FEATURE_SH_STANDALONE``; see
     ``test_applet_contracts.py``'s module docstring), so no GNU tool can stand
     in. ``LC_ALL=C`` makes the diagnostics the ones otto's parsers read.
+    *merge_stderr* folds stderr into stdout, as in :func:`run_via_dash`.
     """
     return subprocess.run(
         [str(binary_for(release)), "sh", "-c", script],
         env={"PATH": str(applets), "LC_ALL": "C"},
-        capture_output=True,
+        **_streams(merge_stderr),
         text=True,
         timeout=timeout,
         # The callers measure the exit status and the output; a raise would

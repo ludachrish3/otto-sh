@@ -1,16 +1,27 @@
 """Tests for netcat port-finding and listener-check strategies."""
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from otto.host.connections import ConnectionManager
-from otto.host.errors import HostCommandError, HostUnreachableError
+from otto.host.errors import CommandValueError, HostCommandError, HostUnreachableError
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
+from otto.host.transfer.nc import (
+    NcPortRungError,
+    NcPortSharedError,
+    NcRungToolError,
+    read_rung_answer,
+)
+from otto.host.transfer.nc_scripts import TOOL_FAILED
+from otto.host.value_reader import Integer
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.nc_listings import COMPLAINT
+from tests._fixtures.nc_listings import tool_failed as _tool_failed
 
 
 def make_ft(
@@ -593,25 +604,25 @@ class TestWarmupForTransfer:
 class TestFindFreePortAutoSelfHeal:
     @pytest.mark.asyncio
     async def test_self_heal_resets_and_cascades(self) -> None:
-        """Cached strategy fails → reset → cascade from top of _PORT_STRATEGY_ORDER.
+        """Cached strategy fails → every OTHER rung is tried, in the declared order.
 
         _PORT_STRATEGY_ORDER = ["ss", "netstat", "python", "proc"].
-        With "ss" pre-cached, the expected call sequence is:
-          1. "ss"      — cached attempt (raises)
-          2. "ss"      — first cascade entry (raises again)
-          3. "netstat" — second cascade entry (succeeds, returns 54321)
+        With "netstat" pre-cached, the expected call sequence is:
+          1. "netstat" — cached attempt (raises), never run a second time
+          2. "ss"      — first in the order (raises)
+          3. "python"  — next other rung (succeeds, returns 54321)
         """
         returned_port = 54321
         call_strategies: list[str] = []
 
         async def find_free_port_with_side_effect(strategy: str) -> int:
             call_strategies.append(strategy)
-            if strategy == "ss":
-                raise RuntimeError("ss failed")
+            if strategy in ("netstat", "ss"):
+                raise RuntimeError(f"{strategy} failed")
             return returned_port
 
         ft = make_ft(nc_port_strategy="auto")
-        ft._resolved_port_strategy = "ss"
+        ft._resolved_port_strategy = "netstat"
         ft._find_free_port_with = AsyncMock(side_effect=find_free_port_with_side_effect)
 
         port = await ft._find_free_port_auto()
@@ -619,15 +630,31 @@ class TestFindFreePortAutoSelfHeal:
         # Correct port returned from the cascade winner.
         assert port == returned_port
 
-        # Exact call-strategy sequence: cached "ss" fails, then cascade
-        # starts from the top of _PORT_STRATEGY_ORDER ("ss" fails again,
-        # "netstat" succeeds).
-        assert call_strategies == ["ss", "ss", "netstat"], (
+        # Exact call-strategy sequence: cached "netstat" fails once, then the
+        # other rungs in declared order ("ss" fails, "python" succeeds).
+        assert call_strategies == ["netstat", "ss", "python"], (
             f"unexpected call sequence: {call_strategies}"
         )
 
         # The new cached strategy is the cascade winner, not the old one.
+        assert ft._resolved_port_strategy == "python"
+
+    @pytest.mark.asyncio
+    async def test_a_recovered_earlier_rung_is_used_after_the_cached_one_fails(self) -> None:
+        """Across two calls: ss fails and netstat is cached; later netstat fails and ss works."""
+        log: list[str] = []
+        answers = {"probe": _ok("ss ss\n"), "ss": _tool_failed(), "netstat": _ok("40020\n")}
+        ft = make_ft(exec_cmd=_host(answers, log))
+        assert await ft._find_free_port() == 40020
         assert ft._resolved_port_strategy == "netstat"
+        ft._release_port(40020)
+
+        answers["netstat"] = _tool_failed()
+        answers["ss"] = _ok("40021\n")
+        log.clear()
+        assert await ft._find_free_port() == 40021
+        assert log == ["netstat", "ss"]
+        assert ft._resolved_port_strategy == "ss"
 
 
 # ============================================================================
@@ -675,3 +702,358 @@ class TestResolveListenerStrategyCascade:
 
         assert result == "ss"
         assert ft._resolved_listener_check == "ss"
+
+
+# ============================================================================
+# The port finder fails loudly
+# ============================================================================
+
+_COMPLAINT_AND_PORT = f"{COMPLAINT}\n10744"
+
+
+def _rung_of(cmd: str) -> str:
+    """Which rung a control command belongs to (``probe`` for the strategy probe)."""
+    if "command -v" in cmd:
+        return "probe"
+    if "ss -tln" in cmd:
+        return "ss"
+    if "netstat -tln" in cmd:
+        return "netstat"
+    if cmd.startswith(("python -c", "python3 -c")):
+        return "python"
+    if "/proc/net/tcp" in cmd:
+        return "proc"
+    return "other"
+
+
+def _host(answers: dict[str, CommandResult], log: list[str]) -> AsyncMock:
+    """An exec mock that answers each rung from *answers* and records the rung it ran."""
+
+    async def run(cmd: str, **kw: object) -> CommandResult:
+        rung = _rung_of(cmd)
+        log.append(rung)
+        return answers.get(rung, _fail("unexpected: " + cmd))
+
+    return AsyncMock(side_effect=run)
+
+
+def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+class TestPortFinderAutoIsLoud:
+    @pytest.mark.asyncio
+    async def test_the_field_case_warns_once_and_caches_the_next_rung(self, caplog):
+        """The probe says netstat; netstat's tool failed; python's port is used and kept.
+
+        ``ss`` is tried after the failed cached rung, as every other rung is.
+        """
+        log: list[str] = []
+        exec_cmd = _host(
+            {
+                "probe": _ok("netstat netstat\n"),
+                "ss": _tool_failed(),
+                "netstat": _tool_failed(),
+                "python": _ok("40001\n"),
+            },
+            log,
+        )
+        ft = make_ft(exec_cmd=exec_cmd)
+        with caplog.at_level(logging.WARNING, logger="otto.host.transfer.nc"):
+            assert await ft._find_free_port() == 40001
+        assert ft._resolved_port_strategy == "python"
+        netstat_warnings = [w for w in _warnings(caplog) if "'netstat'" in w]
+        assert len(netstat_warnings) == 1, _warnings(caplog)
+        assert "nc_options.port_strategy" in netstat_warnings[0]
+        assert "test" in netstat_warnings[0]
+        assert log == ["probe", "netstat", "ss", "python"]
+
+        caplog.clear()
+        log.clear()
+        with caplog.at_level(logging.WARNING, logger="otto.host.transfer.nc"):
+            assert await ft._find_free_port() == 40001
+        assert _warnings(caplog) == []
+        assert log == ["python"]
+
+    @pytest.mark.asyncio
+    async def test_a_failing_cached_rung_is_run_once(self):
+        log: list[str] = []
+        exec_cmd = _host({"ss": _tool_failed(), "netstat": _ok("40002\n")}, log)
+        ft = make_ft(exec_cmd=exec_cmd)
+        ft._resolved_port_strategy = "ss"
+        assert await ft._find_free_port() == 40002
+        assert log == ["ss", "netstat"]
+
+    @pytest.mark.asyncio
+    async def test_every_rung_failing_names_each_rung_its_reason_and_the_pin(self):
+        log: list[str] = []
+        exec_cmd = _host(
+            {
+                "probe": _fail("probe blew up"),
+                "ss": _tool_failed(),
+                "netstat": _ok(_COMPLAINT_AND_PORT),
+                "python": _fail("no python here"),
+                "proc": _fail("proc said no"),
+            },
+            log,
+        )
+        ft = make_ft(exec_cmd=exec_cmd)
+        with pytest.raises(HostCommandError) as info:
+            await ft._find_free_port()
+        message = str(info.value)
+        assert "All port-finding strategies failed on test" in message
+        for rung in ("ss", "netstat", "python", "proc"):
+            assert f"{rung}:" in message
+        assert TOOL_FAILED in message or "missing or failed" in message
+        assert "No such file or directory" in message
+        assert "no python here" in message
+        assert "proc said no" in message
+        assert "nc_options.port_strategy" in message
+
+    @pytest.mark.asyncio
+    async def test_a_timed_out_first_rung_stops_the_ladder_without_a_warning(self, caplog):
+        log: list[str] = []
+        exec_cmd = _host({"ss": _timed_out("")}, log)
+        ft = make_ft(exec_cmd=exec_cmd)
+        ft._resolved_port_strategy = "ss"
+        with (
+            caplog.at_level(logging.WARNING, logger="otto.host.transfer.nc"),
+            pytest.raises(HostUnreachableError),
+        ):
+            await ft._find_free_port()
+        assert _warnings(caplog) == []
+        assert log == ["ss"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [asyncio.CancelledError(), NcPortSharedError("shared")],
+        ids=["cancelled", "port-shared"],
+    )
+    async def test_errors_that_stop_the_ladder_propagate(self, error, caplog):
+        ft = make_ft()
+        ft._resolved_port_strategy = "ss"
+        ft._find_free_port_with = AsyncMock(side_effect=error)
+        with (
+            caplog.at_level(logging.WARNING, logger="otto.host.transfer.nc"),
+            pytest.raises(type(error)),
+        ):
+            await ft._find_free_port()
+        assert ft._find_free_port_with.await_count == 1
+        assert _warnings(caplog) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["probe", "cache", "cascade"])
+    async def test_a_failing_rung_reports_the_same_on_every_path(self, path, caplog):
+        """The probe's fresh choice, the cache and the cascade give one report."""
+        answers = {"netstat": _ok(_COMPLAINT_AND_PORT), "python": _ok("40003\n")}
+        if path == "probe":
+            answers["probe"] = _ok("netstat netstat\n")
+            answers["ss"] = _fail("no ss")
+        elif path == "cascade":
+            answers["probe"] = _fail("probe blew up")
+            answers["ss"] = _fail("no ss")
+        log: list[str] = []
+        ft = make_ft(exec_cmd=_host(answers, log))
+        if path == "cache":
+            ft._resolved_port_strategy = "netstat"
+            answers["ss"] = _fail("no ss")
+        with caplog.at_level(logging.WARNING, logger="otto.host.transfer.nc"):
+            assert await ft._find_free_port() == 40003
+        netstat_warnings = [w for w in _warnings(caplog) if "'netstat'" in w]
+        assert netstat_warnings == [
+            (
+                "test: the netcat port finder's 'netstat' rung failed (netstat free port: "
+                "expected a base-10 integer >= 1 and <= 65535, got "
+                f"{_COMPLAINT_AND_PORT!r}); trying the next rung. "
+                "Set nc_options.port_strategy to pin another."
+            )
+        ]
+        assert log.count("netstat") == 1
+
+
+class TestPortFinderPinnedIsNamed:
+    @pytest.mark.asyncio
+    async def test_netstat_answering_a_complaint_and_a_port(self):
+        log: list[str] = []
+        ft = make_ft(
+            nc_port_strategy="netstat", exec_cmd=_host({"netstat": _ok(_COMPLAINT_AND_PORT)}, log)
+        )
+        with pytest.raises(NcPortRungError) as info:
+            await ft._find_free_port()
+        assert isinstance(info.value, HostCommandError)
+        message = str(info.value)
+        assert "port finder" in message
+        assert "'netstat'" in message
+        assert "test" in message
+        assert repr(_COMPLAINT_AND_PORT) in message
+        assert log == ["netstat"]
+
+    @pytest.mark.asyncio
+    async def test_custom_answering_a_port_out_of_range(self):
+        exec_cmd = AsyncMock(return_value=_ok("70000\n"))
+        ft = make_ft(nc_port_strategy="custom", nc_port_cmd="finder", exec_cmd=exec_cmd)
+        with pytest.raises(NcPortRungError, match="70000"):
+            await ft._find_free_port()
+
+    @pytest.mark.asyncio
+    async def test_ss_answering_the_sentinel_is_named_not_internal(self):
+        ft = make_ft(nc_port_strategy="ss", exec_cmd=AsyncMock(return_value=_tool_failed()))
+        with pytest.raises(NcPortRungError) as info:
+            await ft._find_free_port()
+        assert not isinstance(info.value, NcRungToolError)
+        message = str(info.value)
+        assert "'ss'" in message
+        assert "missing or failed" in message
+        assert TOOL_FAILED not in message, "the internal sentinel is not shown to the user"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("strategy", "answer"),
+        [("netstat", _COMPLAINT_AND_PORT), ("custom", "70000\n")],
+        ids=["pinned", "custom"],
+    )
+    async def test_an_unreadable_answer_is_still_a_value_error(self, strategy, answer):
+        """``except ValueError`` caught an unreadable answer before the rung had a name."""
+        ft = make_ft(
+            nc_port_strategy=strategy,
+            nc_port_cmd="finder",
+            exec_cmd=AsyncMock(return_value=_ok(answer)),
+        )
+        with pytest.raises(ValueError, match=strategy if strategy != "custom" else "70000"):
+            await ft._find_free_port()
+        with pytest.raises(HostCommandError):
+            await ft._find_free_port()
+
+    @pytest.mark.asyncio
+    async def test_a_digit_string_too_long_to_convert_is_the_rung_error(self):
+        ft = make_ft(nc_port_strategy="ss", exec_cmd=AsyncMock(return_value=_ok("9" * 5000)))
+        with pytest.raises(NcPortRungError, match="'ss'"):
+            await ft._find_free_port()
+
+
+class TestPythonRung:
+    @pytest.mark.asyncio
+    async def test_python_fails_python3_answers(self):
+        exec_cmd = AsyncMock(side_effect=[_fail("not found"), _ok("40004\n")])
+        ft = make_ft(nc_port_strategy="python", exec_cmd=exec_cmd)
+        assert await ft._find_free_port() == 40004
+
+    @pytest.mark.asyncio
+    async def test_python_timing_out_still_tries_python3(self):
+        exec_cmd = AsyncMock(side_effect=[_timed_out(""), _ok("40005\n")])
+        ft = make_ft(nc_port_strategy="python", exec_cmd=exec_cmd)
+        assert await ft._find_free_port() == 40005
+        assert exec_cmd.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_both_interpreters_timing_out_is_unreachable(self):
+        exec_cmd = AsyncMock(side_effect=[_timed_out(""), _timed_out("")])
+        ft = make_ft(nc_port_strategy="python", exec_cmd=exec_cmd)
+        with pytest.raises(HostUnreachableError):
+            await ft._find_free_port()
+
+    @pytest.mark.asyncio
+    async def test_a_silent_failure_says_the_exit_status_and_that_nothing_was_printed(self):
+        exec_cmd = AsyncMock(side_effect=[_fail(""), _fail("")])
+        ft = make_ft(nc_port_strategy="python", exec_cmd=exec_cmd)
+        with pytest.raises(NcPortRungError) as info:
+            await ft._find_free_port()
+        message = str(info.value)
+        assert "exit status 1" in message
+        assert "printed nothing" in message
+        assert not message.endswith(": ")
+
+
+class TestReadRungAnswer:
+    def test_the_sentinel_is_a_tool_failure(self):
+        with pytest.raises(NcRungToolError, match="ss"):
+            read_rung_answer(f"{TOOL_FAILED}\n", rung="ss", what="ss free port", kind=Integer(1))
+
+    def test_text_is_a_command_value_error(self):
+        with pytest.raises(CommandValueError):
+            read_rung_answer("nope", rung="ss", what="ss free port", kind=Integer(1))
+
+    def test_a_number_is_read(self):
+        assert read_rung_answer(" 12\n", rung="ss", what="count", kind=Integer()) == 12
+
+
+class TestPortFinderTriesEveryOtherRungAfterTheCachedOne:
+    @pytest.mark.asyncio
+    async def test_the_probe_said_netstat_and_netstat_failed(self, caplog):
+        """The cached rung runs once; then every other rung, in the declared order."""
+        log: list[str] = []
+        exec_cmd = _host(
+            {
+                "probe": _ok("netstat netstat\n"),
+                "ss": _fail("no ss"),
+                "netstat": _tool_failed(),
+                "python": _ok("40011\n"),
+            },
+            log,
+        )
+        ft = make_ft(exec_cmd=exec_cmd)
+        with caplog.at_level(logging.WARNING, logger="otto.host.transfer.nc"):
+            assert await ft._find_free_port() == 40011
+        assert len(_warnings(caplog)) == 2, _warnings(caplog)
+        assert log == ["probe", "netstat", "ss", "python"]
+
+    @pytest.mark.asyncio
+    async def test_the_all_fail_error_names_every_rung_and_its_reason(self):
+        log: list[str] = []
+        exec_cmd = _host(
+            {
+                "ss": _fail("no ss"),
+                "netstat": _fail("no netstat"),
+                "python": _fail("no python here"),
+                "proc": _fail("proc said no"),
+            },
+            log,
+        )
+        ft = make_ft(exec_cmd=exec_cmd)
+        ft._resolved_port_strategy = "python"
+        with pytest.raises(HostCommandError) as info:
+            await ft._find_free_port()
+        message = str(info.value)
+        assert log == ["python", "python", "ss", "netstat", "proc"]
+        for reason in ("no ss", "no netstat", "no python here", "proc said no"):
+            assert reason in message
+        assert "skipped" not in message
+
+    @pytest.mark.asyncio
+    async def test_only_a_rung_with_another_after_it_says_the_next_is_tried(self, caplog):
+        exec_cmd = _host(
+            {
+                "probe": _fail("probe blew up"),
+                "ss": _fail("no ss"),
+                "netstat": _fail("no netstat"),
+                "python": _fail("no python"),
+                "proc": _fail("proc said no"),
+            },
+            [],
+        )
+        ft = make_ft(exec_cmd=exec_cmd)
+        with (
+            caplog.at_level(logging.WARNING, logger="otto.host.transfer.nc"),
+            pytest.raises(HostCommandError),
+        ):
+            await ft._find_free_port()
+        by_rung = {
+            rung: [w for w in _warnings(caplog) if f"'{rung}' rung failed" in w]
+            for rung in ("ss", "netstat", "python", "proc")
+        }
+        for rung in ("ss", "netstat", "python"):
+            assert len(by_rung[rung]) == 1
+            assert "trying the next rung" in by_rung[rung][0]
+        assert len(by_rung["proc"]) == 1
+        assert "trying the next rung" not in by_rung["proc"][0]
+        assert by_rung["proc"][0].endswith("). Set nc_options.port_strategy to pin another.")
+
+    @pytest.mark.asyncio
+    async def test_a_non_zero_exit_is_cut_in_the_error(self):
+        long_text = "x" * 1000
+        ft = make_ft(nc_port_strategy="ss", exec_cmd=AsyncMock(return_value=_fail(long_text)))
+        with pytest.raises(NcPortRungError) as info:
+            await ft._find_free_port()
+        assert "x" * 200 in str(info.value)
+        assert "x" * 201 not in str(info.value)
