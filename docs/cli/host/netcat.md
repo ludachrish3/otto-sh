@@ -69,6 +69,12 @@ when auto-detection isn't appropriate for a particular host:
 
 The full option list is in {doc}`../../configuration/host-options`.
 
+### Choosing a strategy by measurement
+
+`otto host <id> probe` runs the strategies on the host and prints the
+`nc_options` fragment to paste; see
+{doc}`Netcat strategies in the protocol survey <capabilities/protocols>`.
+
 ### When a strategy fails
 
 Most hosts never see a failure: ``auto`` picks a tool that works and keeps

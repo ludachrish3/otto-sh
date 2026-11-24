@@ -124,8 +124,10 @@ answers a SYN to a closed port badly.
 
 ## The pin
 
-Recon once, then pin. When something differs from the lab record the
-report ends with a plain-text block to paste into the host's entry:
+Recon once, then pin. When something differs from the lab record, or the
+survey measured a {ref}`netcat strategy <netcat-strategy-probe>` (without
+`--user`), the report ends with a plain-text block to paste into the
+host's entry:
 
 ```text
 valid_terms = ["ssh"]
@@ -153,9 +155,57 @@ selector, picks another. So pasting the pin changes the first entry only
 when the declared one is dead. To make a newly found protocol the first
 choice, move it to the front by hand.
 
-A `*_options` fragment appears only for a protocol whose working port
-differs from the declared one (`"snmp": {"port": N}` for the monitoring
-block). Two or more supported ports that
+A `*_options` fragment appears for a protocol whose working port differs
+from the declared one (`"snmp": {"port": N}` for the monitoring block), and
+an `nc_options` fragment also when the survey measured a netcat strategy
+without `--user`.
+Two or more supported ports that
 are all undeclared produce no fragment at all — just a footnote naming the
 choice: `ssh: supported on 2222 and 2223; choose one in ssh_options.port`.
 Nothing is applied for you.
+
+(netcat-strategy-probe)=
+### Netcat strategies
+
+When the survey finds `nc` supported and the session is not a console, it
+also measures which {doc}`netcat strategy <../netcat>` works on the host:
+one for finding a free port (`port_strategy`) and one for checking the
+listener (`listener_check`). It tries each strategy whose tool is on the
+host, in the `auto` order, and keeps the first that works. Nothing listens
+and nothing is left on the host.
+
+A measured strategy goes into the pin, in the same `nc_options` fragment
+as a moved `port`:
+
+```text
+"nc_options": {"port_strategy": "ss", "listener_check": "ss"}
+```
+
+Paste it into the host's
+{ref}`nc_options <nc-options-reference>`, as with the rest of the pin.
+Pinning is optional: under `auto`, the first netcat transfer in a session
+runs one command to pick both strategies.
+
+The listener check is asked about a TCP listener from the survey's
+inventory of the host, one other than the session's own port when there is
+one (behind a port forward the declared port may be the forwarder's), and
+the session's port when it is the only TCP listener listed. Under `--user`
+the strategies are measured as that user, so each gets a line of its own
+and none goes into the pin, which applies to every login of the host: run
+the probe without `--user` to get one.
+
+A strategy that is not in the pin gets a line of its own above it:
+
+- `nc port_strategy: "proc" is declared in nc_options, so it was not
+  measured` — the entry already pins that strategy, so the survey does not
+  run it.
+- `nc listener_check: not measured: <reason>` — nothing was measured; the
+  reason says why (one line names both options when they share it), for
+  example that `nc` is not supported, that no strategy's tool is on the
+  host (then it says how to set `custom`), or that the survey had no
+  listener to check. A transfer still picks its
+  strategy when it runs.
+- `nc strategy "ss" failed for port_strategy: <reason>` — the strategy's
+  tool is on the host but its script failed, timed out, gave no answer, or
+  (for `listener_check`) found no listener on the port it checked; the
+  survey went on to the next one.

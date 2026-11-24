@@ -14,6 +14,8 @@ INFO     @test1 > | 2
 INFO     @test1 > | >>>
 INFO     @test1   | exit()
 INFO     Connected to <Peer 127.0.0.1 <port>>
+INFO     Connected to <Peer 127.0.0.1 <port>>
+INFO     Connection closed to <Peer 127.0.0.1 <port>>
 INFO     Connection closed to <Peer 127.0.0.1 <port>>
                  userland
 ╭─────────────────┬───────────┬──────────╮
@@ -84,3 +86,5 @@ This is the pin in force:
 not applicable to this family: console, tftp
 terminal mapping (ssh): onlcr
 terminal mapping (telnet): onlcr
+
+"nc_options": {"port_strategy": "netstat", "listener_check": "netstat"}

@@ -6,7 +6,7 @@ import pytest
 from rich.table import Table
 from rich.text import Text
 
-from otto.host.survey.engine import Survey
+from otto.host.survey.engine import NcFailedStrategy, Survey
 from otto.host.survey.report import (
     DriftRow,
     drift_rows,
@@ -329,6 +329,106 @@ def test_a_valid_transfers_pin_drops_a_dead_transfer_and_keeps_the_rest_in_order
         supported=["ftp", "sftp", "ssh"],
     )
     assert menu_pin(["ssh"], ["sftp", "scp", "ftp"], s) == ['valid_transfers = ["sftp", "ftp"]']
+
+
+def _rungs(port, listener, failed=()):
+    from otto.host.survey.engine import NcLadderResult, NcRungs
+
+    return NcRungs(port=NcLadderResult(*port), listener=NcLadderResult(*listener), failed=[*failed])
+
+
+def test_the_pin_carries_both_measured_strategies_in_one_nc_fragment():
+    s = _survey(nc_rungs=_rungs(("measured", "ss"), ("measured", "proc")))
+    assert menu_pin([], [], s) == [
+        '"nc_options": {"port_strategy": "ss", "listener_check": "proc"}'
+    ]
+
+
+def test_a_declared_strategy_adds_no_key_to_the_pin():
+    s = _survey(nc_rungs=_rungs(("declared", "netstat"), ("measured", "ss")))
+    assert menu_pin([], [], s) == ['"nc_options": {"listener_check": "ss"}']
+
+
+def test_a_moved_nc_port_and_the_measured_strategies_share_one_fragment():
+    s = _survey(
+        working_ports={"nc": 2222, "ssh": 2222},
+        nc_rungs=_rungs(("measured", "netstat"), ("measured", "ss")),
+    )
+    assert menu_pin([], [], s) == [
+        '"nc_options": {"port": 2222, "port_strategy": "netstat", "listener_check": "ss"}',
+        '"ssh_options": {"port": 2222}',
+    ]
+
+
+def test_a_moved_nc_port_alone_keeps_todays_fragment():
+    unmeasured = ("unmeasured", None, "the session is a console")
+    s = _survey(working_ports={"nc": 2222}, nc_rungs=_rungs(unmeasured, unmeasured))
+    assert menu_pin([], [], s) == ['"nc_options": {"port": 2222}']
+
+
+def test_no_measured_strategy_and_no_moved_port_means_no_nc_fragment():
+    unmeasured = ("unmeasured", None, "nc is not supported on this host")
+    s = _survey(nc_rungs=_rungs(unmeasured, ("declared", "custom")))
+    assert menu_pin([], [], s) == []
+
+
+def test_the_report_states_each_declared_failed_and_unmeasured_strategy():
+    from otto.host.survey.report import survey_report
+
+    s = _survey(
+        nc_rungs=_rungs(
+            ("declared", "custom"),
+            ("unmeasured", None, "the inventory found no TCP listener to ask about"),
+            failed=[NcFailedStrategy("port", "ss", "ss: the tool is missing or failed")],
+        )
+    )
+    rendered = [str(x) for x in survey_report(object(), s) if isinstance(x, Text)]
+    assert rendered == [
+        'nc port_strategy: "custom" is declared in nc_options, so it was not measured',
+        "nc listener_check: not measured: the inventory found no TCP listener to ask about",
+        'nc strategy "ss" failed for port_strategy: ss: the tool is missing or failed',
+    ]
+
+
+def _nc_text(s) -> list[str]:
+    from otto.host.survey.report import survey_report
+
+    return [str(x) for x in survey_report(object(), s) if isinstance(x, Text)]
+
+
+def test_two_ladders_unmeasured_for_one_reason_print_it_once():
+    unmeasured = ("unmeasured", None, "nc is not supported on this host")
+    s = _survey(nc_rungs=_rungs(unmeasured, unmeasured))
+    assert _nc_text(s) == [
+        "nc port_strategy, listener_check: not measured: nc is not supported on this host"
+    ]
+
+
+def test_two_ladders_unmeasured_for_different_reasons_print_a_line_each():
+    s = _survey(
+        nc_rungs=_rungs(("unmeasured", None, "one reason"), ("unmeasured", None, "another"))
+    )
+    assert _nc_text(s) == [
+        "nc port_strategy: not measured: one reason",
+        "nc listener_check: not measured: another",
+    ]
+
+
+def test_under_user_the_measured_strategies_are_printed_and_not_offered_as_a_pin():
+    s = _survey(
+        user="root",
+        working_ports={"nc": 2222},
+        nc_rungs=_rungs(("measured", "ss"), ("measured", "proc")),
+    )
+    assert menu_pin([], [], s) == ['"nc_options": {"port": 2222}']
+    assert _nc_text(s) == [
+        'nc port_strategy: "ss" works when measured as "root"',
+        'nc listener_check: "proc" works when measured as "root"',
+        (
+            'nc: the strategies were measured as "root" and are not offered as a pin;'
+            " run the probe without --user for one"
+        ),
+    ]
 
 
 def test_terminal_mapping_lines_name_each_term_and_what_was_observed():

@@ -107,3 +107,4 @@ terminal mapping (telnet): onlcr
 ╰──────────┴──────────┴────────────────────────┴─────────────────╯
 
 valid_transfers = ["scp", "sftp", "ftp", "nc", "shell"]
+"nc_options": {"port_strategy": "ss", "listener_check": "ss"}

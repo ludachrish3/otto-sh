@@ -10,7 +10,14 @@ from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.login_proxy import Cred
-from otto.host.options import ConsoleOptions, FtpOptions, SnmpOptions, SshOptions, TelnetOptions
+from otto.host.options import (
+    ConsoleOptions,
+    FtpOptions,
+    NcOptions,
+    SnmpOptions,
+    SshOptions,
+    TelnetOptions,
+)
 from otto.host.survey import engine
 from otto.host.survey.dial import DialOutcome
 from otto.host.survey.inventory import Inventory, Listener, parse_inventory
@@ -18,8 +25,11 @@ from otto.host.survey.login import LoginOutcome
 from otto.host.survey.report import menu_pin
 from otto.host.survey.sweep import SweepRow
 from otto.host.survey.verdict import ProtocolVerdict
+from otto.host.transfer import nc_scripts
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
+from otto.result import CommandResult
+from otto.utils import Status
 
 _FIX = Path(__file__).parent / "_fixtures"
 _CREDS = [Cred(login="admin", password="pw")]
@@ -55,6 +65,10 @@ class _Userland:
 
 def _row(survey, protocol, port):
     return next(v for v in survey.verdicts if v.protocol == protocol and v.port == port)
+
+
+async def _no_rung_exec(self, cmd, **kw):
+    return CommandResult(status=Status.Success, value="", retcode=0)
 
 
 @pytest.fixture
@@ -110,6 +124,9 @@ def seams(monkeypatch):
     monkeypatch.setattr(engine, "check_snmp", snmp)
     monkeypatch.setattr(engine, "open_sftp_or_attribute", sftp)
     monkeypatch.setattr(UnixHost, "userland", lambda self: _Userland())
+    # The netcat strategy probe runs over `exec`; by default the host has no
+    # strategy's tool, so a test about something else meets one footnote.
+    monkeypatch.setattr(UnixHost, "exec", _no_rung_exec)
     return calls
 
 
@@ -1314,3 +1331,493 @@ async def test_an_ssh_host_sizes_its_telnet_logins_for_telnet(seams, monkeypatch
     telnet_open = host._session_mgr.open_budget(term="telnet")
     assert set(budgets) >= {"telnet:23", "telnet:2323"}, budgets
     assert all(budgets[k] > telnet_open for k in ("telnet:23", "telnet:2323")), budgets
+
+
+# --- The netcat strategies: the probe measures each ladder's rungs. ---------
+
+_PORTS = {r.name: r for r in nc_scripts.PORT_LADDER}
+_LISTENERS = {r.name: r for r in nc_scripts.LISTENER_LADDER}
+_AVAILABILITY = nc_scripts.availability_probe()
+_BASE = NcOptions().port
+
+
+def _port_script(name: str) -> str:
+    return _PORTS[name].scripts(_BASE, "")[0]
+
+
+def _listener_script(name: str, port: int = 22) -> str:
+    return _LISTENERS[name].script(port)
+
+
+def _ok(value: str) -> CommandResult:
+    return CommandResult(status=Status.Success, value=value, retcode=0)
+
+
+def _sentinel() -> CommandResult:
+    return CommandResult(status=Status.Failed, value=nc_scripts.TOOL_FAILED, retcode=1)
+
+
+@pytest.fixture
+def scripted(seams, monkeypatch):
+    """A host whose ``exec`` answers only the table's scripts; ``run`` must never see one.
+
+    Yields the answer map (script -> result) the test fills and the list of
+    every script ``exec`` received, in order. A script nobody answered fails
+    the test: the probe runs nothing the table did not build.
+    """
+    answers: dict[str, CommandResult] = {}
+    ran: list[str] = []
+    run_cmds: list = []
+
+    async def exec_(self, cmd, **kw):
+        ran.append(cmd)
+        assert cmd in answers, f"a script the table did not build reached exec: {cmd!r}"
+        return answers[cmd]
+
+    async def run(self, cmds, **kw):
+        run_cmds.append(cmds)
+        raise AssertionError(f"a script reached run: {cmds!r}")
+
+    monkeypatch.setattr(UnixHost, "exec", exec_)
+    monkeypatch.setattr(UnixHost, "run", run)
+    yield answers, ran
+    assert run_cmds == []
+
+
+@pytest.mark.asyncio
+async def test_ss_works_for_both_ladders(scripted):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat python proc")
+    answers[_port_script("ss")] = _ok("9100")
+    answers[_listener_script("ss")] = _ok("1")
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs == engine.NcRungs(
+        port=engine.NcLadderResult("measured", "ss"),
+        listener=engine.NcLadderResult("measured", "ss"),
+    )
+    assert ran == [_AVAILABILITY, _port_script("ss"), _listener_script("ss")]
+
+
+@pytest.mark.asyncio
+async def test_a_present_rung_that_fails_is_named_and_the_next_one_measured(scripted):
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat proc")
+    answers[_port_script("ss")] = _sentinel()
+    answers[_port_script("netstat")] = _ok("9100")
+    answers[_listener_script("ss")] = _ok("1")
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "netstat")
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert [f"{f.ladder} {f.strategy}" for f in s.nc_rungs.failed] == ["port ss"], s.nc_rungs.failed
+
+
+@pytest.mark.asyncio
+async def test_a_rung_that_is_not_available_is_passed_over_in_silence(scripted):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("python proc")
+    answers[_port_script("python")] = _ok("41000")
+    answers[_listener_script("proc")] = _ok("1")
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs == engine.NcRungs(
+        port=engine.NcLadderResult("measured", "python"),
+        listener=engine.NcLadderResult("measured", "proc"),
+    )
+    assert ran == [_AVAILABILITY, _port_script("python"), _listener_script("proc")]
+
+
+@pytest.mark.asyncio
+async def test_a_listener_rung_that_counts_none_is_a_failed_rung(scripted):
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_port_script("ss")] = _ok("9100")
+    answers[_listener_script("ss")] = _ok("0")
+    answers[_listener_script("netstat")] = _ok("2")
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "netstat")
+    assert [f"{f.ladder} {f.strategy}" for f in s.nc_rungs.failed] == ["listener ss"], (
+        s.nc_rungs.failed
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_console_session_measures_nothing(scripted):
+    _answers, ran = scripted
+    host = _unix(
+        term="console",
+        valid_terms=["console"],
+        valid_transfers=["scp", "ftp", "nc", "shell"],
+        console_options=ConsoleOptions(server="test1", port=4001),
+    )
+    s = await engine.run_survey(host)
+    assert ran == []
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port.state == s.nc_rungs.listener.state == "unmeasured"
+    assert "console" in s.nc_rungs.port.note
+
+
+@pytest.mark.asyncio
+async def test_nc_not_supported_measures_nothing(scripted, monkeypatch):
+    _answers, ran = scripted
+    monkeypatch.setattr(UnixHost, "userland", lambda self: _Userland(nc="absent"))
+    s = await engine.run_survey(_unix())
+    assert ran == []
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port.state == s.nc_rungs.listener.state == "unmeasured"
+    assert "nc" in s.nc_rungs.port.note
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "listeners",
+    [None, [Listener("udp", "0.0.0.0", 161, "snmpd")]],
+    ids=["no-inventory", "no-tcp-listener"],
+)
+async def test_without_a_listener_to_ask_about_only_the_port_ladder_is_measured(
+    scripted, monkeypatch, listeners
+):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_port_script("ss")] = _ok("9100")
+
+    async def inventory(run, *, elevate):
+        if listeners is None:
+            return Inventory(tool="", elevated=False, error="inventory failed: boom")
+        return Inventory(tool="ss", elevated=elevate, listeners=listeners)
+
+    monkeypatch.setattr(engine, "run_inventory", inventory)
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
+    assert s.nc_rungs.listener.state == "unmeasured"
+    assert s.nc_rungs.listener.note
+    assert ran == [_AVAILABILITY, _port_script("ss")]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_port_strategy_is_declared_and_not_run(scripted):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_listener_script("ss")] = _ok("1")
+    host = _unix(nc_options=NcOptions(port_strategy="netstat"))
+    s = await engine.run_survey(host)
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("declared", "netstat")
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert ran == [_AVAILABILITY, _listener_script("ss")]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_custom_listener_check_is_declared_and_not_run(scripted):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_port_script("ss")] = _ok("9100")
+    host = _unix(nc_options=NcOptions(listener_check="custom", listener_cmd="true"))
+    s = await engine.run_survey(host)
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
+    assert s.nc_rungs.listener == engine.NcLadderResult("declared", "custom")
+    assert ran == [_AVAILABILITY, _port_script("ss")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [_ok("ss bogus"), CommandResult(status=Status.Failed, value="", retcode=-1, timed_out=True)],
+    ids=["not-a-rung", "timed-out"],
+)
+async def test_an_availability_probe_that_cannot_answer_leaves_both_unmeasured(scripted, answer):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = answer
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port.state == s.nc_rungs.listener.state == "unmeasured"
+    assert s.nc_rungs.port.note == s.nc_rungs.listener.note != ""
+    assert ran == [_AVAILABILITY]
+
+
+@pytest.mark.asyncio
+async def test_every_script_the_probe_runs_is_one_the_table_built(scripted):
+    """Every rung fails but the last: each script that reached exec is a table builder's output."""
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat python proc")
+    for name, rung in _PORTS.items():
+        for script in rung.scripts(_BASE, ""):
+            answers[script] = _ok("9100") if name == "proc" else _sentinel()
+    for name in _LISTENERS:
+        answers[_listener_script(name)] = _ok("1") if name == "proc" else _ok("0")
+    built = set(answers)
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "proc")
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "proc")
+    assert set(ran) == built
+    assert [f"{f.ladder} {f.strategy}" for f in s.nc_rungs.failed] == [
+        "port ss",
+        "port netstat",
+        "port python",
+        "listener ss",
+        "listener netstat",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_strategy_that_hangs_is_one_failed_strategy_and_the_walk_goes_on(
+    scripted, monkeypatch
+):
+    """A hung ss port scan times out on its own bound: netstat is measured, the listeners walked.
+
+    Mutation: read every ``None`` from ``_bounded`` as a spent survey budget
+    and both ladders read "the survey budget ran out" after one hang.
+    """
+    answers, ran = scripted
+    monkeypatch.setattr(engine, "INVENTORY_TIMEOUT_S", 0.05)
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_port_script("netstat")] = _ok("9100")
+    answers[_listener_script("ss")] = _ok("1")
+    hang = _port_script("ss")
+    answers[hang] = _ok("never read")
+    real_exec = UnixHost.exec
+
+    async def exec_(self, cmd, **kw):
+        if cmd == hang:
+            ran.append(cmd)
+            await asyncio.sleep(3600)
+        return await real_exec(self, cmd, **kw)
+
+    monkeypatch.setattr(UnixHost, "exec", exec_)
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "netstat")
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert [(f.ladder, f.strategy) for f in s.nc_rungs.failed] == [("port", "ss")]
+    assert "timed out" in s.nc_rungs.failed[0].reason, s.nc_rungs.failed
+    assert ran == [_AVAILABILITY, hang, _port_script("netstat"), _listener_script("ss")]
+
+
+@pytest.mark.asyncio
+async def test_with_no_strategys_tool_each_ladder_says_how_to_pin_custom(scripted):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("")
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port.note == (
+        "no strategy's tool is on the host; set nc_options.port_strategy to"
+        ' "custom" with a port_cmd that prints a free port'
+    )
+    assert s.nc_rungs.listener.note == (
+        "no strategy's tool is on the host; set nc_options.listener_check to"
+        ' "custom" with a listener_cmd that exits 0 when {port} is listening'
+    )
+    assert ran == [_AVAILABILITY]
+
+
+def _raising_exec(scripted, monkeypatch, failing: str, error: BaseException) -> None:
+    """``exec`` raises *error* for the one script *failing*, as a runner error arrives raw."""
+    _answers, ran = scripted
+    real_exec = UnixHost.exec
+
+    async def exec_(self, cmd, **kw):
+        if cmd == failing:
+            ran.append(cmd)
+            raise error
+        return await real_exec(self, cmd, **kw)
+
+    monkeypatch.setattr(UnixHost, "exec", exec_)
+
+
+@pytest.mark.asyncio
+async def test_a_runner_error_in_the_availability_probe_leaves_the_ladders_unmeasured(
+    scripted, monkeypatch
+):
+    """A refused exec channel arrives as a raw ``OSError``: the survey keeps its other rows."""
+    _answers, ran = scripted
+    _raising_exec(scripted, monkeypatch, _AVAILABILITY, OSError("Connection refused"))
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port.state == s.nc_rungs.listener.state == "unmeasured"
+    assert "OSError" in s.nc_rungs.port.note, s.nc_rungs.port.note
+    assert _row(s, "ssh", 1).state == "supported"
+    assert ran == [_AVAILABILITY]
+
+
+@pytest.mark.asyncio
+async def test_a_runner_error_in_a_port_script_is_one_failed_strategy(scripted, monkeypatch):
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_port_script("netstat")] = _ok("9100")
+    answers[_listener_script("ss")] = _ok("1")
+    _raising_exec(scripted, monkeypatch, _port_script("ss"), OSError("Connection refused"))
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "netstat")
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert [(f.ladder, f.strategy) for f in s.nc_rungs.failed] == [("port", "ss")]
+    assert "OSError" in s.nc_rungs.failed[0].reason, s.nc_rungs.failed
+    assert _row(s, "ssh", 1).state == "supported"
+
+
+@pytest.mark.asyncio
+async def test_a_runner_error_in_a_listener_script_is_one_failed_strategy(scripted, monkeypatch):
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_port_script("ss")] = _ok("9100")
+    answers[_listener_script("netstat")] = _ok("1")
+    _raising_exec(scripted, monkeypatch, _listener_script("ss"), OSError("Connection refused"))
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "netstat")
+    assert [(f.ladder, f.strategy) for f in s.nc_rungs.failed] == [("listener", "ss")]
+    assert "OSError" in s.nc_rungs.failed[0].reason, s.nc_rungs.failed
+    assert _row(s, "ssh", 1).state == "supported"
+
+
+@pytest.mark.asyncio
+async def test_two_declared_ladders_run_no_command(scripted):
+    _answers, ran = scripted
+    host = _unix(nc_options=NcOptions(port_strategy="netstat", listener_check="proc"))
+    s = await engine.run_survey(host)
+    assert s.nc_rungs == engine.NcRungs(
+        port=engine.NcLadderResult("declared", "netstat"),
+        listener=engine.NcLadderResult("declared", "proc"),
+    )
+    assert ran == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_availability_probe_keeps_a_declared_pin(scripted):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = CommandResult(
+        status=Status.Failed, value="", retcode=-1, timed_out=True
+    )
+    s = await engine.run_survey(_unix(nc_options=NcOptions(port_strategy="netstat")))
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("declared", "netstat")
+    assert s.nc_rungs.listener.state == "unmeasured"
+    assert ran == [_AVAILABILITY]
+
+
+@pytest.mark.asyncio
+async def test_a_budget_spent_on_the_port_ladder_keeps_a_declared_listener_pin(
+    scripted, monkeypatch
+):
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss")
+    hang = _port_script("ss")
+    real_exec = UnixHost.exec
+
+    async def exec_(self, cmd, **kw):
+        if cmd == hang:
+            raise engine._BudgetSpent
+        return await real_exec(self, cmd, **kw)
+
+    monkeypatch.setattr(UnixHost, "exec", exec_)
+    s = await engine.run_survey(_unix(nc_options=NcOptions(listener_check="netstat")))
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port.state == "unmeasured"
+    assert s.nc_rungs.listener == engine.NcLadderResult("declared", "netstat")
+
+
+@pytest.mark.asyncio
+async def test_the_strategy_tier_runs_after_every_older_tier(scripted, monkeypatch):
+    """Discovery, the SNMP tier and the extra dials all finish before the first strategy script."""
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_port_script("ss")] = _ok("9100")
+    answers[_listener_script("ss")] = _ok("1")
+    order: list[str] = []
+    real_exec, real_dial, real_snmp = UnixHost.exec, engine.dial_direct, engine.check_snmp
+
+    async def exec_(self, cmd, **kw):
+        order.append("exec")
+        return await real_exec(self, cmd, **kw)
+
+    async def dial(ip, port, *, timeout):
+        order.append(f"dial:{port}")
+        return await real_dial(ip, port, timeout=timeout)
+
+    async def snmp(**kw):
+        order.append("snmp")
+        return await real_snmp(**kw)
+
+    monkeypatch.setattr(UnixHost, "exec", exec_)
+    monkeypatch.setattr(engine, "dial_direct", dial)
+    monkeypatch.setattr(engine, "check_snmp", snmp)
+    await engine.run_survey(_unix(), scan_ports="9000")
+    first = order.index("exec")
+    assert {"snmp", "dial:2222", "dial:9000"} <= set(order[:first]), order
+    assert all(step == "exec" for step in order[first:]), order
+
+
+@pytest.mark.asyncio
+async def test_the_sessions_own_port_is_asked_about_when_it_is_the_only_tcp_listener(
+    scripted, monkeypatch
+):
+    """A stock dropbear host lists only its sshd: that listener is on the host, so it is used."""
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_port_script("ss")] = _ok("9100")
+    answers[_listener_script("ss", 1)] = _ok("1")
+
+    async def inventory(run, *, elevate):
+        return Inventory(
+            tool="ss",
+            elevated=elevate,
+            listeners=[Listener("tcp", "0.0.0.0", 1, "sshd"), Listener("udp", "0.0.0.0", 161, "")],
+        )
+
+    monkeypatch.setattr(engine, "run_inventory", inventory)
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert ran == [_AVAILABILITY, _port_script("ss"), _listener_script("ss", 1)]
+
+
+@pytest.mark.asyncio
+async def test_another_tcp_listener_is_preferred_over_the_sessions_own_port(scripted, monkeypatch):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_port_script("ss")] = _ok("9100")
+    answers[_listener_script("ss", 8080)] = _ok("1")
+
+    async def inventory(run, *, elevate):
+        return Inventory(
+            tool="ss",
+            elevated=elevate,
+            listeners=[Listener("tcp", "0.0.0.0", 1, "sshd"), Listener("tcp", "0.0.0.0", 8080, "")],
+        )
+
+    monkeypatch.setattr(engine, "run_inventory", inventory)
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert ran[-1] == _listener_script("ss", 8080)
+
+
+@pytest.mark.asyncio
+async def test_under_user_the_strategies_are_measured_and_offered_as_no_pin(scripted, monkeypatch):
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_port_script("ss")] = _ok("9100")
+    answers[_listener_script("ss")] = _ok("1")
+
+    class _AsUser:
+        def __init__(self, user):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(UnixHost, "as_user", lambda self, user="root", password=None: _AsUser(user))
+    host = _unix(creds=[Cred(login="admin", password="pw"), Cred(login="root", password="r")])
+    s = await engine.run_survey(host, user="root")
+    assert s.user == "root"
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
+    pin = menu_pin(host.valid_terms, host.valid_transfers, s)
+    assert not any("port_strategy" in line or "listener_check" in line for line in pin), pin
