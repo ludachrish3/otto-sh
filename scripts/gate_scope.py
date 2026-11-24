@@ -571,6 +571,12 @@ SPECIAL_TREES = [
         ["make conformance-bed"],
         ["make conformance-bed"],
     ),
+    # The netcat rung contract carries `conformance_bed` for the same reason.
+    (
+        "tests/conformance/test_nc_rung_contract.py",
+        ["make conformance-bed"],
+        ["make conformance-bed"],
+    ),
     ("tests/conformance/*", ["make conformance"], ["make conformance-bed"]),
     ("tests/busybox/*", ["make busybox"], ["make busybox"]),
     # The #386 bed proof (`release_proof`): its own lane, run when the file itself changes

@@ -54,7 +54,7 @@ pluggable BACKEND INTERFACES conform. This tree is about HOST CONTRACTS.
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from functools import partial
@@ -206,7 +206,11 @@ _ANSWER_TIMEOUT_S = 60.0
 
 
 def build_bed_host(
-    cell: "Cell", *, session_setup: "str | None" = None, login: "str | None" = None
+    cell: "Cell",
+    *,
+    session_setup: "str | None" = None,
+    login: "str | None" = None,
+    options: "Mapping[str, Mapping[str, object]] | None" = None,
 ) -> "RemoteHost":
     """Build *cell*'s host through otto's factory, PINNED to the cell's pair.
 
@@ -265,6 +269,12 @@ def build_bed_host(
     first entry that applies to it (``RemoteHost.creds``). ``None`` keeps
     the lab's order. A *login* the entry does not hold raises, rather than
     quietly logging in as someone else.
+
+    *options* overrides option blocks of the entry, merged per key: for
+    ``{"nc_options": {"port_strategy": "ss"}}`` the entry's own
+    ``nc_options`` keep every field but ``port_strategy``. ``None`` builds
+    the entry as the lab declares it. The netcat rung contract
+    (``tests/conformance/test_nc_rung_contract.py``) pins its rungs this way.
     """
     _ensure_custom_frames()
     entry = dict(host_data(cell.element, BED_TECH))
@@ -277,6 +287,8 @@ def build_bed_host(
         pinned["creds"] = chosen + [c for c in creds if c.get("login") != login]
     if session_setup is not None:
         pinned["session_setup"] = session_setup
+    for key, override in (options or {}).items():
+        pinned[key] = {**(entry.get(key) or {}), **override}
     host = create_host_from_dict(pinned, element=element_for(cell.element, BED_TECH))
     if (host.term, host.transfer) != (cell.term, cell.transfer):
         raise RuntimeError(
@@ -450,7 +462,11 @@ def _scratch_for(dest: "Path | None") -> "Callable[[Path], Path] | None":
 
 
 def _opener_for(
-    cell: "Cell", *, session_setup: "str | None" = None, login: "str | None" = None
+    cell: "Cell",
+    *,
+    session_setup: "str | None" = None,
+    login: "str | None" = None,
+    options: "Mapping[str, Mapping[str, object]] | None" = None,
 ) -> "Callable[[], AbstractAsyncContextManager[BaseHost]]":
     """Open *cell*'s real bed host, pinned to its pair, or fail naming the host.
 
@@ -503,13 +519,14 @@ def _opener_for(
 
     *session_setup* is passed through to :func:`build_bed_host`: the
     ``exec-shell`` entry's opener is this one with a hook. *login* is passed
-    through the same way (:meth:`BedCell.open_host_as`).
+    through the same way (:meth:`BedCell.open_host_as`), and so is *options*
+    (:meth:`BedCell.open_host_with`).
     """
 
     @contextlib.asynccontextmanager
     async def opener() -> "AsyncIterator[BaseHost]":
         with bed_lab_context(BED_TECH):
-            host = build_bed_host(cell, session_setup=session_setup, login=login)
+            host = build_bed_host(cell, session_setup=session_setup, login=login, options=options)
             async with host:
                 await _require_an_answer(cell, host)
                 yield host
@@ -538,6 +555,12 @@ class BedCell:
     def open_host_as(self, login: str) -> "AbstractAsyncContextManager[BaseHost]":
         """:attr:`open_host`'s open of this cell, logged in as *login* (one of its lab creds)."""
         return _opener_for(self.cell, login=login)()
+
+    def open_host_with(
+        self, options: "Mapping[str, Mapping[str, object]]"
+    ) -> "AbstractAsyncContextManager[BaseHost]":
+        """:attr:`open_host`'s open of this cell, option blocks overridden by *options*."""
+        return _opener_for(self.cell, options=options)()
 
 
 def bed_topology() -> "list[BedCell]":

@@ -16,10 +16,10 @@ by these spellings (the nc universal-spelling spec).
 
 import asyncio
 import random
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from ..connections import ConnectionManager
@@ -49,14 +49,15 @@ from .base import (
     resolve_concurrency_limit,
 )
 from .nc_scripts import (
+    CONTROL_AUTO,
+    CONTROL_CUSTOM,
+    LISTENER_LADDER,
+    PORT_LADDER,
     TOOL_FAILED,
-    netstat_listener_script,
-    netstat_port_script,
-    proc_listener_script,
-    proc_port_script,
-    python_port_command,
-    ss_listener_script,
-    ss_port_script,
+    ListenerRung,
+    PortRung,
+    availability_probe,
+    presence_probe,
 )
 from .unix_base import UnixFileTransfer
 
@@ -239,23 +240,18 @@ def _never_answered(result: CommandResult) -> bool:
 # port. Clamped so the scan never starts past the port range.
 _NC_PORT_SCAN_SPREAD = 2000
 
-_PORT_STRATEGY_ORDER: list[NcPortStrategy] = ["ss", "netstat", "python", "proc"]
-_LISTENER_CHECK_ORDER: list[NcListenerCheck] = ["ss", "netstat", "proc"]
+# Both ladders are declared once, in `nc_scripts`; everything here is looked
+# up by name from those tables.
+_PORT_RUNGS = {rung.name: rung for rung in PORT_LADDER}
+_LISTENER_RUNGS = {rung.name: rung for rung in LISTENER_LADDER}
 
 # Single-round-trip probe that picks a port-finding strategy and a
-# listener-check strategy in one shell invocation. `command -v` is POSIX
-# (unlike `which`, which varies across distros), short-circuits on the first
-# hit, and treats exit-code as the availability signal. Output is one line of
-# the form "<port> <listener>", e.g. "ss ss" or "python proc".
-_STRATEGY_PROBE = (
-    "port=proc; listener=proc; "
-    "if command -v ss >/dev/null 2>&1; then port=ss; listener=ss; "
-    "elif command -v netstat >/dev/null 2>&1; then port=netstat; listener=netstat; "
-    "elif command -v python >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; "
-    "then port=python; "
-    "fi; "
-    'echo "$port $listener"'
-)
+# listener-check strategy in one shell invocation. Output is one line of the
+# form "<port> <listener>", e.g. "ss ss" or "python proc".
+_PRESENCE_PROBE = presence_probe()
+
+Runner = Callable[[str], Awaitable[CommandResult]]
+"""Runs one control-plane script on the host and returns its result."""
 
 
 class NcPortSharedError(OttoError, ConnectionError):
@@ -345,6 +341,100 @@ def read_rung_answer(text: str | None, *, rung: str, what: str, kind: Integer) -
 
 _LISTENER_COUNT = Integer(minimum=0)
 """What a built-in listener-check rung must answer."""
+
+
+async def available_rungs(run: Runner) -> frozenset[str]:
+    """Return the names of every rung whose ``present`` test passes on the host.
+
+    One remote command: :func:`~otto.host.transfer.nc_scripts.availability_probe`.
+
+    Raises:
+        ~otto.host.errors.HostUnreachableError: if the probe timed out.
+        ~otto.host.errors.HostCommandError: if it exited non-zero, or named
+            something that is not a rung.
+    """
+    result = await run(availability_probe())
+    if result.timed_out or result.retcode != 0:
+        raise _probe_failure(
+            result.timed_out,
+            f"netcat rung availability probe failed: {cut_for_message(result.value)}",
+        )
+    names = frozenset(result.value.split())
+    unknown = names - _PORT_RUNGS.keys() - _LISTENER_RUNGS.keys()
+    if unknown:
+        raise HostCommandError(
+            f"netcat rung availability probe named no rung: {cut_for_message(result.value)}"
+        )
+    return names
+
+
+async def run_port_rung(rung: PortRung, run: Runner, *, base_port: int, reserved: str) -> int:
+    """Run a port-finder *rung* and read the port it printed.
+
+    The rung's scripts run in order; the next runs only after a non-zero exit
+    or a timeout. A rung that keeps the listing contract (``sentinel``) has
+    its last result judged as a scan: the sentinel raises
+    :class:`NcRungToolError`, any other non-zero exit or a timeout raises
+    with ``rung.failed`` and the output. A rung whose exit status is its
+    answer (python) is judged by its last script, which the message names.
+
+    Args:
+        rung: The rung to run.
+        run: The runner for each script.
+        base_port: Where a scan starts.
+        reserved: The ports already reserved, space separated.
+
+    Raises:
+        ~otto.host.errors.HostUnreachableError: if the last script timed out.
+        NcRungToolError: if a scan printed the tool-failed sentinel.
+        ~otto.host.errors.HostCommandError: if the last script exited non-zero.
+        ~otto.host.errors.CommandValueError: if a script exited 0 with output
+            that is not a port.
+    """
+    first, *rest = rung.scripts(base_port, reserved)
+    script, result = first, await run(first)
+    for after in rest:
+        if result.retcode == 0 and not result.timed_out:
+            break
+        script, result = after, await run(after)
+    if rung.sentinel:
+        if result.timed_out or (result.retcode != 0 and not _printed_tool_failed(result.value)):
+            raise _probe_failure(
+                result.timed_out, f"{rung.failed}: {cut_for_message(result.value)}"
+            )
+    elif result.retcode != 0 or result.timed_out:
+        # A script whose exit status is its answer begins with the command it
+        # runs (see `python_port_command`), so its first word names it.
+        exe = script.split(" ", 1)[0]
+        if result.timed_out:
+            detail = f"{exe} timed out"
+        elif result.value.strip():
+            detail = cut_for_message(result.value)
+        else:
+            detail = f"{exe} printed nothing (exit status {result.retcode})"
+        raise _probe_failure(result.timed_out, f"{rung.failed}: {detail}")
+    return read_rung_answer(result.value, rung=rung.name, what=f"{rung.name} free port", kind=_PORT)
+
+
+async def run_listener_rung(rung: ListenerRung, run: Runner, port: int) -> int | None:
+    """Run a listener-check *rung* once and return how many listeners hold *port*.
+
+    Returns:
+        The count, or ``None`` when the poll gave no answer to read (it timed
+        out, never ran or printed nothing).
+
+    Raises:
+        NcRungToolError: if the rung's tool is missing or failed.
+        ~otto.host.errors.CommandValueError: if it printed text that is not a
+            count.
+    """
+    result = await run(rung.script(port))
+    if _never_answered(result):
+        return None
+    return read_rung_answer(
+        result.value, rung=rung.name, what=f"{rung.name} listener count", kind=_LISTENER_COUNT
+    )
+
 
 _NC_LISTENER_READY_TIMEOUT = 5.0
 """How long the put and tunnelled-get paths wait for the remote listener."""
@@ -842,7 +932,7 @@ class NcFileTransfer(UnixFileTransfer):
     async def prepare(self) -> None:
         """Resolve the userland, then port + listener strategies in one round-trip.
 
-        Runs the shared `_STRATEGY_PROBE` script through `_control_run` so the
+        Runs the presence probe (`nc_scripts.presence_probe`) through `_control_run` so the
         port and listener strategies are resolved up front rather than lazily
         at first-transfer time. Idempotent — a second call with both
         strategies already cached is a no-op.
@@ -865,20 +955,24 @@ class NcFileTransfer(UnixFileTransfer):
         """
         if self._userland is not None:
             await self._userland.resolve()
-        port_auto = self._nc_port_strategy == "auto" and self._resolved_port_strategy is None
-        listener_auto = self._nc_listener_check == "auto" and self._resolved_listener_check is None
+        port_auto = self._nc_port_strategy == CONTROL_AUTO and self._resolved_port_strategy is None
+        listener_auto = (
+            self._nc_listener_check == CONTROL_AUTO and self._resolved_listener_check is None
+        )
         if not (port_auto or listener_auto):
             return
         async with self._prepare_lock:
             # Re-check under the lock — another coroutine may have finished
             # while we waited.
-            port_auto = self._nc_port_strategy == "auto" and self._resolved_port_strategy is None
+            port_auto = (
+                self._nc_port_strategy == CONTROL_AUTO and self._resolved_port_strategy is None
+            )
             listener_auto = (
-                self._nc_listener_check == "auto" and self._resolved_listener_check is None
+                self._nc_listener_check == CONTROL_AUTO and self._resolved_listener_check is None
             )
             if not (port_auto or listener_auto):
                 return
-            result = await self._control_run(_STRATEGY_PROBE)
+            result = await self._control_run(_PRESENCE_PROBE)
             if result.retcode != 0:
                 _logger.debug(
                     f"{self._name}: strategy probe failed (retcode={result.retcode}, "
@@ -893,15 +987,11 @@ class NcFileTransfer(UnixFileTransfer):
                 )
                 return
             port_choice, listener_choice = parts
-            if port_auto and port_choice in ("ss", "netstat", "python", "proc"):
-                self._resolved_port_strategy = cast(
-                    'Literal["ss", "netstat", "python", "proc"]', port_choice
-                )
+            if port_auto and port_choice in _PORT_RUNGS:
+                self._resolved_port_strategy = cast("NcPortStrategy", port_choice)
                 _logger.debug(f"{self._name}: cached port strategy '{port_choice}' via probe")
-            if listener_auto and listener_choice in ("ss", "netstat", "proc"):
-                self._resolved_listener_check = cast(
-                    'Literal["ss", "netstat", "proc"]', listener_choice
-                )
+            if listener_auto and listener_choice in _LISTENER_RUNGS:
+                self._resolved_listener_check = cast("NcListenerCheck", listener_choice)
                 _logger.debug(
                     f"{self._name}: cached listener check strategy '{listener_choice}' via probe"
                 )
@@ -940,7 +1030,7 @@ class NcFileTransfer(UnixFileTransfer):
         """
         async with self._port_lock:
             strategy = self._nc_port_strategy
-            if strategy == "auto":
+            if strategy == CONTROL_AUTO:
                 port = await self._find_free_port_auto()
             else:
                 port = await self._find_free_port_pinned(strategy)
@@ -969,16 +1059,16 @@ class NcFileTransfer(UnixFileTransfer):
         First call goes through `prepare()` so both the port and listener
         strategies resolve in one round-trip. The cached rung and the cascade
         are one loop: the cached rung first, then every OTHER rung of
-        ``_PORT_STRATEGY_ORDER`` in its declared order, so no rung runs twice
+        ``PORT_LADDER`` in its declared order, so no rung runs twice
         in one call and an earlier rung that has recovered since it failed is
-        used again. With no cached rung all four run in order. The first rung
+        used again. With no cached rung every rung runs in order. The first rung
         that answers is cached. A rung that fails is warned about once per
         transfer backend, naming the option that pins another.
 
         The cascade exists to survive a host that LACKS a tool, so an
         unreachable host is not a cascade case and stops it: the next strategy
-        will not get an answer either, and trying all four burns four more
-        timeouts before reporting the wrong cause ("all port-finding
+        will not get an answer either, and trying every other rung burns one
+        more timeout each before reporting the wrong cause ("all port-finding
         strategies failed", a HostCommandError, for a host that never
         answered). ``NcPortSharedError`` and cancellation stop it too; neither
         is caught here.
@@ -986,7 +1076,7 @@ class NcFileTransfer(UnixFileTransfer):
         if self._resolved_port_strategy is None:
             await self.prepare()
         cached = self._resolved_port_strategy
-        order = list(_PORT_STRATEGY_ORDER)
+        order = [cast("NcPortStrategy", rung.name) for rung in PORT_LADDER]
         if cached in order:
             order.remove(cached)
             order.insert(0, cached)
@@ -1025,20 +1115,20 @@ class NcFileTransfer(UnixFileTransfer):
         )
 
     async def _find_free_port_with(self, strategy: NcPortStrategy) -> int:
-        """Dispatch to a specific port-finding strategy."""
-        match strategy:
-            case "ss":
-                return await self._find_free_port_ss()
-            case "netstat":
-                return await self._find_free_port_netstat()
-            case "python":
-                return await self._find_free_port_python()
-            case "proc":
-                return await self._find_free_port_proc()
-            case "custom":
-                return await self._find_free_port_custom()
-            case _:
-                raise ValueError(f"Unknown port strategy: {strategy}")
+        """Run one port-finding strategy: a rung of ``PORT_LADDER``, or ``custom``."""
+        if strategy == CONTROL_CUSTOM:
+            return await self._find_free_port_custom()
+        rung = _PORT_RUNGS.get(strategy)
+        if rung is None:
+            raise ValueError(f"Unknown port strategy: {strategy}")
+        if not rung.scans:
+            # The kernel picks the port: no scan start is drawn, no reservation read.
+            return await run_port_rung(
+                rung, self._control_run, base_port=self._nc_port, reserved=""
+            )
+        return await run_port_rung(
+            rung, self._control_run, base_port=self._scan_start(), reserved=self._reserved_str()
+        )
 
     def _reserved_str(self) -> str:
         return " ".join(str(p) for p in self._reserved_ports)
@@ -1054,54 +1144,6 @@ class NcFileTransfer(UnixFileTransfer):
         if ceiling <= 0:
             return self._nc_port
         return self._nc_port + random.randrange(min(_NC_PORT_SCAN_SPREAD, ceiling))  # noqa: S311 — collision spreading, not a secret
-
-    async def _run_port_scan(self, rung: str, script: str, failed: str) -> int:
-        """Run a built-in rung's scan *script* and read the port it printed.
-
-        A timeout raises ``HostUnreachableError``; the sentinel raises
-        :class:`NcRungToolError`; any other non-zero exit raises
-        ``HostCommandError`` with *failed* and the output; a zero exit whose
-        output is not a port raises ``CommandValueError``.
-        """
-        result = await self._control_run(script)
-        if result.timed_out or (result.retcode != 0 and not _printed_tool_failed(result.value)):
-            raise _probe_failure(result.timed_out, f"{failed}: {cut_for_message(result.value)}")
-        return read_rung_answer(result.value, rung=rung, what=f"{rung} free port", kind=_PORT)
-
-    async def _find_free_port_ss(self) -> int:
-        script = ss_port_script(base_port=self._scan_start(), reserved=self._reserved_str())
-        return await self._run_port_scan("ss", script, "ss port scan failed")
-
-    async def _find_free_port_netstat(self) -> int:
-        script = netstat_port_script(base_port=self._scan_start(), reserved=self._reserved_str())
-        return await self._run_port_scan("netstat", script, "netstat port scan failed")
-
-    async def _find_free_port_python(self) -> int:
-        """Try ``python``, then ``python3`` for the bind-to-0 one-liner.
-
-        ``python3`` is tried whatever way ``python`` failed, a timeout
-        included; the error is the last interpreter's. Its stderr is dropped
-        (see :func:`~otto.host.transfer.nc_scripts.python_port_command`), so a
-        failure that printed nothing is reported by its exit status.
-        """
-        result = await self._control_run(python_port_command("python"))
-        if result.retcode != 0 or result.timed_out:
-            result = await self._control_run(python_port_command("python3"))
-        if result.retcode == 0 and not result.timed_out:
-            return read_rung_answer(
-                result.value, rung="python", what="python free port", kind=_PORT
-            )
-        if result.timed_out:
-            detail = "python3 timed out"
-        elif result.value.strip():
-            detail = cut_for_message(result.value)
-        else:
-            detail = f"python3 printed nothing (exit status {result.retcode})"
-        raise _probe_failure(result.timed_out, f"python port discovery failed: {detail}")
-
-    async def _find_free_port_proc(self) -> int:
-        script = proc_port_script(base_port=self._scan_start(), reserved=self._reserved_str())
-        return await self._run_port_scan("proc", script, "/proc/net/tcp port scan failed")
 
     async def _find_free_port_custom(self) -> int:
         """Run the user's ``port_cmd``; its stdout must be one port (no sentinel is asked of it)."""
@@ -1175,28 +1217,20 @@ class NcFileTransfer(UnixFileTransfer):
                 and, when no poll was answered, that the check never answered.
         """
         strategy = self._nc_listener_check
-        if strategy == "auto":
+        if strategy == CONTROL_AUTO:
             strategy = await self._resolve_listener_strategy()
-        check = self._listener_cmd_for(strategy, port)
+        rung = self._listener_rung(strategy)
+        custom = self._custom_listener_cmd(port) if rung is None else ""
         fast_interval = min(0.05, interval)
-        counts = strategy != "custom"
+        counts = rung is not None
         answered = False
 
         async def listening() -> bool:
             nonlocal answered
-            result = await self._control_run(check)
-            if not counts:
-                return result.retcode == 0
-            if _never_answered(result):
-                return False
-            answered = True
+            if rung is None:
+                return (await self._control_run(custom)).retcode == 0
             try:
-                holders = read_rung_answer(
-                    result.value,
-                    rung=strategy,
-                    what=f"{strategy} listener count",
-                    kind=_LISTENER_COUNT,
-                )
+                holders = await run_listener_rung(rung, self._control_run, port)
             except NcRungToolError as e:
                 raise NcListenerToolError(
                     f"The netcat listener check's '{strategy}' rung failed on {self._name}: {e}. "
@@ -1207,6 +1241,9 @@ class NcFileTransfer(UnixFileTransfer):
                     f"The netcat listener check's '{strategy}' rung on {self._name} answered "
                     f"with text that is not a count: {e}"
                 ) from e
+            if holders is None:
+                return False
+            answered = True
             if holders > 1:
                 raise NcPortSharedError(
                     f"Remote port {port} is shared: {holders} listeners hold it, so another "
@@ -1234,9 +1271,9 @@ class NcFileTransfer(UnixFileTransfer):
 
     def _polled_listener_rung(self) -> str:
         """Return the listener-check rung the readiness wait polls (``auto`` until resolved)."""
-        if self._nc_listener_check != "auto":
+        if self._nc_listener_check != CONTROL_AUTO:
             return self._nc_listener_check
-        return self._resolved_listener_check or "auto"
+        return self._resolved_listener_check or CONTROL_AUTO
 
     async def _await_remote_listener(
         self, port: int, listener: "asyncio.Task[Any]", label: str
@@ -1321,50 +1358,51 @@ class NcFileTransfer(UnixFileTransfer):
     async def _get_listener_check_cmd(self, port: int) -> str:
         """Return the shell command string for checking a listener on *port*."""
         strategy = self._nc_listener_check
-        if strategy == "auto":
+        if strategy == CONTROL_AUTO:
             strategy = await self._resolve_listener_strategy()
         return self._listener_cmd_for(strategy, port)
 
     async def _resolve_listener_strategy(self) -> NcListenerCheck:
         """Return the cached listener strategy, running `prepare()` if needed.
 
-        Falls back to the per-tool `type` cascade only if `prepare()` couldn't
-        populate the cache (e.g. the compound probe failed). This keeps the
-        original behavior as a safety net without paying for it on the hot
-        path.
+        Falls back to walking ``LISTENER_LADDER`` with each rung's ``present``
+        test only if `prepare()` couldn't populate the cache (e.g. the compound
+        probe failed); the last rung is the fallback and is not tested. This
+        keeps a safety net without paying for it on the hot path.
         """
         if self._resolved_listener_check is None:
             await self.prepare()
         if self._resolved_listener_check is not None:
             return self._resolved_listener_check
-        for candidate in _LISTENER_CHECK_ORDER:
-            if candidate == "proc":
-                self._resolved_listener_check = "proc"
-                _logger.debug(f"{self._name}: cached listener check strategy 'proc'")
-                return "proc"
-            tool = candidate  # 'ss' or 'netstat'
-            result = await self._control_run(f"type {tool} >/dev/null 2>&1")
-            if result.retcode == 0:
-                self._resolved_listener_check = candidate
-                _logger.debug(f"{self._name}: cached listener check strategy '{candidate}'")
-                return candidate
-        return "proc"  # pragma: no cover
+        *tested, fallback = LISTENER_LADDER
+        chosen = fallback
+        for rung in tested:
+            if (await self._control_run(rung.present)).retcode == 0:
+                chosen = rung
+                break
+        self._resolved_listener_check = cast("NcListenerCheck", chosen.name)
+        _logger.debug(f"{self._name}: cached listener check strategy '{chosen.name}'")
+        return self._resolved_listener_check
+
+    def _listener_rung(self, strategy: NcListenerCheck) -> ListenerRung | None:
+        """Return the ``LISTENER_LADDER`` rung *strategy* names, or ``None`` for ``custom``."""
+        if strategy == CONTROL_CUSTOM:
+            return None
+        rung = _LISTENER_RUNGS.get(strategy)
+        if rung is None:
+            raise ValueError(f"Unknown listener check strategy: {strategy}")
+        return rung
+
+    def _custom_listener_cmd(self, port: int) -> str:
+        """Build the user's ``listener_cmd`` for *port*."""
+        if self._nc_listener_cmd is None:
+            raise ValueError("nc_listener_check is 'custom' but nc_listener_cmd is None")
+        return self._nc_listener_cmd.format(port=port)
 
     def _listener_cmd_for(self, strategy: NcListenerCheck, port: int) -> str:
         """Build the check command for a concrete (non-auto) strategy."""
-        match strategy:
-            case "ss":
-                return ss_listener_script(port)
-            case "netstat":
-                return netstat_listener_script(port)
-            case "proc":
-                return proc_listener_script(port)
-            case "custom":
-                if self._nc_listener_cmd is None:
-                    raise ValueError("nc_listener_check is 'custom' but nc_listener_cmd is None")
-                return self._nc_listener_cmd.format(port=port)
-            case _:
-                raise ValueError(f"Unknown listener check strategy: {strategy}")
+        rung = self._listener_rung(strategy)
+        return self._custom_listener_cmd(port) if rung is None else rung.script(port)
 
     async def _verify_nc_dest_size(self, dst: Path, expected: int) -> Result | None:
         """Stat the remote destination and verify it matches *expected* bytes.

@@ -1432,6 +1432,10 @@ conformance: ## Run the host-contract conformance suite (`conformance`-marked; e
 # and four clean runs that day took 980 s, 1049 s, 1083 s and 1092 s: within
 # two minutes of the old cap, so a slow guest would have ended a healthy run
 # as a timeout (exit 124) with no failing test behind it.
+#
+# Re-measured 2026-11-24 with the netcat rung contract folded in
+# (`tests/conformance/test_nc_rung_contract.py`, 66 items): 1577 items, pytest
+# 991 s, the whole lane 1055 s.
 CONFORMANCE_CELLS ?= all
 CONFORMANCE_BED_TIMEOUT := 1500s
 MATRIX_CANDIDATE := reports/.support-matrix-candidate.json
