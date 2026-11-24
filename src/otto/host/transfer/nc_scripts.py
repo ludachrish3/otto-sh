@@ -23,7 +23,9 @@ WHY THE LISTENER SCRIPTS COUNT. Measured 2026-09-11 on the bed (nc.openbsd
 from another process coexists on the same port and the kernel hands each
 connection to whichever it hashes to. A presence check was satisfied by the
 other process's listener and two streams crossed. The caller reads the count
-and refuses a port more than one process holds.
+and refuses a port more than one listener holds. The count is per address
+family (see ``_LARGER``): one IPv4 and one IPv6 listener on a port count as
+one, whichever processes hold them.
 """
 
 from collections.abc import Callable
@@ -87,11 +89,16 @@ def _listing_port_script(command: str, base_port: int, reserved: str) -> str:
     )
 
 
-def _listing_listener_script(command: str, port: int) -> str:
-    return _quiet(
-        _capture(command)
-        + _each_line("n=0; ", f"case {_LOCAL_PORT} in {port}) n=$((n+1));; esac;", "echo $n;")
-    )
+# A listener count is of listeners that could take one stream. A netcat that
+# binds a socket per address family for its port (`ncat -l` listens on
+# `0.0.0.0` and on `::`) is one listener, and the kernel hands a connection to
+# one family, so the two families are counted apart and the larger count is
+# the answer. Two listeners on one family share the port, on either family.
+_LARGER = "[ $n4 -gt $n6 ] && echo $n4 || echo $n6;"
+
+# The local address without its port (`0.0.0.0`, `::`, `::1`, `[::]`): an
+# IPv6 one holds a colon.
+_LOCAL_ADDRESS = "${4%:*}"
 
 
 def ss_port_script(*, base_port: int, reserved: str) -> str:
@@ -104,14 +111,46 @@ def netstat_port_script(*, base_port: int, reserved: str) -> str:
     return _listing_port_script("netstat -tln", base_port, reserved)
 
 
+def _ss_family_count(variable: str, port: int) -> str:
+    """Store in *variable* how many rows of ``$out`` are on *port*."""
+    counted = _each_line("n=0; ", f"case {_LOCAL_PORT} in {port}) n=$((n+1));; esac;", "echo $n;")
+    return f"{variable}=$({counted}); "
+
+
 def ss_listener_script(port: int) -> str:
-    """Build the count of ``ss`` listeners that hold *port*."""
-    return _listing_listener_script(f"ss -tln sport = :{port}", port)
+    """Build the count of ``ss`` listeners that hold *port*.
+
+    The larger of the IPv4 and the IPv6 count. ``ss`` is asked for each
+    family by flag (``-4``, ``-6``), because how it writes an address does not
+    say the family across versions: ``*:22`` is the IPv4 wildcard in an old
+    iproute2 and the dual-stack IPv6 one in a current one. A failing ``-6``
+    is a host without IPv6 and counts none; a failing ``-4`` is the tool
+    failing.
+    """
+    return _quiet(
+        _capture(f"ss -tln -4 sport = :{port}")
+        + _ss_family_count("n4", port)
+        + f'out=$(ss -tln -6 sport = :{port}) || out=""; '
+        + _ss_family_count("n6", port)
+        + _LARGER
+    )
 
 
 def netstat_listener_script(port: int) -> str:
-    """Build the count of ``netstat`` listeners that hold *port*."""
-    return _listing_listener_script("netstat -tln", port)
+    """Build the count of ``netstat`` listeners that hold *port*.
+
+    The larger of the IPv4 and the IPv6 count, the family read from the local
+    address: BusyBox ``netstat`` has no flag that selects one.
+    """
+    return _quiet(
+        _capture("netstat -tln")
+        + _each_line(
+            "n4=0; n6=0; ",
+            f"case {_LOCAL_PORT} in {port}) "
+            f"case {_LOCAL_ADDRESS} in *:*) n6=$((n6+1));; *) n4=$((n4+1));; esac;; esac;",
+            _LARGER,
+        )
+    )
 
 
 def _read_proc(proc_net: str) -> str:
@@ -141,13 +180,18 @@ def proc_port_script(*, base_port: int, reserved: str, proc_net: str = "/proc/ne
 
 
 def proc_listener_script(port: int, *, proc_net: str = "/proc/net") -> str:
-    """Build the count of ``LISTEN`` (``0A``) rows of ``tcp`` and ``tcp6`` on *port*."""
+    """Build the count of ``LISTEN`` (``0A``) rows of ``tcp`` and ``tcp6`` on *port*.
+
+    The larger of the IPv4 and the IPv6 count: an IPv4 local address is eight
+    hex characters wide, an IPv6 one thirty-two.
+    """
     return _quiet(
         _read_proc(proc_net)
         + _each_line(
-            "n=0; ",
-            f"case $2 in *:{port:04X}) case $4 in 0A) n=$((n+1));; esac;; esac;",
-            "echo $n;",
+            "n4=0; n6=0; ",
+            f"case $4 in 0A) case $2 in ????????:{port:04X}) n4=$((n4+1));; "
+            f"*:{port:04X}) n6=$((n6+1));; esac;; esac;",
+            _LARGER,
         )
     )
 

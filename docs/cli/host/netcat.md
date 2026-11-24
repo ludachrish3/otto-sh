@@ -40,7 +40,7 @@ The auto cascade order is: ss → netstat → python → proc.
 | Strategy     | How it works                                                                                          |
 |--------------|-------------------------------------------------------------------------------------------------------|
 | ``auto``     | Probe for ss, then netstat, falling back to proc. Cache the result.                                   |
-| ``ss``       | Count LISTEN sockets via ``ss -tln sport = :<port>``.                                                 |
+| ``ss``       | Count LISTEN sockets via ``ss -tln sport = :<port>``, asked per address family (``-4``, ``-6``).      |
 | ``netstat``  | Count the port's lines in ``netstat -tln``.                                                           |
 | ``proc``     | Count ``/proc/net/tcp`` and ``tcp6`` rows in LISTEN state on the port (Linux-only; the last resort).  |
 | ``custom``   | Run the command in ``nc_options.listener_cmd`` with ``{port}`` placeholder. Must exit 0 if listening. |
@@ -48,7 +48,10 @@ The auto cascade order is: ss → netstat → python → proc.
 The built-in checks count listeners rather than merely detecting one. A port
 held by more than one listener is refused and the file is retried on a fresh
 port; the scan for that port starts at a random offset above
-``nc_options.port`` so two scanners overlapping in time rarely agree. The
+``nc_options.port`` so two scanners overlapping in time rarely agree. IPv4
+and IPv6 listeners are counted apart and the larger count is the answer, so
+a netcat that binds one socket of each family for its port, as ``ncat``
+does, is one listener, and two listeners of one family share the port. The
 ``custom`` check exits 0 or 1 by its contract and cannot count, so it remains
 a presence check.
 

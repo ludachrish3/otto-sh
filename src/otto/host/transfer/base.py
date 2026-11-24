@@ -777,7 +777,8 @@ Available strategies:
   The first tool found is cached and reused for subsequent checks. The check
   never falls through to another strategy: a built-in check whose tool fails
   stops the transfer at once.
-- ``'ss'`` — count LISTEN sockets via ``ss -tln sport = :<port>``; more than one is refused.
+- ``'ss'`` — count LISTEN sockets via ``ss -tln sport = :<port>``, asked for IPv4
+  and for IPv6; more than one is refused.
 - ``'netstat'`` — count the ``netstat -tln`` rows whose local port is the port;
   more than one is refused.
 - ``'proc'`` — count the ``/proc/net/tcp`` and ``tcp6`` rows in LISTEN state
@@ -786,4 +787,7 @@ Available strategies:
   is unreadable).
 - ``'custom'`` — run the shell command specified in ``nc_listener_cmd`` with a
   ``{port}`` placeholder. Must exit 0 when the port is listening.
+
+A built-in count is the larger of the port's IPv4 and IPv6 listener counts: a
+netcat that binds one socket of each family (``ncat``) is one listener.
 """

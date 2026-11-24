@@ -31,10 +31,14 @@ from tests._fixtures.nc_listings import (
     PORT,
     SS_HEADER,
     TCP_HEADER,
+    NoIpv6Error,
+    listener_on_both_families,
     netstat_listing,
     one_port,
+    ss_by_family,
     ss_listing,
     tcp_row,
+    two_listeners_on_one_family,
 )
 
 _HELPERS = ("sort", "tr", "sed", "grep", "cat", "printf")
@@ -232,6 +236,104 @@ class TestProcWithoutIpv6:
         assert _run(proc_listener_script(OTHER, proc_net=str(net)), path) == "1\n"
 
 
+def _netstat_rows(*addresses: str) -> str:
+    rows = "".join(
+        f"tcp        0      0 {address}         0.0.0.0:*               LISTEN\n"
+        for address in addresses
+    )
+    return _printing(NETSTAT_HEADER + rows)
+
+
+def _proc_net(tmp_path: Path, *, v4: int, v6: int) -> Path:
+    """A ``/proc/net`` with *v4* LISTEN rows on PORT in ``tcp`` and *v6* in ``tcp6``."""
+    net = tmp_path / "net"
+    net.mkdir()
+    (net / "tcp").write_text(TCP_HEADER + "".join(tcp_row(i, PORT) for i in range(v4)))
+    (net / "tcp6").write_text(TCP_HEADER + "".join(tcp_row(i, PORT, v6=True) for i in range(v6)))
+    return net
+
+
+class TestOneListenerOnBothFamilies:
+    """A netcat that binds an IPv4 and an IPv6 socket for its port is one listener.
+
+    ``ncat -l -p PORT`` does: it listens on ``0.0.0.0`` and on ``::``. The
+    count is of listeners that could take the stream, and the kernel hands a
+    connection to one address family, so the count is the larger of the two
+    families' counts.
+    """
+
+    @pytest.mark.parametrize(
+        ("v4", "v6"),
+        [
+            pytest.param(f"0.0.0.0:{PORT}", f"[::]:{PORT}", id="iproute2"),
+            pytest.param(f"*:{PORT}", f":::{PORT}", id="old-iproute2"),
+            pytest.param(f"127.0.0.1:{PORT}", f"[::1]:{PORT}", id="loopback"),
+        ],
+    )
+    def test_ss(self, v4, v6, tmp_path):
+        path = _bin_dir(tmp_path, {"ss": ss_by_family([v4], [v6])})
+        assert _run(ss_listener_script(PORT), path) == "1\n"
+
+    @pytest.mark.parametrize("v6", [f":::{PORT}", f"::1:{PORT}"], ids=["any", "loopback"])
+    def test_netstat(self, v6, tmp_path):
+        path = _bin_dir(tmp_path, {"netstat": _netstat_rows(f"0.0.0.0:{PORT}", v6)})
+        assert _run(netstat_listener_script(PORT), path) == "1\n"
+
+    def test_proc(self, tmp_path):
+        net = _proc_net(tmp_path, v4=1, v6=1)
+        path = _bin_dir(tmp_path, {})
+        assert _run(proc_listener_script(PORT, proc_net=str(net)), path) == "1\n"
+
+
+class TestTwoListenersOnOneFamily:
+    """Two listeners of one address family on a port share it, on either family."""
+
+    def test_ss_ipv4(self, tmp_path):
+        rows = [f"0.0.0.0:{PORT}", f"0.0.0.0:{PORT}"]
+        path = _bin_dir(tmp_path, {"ss": ss_by_family(rows, [])})
+        assert _run(ss_listener_script(PORT), path) == "2\n"
+
+    def test_ss_ipv6(self, tmp_path):
+        rows = [f"*:{PORT}", f"[::]:{PORT}"]
+        path = _bin_dir(tmp_path, {"ss": ss_by_family([], rows)})
+        assert _run(ss_listener_script(PORT), path) == "2\n"
+
+    def test_ss_two_of_each(self, tmp_path):
+        v4 = [f"0.0.0.0:{PORT}", f"0.0.0.0:{PORT}"]
+        v6 = [f"[::]:{PORT}", f"[::]:{PORT}"]
+        path = _bin_dir(tmp_path, {"ss": ss_by_family(v4, v6)})
+        assert _run(ss_listener_script(PORT), path) == "2\n"
+
+    @pytest.mark.parametrize(
+        "addresses",
+        [(f"0.0.0.0:{PORT}", f"0.0.0.0:{PORT}"), (f":::{PORT}", f":::{PORT}")],
+        ids=["ipv4", "ipv6"],
+    )
+    def test_netstat(self, addresses, tmp_path):
+        path = _bin_dir(tmp_path, {"netstat": _netstat_rows(*addresses)})
+        assert _run(netstat_listener_script(PORT), path) == "2\n"
+
+    @pytest.mark.parametrize(("v4", "v6"), [(2, 0), (0, 2), (2, 1)], ids=["ipv4", "ipv6", "mixed"])
+    def test_proc(self, v4, v6, tmp_path):
+        net = _proc_net(tmp_path, v4=v4, v6=v6)
+        path = _bin_dir(tmp_path, {})
+        assert _run(proc_listener_script(PORT, proc_net=str(net)), path) == "2\n"
+
+
+class TestAnSsWithoutIpv6:
+    """``ss -6`` failing is a host without IPv6, not a broken tool."""
+
+    def test_the_ipv4_count_stands(self, tmp_path):
+        body = (
+            'case " $* " in\n'
+            '*" -6 "*) echo "ss: no IPv6" >&2; exit 1;;\n'
+            f"*) cat <<'EOF'\n{SS_HEADER}LISTEN 0 10 0.0.0.0:{PORT} 0.0.0.0:*\nEOF\n;;\n"
+            "esac\n"
+        )
+        path = _bin_dir(tmp_path, {"ss": body})
+        assert _run(ss_listener_script(PORT), path) == "1\n"
+
+
 @pytest.fixture
 def dual_stack_port():
     """A port held by one dual-stack listener (``[::]``, ``IPV6_V6ONLY=0``)."""
@@ -319,3 +421,42 @@ class TestADualStackListener:
             check=False,
         ).stdout
         assert one_port(free) != dual_stack_port
+
+
+def _count(rung: str, port: int, tmp_path: Path) -> tuple[str, str]:
+    """What the real *rung* counts for *port*, and the listing it read."""
+    path, log = _recording(tmp_path, "cat" if rung == "proc" else rung)
+    listener = {
+        "ss": ss_listener_script,
+        "netstat": netstat_listener_script,
+        "proc": proc_listener_script,
+    }[rung]
+    out = subprocess.run(
+        ["/bin/sh", "-c", listener(port)],
+        env={"PATH": path},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=60,
+        check=False,
+    ).stdout
+    return out, (log.read_text() if log.exists() else "<the tool printed nothing>")
+
+
+class TestRealListenersOfThisMachine:
+    """The same two shapes, bound for real and read by the machine's own tools."""
+
+    @pytest.mark.parametrize("rung", _real_rungs())
+    def test_one_listener_on_both_families_is_counted_once(self, rung, tmp_path):
+        try:
+            with listener_on_both_families() as port:
+                count, listing = _count(rung, port, tmp_path)
+        except NoIpv6Error as exc:
+            pytest.skip(f"no IPv6 loopback on this machine: {exc}")
+        assert count == "1\n", f"counted {count!r} for port {port} from this listing:\n{listing}"
+
+    @pytest.mark.parametrize("rung", _real_rungs())
+    def test_two_listeners_on_one_family_are_counted_twice(self, rung, tmp_path):
+        with two_listeners_on_one_family() as port:
+            count, listing = _count(rung, port, tmp_path)
+        assert count == "2\n", f"counted {count!r} for port {port} from this listing:\n{listing}"

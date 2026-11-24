@@ -33,9 +33,13 @@ from tests._fixtures.nc_listings import (
     PORT,
     SS_HEADER,
     TCP_HEADER,
+    NoIpv6Error,
+    listener_on_both_families,
     one_port,
+    ss_by_family,
     ss_listing,
     tcp_row,
+    two_listeners_on_one_family,
 )
 
 from ._rows import ARTIFACT_ROWS, ROWS, binary_for, run_in_busybox_sh, run_via_dash, stand_in_applet
@@ -160,6 +164,69 @@ def test_ss_listener_counts_a_listed_port(release, driver, applet_dir):
     out = _drive(driver, release, applets, ss_listener_script(PORT))
     assert witness.exists()
     assert out.stdout == "1\n"
+
+
+# --- one listener on both address families, two on one --------------------
+#
+# A netcat that binds a socket per address family for its port (ncat) is one
+# listener; two listeners on one family share the port.
+
+
+@pytest.mark.busybox
+@pytest.mark.parametrize(("release", "driver"), DRIVEN)
+def test_netstat_counts_one_listener_on_both_families_once(release, driver, applet_dir):
+    applets = _applets(applet_dir, release, ["netstat"])
+    try:
+        with listener_on_both_families() as port:
+            out = _drive(driver, release, applets, netstat_listener_script(port))
+    except NoIpv6Error as exc:
+        pytest.skip(f"no IPv6 loopback on this machine: {exc}")
+    assert out.stdout == "1\n"
+
+
+@pytest.mark.busybox
+@pytest.mark.parametrize(("release", "driver"), DRIVEN)
+def test_netstat_counts_two_listeners_on_one_family_twice(release, driver, applet_dir):
+    applets = _applets(applet_dir, release, ["netstat"])
+    with two_listeners_on_one_family() as port:
+        out = _drive(driver, release, applets, netstat_listener_script(port))
+    assert out.stdout == "2\n"
+
+
+@pytest.mark.busybox
+@pytest.mark.parametrize(
+    ("v4", "v6", "count"),
+    [
+        pytest.param([f"0.0.0.0:{PORT}"], [f"[::]:{PORT}"], "1\n", id="both-families"),
+        pytest.param([f"*:{PORT}"], [f":::{PORT}"], "1\n", id="both-families-old-iproute2"),
+        pytest.param([f"0.0.0.0:{PORT}"] * 2, [], "2\n", id="two-ipv4"),
+        pytest.param([], [f"*:{PORT}", f"[::]:{PORT}"], "2\n", id="two-ipv6"),
+    ],
+)
+@pytest.mark.parametrize(("release", "driver"), DRIVEN)
+def test_ss_counts_per_address_family(release, driver, v4, v6, count, applet_dir):
+    applets = _applets(applet_dir, release)
+    witness = _witnessed(applets, "ss", ss_by_family(v4, v6))
+    out = _drive(driver, release, applets, ss_listener_script(PORT))
+    assert witness.exists()
+    assert out.stdout == count
+
+
+@pytest.mark.busybox
+@pytest.mark.parametrize(
+    ("v4", "v6", "count"),
+    [(1, 1, "1\n"), (2, 0, "2\n"), (0, 2, "2\n"), (2, 1, "2\n")],
+    ids=["both-families", "two-ipv4", "two-ipv6", "mixed"],
+)
+@pytest.mark.parametrize(("release", "driver"), DRIVEN)
+def test_proc_counts_per_address_family(release, driver, v4, v6, count, applet_dir, tmp_path):
+    applets = _applets(applet_dir, release)
+    net = tmp_path / "net"
+    net.mkdir()
+    (net / "tcp").write_text(TCP_HEADER + "".join(tcp_row(i, PORT) for i in range(v4)))
+    (net / "tcp6").write_text(TCP_HEADER + "".join(tcp_row(i, PORT, v6=True) for i in range(v6)))
+    out = _drive(driver, release, applets, proc_listener_script(PORT, proc_net=str(net)))
+    assert out.stdout == count
 
 
 # --- /proc over a synthetic directory, tcp6 present and absent -------------
