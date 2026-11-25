@@ -261,7 +261,7 @@ def build_bed_host(
     docstring was written for.
 
     *session_setup* names a registered hook for the host to carry, which is
-    how the ``exec-shell`` entry forces ``exec`` onto the pooled shell
+    how a hooked cell sends ``exec`` to a pooled session with a terminal
     (``tests/conformance/_entry.py``); the caller registers it first.
 
     *login* selects which of the entry's ``creds`` the host logs in as: that
@@ -518,7 +518,7 @@ def _opener_for(
     construction condition nothing else in the suite uses.
 
     *session_setup* is passed through to :func:`build_bed_host`: the
-    ``exec-shell`` entry's opener is this one with a hook. *login* is passed
+    hooked cell's opener is this one with a hook. *login* is passed
     through the same way (:meth:`BedCell.open_host_as`), and so is *options*
     (:meth:`BedCell.open_host_with`).
     """

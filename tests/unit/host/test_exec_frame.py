@@ -18,6 +18,7 @@ import asyncio
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -201,7 +202,8 @@ async def test_a_cancelled_exec_gives_the_parent_back_its_errexit_and_terminal(n
 
 @pytest.mark.parametrize("name", _CANCEL_SHELLS)
 @pytest.mark.asyncio
-async def test_a_pooled_session_cancelled_mid_exec_is_not_handed_out_damaged(name):
+async def test_a_pooled_session_cancelled_mid_exec_is_closed_not_handed_out(name):
+    """A cancelled pooled exec closes its session: the next exec is on a fresh one."""
     mgr = _mgr()
     made: list[_WatchedPty] = []
 
@@ -224,14 +226,202 @@ async def test_a_pooled_session_cancelled_mid_exec_is_not_handed_out_damaged(nam
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+        assert not session.alive
         terminal = await pooled(POSIX.terminal_read_command)
         nxt = await pooled("false; echo reached")
-        assert made == [session]
+        assert len(made) == 2
+        assert made[0] is session
     finally:
         for s in made:
             await s.close()
     assert terminal.value == POSIX.terminal_baseline_answer
-    assert (nxt.value, nxt.retcode) == ("", 1)
+    assert (nxt.value, nxt.retcode) == ("reached", 0), "a fresh session has no set -e"
+
+
+class _RecordingPty(_WatchedPty):
+    """A :class:`_WatchedPty` that records what is written to it."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.writes: list[str] = []
+
+    async def write_transport(self, *, data) -> None:
+        self.writes.append(str(data))
+        await super().write_transport(data=data)
+
+
+def _pooled_mgr(name):
+    mgr = _mgr()
+    made: list[_RecordingPty] = []
+
+    def factory():
+        made.append(_RecordingPty(name))
+        return made[-1]
+
+    mgr._session_factory = factory
+    return mgr, made
+
+
+def _idle_names(mgr) -> list[str]:
+    return [s.name for idle in mgr._exec_pools.values() for s in idle]
+
+
+_PARTIAL = "otto-part''ial"
+"""What the stopped exec prints before it blocks (its typed text does not carry the word)."""
+
+
+async def _stop_pooled(mgr, made, how):
+    """Run one exec on the pooled session, stop the next by *how*, and return what is known."""
+    exec_input = ExecInput(stdin_eof=True, restore=ExecRestore.BASELINE)
+    first = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="true", exec_input=exec_input)
+    assert first.retcode == 0
+    (kept,) = _idle_names(mgr)
+    (session,) = made
+    cmd = f"echo {_PARTIAL}; echo arm''ed; sleep 30"
+    written = len(session.writes)
+    result = None
+    if how == "timeout":
+        result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd=cmd, timeout=3, exec_input=exec_input)
+        assert session.armed.is_set(), "the command never started within its budget"
+    else:
+        task = asyncio.ensure_future(
+            _exec(mgr, ExecRoute.POOLED_SHELL, cmd=cmd, timeout=40, exec_input=exec_input)
+        )
+        await asyncio.wait_for(session.armed.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    after = session.writes[written:]
+    return kept, session, result, after
+
+
+@pytest.mark.parametrize("how", ["timeout", "cancel"])
+@pytest.mark.parametrize("name", _CANCEL_SHELLS)
+@pytest.mark.asyncio
+async def test_a_stopped_pooled_exec_closes_its_terminal_session_probed_not_restored(name, how):
+    """Interrupted and probed, never restored: the session is closed, the next exec gets another."""
+    mgr, made = _pooled_mgr(name)
+    try:
+        kept, session, result, after = await _stop_pooled(mgr, made, how)
+        # The command's own line, the interrupt, then the recovery probe that
+        # confirms the command is gone; no restore line.
+        assert after[1] == "\x03", after
+        assert len(after) > 2, "no recovery probe after the ^C"
+        restore_line = session._frame.restore_line(ExecRestore.BASELINE, session._markers)
+        assert restore_line is not None
+        assert restore_line not in after, after
+        assert not session.alive
+        assert kept not in _idle_names(mgr)
+        nxt = await _exec(
+            mgr,
+            ExecRoute.POOLED_SHELL,
+            cmd="echo again",
+            exec_input=ExecInput(stdin_eof=True),
+        )
+        assert nxt.value == "again"
+        (fresh,) = _idle_names(mgr)
+        assert fresh != kept
+        assert len(made) == 2
+    finally:
+        for s in made:
+            await s.close()
+    if result is not None:
+        assert result.timed_out
+        assert "otto-partial" in result.value
+
+
+def _running(pid: int) -> bool:
+    """Whether *pid* is a process that has not exited (a zombie has)."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        return stat.rsplit(")", 1)[1].split()[0] != "Z"
+    except FileNotFoundError:
+        return False
+
+
+class _ClosingWitness(_RecordingPty):
+    """A :class:`_RecordingPty` that notes, as its close starts, whether *pid_file*'s process runs.
+
+    This double's close kills the pty's foreground group, which a real
+    transport's close (an ssh channel's) does not: the witness is taken before
+    it, so only the stop that ran before the close can have ended the command.
+    """
+
+    def __init__(self, name: str, pid_file) -> None:
+        super().__init__(name)
+        self.pid_file = pid_file
+        self.running_at_close: bool | None = None
+
+    async def close(self) -> None:
+        if self.running_at_close is None and self.pid_file.exists():
+            self.running_at_close = _running(int(self.pid_file.read_text()))
+        await super().close()
+
+
+@pytest.mark.parametrize("name", _CANCEL_SHELLS)
+@pytest.mark.asyncio
+async def test_a_timed_out_pooled_exec_returns_once_its_command_is_gone(name, tmp_path):
+    """By the time the pool closes the stopped session, the process its command started has exited.
+
+    The command's process takes a moment to die on the interrupt (its INT trap
+    sleeps first), so only a stop that waits for the shell to come back sees
+    it gone.
+    """
+    start = tmp_path / "pid"
+    cmd = (
+        'sh -c \'trap "sleep 1; exit 0" INT; '
+        f'echo $$ > {start}; echo arm""ed; while :; do sleep 0.1; done\''
+    )
+    mgr = _mgr()
+    made: list[_ClosingWitness] = []
+
+    def factory():
+        made.append(_ClosingWitness(name, start))
+        return made[-1]
+
+    mgr._session_factory = factory
+    try:
+        result = await _exec(
+            mgr,
+            ExecRoute.POOLED_SHELL,
+            cmd=cmd,
+            timeout=3,
+            exec_input=ExecInput(stdin_eof=True, restore=ExecRestore.BASELINE),
+        )
+        assert result.timed_out
+        (session,) = made
+        assert session.armed.is_set(), "the command never started within its budget"
+        assert not session.alive
+        assert session.running_at_close is False, (
+            f"the session was closed while its command still ran: {session.running_at_close}"
+        )
+    finally:
+        for s in made:
+            await s.close()
+
+
+@pytest.mark.parametrize("how", ["timeout", "cancel"])
+@pytest.mark.asyncio
+async def test_a_stopped_exec_on_a_session_of_its_own_is_still_recovered(how):
+    """Off the pool (a default session's exec), the stop still probes and restores."""
+    name = _CANCEL_SHELLS[0]
+    s = _RecordingPty(name)
+    try:
+        await s._ensure_initialized()
+        written = len(s.writes)
+        if how == "timeout":
+            r = await s.exec_("echo arm''ed; sleep 30", timeout=3)
+            assert r.timed_out
+        else:
+            await _cancel_once_armed(
+                lambda cmd, sink: s.exec_(cmd, timeout=40, on_output=sink),
+                "echo arm''ed; sleep 30",
+            )
+        assert len(s.writes[written:]) > 2, "recovered: a probe and a restore after the ^C"
+        assert s.alive
+        assert (await s.exec_("echo again", timeout=10)).value == "again"
+    finally:
+        await s.close()
 
 
 class _UnconfirmedRestore(_WatchedPty):

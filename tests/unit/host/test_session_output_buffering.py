@@ -24,12 +24,22 @@ class FrameMockSession(FeedAfterWriteMixin, ShellSession):
         self.written: list[str] = []
         self.emitted: list[str] = []
         self._on_output = self.emitted.append
+        self.answer_on_write: str | None = None
+        """Output fed the moment the next command is written, then cleared.
+
+        A test whose command runs under a short timeout sets this instead of
+        feeding from its own task: the output is there before the session
+        reads, so no step of the test sits inside the command's timeout.
+        """
 
     async def open_transport(self) -> None:
         self._out_reader = asyncio.StreamReader()
 
     async def write_transport(self, data: str) -> None:
         self.written.append(data)
+        answer, self.answer_on_write = self.answer_on_write, None
+        if answer is not None:
+            self.feed(answer)
 
     async def _take_unread(self) -> str:
         return ""
@@ -258,16 +268,12 @@ async def test_a_timed_out_buffered_frame_logs_the_complete_lines_of_its_value(
     s = _UnreadKeepingSession(command_frame=_BufferedZephyrFrame())
     await _init(s)
 
-    async def no_stop(*, restore=None, held=None) -> None:
+    async def no_stop(*, restore=None, held=None, disposable=False) -> None:
         return None
 
     monkeypatch.setattr(s, "_stop_under_bound", no_stop)
-    run = asyncio.create_task(s.run_cmd(cmd="long", timeout=0.3))
-    await wait_for_async(
-        lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="the command was never written"
-    )
-    s.feed(f"\r\n{s._begin_marker}: command not found\r\n~$ \r\n{printed}")
-    result = await run
+    s.answer_on_write = f"\r\n{s._begin_marker}: command not found\r\n~$ \r\n{printed}"
+    result = await s.run_cmd(cmd="long", timeout=0.3)
     assert result.timed_out
     shown = result.value.partition("\n")[2]
     assert shown.startswith("one\ntwo")
@@ -309,17 +315,13 @@ async def test_a_timed_out_buffered_frame_returns_its_result_when_the_sink_fails
     def failing(line: str) -> None:
         raise _SinkError(line)
 
-    async def no_stop(*, restore=None, held=None) -> None:
+    async def no_stop(*, restore=None, held=None, disposable=False) -> None:
         return None
 
     s._on_output = failing
     monkeypatch.setattr(s, "_stop_under_bound", no_stop)
-    run = asyncio.create_task(s.run_cmd(cmd="long", timeout=0.3))
-    await wait_for_async(
-        lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="the command was never written"
-    )
-    s.feed(f"\r\n{s._begin_marker}: command not found\r\n~$ \r\none\r\n")
-    result = await run
+    s.answer_on_write = f"\r\n{s._begin_marker}: command not found\r\n~$ \r\none\r\n"
+    result = await s.run_cmd(cmd="long", timeout=0.3)
     assert result.timed_out
 
 
@@ -358,7 +360,7 @@ async def test_a_timed_out_live_frame_logs_the_complete_lines_it_had_not_read(
     await _init(s)
     s._terminal = Measurement(ONLCR, calibrated=True)
 
-    async def no_stop(*, restore=None, held=None) -> None:
+    async def no_stop(*, restore=None, held=None, disposable=False) -> None:
         return None
 
     monkeypatch.setattr(s, "_stop_under_bound", no_stop)
@@ -380,7 +382,7 @@ async def test_a_timed_out_live_frame_logs_nothing_from_the_end_record_on(
     await _init(s)
     s._terminal = Measurement(ONLCR, calibrated=True)
 
-    async def no_stop(*, restore=None, held=None) -> None:
+    async def no_stop(*, restore=None, held=None, disposable=False) -> None:
         return None
 
     monkeypatch.setattr(s, "_stop_under_bound", no_stop)
@@ -568,16 +570,12 @@ async def test_a_timed_out_zephyr_command_logs_the_complete_lines_of_its_value(
     s = _UnreadKeepingSession(command_frame=ZephyrFrame())
     await _init(s)
 
-    async def no_stop(*, restore=None, held=None) -> None:
+    async def no_stop(*, restore=None, held=None, disposable=False) -> None:
         return None
 
     monkeypatch.setattr(s, "_stop_under_bound", no_stop)
-    run = asyncio.create_task(s.run_cmd(cmd="long", timeout=0.3))
-    await wait_for_async(
-        lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="the command was never written"
-    )
-    s.feed(f"\r\n{s._begin_marker}: command not found\r\n{_PROMPT}\r\n{printed}")
-    result = await run
+    s.answer_on_write = f"\r\n{s._begin_marker}: command not found\r\n{_PROMPT}\r\n{printed}"
+    result = await s.run_cmd(cmd="long", timeout=0.3)
     assert result.timed_out
     shown = result.value.partition("\n")[2]
     complete = log_lines(shown)[: -1 if printed.endswith("unfini") else None]
@@ -697,25 +695,19 @@ async def test_a_timeout_while_a_held_log_types_a_credential_logs_each_line_once
     s = _AnswerBlockingSession(command_frame=frame())
     await _init(s)
 
-    async def no_stop(*, restore=None, held=None) -> None:
+    async def no_stop(*, restore=None, held=None, disposable=False) -> None:
         return None
 
     monkeypatch.setattr(s, "_stop_under_bound", no_stop)
     logged: list[str] = []
     with records_containing("s3cret-answer") as secret:
-        run = asyncio.create_task(
-            s.run_cmd(
-                cmd="login",
-                expects=[_WHOLE_LINE_CREDENTIAL],
-                on_output=logged.append,
-                timeout=0.3,
-            )
+        s.answer_on_write = f"{s._begin_marker}\nA\nB\nC\nPassword: \n"
+        result = await s.run_cmd(
+            cmd="login",
+            expects=[_WHOLE_LINE_CREDENTIAL],
+            on_output=logged.append,
+            timeout=0.3,
         )
-        await wait_for_async(
-            lambda: len(s.written) > 0, 5, interval=0.005, on_timeout="never written"
-        )
-        s.feed(f"{s._begin_marker}\nA\nB\nC\nPassword: \n")
-        result = await run
     assert result.timed_out
     assert logged == ["A", "B", "C"]
     assert secret == []

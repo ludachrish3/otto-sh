@@ -737,7 +737,7 @@ async def test_a_sink_failing_on_the_held_line_never_replaces_a_shell_command_s_
     s._terminal = _MAPPINGS["onlcr"]
     stopped: list[str] = []
 
-    async def stop(*, restore=None, held=None) -> None:
+    async def stop(*, restore=None, held=None, disposable=False) -> None:
         stopped.append(how)
 
     monkeypatch.setattr(s, "_stop_under_bound", stop)
@@ -1195,7 +1195,8 @@ async def test_a_process_exec_builds_its_value_once(
     monkeypatch.setattr(ExecOutput, "value", counted)
     host = LocalHost()
     try:
-        result = await host.exec(f"printf '{printed}'", log=mode)
+        # The subprocess primitive itself: no exec() takes it, and it stays until removed.
+        result = await host._exec_subprocess(f"printf '{printed}'", 10.0, log=mode)
     finally:
         await host.close()
     assert result.route == "local-subprocess"

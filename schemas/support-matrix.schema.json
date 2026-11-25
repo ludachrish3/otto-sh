@@ -470,8 +470,7 @@
           "type": "string",
           "enum": [
             "run",
-            "exec",
-            "exec-shell"
+            "exec"
           ],
           "title": "Entry",
           "description": "How the command was issued (`tests/conformance/_entry.py`). Present exactly when the row's contract declares `@pytest.mark.entries(...)`; an entry-less contract's cell carries none. `tests/_fixtures/support_matrix.py` checks it agrees with the label's fourth field."

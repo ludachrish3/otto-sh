@@ -1,13 +1,15 @@
-"""One stop sequence for a command otto started as a process: local exec and the ssh exec channel.
+"""One stop sequence for a command otto started as a process: a local shell's group, an ssh channel.
 
 A timed-out command is asked to stop with ``TERM`` ("you took too long"); an
 interrupted one is hung up with ``HUP`` ("the terminal went away", the end a
 shell-routed command meets when its pty closes, which spares a deliberately
-``nohup``'d child). Either way the command can ignore the first signal, so
-the wait for it is bounded by ``_EXEC_REAP_TIMEOUT`` and only a command that
-OUTLIVES that first signal is killed. A command that obeys ends the
-escalation, so its group's survivors (a ``nohup`` child, a child that traps
-``TERM``) are left as they are.
+``nohup``'d child the hang-up itself). Either way the command can ignore the
+first signal, so the stop is bounded by ``_EXEC_REAP_TIMEOUT`` (the grace): a
+command that OUTLIVES the first signal by the grace is killed, and on a route
+that sees the command's process group, so is whatever is left in the group
+once the grace is over (a member that ignores the signal, a ``nohup`` child).
+A group that is empty when the command exits ends the stop at once. A process
+that left the group (``setsid``) is never reached.
 
 Where the signal goes is each route's adapter:
 
@@ -32,6 +34,7 @@ that carries it.
 """
 
 import asyncio
+import contextlib
 import enum
 import logging
 import os
@@ -46,6 +49,17 @@ from .command_frame import SESSION_SHELL
 from .host import _EXEC_REAP_TIMEOUT, EXEC_CANCEL_REAP_BOUND
 
 logger = logging.getLogger(__name__)
+
+SESSION_MARK = "OTTO_SESSION"
+"""The environment variable a shell session without a terminal is started with.
+
+Its value is the session's token; every process the shell starts inherits
+it, and that is how a command otto gives up on is found and stopped
+(:func:`reap_marked_command`). The stop ends the session, so it reaches
+everything the session started and is still running, a background job from
+an earlier command included. A command can read the variable; a process
+started without it is not stopped, which is how a daemon otto launches
+(:func:`otto.host.daemon.launch_command`) outlives the stop."""
 
 
 def reap_marked_script(variable: str) -> str:
@@ -94,8 +108,14 @@ def marked_shell_command(variable: str, token: str) -> str:
     the profile is read as a plain shell channel reads it) that reads its
     commands from the channel. The token is in the new shell's own start
     environment, where :func:`reap_marked_script` finds it.
+
+    The login shell's stderr is joined to its stdout. A server started
+    without a pty gives the command two pipes and forwards them in the order
+    it finds them, not the order they were written, so output from the two
+    could arrive out of order and stderr could arrive after the command's
+    end marker. One pipe keeps the order written.
     """
-    return f"{variable}={token} exec {SESSION_SHELL} -l"
+    return f"{variable}={token} exec {SESSION_SHELL} -l 2>&1"
 
 
 class StopSignal(enum.Enum):
@@ -121,6 +141,18 @@ class StoppableProcess(Protocol):
         """Return once the command has exited; a route failure is an :class:`OSError`."""
         ...
 
+    def group_gone(self) -> bool:
+        """Whether nothing is left of the command's process group, as far as otto can see.
+
+        ``True`` on a route that cannot see the group (the server's to
+        signal), so the stop never waits for it there.
+        """
+        ...
+
+    def kill_group(self) -> None:
+        """``KILL`` what is left of the command's process group; an empty group is no error."""
+        ...
+
 
 async def _exited_within(proc: StoppableProcess, bound: float) -> bool:
     """Whether *proc* exits within *bound* seconds."""
@@ -132,23 +164,51 @@ async def _exited_within(proc: StoppableProcess, bound: float) -> bool:
 
 
 async def stop_process(proc: StoppableProcess, *, first: StopSignal) -> None:
-    """Stop *proc*: *first*, then ``KILL`` only if it outlives *first* by ``_EXEC_REAP_TIMEOUT``.
+    """Stop *proc*: *first*, then ``KILL`` what outlives it by ``_EXEC_REAP_TIMEOUT``.
 
-    A :class:`ProcessLookupError` from any signal means the command is gone
-    and ends the escalation. Both waits are bounded, so a command that never
-    reports its exit cannot hold the stop open.
+    The command itself is killed if it has not exited by the end of the
+    grace. If it has, what is left of its process group is given the rest
+    of the grace to go, then killed; a group that is already empty ends the
+    stop with no wait. A :class:`ProcessLookupError` from any signal means
+    the command is gone and ends the escalation. Every wait is bounded, so a
+    command that never reports its exit cannot hold the stop open.
     """
+    loop = asyncio.get_running_loop()
+    grace_ends = loop.time() + _EXEC_REAP_TIMEOUT
     try:
         proc.send(first)
     except ProcessLookupError:
         return
     if await _exited_within(proc, _EXEC_REAP_TIMEOUT):
+        await _kill_group_left_after(proc, grace_ends - loop.time())
         return
     try:
         proc.send("KILL")
     except ProcessLookupError:
         return
     await _exited_within(proc, _EXEC_REAP_TIMEOUT)
+
+
+async def _kill_group_left_after(proc: StoppableProcess, bound: float) -> None:
+    """Give what is left of *proc*'s group *bound* seconds to go, then ``KILL`` it.
+
+    The first probe is immediate, so an empty group costs no wait.
+    """
+    from ..utils import WaitTimeoutError, wait_for_async
+
+    try:
+        await wait_for_async(
+            proc.group_gone,
+            max(bound, 0.0),
+            interval=_GROUP_POLL_INTERVAL,
+            on_timeout="process group outlived the grace",
+        )
+    except WaitTimeoutError:
+        proc.kill_group()
+
+
+_GROUP_POLL_INTERVAL = 0.05
+"""Seconds between looks at whether a stopped command's process group has emptied."""
 
 
 async def _stop_quietly(proc: StoppableProcess, *, first: StopSignal) -> None:
@@ -188,7 +248,8 @@ async def stop_interrupted(proc: StoppableProcess, exc: BaseException, *, what: 
     """Hang up a process-route command whose exec is unwinding with *exc*; never replace *exc*.
 
     ``HUP`` first, the end a shell-routed command meets when its pty closes,
-    so a deliberately ``nohup``'d child survives. A failing stop is logged,
+    which a ``nohup``'d child ignores; what is still in a local process
+    group after the grace is killed (see the module docstring). A failing stop is logged,
     and a cancellation *exc* is held by :func:`~otto.lifecycle.compensate`,
     so the caller's ``raise`` re-raises what unwound the exec.
     """
@@ -305,6 +366,26 @@ class LocalStoppable:
         """Return once the leader has exited, whoever still holds its output."""
         await self._leader_exited.wait()
 
+    def group_gone(self) -> bool:
+        """Whether the group has no member left (``killpg`` of signal 0 finds none).
+
+        While a member survives, the group id is not handed to a new process,
+        so the probe and :meth:`kill_group` reach this command's group only.
+        Where only another user's processes remain (a local ``sudo`` command)
+        the probe raises :class:`PermissionError`, which the quiet stop logs,
+        and that group is not killed.
+        """
+        try:
+            os.killpg(self._proc.pid, 0)
+        except ProcessLookupError:
+            return True
+        return False
+
+    def kill_group(self) -> None:
+        """``KILL`` every member left in the group."""
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(self._proc.pid, signal.SIGKILL)
+
 
 class ChannelStoppable:
     """An ssh exec channel's process: the channel delivers each signal to the remote command.
@@ -339,3 +420,10 @@ class ChannelStoppable:
             await self._process.wait()
         except asyncssh.Error as exc:
             raise OSError(str(exc)) from exc
+
+    def group_gone(self) -> bool:
+        """Answer ``True``: the remote group is the server's to signal, not otto's to see."""
+        return True
+
+    def kill_group(self) -> None:
+        """Nothing: see :meth:`group_gone`."""

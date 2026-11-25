@@ -342,7 +342,7 @@ class CellFacts:
     cell_kind: str
     label: str
     entry: str
-    """How the command was issued (``run``, ``exec``, ``exec-shell``); ``""``
+    """How the command was issued (``run``, ``exec``); ``""``
     for a contract that declares no entries."""
 
 

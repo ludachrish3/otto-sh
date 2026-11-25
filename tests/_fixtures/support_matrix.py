@@ -223,6 +223,14 @@ SURFACES: "tuple[Surface, ...]" = (
         ),
     ),
     Surface(
+        id="typed-input",
+        title="typed input: a command reaches the shell byte for byte, or is refused whole",
+        contract=(
+            "tests/conformance/test_input_contract.py"
+            "::test_a_typed_command_reaches_the_shell_byte_for_byte"
+        ),
+    ),
+    Surface(
         id="transfer-roundtrip",
         title="transfer: put/get roundtrip preserves content",
         contract=(
@@ -600,7 +608,8 @@ def _labels_by_element(contract: str) -> "dict[str, list[str]]":
     """
     labels: "dict[str, list[str]]" = {}
     for resolved in space_for(contract, list(_bed_space())):
-        labels.setdefault(resolved.cell.element, []).append(cell_label(resolved))
+        known = labels.setdefault(resolved.cell.element, [])
+        known.append(cell_label(resolved))
     return labels
 
 

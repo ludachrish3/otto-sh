@@ -1,7 +1,7 @@
 """Local host implementation — runs commands on the machine otto itself is running on.
 
 :class:`LocalHost` is a concrete :class:`~otto.host.host.BaseHost` that spawns
-subprocesses and manages a persistent local shell session, mirroring the API of
+local shell sessions (a persistent one for ``run``, pooled ones for ``exec``), mirroring the API of
 :class:`~otto.host.unix_host.UnixHost` without any network transport. File
 transfers are handled by :class:`LocalFileTransfer` (a :mod:`shutil`-backed
 :class:`~otto.host.transfer.BaseFileTransfer` subclass) so progress reporting
@@ -197,10 +197,8 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     get, open_session, send, expect, is_reachable) without any network transport.
     Shell state (working directory, environment variables) persists across ``run``
     calls through a :class:`~otto.host.session.SessionManager`-backed local
-    session; ``exec`` bypasses it and spawns an independent subprocess, making
-    concurrent calls safe. An ``exec`` that needs a shell (``expects=``,
-    ``sudo=``) or another user (``user=``, or an enclosing ``as_user()``) runs
-    on a pooled local shell instead, as on a remote host. File transfers
+    session; ``exec`` bypasses it and runs on a pooled local shell of its own,
+    as on a remote host, making concurrent calls safe. File transfers
     delegate to :class:`LocalFileTransfer`.
 
     The shells run as the invoking user. ``user=`` switches them exactly as on
@@ -289,15 +287,16 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     @override
     def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
-        """Plan a fresh local subprocess, unless the call needs a shell or a user.
+        """Plan a local shell session for the call: ``POOLED_SHELL``, always.
 
         *user* is the call's effective user (an enclosing ``as_user()``
-        included). A call that needs a shell (*expects*, *sudo*) or runs as
-        another user is ``POOLED_SHELL``: a pooled local shell, opened as that
-        user, answers the prompt and keeps the identity a bare process cannot.
+        included); the session is opened as them, and answers a prompt or an
+        elevation as ``run``'s does. It reads a pipe, so the plan has one
+        mode. The manager keeps no idle local
+        session (``SessionManager._idle_exec_sessions_kept``): each call opens
+        a shell for itself, which starts from the Python process's current
+        directory and environment, and closes it after.
         """
-        if not needs_shell and user is None:
-            return ExecPlan(route=ExecRoute.LOCAL_SUBPROCESS)
         return ExecPlan(route=ExecRoute.POOLED_SHELL)
 
     @override
@@ -314,10 +313,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     ) -> CommandResult:
         """Run *cmd* on the route :meth:`_plan_exec` chose.
 
-        A subprocess is stateless and concurrent-safe: each call spawns an
-        independent process, and several ``exec()`` calls can run at once via
-        ``asyncio.gather()``. The pooled shell is the session manager's, as on
-        every family that plans one.
+        The pooled shell is the session manager's, as on every family that
+        plans one; each call has a shell of its own, so several ``exec()``
+        calls can run at once via ``asyncio.gather()``. The subprocess route
+        is still dispatched here for a plan that names it.
         """
         if plan.route is ExecRoute.LOCAL_SUBPROCESS:
             return await self._exec_subprocess(
@@ -331,6 +330,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             user=user,
             expects=expects,
             exec_input=exec_input,
+            plain=plan.plain,
         )
 
     async def _exec_subprocess(
@@ -342,6 +342,8 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         exec_input: "ExecInput | None" = None,
     ) -> CommandResult:
         """Fire-and-forget subprocess execution; every result it returns records its route.
+
+        No ``exec`` reaches it: a local ``exec`` runs on a pooled session.
 
         Logs the command and its output as ``resolve_exec_log`` answers for
         *log* and *exec_input*: on this host, or on a delegating host.

@@ -130,20 +130,18 @@ path is interpolated into every chunk command, so it was that rig's own
 destination (27 characters) and a longer path spends the headroom -- what
 matters is the RELATIONSHIP, not either number.
 
-THAT MEASUREMENT NO LONGER HAS A TEST, AND CANNOT GET ONE BACK HERE. The rig
-was a dropbear this codebase grafted onto a BusyBox-only chroot, retired with the
-rest of the artifact harness; the live BusyBox bed cannot replace it: four of
-its five guests run no sshd at all and the fifth (bb1350) runs a 2012 dropbear
-whose ``MAX_STRING_LEN`` of 1400 rejects a full chunk command outright
-('String too long', measured 2026-09-24 by the conformance bed's progress
-contract, declared there as a known failure, follow-up #437) -- so it
-measures the CAP, not the headroom this paragraph is about. What survives
-is hostless: the emitted
-line lengths are computed and bounded by
-``tests/unit/host/transfer/test_shell_transfer.py``'s
-``TestShellChunkLineLength``. So after the harness's deletion NO test puts a
-full-size chunk command on a real ssh exec channel, and a regression in that
-direction would be caught by arithmetic rather than by a device.
+THE BED'S ONE SSH GUEST PUTS A FULL CHUNK ON A REAL SSH SESSION. The rig was a
+dropbear this codebase grafted onto a BusyBox-only chroot, retired with the
+rest of the artifact harness. Four of the live BusyBox bed's five guests run
+no sshd; the fifth (bb1350) runs dropbear 2012.55, whose ``MAX_STRING_LEN``
+caps an SSH string at 1400 bytes. ``exec()`` types its command into a pooled
+session's channel rather than sending it as one exec-request string, so the
+cap does not reach a chunk command: the conformance bed's progress contract
+puts full-size chunks on ``bb1350:ssh:shell`` and passes. That cell proves a
+full chunk crosses, not the 9000-character headroom above, which nothing on
+the bed measures. The emitted line lengths are computed and bounded hostlessly
+by ``tests/unit/host/transfer/test_shell_transfer.py``'s
+``TestShellChunkLineLength``.
 
 THE PTY PATH IS THE ONE WITH NO MARGIN, and it is a separate measurement this
 branch also holds. BusyBox ash's line editor
@@ -155,11 +153,11 @@ the DEVICE's line editor rather than as any transport. A 5535-character chunk
 line is over that by a factor of five.
 
 WHICH OF THE TWO THIS BACKEND GETS IS THE HOST'S ``term``, not this module's
-choice. ``_exec_cmd`` is ``UnixHost.exec``, whose plan opens
-a bare pty-less exec channel only for ``term: "ssh"``; telnet has no
-stateless exec primitive, so it routes through a pooled SHELL session
-instead -- the line-edited path. A ``term: telnet`` BusyBox host is therefore
-exactly the case this note used to worry about, and it is NO LONGER
+choice. ``_exec_cmd`` is ``UnixHost.exec``, which runs on a pooled shell session
+on every term; on ``term: "ssh"`` its plan may open that session without a
+terminal, and telnet's always has one -- the line-edited path. A
+``term: telnet`` BusyBox host is therefore exactly the case this note used
+to worry about, and it is NO LONGER
 UNMEASURED: five telnet-console BusyBox guests joined the bed, the case
 happened, and the paragraphs below are what they answered.
 
@@ -473,8 +471,8 @@ class PutChunkLoop:
     answers what is left of the line once otto's framing (and any quoting
     the framing gives the command) is rendered around it, or ``None``.
     ``None`` (as the answer, or for the field) means no line discipline is in
-    the way -- an ``ssh`` host's bare exec channel, a local subprocess, a
-    container's ``docker exec`` -- and a codec should then do exactly what it
+    the way -- a pooled session without a terminal, a container's
+    ``docker exec`` -- and a codec should then do exactly what it
     did before this field existed. It is not "unknown" and never a reason to
     guess: the number comes from
     :meth:`~otto.host.session.SessionManager.line_room` for the host's exec plan, which is the

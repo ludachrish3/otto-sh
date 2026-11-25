@@ -819,11 +819,9 @@ class TestALiveCommandLogsUnderOneModeOnEveryEntry:
         ``host.run`` asks the session's transport to redact a command whose
         resolved mode is NEVER (``ShellSession.run_cmd(redact=True)``), and a
         named session's ``run`` must ask the same for the same input; a NORMAL
-        command asks on neither. ``host.exec`` on a local host spawns its own
-        process and reaches no shell transport, so it has no request to make:
-        pinned as none, so an exec that starts riding a shell session shows up
-        here and must then ask like the other two. An exec on the pooled shell
-        route types into a session, so it asks as ``run`` does.
+        command asks on neither. ``host.exec`` on a local host rides a shell
+        session of its own, so it asks like the other two. An exec on the
+        pooled shell route types into a session, so it asks as ``run`` does.
         """
         from tests.unit.host.test_session_exec_pooled import _mgr
 
@@ -873,7 +871,7 @@ class TestALiveCommandLogsUnderOneModeOnEveryEntry:
 
         assert seen == {
             (name, mode): (
-                [] if name == "exec" else [mode is LogMode.NEVER],
+                [mode is LogMode.NEVER],
                 "OUT" if name == "pooled-exec" else "otto-redact",
             )
             for mode in (LogMode.NEVER, LogMode.NORMAL)

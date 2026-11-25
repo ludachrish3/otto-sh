@@ -954,7 +954,7 @@ SURFACES: list[Surface] = [
     ),
     # The built-in `local` host stands in for the ~30 host subverbs that run a
     # shell command: every one is a `@cli_exposed` method on the same class.
-    _verb_surface("host_local_exec", ["otto", "host", "local", "exec", "true"], target_ratio=4.4),
+    _verb_surface("host_local_exec", ["otto", "host", "local", "exec", "true"], target_ratio=4.54),
     _verb_surface(
         "host_local_put",
         ["otto", "host", "local", "put", "{root}/payload.txt", "{root}/put-dest"],

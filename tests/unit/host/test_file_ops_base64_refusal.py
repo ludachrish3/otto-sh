@@ -647,16 +647,17 @@ class TestWhyTheseTwoPathsAreStillOpen:
             wired._elevate("id -u")
 
     @pytest.mark.asyncio
-    async def test_the_probes_would_not_run_in_the_shell_local_commands_run_in(self) -> None:
-        """``LocalHost``'s own extra reason, and it is structural, not this box's.
+    async def test_the_probes_run_in_the_shell_local_commands_run_in(self) -> None:
+        """``LocalHost``'s former extra reason is gone: ``exec`` and ``run`` share one shell.
 
-        A resolver's probes go through ``exec``, which is
-        ``loop.subprocess_shell`` — ``/bin/sh``. Commands go through ``run``,
-        which is a persistent ``bash`` (``LocalSession``). ``$0`` is asserted
-        rather than ``$BASH_VERSION`` deliberately: it names the shell each path
-        INVOKES, which is fixed by otto's own code, so this states the split on
-        a machine whose ``/bin/sh`` happens to be bash too — where a
-        ``BASH_VERSION`` comparison would pass by agreeing.
+        A resolver's probes go through ``exec``, which now rides a
+        ``LocalSession`` (``bash``), as commands through ``run`` do. It used
+        to be ``loop.subprocess_shell`` (``/bin/sh``), so a resolver on this
+        class would have described a shell the caller's commands do not run
+        in. ``$0`` is asserted rather than ``$BASH_VERSION`` deliberately: it
+        names the shell each path INVOKES, which is fixed by otto's own code.
+        What still keeps the path open is the elevation coupling the tests
+        around this one measure.
         """
         host = LocalHost(log=LogMode.QUIET)
         try:
@@ -666,16 +667,11 @@ class TestWhyTheseTwoPathsAreStillOpen:
             # `run` opens the persistent session; the fd watermark fixture fails
             # the test if it is left open.
             await host.close()
-        assert probe_shell == "/bin/sh"
-        assert command_shell == "bash"
-        assert probe_shell != command_shell, (
-            "a resolver on this class would describe the shell its probes ran in, which "
-            "is not the shell `run()` executes the caller's commands in"
-        )
+        assert (probe_shell, command_shell) == ("bash", "bash")
 
     @pytest.mark.asyncio
     async def test_a_round_in_a_non_bash_sh_denies_the_bash_this_class_declares(self) -> None:
-        """The consequence of that split, INJECTED rather than inherited.
+        """The consequence that split had, INJECTED rather than inherited.
 
         The runner answers the way a non-bash ``/bin/sh`` does, so this measures
         the outcome on any machine — including one whose ``/bin/sh`` IS bash,

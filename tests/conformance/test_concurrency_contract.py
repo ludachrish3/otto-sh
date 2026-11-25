@@ -29,7 +29,7 @@ _CALLS = 4
 """How many execs the contract gathers: enough that a line shared without turns interleaves."""
 
 
-@pytest.mark.entries("exec", "exec-shell")
+@pytest.mark.entries("exec")
 @pytest.mark.observable(
     "each of 4 concurrent execs' value against the token its `distinct_answer_template` printed"
 )
@@ -47,7 +47,7 @@ async def test_concurrent_execs_each_return_their_own_result(resolved_cell: Reso
     assert crossed(results, tokens) == []
 
 
-@pytest.mark.entries("exec", "exec-shell")
+@pytest.mark.entries("exec")
 @pytest.mark.positive_control("exec-concurrent")
 async def test_control_swapped_results_are_reported(resolved_cell: ResolvedCell) -> None:
     """Two answers handed to each other's callers are both reported.

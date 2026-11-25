@@ -55,14 +55,14 @@ does not compose the standing mode yet; the container's own `send` and
 | | Named session | `exec` |
 | --- | --- | --- |
 | Shell state | Persistent (per session) | Carried to no later command; on a `console` route, `exec` starts in a clean login shell ({ref}`by route <exec-frame-shell-state>`; routes are listed in {ref}`Command contracts <command-contracts>`) |
-| Setup cost | One connection, reused | New process per call |
+| Setup cost | One session, reused | Depends on the host ({ref}`host-exec-pool`) |
 | Use case | Multi-step workflows in parallel | One-off independent commands |
 
-Some hosts give `exec` no process of its own: over `telnet`, and over `ssh`
-when the call needs a shell (`expects=`, `sudo=True`, a user otto cannot log
-in as directly), otto types the command into a **pooled shell**, a shell
-session it keeps for `exec` beside the one `run` uses. Over `console`, `exec`
-is typed into the console's one shell, the one `run` uses. Which route a call
+Every `exec` is typed into a shell. Over `ssh`, `telnet` and on the local
+host that is a **pooled shell**, a shell session otto keeps for `exec` beside
+the one `run` uses (on ssh and the local host without a terminal unless the
+call needs one: {ref}`host-exec-on-sessions`). Over `console`, `exec` is typed
+into the console's one shell, the one `run` uses. Which route a call
 takes is on {doc}`../command-contracts/exec`.
 
 When otto types an `exec` into a shell, it wraps the command in an **exec
@@ -73,10 +73,8 @@ command's exit status that tells otto the command is over.
 #### What the command reads on stdin
 
 Without `expects=`, an `exec`'s command reads end of file on stdin, so a
-command that reads stdin does not wait for input. The ssh exec channel (the
-`ssh-channel` route of {doc}`../command-contracts/exec`) and local `exec`
-have no stdin to give; the exec frame redirects the command's
-stdin away from the terminal.
+command that reads stdin does not wait for input: the exec frame redirects
+the command's stdin away from the session's input.
 
 With `expects=`, the command's stdin is the terminal, since otto types its
 answers there.
@@ -129,12 +127,13 @@ has one keeps it. How such a command ends, times out or is stopped is on
 
 Where an `exec` starts, and what it can leave behind:
 
-- **The ssh exec channel and local `exec`** start a process of their own, from
-  the login's environment; nothing they change outlives them.
 - **A pooled shell** runs nothing but `exec`s, each in a subshell. Each one
   starts from the state the session was set up with (its handshake and any
   `session_setup` hook); no `run` touches it, and nothing an `exec` changes
-  reaches the next one.
+  reaches the next one. On ssh it is the user's login shell, so the login
+  profile has been read; on the local host it is `bash` with no profile,
+  opened for the call from the Python process's current directory and
+  environment.
 - **A console's `exec`** runs in a clean login shell that the console's one
   shell (the shell `run` uses) starts for it: `env -i` keeps only `HOME`,
   `TERM`, `USER`, `LOGNAME` and `PATH`, and sets `SHELL` to the program it
@@ -165,12 +164,12 @@ console's login shell starts with the login's own options, so the console
 shell's `set -e` is neither inherited nor changed.
 
 When an `exec` times out, has its password refused, or is cancelled, the
-frame's own end never ran. otto then types one line of its own once the shell
+frame's own end never ran. A pooled shell is then stopped and closed, never
+handed out again. On a console, otto types one line of its own once the shell
 is back, before the call returns or the cancellation reaches you: it puts the
 terminal record back and turns `set -e` on again where the shell had it. A
-session that cannot confirm that line is dead
-({ref}`closing-a-session`), and a pooled one is discarded instead of handed
-out again.
+session that cannot confirm that line is dead ({ref}`closing-a-session`).
+What the stop reaches is on {ref}`the results page <exec-stop-reach>`.
 
 The same holds for a `run` that times out or is cancelled: otto types its
 Ctrl-C before the call returns. If your own session has `set -e` on, that
@@ -248,11 +247,11 @@ that uses that session; any other is closed when it or its host is closed.
 On the local machine, which commands can leave a session given up is a
 {ref}`known gap of run <command-contract-run-known-gaps>`.
 
-Closing a local shell session sends TERM to its process group, and KILL to the
-group only if the shell outlives TERM. A process that ignores TERM survives
-when the shell exits on TERM; a process that left the group is never
-signalled; and if the shell had already exited before the close, nothing is
-signalled.
+Closing a local shell session sends TERM to its process group. Whatever is
+still in the group 5 seconds later, the shell or a process that ignores TERM,
+gets KILL; a group that is empty when the shell exits ends the close at once.
+A process that left the group (`setsid`) is never signalled, and if the shell
+had already exited before the close, nothing is signalled.
 
 The local shell runs in a session of its own, with no controlling terminal, so
 a Ctrl-C typed at otto's terminal does not reach the commands running in it.

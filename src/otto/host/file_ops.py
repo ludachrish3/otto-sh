@@ -280,9 +280,9 @@ class PosixFileOps(UserlandHost):
 
         A recursive ``put`` passes the *user* it was given, so the skeleton
         is owned by whoever lands the files. That inherits ``exec``'s own
-        rule: on a unix host whose term carries no SSH exec channel,
-        ``exec(user=...)`` is refused by name — loudly, before any
-        directory exists, rather than half-landing a tree.
+        rule: on ssh and telnet ``exec(user=...)`` runs on a pooled session
+        that is *user* (their own ssh login, or a switch to them); on a
+        console, on the default session switched to them.
         """
         if not paths:
             return Result(status=Status.Success)

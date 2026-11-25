@@ -210,14 +210,11 @@ Facts worth knowing before you read a failure:
   `tests/integration/busybox_bed/test_legacy_dropbear.py` is the wire proof
   that otto negotiates with it, with stock options and with a per-host
   [`kex_algs`](../../configuration/settings.md#legacy-ssh-servers). Over ssh
-  its `nc` transfer passes every conformance contract and `shell` passes all
-  but the full-stride progress contract: dropbear 2012.55 caps an SSH string
-  at 1400 bytes and a full chunk command is ~5.5 KB, declared a known
-  failure in the conformance bed
-  (`tests/conformance/test_progress_contract.py`, follow-up #437); the next
-  `make conformance-bed` records it as `measured-broken` in the support
-  matrix. The host key is minted once on
-  `test1` (`~/busybox-bed/dropbear_rsa_host_key`) and
+  its `nc` and `shell` transfers pass every conformance contract. dropbear
+  2012.55 caps an SSH string at 1400 bytes, but an `exec` types its command
+  into a session's channel rather than sending it as one exec-request
+  string, so a full ~5.5 KB chunk command never meets the cap. The host
+  key is minted once on `test1` (`~/busybox-bed/dropbear_rsa_host_key`) and
   kept across re-provisions. The daemon is not health-probed by
   `scripts/lab_health.py`, which routes hop-fronted guests to the telnet
   console probe by shape.

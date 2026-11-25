@@ -29,10 +29,11 @@ class ExecRoute(Enum):
     ``POOLED_SHELL`` and ``DEFAULT_SESSION`` type into a shell, so a command
     on them is line-edited where that shell has a terminal; the routes'
     records (:data:`~otto.host.session.EXEC_ROUTES`) declare that
-    ``line_budget`` limitation. The others type into no shell of otto's:
-    ``SSH_CHANNEL`` opens a bare pty-less channel, ``LOCAL_SUBPROCESS``
-    spawns a process, and ``CONTAINER`` hands the command to the parent host
-    as ``docker exec``.
+    ``line_budget`` limitation. ``CONTAINER`` types into no shell of otto's:
+    it hands the command to the parent host as ``docker exec``.
+    ``SSH_CHANNEL`` and ``LOCAL_SUBPROCESS`` remain members, with the code
+    behind them, but no ``exec`` takes either: every ssh, telnet and local
+    ``exec`` runs on ``POOLED_SHELL``.
 
     ``UNSUPPORTED`` and bare ``CONTAINER`` never appear as a
     :attr:`CommandResult.route <otto.result.CommandResult.route>` value: an
@@ -41,18 +42,21 @@ class ExecRoute(Enum):
     """
 
     SSH_CHANNEL = "ssh-channel"
-    """A bare ssh exec channel, no pty allocated."""
+    """A bare ssh exec channel, no pty allocated. No ``exec`` takes this route."""
 
     POOLED_SHELL = "pooled-shell"
-    """A pooled pty-backed shell session, for telnet or ANY host whose login is proxied."""
+    """The route of every ``exec`` on ssh, telnet and the local host, a pooled shell session.
+
+    The session reads a terminal or a plain pipe, as the host's plan
+    decides (``ExecPlan.plain``)."""
 
     DEFAULT_SESSION = "default-session"
     """The host's one default session, the one ``run`` uses: a ``console``
     term, which serves a single client, or an embedded target, whose console
-    has no stateless primitive."""
+    is its only session."""
 
     LOCAL_SUBPROCESS = "local-subprocess"
-    """A fresh local subprocess (``LocalHost``)."""
+    """A fresh local subprocess. No ``exec`` takes this route; ``LocalHost`` pools a shell."""
 
     CONTAINER = "container"
     """``docker exec`` dispatched through the parent host (``DockerContainerHost``)."""

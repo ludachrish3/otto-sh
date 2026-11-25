@@ -48,7 +48,7 @@ from tests.conformance._sample import cell_label
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.observable(
     "the value of a command issued with expects=, sudo=, user=, their combinations, a "
     "ShellCommand's own expects and log against the call's, and inside and after as_user(); "
@@ -93,7 +93,7 @@ def _twisted(arm: OptionArm) -> OptionArm:
     return dataclasses.replace(arm, expected=Answer(fresh_token()))
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.positive_control("exec-options")
 async def test_control_an_answer_otto_did_not_type_is_refused(resolved_cell: ResolvedCell) -> None:
     """The expects arm with another answer typed, or a refusal expected to answer, is refused.

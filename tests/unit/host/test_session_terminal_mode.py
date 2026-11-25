@@ -37,6 +37,40 @@ from otto.utils import wait_for_async
 from scripts.process_group import process_state
 
 
+async def _merged_as_a_server_forwards(
+    proc: asyncio.subprocess.Process, merged: asyncio.StreamReader
+) -> None:
+    """Feed *merged* from *proc*'s two pipes, stderr held until the next stdout chunk.
+
+    A server forwards a command's two pipes in the order it finds them, not
+    the order they were written. This picks the one order that is always
+    wrong for stderr written before stdout: what has arrived on stderr goes
+    out right after the next stdout chunk, and the rest at stdout's end.
+    """
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+    stdout, stderr = proc.stdout, proc.stderr
+    held = bytearray()
+
+    async def hold() -> None:
+        while chunk := await stderr.read(65536):
+            held.extend(chunk)
+
+    holding = asyncio.ensure_future(hold())
+    try:
+        while chunk := await stdout.read(65536):
+            merged.feed_data(chunk)
+            if held:
+                merged.feed_data(bytes(held))
+                held.clear()
+        await holding
+        if held:
+            merged.feed_data(bytes(held))
+    finally:
+        holding.cancel()
+        merged.feed_eof()
+
+
 class _PipeProcess:
     """An asyncssh process over a local ``bash`` that reads a pipe.
 
@@ -44,7 +78,13 @@ class _PipeProcess:
     (what OpenSSH does), or the shell alone (what dropbear does).
     """
 
-    def __init__(self, proc: asyncio.subprocess.Process, *, signals_group: bool) -> None:
+    def __init__(
+        self,
+        proc: asyncio.subprocess.Process,
+        *,
+        signals_group: bool,
+        stdout: "asyncio.StreamReader | None" = None,
+    ) -> None:
         self._proc = proc
         self._signals_group = signals_group
         self.written: list[bytes] = []
@@ -52,7 +92,7 @@ class _PipeProcess:
         assert proc.stdin is not None
         assert proc.stdout is not None
         self.stdin = SimpleNamespace(write=self._write)
-        self.stdout = proc.stdout
+        self.stdout = proc.stdout if stdout is None else stdout
 
     def _write(self, data: bytes) -> None:
         self.written.append(data)
@@ -77,9 +117,13 @@ class _PipeConnection:
 
     ``create_process`` hands its command to ``sh``, as a server hands it to
     the user's shell, with ``SHELL`` naming bash and an empty *home* (no
-    profile of the developer's is read). ``run`` runs its command the same
-    way, on a channel of its own; with *runs* false it fails, as a
-    connection that can open no second channel does.
+    profile of the developer's is read). Asked for no pty, the command gets
+    two pipes, as it does from a server, and its stderr is merged into the
+    stream read the way a server may forward it: only after the next stdout
+    chunk (see :func:`_merged_as_a_server_forwards`). A pty is one stream.
+    ``run`` runs its command the same way, on a channel of its own; with
+    *runs* false it fails, as a connection that can open no second channel
+    does.
     """
 
     def __init__(self, home: Path, *, signals_group: bool = True, runs: bool = True) -> None:
@@ -91,22 +135,30 @@ class _PipeConnection:
         self.ran: list[str] = []
         self.processes: list[_PipeProcess] = []
         self._children: list[asyncio.subprocess.Process] = []
+        self._forwarders: list[asyncio.Future[None]] = []
 
     async def create_process(self, *args: Any, **kwargs: Any) -> _PipeProcess:
         self.opened.append(args)
         self.asked.append(kwargs)
+        two_pipes = kwargs.get("request_pty") is False
         proc = await asyncio.create_subprocess_exec(
             "sh",
             "-c",
             *args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            stderr=asyncio.subprocess.PIPE if two_pipes else asyncio.subprocess.STDOUT,
             start_new_session=True,
             env=self._env,
         )
         self._children.append(proc)
-        process = _PipeProcess(proc, signals_group=self._signals_group)
+        merged = None
+        if two_pipes:
+            merged = asyncio.StreamReader()
+            self._forwarders.append(
+                asyncio.ensure_future(_merged_as_a_server_forwards(proc, merged))
+            )
+        process = _PipeProcess(proc, signals_group=self._signals_group, stdout=merged)
         self.processes.append(process)
         return process
 
@@ -121,6 +173,10 @@ class _PipeConnection:
         return SimpleNamespace(exit_status=await proc.wait())
 
     async def reap(self) -> None:
+        # The forwarders first: communicate() below reads the pipes they read.
+        for forwarder in self._forwarders:
+            forwarder.cancel()
+        await asyncio.gather(*self._forwarders, return_exceptions=True)
         for proc in self._children:
             # The whole group, the shell gone or not: a command that outlived
             # its shell is what some of these tests leave behind.
@@ -167,7 +223,7 @@ async def test_a_session_without_a_terminal_asks_for_no_pty_and_a_marked_login_s
     assert "term_type" not in openssh.asked[0]
     assert openssh.asked[0]["request_pty"] is False
     (command,) = openssh.opened[0]
-    token = re.fullmatch(r"OTTO_SESSION=([0-9a-f]{32}) exec (.*) -l", command)
+    token = re.fullmatch(r"OTTO_SESSION=([0-9a-f]{32}) exec (.*) -l 2>&1", command)
     assert token is not None
     assert token[2] == SESSION_SHELL
     assert session.reads_a_terminal is False

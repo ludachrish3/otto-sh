@@ -1,14 +1,13 @@
 """What every host owes a caller whose command is killed by a signal: 128+N, and a usable host.
 
-A shell reports a command that signal ``N`` killed as ``128 + N``; a process
-route learns the same death as asyncio's ``-N``, or (on the ssh channel) as
-no exit status at all. The promise is the shell's number on every route, so a
-caller reading ``retcode`` cannot tell which route ran the command.
+A shell reports a command that signal ``N`` killed as ``128 + N``. The promise
+is the shell's number on every route, so a caller reading ``retcode`` cannot
+tell which route ran the command.
 
 The stimulus varies by entry, the asserted property does not: ``run`` types
 the command into a shell, so the killed process must be a child of it
-(``sh -c '…'``), while ``exec`` hands the command to a process of its own, so
-an ``exec`` makes the killed process that process itself.
+(``sh -c '…'``), while the exec frame runs an ``exec`` in a subshell of its
+own, so an ``exec`` makes the killed process that subshell itself.
 
 WHAT THIS CONTRACT IS ABOUT, declared rather than assumed: see
 :func:`applicable_cell`.
@@ -37,7 +36,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     return resolved.vocabulary.signal_kill_command is not None
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.observable(
     "retcode of the signal stimulus, then whether `{words.single_line_command}` answers "
     "on the same host"
@@ -64,7 +63,7 @@ async def test_a_command_killed_by_a_signal_reports_128_plus_n(resolved_cell: Re
 
 
 @pytest.mark.positive_control("exec-signal-exit")
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 async def test_control_143_is_reported_as_143_and_an_ordinary_command_as_success(
     resolved_cell: ResolvedCell,
 ) -> None:

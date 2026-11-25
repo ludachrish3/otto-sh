@@ -204,8 +204,8 @@ options:
   ```
 
 - **Run stateless commands** with `exec` (`await dut.exec("ip -s link")`),
-  as in {doc}`../extend/async-patterns`. Each call runs on a session the host doesn't
-  keep, so no `cd` or exported variable carries over. A host with only a
+  as in {doc}`../extend/async-patterns`. Each call runs on a shell session apart
+  from `run`'s, so no `cd` or exported variable carries over. A host with only a
   single console is the exception: its `exec` shares that console. On a
   Zephyr board it shares the shell's state too; on a console whose frame is
   bash or ash it runs in a clean login shell, not from what `run` left there,

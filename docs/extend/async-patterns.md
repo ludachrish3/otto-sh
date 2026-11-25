@@ -51,8 +51,9 @@ aggregate status plus individual per-command results:
 ## Running commands concurrently with asyncio.gather
 
 Use {meth}`~otto.host.host.Host.exec` for concurrent-safe execution.
-Unlike `run`, each `exec` call opens an independent process and does
-not share state:
+Unlike `run`, each `exec` call runs on a pooled session no other call holds
+({ref}`host-exec-pool`), and shares no shell state with the calls before it
+({ref}`what the exec frame isolates <exec-frame-shell-state>`):
 
 ```{doctest}
 >>> import asyncio
@@ -73,7 +74,7 @@ not share state:
 
 | | `run` | `exec` |
 | --- | --- | --- |
-| Session | Persistent (state carries over) | Fresh process per call |
+| Session | Persistent (state carries over) | A pooled session of its own; no state carries over |
 | Concurrent-safe | No (shares one shell) | Yes |
 | Use case | Sequential steps that depend on shell state | Independent commands in parallel |
 

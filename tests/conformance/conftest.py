@@ -203,15 +203,12 @@ _DOMAIN_HOOK = "applicable_cell"
 #: drawn cell is EXPECTED TO FAIL, returning the reason or None. Applied as
 #: ``xfail(strict=True)``, which is an ASSERTION and not a suppression: the
 #: item must fail, an unexpected pass (``XPASS``) is a hard error, and the
-#: marker's own removal is what a fixed product forces. ONE MODULE DECLARES ONE
-#: TODAY: ``test_progress_contract.py``, over the bed's ``bb1350:ssh:shell``
-#: cell (dropbear 2012.55's 1400-byte string cap; see that module's banner).
-#: ``test_transfer_contract.py`` did until 2026-08-25, for a root-caused
-#: defect in otto's ``nc`` listener spelling on BusyBox, and the universal
-#: ``nc -l -p PORT`` spelling repaid it -- which is the removal this strictness
-#: exists to force. The mechanism stays for the next declaration, and the
-#: convention with it: the whole decision lives in the declaring module under
-#: its own banner, so that reversing it is a single-file change.
+#: marker's own removal is what a fixed product forces. The hook is optional:
+#: a module without it is marked nowhere. ONE MODULE DECLARES ONE TODAY:
+#: ``test_input_contract.py``, over the bed's BusyBox console cell (a typed
+#: TAB arrives with a Ctrl-V byte before it, #1321). The whole decision lives
+#: in the declaring module under its own banner, so that reversing it is a
+#: single-file change.
 _XFAIL_HOOK = "expected_failure"
 
 

@@ -266,15 +266,17 @@ class TestNcPutListenerWait:
             f"wait must come before connect; order={order}"
         )
 
+    @pytest.mark.parametrize("term", ["telnet", "ssh"])
     @pytest.mark.asyncio
-    async def test_telnet_control_run_serializes_onto_pool(self):
-        """On telnet, concurrent control-plane ops must not overlap.
+    async def test_control_run_serializes_onto_pool(self, term):
+        """Concurrent control-plane ops must not overlap, on either term.
 
         ``_control_run`` routes every control op (port-find, listener probe,
         strategy probe, file-size stats) through ``_exec_cmd`` — the same
         exec path the listeners use. ``_control_lock`` serializes
         them so they reuse one warm pooled session instead of fanning out
-        and each paying a cold telnet auth handshake.
+        and each opening a session of its own: a login handshake on telnet,
+        a login shell on ssh.
         """
         in_flight = 0
         max_in_flight = 0
@@ -288,37 +290,14 @@ class TestNcPutListenerWait:
             return _ok()
 
         exec_cmd = AsyncMock(side_effect=tracking_exec)
-        ft = _make_ft(exec_cmd, term="telnet")
+        ft = _make_ft(exec_cmd, term=term)
 
         await asyncio.gather(*(ft._control_run("probe") for _ in range(5)))
 
         assert exec_cmd.await_count == 5, "every control op must route through _exec_cmd"
         assert max_in_flight == 1, (
-            f"telnet control ops must be serialized, saw {max_in_flight} in flight"
+            f"{term} control ops must be serialized, saw {max_in_flight} in flight"
         )
-
-    @pytest.mark.asyncio
-    async def test_ssh_control_run_does_not_serialize(self):
-        """On SSH, control ops run directly with no lock — exec channels over
-        the live connection are cheap and concurrency-safe."""
-        in_flight = 0
-        max_in_flight = 0
-
-        async def tracking_exec(cmd: str, *args, **kwargs) -> CommandResult:
-            nonlocal in_flight, max_in_flight
-            in_flight += 1
-            max_in_flight = max(max_in_flight, in_flight)
-            await asyncio.sleep(0)
-            in_flight -= 1
-            return _ok()
-
-        exec_cmd = AsyncMock(side_effect=tracking_exec)
-        ft = _make_ft(exec_cmd, term="ssh")
-
-        await asyncio.gather(*(ft._control_run("probe") for _ in range(5)))
-
-        assert exec_cmd.await_count == 5
-        assert max_in_flight > 1, "SSH control ops should not be serialized"
 
     @pytest.mark.asyncio
     async def test_non_tunnel_survives_slow_listener_startup(self, tmp_path: Path):

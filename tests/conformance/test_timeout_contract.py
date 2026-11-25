@@ -115,7 +115,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     return resolved.vocabulary.long_running_command is not None
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.observable(
     "CommandResult.timed_out, .status, .retcode and .exit_code for "
     "`{words.long_running_command}` ({words.long_running_seconds}s) run under a shorter "
@@ -226,7 +226,7 @@ async def test_a_command_exceeding_its_budget_fails_the_documented_way(
 # stimulus that can outlive a budget in the first place.
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.positive_control("timeout")
 async def test_control_a_command_inside_its_budget_is_not_reported_as_timed_out(
     resolved_cell: ResolvedCell,

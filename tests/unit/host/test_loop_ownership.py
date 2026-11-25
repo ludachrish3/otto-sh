@@ -5,6 +5,7 @@ import dataclasses
 import logging
 import re
 import time
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -14,6 +15,7 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.local_host import LocalHost
 from otto.host.loop_owner import LOOP_LABELS, HostLoopError, loop_label
 from otto.host.options import SshOptions
+from otto.utils import Status
 from tests._fixtures.clock import LONG_DEADLINE, stepped_loop_clock
 from tests._fixtures.registry import registered_ids
 from tests.conftest import make_host
@@ -617,26 +619,27 @@ def test_a_host_closed_on_one_loop_serves_contending_callers_on_the_next(ctx, mo
     asyncio.run(phase())  # raised "bound to a different event loop" before the fix
 
 
-def test_a_containers_exec_through_its_parent_contends_safely_on_the_next_loop(ctx, monkeypatch):
+def test_a_containers_exec_through_its_parent_contends_safely_on_the_next_loop(
+    ctx, monkeypatch, tmp_path
+):
     """The docker quickstart's shape: a container execs through its parent while
     the parent runs a command of its own, both racing for the parent's first SSH
     connection, on one loop and then, after both hosts are closed, on the next."""
     from otto.host import connections
-    from otto.host.session import SessionManager
-    from otto.result import CommandResult
-    from otto.utils import Status
+    from tests.unit.host.test_terminal_switch import _EitherConnection
+
+    class _ClosablePipe(_EitherConnection, _ClosableConn):
+        """A connection over local shells that ``ConnectionManager.close`` can close."""
+
+    dialled: list[_ClosablePipe] = []
 
     async def connect(*_args, **_kwargs):
         await asyncio.sleep(0)  # yield while holding the lock, so the other caller waits on it
-        return _ClosableConn()
-
-    async def exec_on(self, conn, cmd, timeout=0.0, log=None, exec_input=None):
-        return CommandResult(
-            status=Status.Success, value="", command=cmd, retcode=0, route="ssh-channel"
-        )
+        dialled.append(_ClosablePipe(tmp_path))
+        return dialled[-1]
 
     monkeypatch.setattr(connections, "connect_and_describe", connect)
-    monkeypatch.setattr(SessionManager, "exec_on", exec_on)
+    monkeypatch.setattr(DockerContainerHost, "_docker_exec", AsyncMock(return_value="true"))
     parent = make_host("test1")
     container = DockerContainerHost(
         parent=parent,
@@ -648,10 +651,14 @@ def test_a_containers_exec_through_its_parent_contends_safely_on_the_next_loop(c
 
     async def phase() -> None:
         try:
-            await asyncio.gather(container.exec("true"), parent.exec("true"))
+            results = await asyncio.gather(container.exec("true"), parent.exec("true"))
+            assert [r.status for r in results] == [Status.Success, Status.Success]
         finally:
             await container.close()  # before its parent, as a loop's sweep orders them
             await parent.close()
+            for conn in dialled:
+                await conn.reap()
+            dialled.clear()
 
     asyncio.run(phase())
     asyncio.run(phase())  # raised "bound to a different event loop" before the fix

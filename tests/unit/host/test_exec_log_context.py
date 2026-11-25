@@ -24,8 +24,13 @@ from otto.host.unix_host import UnixHost
 from otto.logger.mode import ExecLogContext, LogMode
 from otto.utils import wait_for_async
 from tests.conformance._log import _watching_records, output_record, records_containing
-from tests.unit.host._exec_log import SU_LOGIN, all_records, records_of
-from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_host
+from tests.unit.host._exec_log import (
+    SU_LOGIN,
+    all_records,
+    close_ssh_parent,
+    records_of,
+    ssh_parent_over_shells,
+)
 from tests.unit.host.conftest import unix_host_over_scripted
 from tests.unit.host.test_session_exec_pooled import (
     _fast_resync_settle,  # noqa: F401 — the fixture, used by name
@@ -187,18 +192,28 @@ def test_the_resolver_answers_the_context_s_for_a_delegated_call() -> None:
             )
 
 
+_HELD = 'echo outtok-a; while [ ! -e "$HOME/release" ]; do sleep 0.05; done; echo outtok-b'
+"""A ``sh`` body that prints one line, then the second once the test creates ``$HOME/release``."""
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("log", "ctx_mode"), _OPPOSED)
 @pytest.mark.parametrize("as_user", [False, True], ids=["login", "direct-user"])
-async def test_the_ssh_channel_logs_as_the_context_says_live(
-    log: LogMode, ctx_mode: LogMode, as_user: bool, monkeypatch
+async def test_an_ssh_exec_logs_as_the_context_says_live(
+    log: LogMode, ctx_mode: LogMode, as_user: bool, tmp_path
 ) -> None:
-    proc = FakeChannelProcess(["outtok-a\n", "outtok-b\n"], hold_from=1)
-    conn = FakeConn(proc)
-    parent = channel_host(conn)
-    parent.log = LogMode.NORMAL
-    ssh_as = AsyncMock(return_value=conn)
-    monkeypatch.setattr(parent._connections, "ssh_as", ssh_as, raising=False)
+    from tests.unit.host.test_terminal_switch import _EitherConnection
+
+    parent, dial = ssh_parent_over_shells(
+        UnixHost,
+        tmp_path,
+        {"wire-ssh": _HELD},
+        creds=[Cred(login="u", password="p"), Cred(login="postgres", password="pw")],
+    )
+    own = _EitherConnection(tmp_path)
+    ssh_as = AsyncMock(return_value=own)
+    parent._connections.ssh_as = ssh_as  # ty: ignore[invalid-assignment]
+    user = "postgres" if as_user else None
     container = LocalHost()
     first_line = asyncio.Event()
 
@@ -207,38 +222,49 @@ async def test_the_ssh_channel_logs_as_the_context_says_live(
             first_line.set()
 
     ctx = _recording_ctx(container, ctx_mode)
-    with all_records() as records, _watching_records(line_seen, level=logging.DEBUG):
-        call = asyncio.create_task(
-            parent._exec_one(
-                "wire-ssh",
-                10.0,
-                log=log,
-                user="postgres" if as_user else None,
-                exec_input=ExecInput(stdin_eof=True, exec_log=ctx),
-            )
-        )
-        try:
-            if ctx_mode is not LogMode.NEVER:
-                # "a" is relayed while "b" is still held back: the lines are live.
-                await wait_for_async(
-                    first_line.is_set, timeout=10, interval=0.01, on_timeout="no line was relayed"
+    try:
+        # The session is opened first, so the records below are the call's alone.
+        await parent.exec("true", user=user, log=LogMode.NEVER)
+        with all_records() as records, _watching_records(line_seen, level=logging.DEBUG):
+            call = asyncio.create_task(
+                parent._exec_one(
+                    "wire-ssh",
+                    10.0,
+                    log=log,
+                    user=user,
+                    exec_input=ExecInput(stdin_eof=True, exec_log=ctx),
                 )
-                assert not call.done()
-                assert [
-                    o.text
-                    for r in records_of(records, container)
-                    if (o := output_record(r, container))
-                ]
-                assert "outtok-b" not in "".join(str(getattr(r, "relayed", "")) for r in records)
-            proc.release.set()
-            result = await call
-        finally:
-            # A failed check above must not leave the call running.
-            proc.release.set()
-            call.cancel()
-            await asyncio.gather(call, return_exceptions=True)
+            )
+            try:
+                if ctx_mode is not LogMode.NEVER:
+                    # "a" is relayed while "b" is still held back: the lines are live.
+                    await wait_for_async(
+                        first_line.is_set,
+                        timeout=10,
+                        interval=0.01,
+                        on_timeout="no line was relayed",
+                    )
+                    assert not call.done()
+                    assert [
+                        o.text
+                        for r in records_of(records, container)
+                        if (o := output_record(r, container))
+                    ]
+                    assert "outtok-b" not in "".join(
+                        str(getattr(r, "relayed", "")) for r in records
+                    )
+                (tmp_path / "release").touch()
+                result = await call
+            finally:
+                # A failed check above must not leave the call running.
+                (tmp_path / "release").touch()
+                call.cancel()
+                await asyncio.gather(call, return_exceptions=True)
+    finally:
+        await close_ssh_parent(parent, dial)
+        await own.reap()
     assert (result.route, result.retcode, result.value) == (
-        ExecRoute.SSH_CHANNEL.value,
+        ExecRoute.POOLED_SHELL.value,
         0,
         "outtok-a\nouttok-b",
     )
@@ -325,7 +351,7 @@ async def test_a_never_context_leaves_no_record_of_command_or_output_on_a_real_f
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("log", "ctx_mode"), _OPPOSED)
-async def test_a_local_subprocess_logs_as_the_context_says(log: LogMode, ctx_mode: LogMode) -> None:
+async def test_a_local_exec_logs_as_the_context_says(log: LogMode, ctx_mode: LogMode) -> None:
     parent = LocalHost()
     parent.log = LogMode.NORMAL
     container = LocalHost()
@@ -336,7 +362,7 @@ async def test_a_local_subprocess_logs_as_the_context_says(log: LogMode, ctx_mod
             wire, 10.0, log=log, exec_input=ExecInput(stdin_eof=True, exec_log=ctx)
         )
     assert (result.route, result.retcode, result.value) == (
-        ExecRoute.LOCAL_SUBPROCESS.value,
+        ExecRoute.POOLED_SHELL.value,
         0,
         "outtok-local",
     )
@@ -421,32 +447,35 @@ async def test_a_pooled_retry_logs_on_the_container_what_an_ordinary_call_logs()
     assert not [t for t in _trace(records, parent) if t[2] == "OUT"]
 
 
-_BOUND = 60.0
-"""The drain's bound, never reached: the channel's read after its two lines raises its expiry.
+_BOUND = 2.0
+"""The timed-out call's bound: its command prints its two lines at once, then never ends.
 
-``asyncio.wait_for`` re-raises the drain's own ``asyncio.TimeoutError`` as
-it raises its own at a real expiry, and the drain stops its line log on
-either, so the call takes the timed-out path with nothing waited for.
+The session is warm, so the bound times the command alone, and is long
+beside the two lines' relay.
 """
 
 
 @pytest.mark.asyncio
-async def test_a_timed_out_call_logs_its_lines_once_on_the_container_as_an_ordinary_call() -> None:
-    def channel_parent() -> "UnixHost":
-        proc = FakeChannelProcess(
-            ["tl-1\n", "tl-2\n"], eof=False, then_raise=asyncio.TimeoutError()
-        )
-        host = channel_host(FakeConn(proc))
-        host.log = LogMode.NORMAL
-        return host
-
-    ordinary, parent, container = channel_parent(), channel_parent(), LocalHost()
+async def test_a_timed_out_call_logs_its_lines_once_on_the_container_as_an_ordinary_call(
+    tmp_path,
+) -> None:
+    script = {"wire-t": "echo tl-1; echo tl-2; exec sleep 3600"}
+    ordinary, ordinary_dial = ssh_parent_over_shells(UnixHost, tmp_path / "o", script)
+    parent, dial = ssh_parent_over_shells(UnixHost, tmp_path / "p", script)
+    container = LocalHost()
     ctx = _recording_ctx(container, LogMode.NORMAL)
-    with all_records() as records:
-        plain = await ordinary._exec_one("wire-t", _BOUND, exec_input=ExecInput(stdin_eof=True))
-        result = await parent._exec_one(
-            "wire-t", _BOUND, exec_input=ExecInput(stdin_eof=True, exec_log=ctx)
-        )
+    try:
+        # Each session is opened first, so the bound below times the command alone.
+        await ordinary.exec("true", log=LogMode.NEVER)
+        await parent.exec("true", log=LogMode.NEVER)
+        with all_records() as records:
+            plain = await ordinary._exec_one("wire-t", _BOUND, exec_input=ExecInput(stdin_eof=True))
+            result = await parent._exec_one(
+                "wire-t", _BOUND, exec_input=ExecInput(stdin_eof=True, exec_log=ctx)
+            )
+    finally:
+        await close_ssh_parent(ordinary, ordinary_dial)
+        await close_ssh_parent(parent, dial)
     assert (plain.timed_out, result.timed_out) == (True, True)
     assert result.value.startswith("Command timed out after"), result.value
     assert [

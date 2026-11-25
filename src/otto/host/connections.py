@@ -1059,7 +1059,7 @@ class ConnectionManager:
         """Whether *user* can authenticate an SSH transport of their own.
 
         The question ``_direct_cred_for`` answers by raising. A caller
-        choosing between a raw channel authenticated as *user* and a
+        choosing between a session over *user*'s own ssh login and a
         switched shell needs the answer without the exception: a *user* no
         credential entry names has no ssh login of their own, so the answer
         is ``False`` and the caller switches to them (``su``), as

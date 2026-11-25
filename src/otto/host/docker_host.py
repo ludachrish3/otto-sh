@@ -35,7 +35,7 @@ from dataclasses import (
     replace,
 )
 from pathlib import Path
-from typing import Annotated, Literal, TypeGuard
+from typing import Annotated, Literal
 
 from typing_extensions import final, override
 
@@ -64,6 +64,7 @@ from .host import (
     _validate_user,
     is_dry_run,
     refuse_declined_fact,
+    runs_stock_exec,
 )
 from .identity import ROOT_LOGIN
 from .mount import Mount, mount_for, mount_for_parent, translate
@@ -141,17 +142,6 @@ def _caller_pairs(
 def _host_label(host: object) -> str:
     """Name *host* in a message: its ``name``, else its type."""
     return str(getattr(host, "name", type(host).__name__))
-
-
-def _carries_exec_log(parent: "Host") -> "TypeGuard[BaseHost]":
-    """Whether *parent* can carry a delegated exec log context.
-
-    It must be an otto host whose public ``exec`` is otto's own: a
-    structural stand-in has no delegated entry, and a project override of
-    ``exec`` (one that refuses, audits or redirects commands) would be
-    bypassed by it. Either keeps the parent's public ``exec``.
-    """
-    return isinstance(parent, BaseHost) and type(parent).exec is BaseHost.exec
 
 
 # The private docker staging root on a parent
@@ -845,17 +835,15 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         * an ok status: the probe answered. Its first line is the id; no
           output is ``""``, and ``_ensure_running`` raises "no running
           container was found".
-        * ``Status.Failed``: the command RAN and exited non-zero (the ssh
-          exec channel, ``SessionManager.exec_on``; a pooled or default shell
-          session, ``ShellSession.run_cmd``; a local subprocess,
-          ``LocalHost._exec_subprocess``). The daemon is down, there is no
+        * ``Status.Failed``: the command RAN and exited non-zero (the
+          parent's pooled or default shell session, ``ShellSession.run_cmd``,
+          on which every parent ``exec`` runs). The daemon is down, there is no
           docker binary, or there is no permission on the socket:
           :class:`~otto.host.errors.ContainerNotRunningError` carrying the
           probe, its exit and Docker's own text (stderr is merged into it).
         * ``Status.Error`` (always the status when ``timed_out`` is set): the
           command never completed, from a timeout or a session lost
-          mid-command in the same three producers, or a local subprocess that
-          reported no return code: :class:`~otto.host.errors.HostUnreachableError`.
+          mid-command on that session: :class:`~otto.host.errors.HostUnreachableError`.
         * A transport the parent cannot open at all RAISES out of its
           ``exec`` (``OSError`` / ``ConnectionError``, the contract
           :func:`~otto.host.errors.exec_or_raise` is written against). It is
@@ -1074,7 +1062,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """See :meth:`~otto.host.host.BaseHost.exec`.
 
         On a container ``sudo`` is ``docker exec -u root`` — the parent's
-        exec channel has no pty to answer a ``sudo -S`` prompt on, and root
+        ``exec`` may run on a session without a terminal, with no pty to
+        answer a ``sudo -S`` prompt on, and root
         in the container is what elevation means there. ``user`` and
         ``sudo`` together refuse: both choose the ``-u``.
 
@@ -1216,7 +1205,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             return self._dry_run_result(cmd, log)
         pairs = _caller_pairs(expects, self.name)
         wrapped = await self._docker_exec(cmd, user=self._effective_user(user))
-        if _carries_exec_log(self.parent):
+        if runs_stock_exec(self.parent):
             exec_log = ExecLogContext(
                 command=cmd,
                 mode=self._exec_log_mode(log),

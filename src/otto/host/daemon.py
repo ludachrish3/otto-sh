@@ -102,12 +102,35 @@ def launch_command(sentinel: str, argv: list[str]) -> str:
     systemd = (
         f"timeout {_SYSTEMD_RUN_PROBE_TIMEOUT} systemd-run --user --collect --quiet -- {tagged}"
     )
-    setsid = f"setsid {tagged} </dev/null >/dev/null 2>&1 &"
+    # The fallback daemon would otherwise inherit the session mark of a shell
+    # without a terminal, and a later timed-out command on that session would
+    # stop it with everything else the session started. ``systemd-run`` needs
+    # no such step: the user manager starts the unit with its own environment.
+    setsid = detached_command(tagged)
     body = (
         f"if command -v systemd-run >/dev/null 2>&1 && {linger} && {systemd} 2>/dev/null; "
         f"then :; else ( {setsid} ); fi"
     )
     return bash_script(body)
+
+
+def detached_command(command: str, *, prefix: str = "") -> str:
+    """Return the shell line that starts *command* so it outlives the session that types it.
+
+    The one spelling of otto's own detached launch (a daemon's fallback, a
+    link check's echo listener). The session mark is cleared first: a shell
+    session without a terminal exports it, and a later timed-out command on
+    that session stops every process started with it set, ``setsid`` or not.
+    ``setsid`` then leaves the session's process group, and the standard
+    streams are redirected, so nothing holds the session's pipes. *prefix*
+    is a command word put before ``setsid`` (``ip netns exec <ns> ``), its
+    trailing space included. The line ends in ``&``: it returns at once.
+    """
+    # Function-scope: the stop module loads the session's command frame and the
+    # host module, which a command that only imports these helpers should not pay for.
+    from .process_stop import SESSION_MARK
+
+    return f"unset {SESSION_MARK}; {prefix}setsid {command} </dev/null >/dev/null 2>&1 &"
 
 
 def refuse_if_launch_wrapper_needs_bash(host: Any, *, attempted: str = "") -> None:

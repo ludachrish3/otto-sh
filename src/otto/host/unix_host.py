@@ -98,6 +98,7 @@ from .host import (
     _ConsoleReset,
     _validate_user,
     is_dry_run,
+    runs_stock_exec,
 )
 from .interact import run_ssh_login, run_telnet_login
 from .login_proxy import LoginProxyError, cred_for, resolve_chain
@@ -629,6 +630,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     userland=self._userland(),
                     get_local_ip=lambda: self._get_local_ip(),  # noqa: PLW0108 — late-bind self for monkeypatching
                     exec_cmd=exec_cmd,
+                    # Only for otto's own `exec`: a project override sees
+                    # the listener through `exec_cmd` like every other command.
+                    spawn_cmd=(
+                        (lambda cmd, **kw: self._exec_spawned(cmd, user=user, **kw))
+                        if runs_stock_exec(self)
+                        else None
+                    ),
                     # Asked of `_exec_plan`, the plan `exec_cmd`'s `exec`
                     # dispatches, with the same effective user: `user=None`
                     # is an enclosing `as_user()`'s identity on both, read
@@ -638,13 +646,19 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     # without a direct cred, rides the pooled shell on ssh
                     # too), and the framing it subtracts is the session
                     # manager's frame's.
-                    exec_line_room=lambda cmd: self._session_mgr.line_room(
-                        route=self._exec_plan(user=user, needs_shell=False).route, cmd=cmd
-                    ),
+                    exec_line_room=lambda cmd: self._exec_line_room(user=user, cmd=cmd),
                     max_filename_len=self.max_filename_len,
                 ),
             ),
         )
+
+    def _exec_line_room(self, *, user: str | None, cmd: str) -> int | None:
+        """Room a transfer's *cmd* line has on the plan its ``exec`` as *user* would take.
+
+        One plan, read once: its route and its session mode both decide.
+        """
+        plan = self._exec_plan(user=user, needs_shell=False)
+        return self._session_mgr.line_room(route=plan.route, cmd=cmd, plain=plan.plain)
 
     def _refuse_console_transfer(self, user: "str | None") -> None:
         """Refuse a console-term transfer that would need a second session.
@@ -995,32 +1009,27 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     @override
     def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
-        """Plan one ``exec`` call as *user*: which route, and on whose connection.
+        """Plan one ``exec`` call as *user*: which route, and which session mode.
 
         Synchronous and free of I/O, so the transfer line budget can ask it
         (through ``BaseHost._exec_plan``, which resolves *user* first) without
-        running anything; :meth:`_run_plan` runs the answer. The conditions,
-        in the order they are read:
+        running anything; :meth:`_run_plan` runs the answer.
 
-        1. A *user* with a DIRECT credential on an ``ssh`` term, on a call
-           that needs no shell, on a host whose own ``exec`` takes the raw
-           channel (no proxied login, no ``session_setup`` hook):
-           ``SSH_CHANNEL`` on that user's own connection
-           (:meth:`~otto.host.connections.ConnectionManager.ssh_as`), so the
-           command runs with their real credentials.
-        2. Any other *user* (one reachable only through proxy hops, any user
-           on telnet, a direct-credential user whose call needs a shell, or
-           one on a proxied or hooked host) needs a shell session opened for
-           them, so the call is planned as needing a shell: the pooled shell
-           opens one as them, over their own ssh login where they have one,
-           and sets it up as them
-           (:meth:`~otto.host.session.SessionManager.open_session`).
-        3. Everything else is the transport's answer,
-           :meth:`~otto.host.session.SessionManager.exec_route`: a
-           ``console`` term is ``DEFAULT_SESSION``; a proxied login, a
-           ``session_setup`` hook or a call that needs a shell is
-           ``POOLED_SHELL``; otherwise ``SSH_CHANNEL`` on ssh and
-           ``POOLED_SHELL`` on telnet.
+        The route is the transport's answer,
+        :meth:`~otto.host.session.SessionManager.exec_route`: a ``console``
+        term is ``DEFAULT_SESSION``, ssh and telnet ``POOLED_SHELL``. The
+        pooled session is opened FOR *user* (over their own ssh login where
+        they have a direct credential, else switched to them) and set up as
+        them (:meth:`~otto.host.session.SessionManager.open_session`).
+
+        The mode is decided here and nowhere else: the session has no
+        terminal (``ExecPlan.plain``) when the call needs no shell (no
+        ``terminal=True``, no prompt, no elevation), runs as the login or as a user
+        with a direct credential (no switch), and the manager can open a
+        session without a terminal at all (ssh, with no proxied login and no
+        ``session_setup`` hook:
+        :meth:`~otto.host.session.SessionManager.no_terminal_limitation`).
+        Anything else takes the transport's own mode, a terminal.
 
         What each route does for the caller (concurrency, shell state, how
         a console switches user) is :meth:`exec`'s and :meth:`_run_plan`'s to
@@ -1029,24 +1038,22 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         Args:
             user: The effective user of the call, or ``None`` for the login
                 target.
-            needs_shell: The call needs a shell a raw channel cannot be
-                (*expects*, *sudo*).
+            needs_shell: The call needs a shell with a terminal (*expects*,
+                *sudo*, ``terminal=True``).
 
         Returns:
             The :class:`~otto.host.session.ExecPlan` :meth:`_run_plan` runs.
         """
-        if (
-            user is not None
+        mgr = self._live_session_mgr()
+        route = mgr.exec_route(needs_shell=needs_shell or user is not None)
+        plain = (
+            route is ExecRoute.POOLED_SHELL
             and not needs_shell
-            and self._live_session_mgr().can_ssh_as(user=user)
-            and self._live_session_mgr().exec_route(needs_shell=False) is ExecRoute.SSH_CHANNEL
-        ):
-            return ExecPlan(route=ExecRoute.SSH_CHANNEL, as_user=user)
-        # A user without a direct cred, or on a host whose exec is a shell,
-        # needs a shell session opened for them, and so does any user whose
-        # call needs a shell anyway.
-        route = self._live_session_mgr().exec_route(needs_shell=needs_shell or user is not None)
-        return ExecPlan(route=route)
+            and (user is None or mgr.can_ssh_as(user=user))
+            and mgr._wants_plain(False)  # noqa: SLF001 — the manager's own answer: its sessions are terminals
+            and mgr.no_terminal_limitation() is None
+        )
+        return ExecPlan(route=route, plain=plain)
 
     @override
     async def _run_plan(
@@ -1083,6 +1090,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             user=user,
             expects=expects,
             exec_input=exec_input,
+            plain=plan.plain,
         )
 
     @override

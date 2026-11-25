@@ -107,8 +107,15 @@ class ResolvedCell:
 
     entry: str = ""
     """How a command reaches this cell's host: ``""`` for an entry-less cell
-    (every contract not marked ``@pytest.mark.entries``), else ``run``,
-    ``exec`` or ``exec-shell`` (``tests/conformance/_entry.py``)."""
+    (every contract not marked ``@pytest.mark.entries``), else ``run`` or
+    ``exec`` (``tests/conformance/_entry.py``)."""
+
+    hooked: bool = False
+    """Whether this cell's host is the one :attr:`open_shell_host` opens: the
+    HOOKED-SSH cell kind (``tests/conformance/_entry.py``, :func:`space_for`).
+    Its ``exec`` takes a pooled session WITH a terminal where the same cell's
+    plain host takes one without, and its sessions carry the marking hook's
+    mark, so a contract can prove the hook ran as the user a session is for."""
 
     family: str = ""
     """``"unix"``, ``"embedded"`` or ``"local"``: the host family the venue
@@ -154,6 +161,8 @@ class ResolvedCell:
     ``BED_SWITCH_USER_MAY_SUDO``; the hermetic stand-in's ``sudo`` lets anyone)."""
 
     open_shell_host: "Callable[[], AbstractAsyncContextManager[BaseHost]] | None" = None
-    """The same host as :attr:`open_host`, built with a registered no-op
-    ``session_setup`` so ``exec`` is forced onto the pooled shell. Set by both
-    venues for ``ssh`` cells without a proxied login; ``None`` elsewhere."""
+    """The same host as :attr:`open_host`, built with a registered marking
+    ``session_setup`` hook, which sends every ``exec`` to a pooled session
+    with a terminal. Set by both venues for ``ssh`` cells without a proxied
+    login (the one shape whose ``exec`` otherwise takes a session without a
+    terminal); ``None`` elsewhere. A cell :attr:`hooked` is opened by it."""

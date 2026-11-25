@@ -61,7 +61,8 @@ your own is {doc}`../../extend/cli-exposed-verbs`.
 
 The host API splits between the CLI's `exec` and the Python-only `run`:
 
-- **`exec`** — one command on a session the host does not keep ({doc}`exec`).
+- **`exec`** — one command on a shell session apart from `run`'s, whose
+  changes reach no later command ({doc}`exec`).
   `run`, the persistent-session verb, is Python-only: a CLI invocation ends,
   so a session it kept would end with it.
 - **`put`** / **`get`** — files up and down ({doc}`put`, {doc}`get`).

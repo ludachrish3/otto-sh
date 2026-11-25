@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from ..check.clock import PROBE_TIMEOUT_S, SOCAT_CONNECT_S, parse_elapsed_ms
+from ..host.daemon import detached_command
 from ..host.shell_quote import bash_script, shell_operand, socat_host
 
 __all__ = [
@@ -194,6 +195,9 @@ def listener_command(
 ) -> str:
     """Detached echo listener on *port*, tagged so teardown can find it via ``pkill -f``.
 
+    Started through :func:`~otto.host.daemon.detached_command`, so a later
+    timed-out command on the session that started it does not stop it.
+
     *bind* is the one address the listener accepts on; ``None`` takes every
     address. The sandbox's listeners live in a private namespace and take
     every address, while a live check's bind only the far endpoint's address
@@ -217,7 +221,7 @@ def listener_command(
         where = f",bind={socat_host(bind)}" if bind else ""
         listen = shlex.quote(f"TCP-LISTEN:{port}{where},fork,reuseaddr")
         body = f"exec -a {shlex.quote(tag)} socat {listen} PIPE"
-    return f"{prefix}setsid {bash_script(body)} >/dev/null 2>&1 < /dev/null &"
+    return detached_command(bash_script(body), prefix=prefix)
 
 
 _PY_CLOCK = (

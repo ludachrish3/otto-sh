@@ -13,6 +13,9 @@ from pathlib import Path
 import pytest
 
 from otto.check.fingerprint import one_command
+from otto.host.daemon import detached_command
+from otto.host.process_stop import SESSION_MARK
+from otto.host.shell_quote import bash_script
 from otto.link.probes import (
     PROBE_TIMEOUT_S,
     listener_command,
@@ -137,15 +140,19 @@ class TestCommands:
     @pytest.mark.parametrize("backend", ["python3", "socat"])
     def test_listener_is_detached_tagged_and_namespaced(self, backend: str) -> None:
         cmd = listener_command(backend, 5205, tag="otto-check-abc123", netns="otto-check-abc123")
-        assert cmd.startswith("ip netns exec otto-check-abc123 ")
+        # Otto's one detached launch: the session mark cleared, then setsid
+        # under the namespace, so a later stop of the session spares it.
+        assert cmd.startswith(f"unset {SESSION_MARK}; ip netns exec otto-check-abc123 setsid ")
+        assert cmd == detached_command(
+            bash_script(shlex.split(cmd)[9]), prefix="ip netns exec otto-check-abc123 "
+        )
         assert "otto-check-abc123" in cmd
         assert "5205" in cmd
-        assert cmd.rstrip().endswith("&")
 
     @pytest.mark.parametrize("backend", ["python3", "socat"])
     def test_listener_binds_the_address_it_is_given(self, backend: str) -> None:
         cmd = listener_command(backend, 5205, tag="otto-check-abc123", bind="10.10.202.12")
-        body = shlex.split(cmd)[3]
+        body = shlex.split(cmd)[5]
         if backend == "python3":
             program = shlex.split(body)[2]
             assert "s.bind(('10.10.202.12', 5205))" in program
@@ -155,7 +162,7 @@ class TestCommands:
     @pytest.mark.parametrize("backend", ["python3", "socat"])
     def test_a_sandbox_listener_takes_every_address(self, backend: str) -> None:
         cmd = listener_command(backend, 5205, tag="otto-check-abc123", netns="otto-check-abc123")
-        body = shlex.split(cmd)[7]
+        body = shlex.split(cmd)[9]
         if backend == "python3":
             assert "s.bind(('', 5205))" in shlex.split(body)[2]
         else:

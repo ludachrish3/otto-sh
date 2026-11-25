@@ -1,22 +1,35 @@
 """How a contract's command reaches a cell's host: the ENTRY, and the route it must take.
 
-A command contract asserts one property of ``host.run``, ``host.exec`` and
-``host.exec`` forced onto the pooled shell alike -- three entry points that
-must agree on the same input (``AGENTS.md``, "ONE DECISION, ONE PLACE"). So
-the entry is part of the CELL a contract is parametrised over, and every
-command a contract or control issues goes through :func:`issue`, which also
-asserts the route the call took (:func:`check_route`).
+A command contract asserts one property of ``host.run`` and ``host.exec``
+alike -- two entry points that must agree on the same input (``AGENTS.md``,
+"ONE DECISION, ONE PLACE"). So the entry is part of the CELL a contract is
+parametrised over, and every command a contract or control issues goes
+through :func:`issue`, which also asserts the route the call took
+(:func:`check_route`).
 
 THE EXPECTED ROUTE IS READ OFF THE LAB ENTRY'S FACTS, never off the host's own
 resolver (``SessionManager.exec_route``). A prediction computed by the code
 under test agrees with that code by construction, so it could never go red;
-the cell's ``family``, ``term`` and ``proxied_login`` are facts the venue read
-from the entry it built the host from, and the table in
-:func:`expected_route` is this suite's independent statement of what otto
-should do with them.
+the cell's ``family`` and ``term`` are facts the venue read from the entry it
+built the host from, and the table in :func:`expected_route` is this suite's
+independent statement of what otto should do with them. So is
+:func:`has_terminal`: whether the session a command is typed into reads a
+terminal is NOT derivable from the route (an ``exec`` over ``ssh`` takes a
+``pooled-shell`` session with or without one), so it is read off the cell's
+other facts -- its term, whether it is hooked, whether its login is proxied
+-- and the call's (whether it needs a shell, whether its user is switched to).
+
+THE HOOKED-SSH CELL KIND. An ``ssh`` cell whose login is not proxied has two
+pooled ``exec`` sessions to check: the one without a terminal its plain host
+takes, and the one WITH a terminal that any declared ``session_setup`` hook
+sends it to. So :func:`space_for` adds, beside such a cell's ``exec`` leg, a
+:attr:`~tests.conformance._resolved.ResolvedCell.hooked` leg, opened through
+the venue's ``open_shell_host`` with the marking hook (:data:`HOOK_MARK`): a
+cell kind, not an entry, since what is issued is the same ``exec``. Its label
+carries the kind's suffix (:data:`~tests.conformance._sample.HOOKED_SUFFIX`).
 
 WHICH CONTRACTS ARE COMMAND CONTRACTS is declared on the contract itself, by
-``@pytest.mark.entries("run", "exec", "exec-shell")``, and read here by AST
+``@pytest.mark.entries("run", "exec")``, and read here by AST
 (:func:`entries_declared`) the way ``tests/conformance/_controls.py`` reads
 ``positive_control`` and ``tests/conformance/_observable.py`` reads
 ``observable``: the matrix's rows are derived without collecting anything.
@@ -48,23 +61,22 @@ from tests.conformance._controls import mark_string_arguments, walk_test_functio
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._sample import cell_label
 
-RUN, EXEC, EXEC_SHELL = "run", "exec", "exec-shell"
-"""The three ways a command is issued: ``run``, ``exec``, and ``exec`` forced
-onto the pooled shell by a registered marking ``session_setup`` hook."""
+RUN, EXEC = "run", "exec"
+"""The two ways a command is issued: ``run`` and ``exec``."""
 
 ENTRIES_MARK = "entries"
-"""``@pytest.mark.entries("run", "exec", "exec-shell")`` on a command contract."""
+"""``@pytest.mark.entries("run", "exec")`` on a command contract."""
 
-ALL_ENTRIES: list[str] = [RUN, EXEC, EXEC_SHELL]
+ALL_ENTRIES: list[str] = [RUN, EXEC]
 
 UNIX, EMBEDDED, LOCAL_FAMILY = "unix", "embedded", "local"
 """The values :attr:`ResolvedCell.family` takes."""
 
-MARKING_SETUP_HOOK = "conformance-exec-shell-mark"
+MARKING_SETUP_HOOK = "conformance-hooked-ssh-mark"
 """The name PREFIX of the one session-setup hook this suite registers (each context
-adds a unique suffix). Declaring any hook sends ``exec`` to the pooled shell;
-this one also marks each session it sets up (:data:`HOOK_MARK`), so a contract
-can tell a pooled session's state from a fresh process's."""
+adds a unique suffix). Declaring any hook sends ``exec`` to a pooled session with
+a terminal; this one also marks each session it sets up (:data:`HOOK_MARK`), so a
+contract can tell a hooked session's state from an unhooked one's."""
 
 HOOK_MARK = "export OTTO_CF_HOOK=ran"
 """What the marking hook runs on each session: the vocabulary's state read prints it."""
@@ -120,11 +132,7 @@ def entries_of_node(node: "ast.FunctionDef | ast.AsyncFunctionDef") -> "list[str
 ENTRY_REASON = {
     EXEC: (
         "there the applets are put on the `PATH` of the `run` session only, which "
-        "a one-off `exec` process never sees"
-    ),
-    EXEC_SHELL: (
-        "only there does `exec` otherwise get an SSH channel of its own, which "
-        "`exec-shell` sends through a shell session instead"
+        "a one-off `exec` session never sees"
     ),
 }
 
@@ -133,65 +141,64 @@ def entries_of(resolved: ResolvedCell) -> "list[str]":
     """The entries *resolved*'s host can be reached by, in :data:`ALL_ENTRIES` order.
 
     A BusyBox-artifact cell is ``run`` only: its applets are put on ``PATH``
-    inside the ``run`` session, which an ``exec`` subprocess never sees.
-    ``exec-shell`` needs a raw channel to force off, so only an ``ssh`` cell
-    whose login is not proxied has one (a proxied login is on the pooled shell
-    already). :data:`ENTRY_REASON` says each of these to a reader.
+    inside the ``run`` session, which an ``exec`` session never sees.
+    :data:`ENTRY_REASON` says this to a reader.
     """
     if resolved.kind == _BUSYBOX_ARTIFACT:
         return [RUN]
-    if _has_raw_channel_to_force_off(resolved):
-        return [RUN, EXEC, EXEC_SHELL]
     return [RUN, EXEC]
 
 
-def _has_raw_channel_to_force_off(resolved: ResolvedCell) -> bool:
-    return resolved.family == UNIX and resolved.cell.term == _SSH and not resolved.proxied_login
-
-
-def expected_route(
-    resolved: ResolvedCell, *, shell_bound: bool = False, direct_user: bool = False
-) -> str:
+def expected_route(resolved: ResolvedCell) -> str:
     """The route a command issued through *resolved*'s entry must report.
 
     From the cell's facts alone; see the module docstring for why never from
-    the host's own resolver. *shell_bound* is a call that needs a shell or a
-    user (``expects=``, ``sudo=``, ``user=``), which changes the answer for
-    ``exec`` only, per family:
-
-    * local: ``pooled-shell``, since a bare subprocess has no pty to answer a
-      prompt on and no identity but otto's own;
-    * unix over ssh or telnet: ``pooled-shell``, since the raw ssh channel
-      cannot answer a prompt or switch user;
-    * unix on a console, and embedded: unchanged, since the one session ``run``
-      uses is the only one the line has.
-
-    *direct_user* is a call whose only shell need is its user, who has a login
-    of their own (a proxy-less cred): on unix over ssh with a raw channel to
-    take, ``exec`` connects as that user on an ``ssh-channel`` of their own.
+    the host's own resolver. ``run`` always takes the host's one session.
+    ``exec`` takes it too where the line has one session only (a unix
+    console, an embedded host); everywhere else -- ``ssh``, ``telnet``, the
+    local host -- a pooled session of its own (``pooled-shell``), whatever
+    the call asks for: whether that session has a terminal is
+    :func:`has_terminal`'s question, not the route's.
     """
     entry = resolved.entry
     if entry == RUN:
         return ExecRoute.DEFAULT_SESSION.value
     if entry not in entries_of(resolved):
         raise ValueError(f"{cell_label(resolved)} has no {entry!r} entry")
-    if entry == EXEC_SHELL:
-        return ExecRoute.POOLED_SHELL.value
-    if resolved.family == LOCAL_FAMILY:
-        return (ExecRoute.POOLED_SHELL if shell_bound else ExecRoute.LOCAL_SUBPROCESS).value
     if resolved.family == EMBEDDED or on_console(resolved):
         return ExecRoute.DEFAULT_SESSION.value
-    if direct_user and _has_raw_channel_to_force_off(resolved):
-        return ExecRoute.SSH_CHANNEL.value
-    if shell_bound and resolved.cell.term in {_SSH, _TELNET}:
-        return ExecRoute.POOLED_SHELL.value
-    if resolved.cell.term == _SSH and not resolved.proxied_login:
-        return ExecRoute.SSH_CHANNEL.value
-    if resolved.cell.term in {_SSH, _TELNET}:
+    if resolved.family == LOCAL_FAMILY or resolved.cell.term in {_SSH, _TELNET}:
         return ExecRoute.POOLED_SHELL.value
     raise ValueError(
         f"no expected exec route for family {resolved.family!r} on term {resolved.cell.term!r}"
     )
+
+
+def has_terminal(
+    resolved: ResolvedCell, *, needs_shell: bool = False, switched_user: bool = False
+) -> bool:
+    """Whether the session *resolved*'s entry types a command into reads a terminal.
+
+    From the cell's facts and the call's, never from the route (the module
+    docstring says why):
+
+    * the local host: never; every session it opens reads a pipe;
+    * ``run``, a console, an embedded host: always; the host's one session;
+    * ``exec`` over ``telnet``: always; telnet has one mode;
+    * ``exec`` over ``ssh``: without a terminal exactly when the host can open
+      one (its login is not proxied and it is not :attr:`~ResolvedCell.hooked`)
+      and the call needs none -- *needs_shell* (``expects=``, ``sudo=True``)
+      False, and *switched_user* (a user reached by switching, not by a login
+      of their own) False.
+    """
+    if resolved.family == LOCAL_FAMILY:
+        return False
+    if resolved.entry == RUN or resolved.family == EMBEDDED or on_console(resolved):
+        return True
+    can_open_without = (
+        resolved.cell.term == _SSH and not resolved.proxied_login and not resolved.hooked
+    )
+    return not (can_open_without and not needs_shell and not switched_user)
 
 
 def project(space: "list[ResolvedCell]") -> "list[ResolvedCell]":
@@ -211,31 +218,46 @@ def with_entry(resolved: ResolvedCell, entry: str) -> ResolvedCell:
     return dataclasses.replace(resolved, entry=entry)
 
 
+def hooked_leg(resolved: ResolvedCell) -> "ResolvedCell | None":
+    """*resolved*'s ``exec`` leg of the hooked-ssh cell kind, or ``None`` where it has none.
+
+    A cell has one exactly where its venue set ``open_shell_host`` (an ``ssh``
+    cell whose login is not proxied); see the module docstring.
+    """
+    if resolved.open_shell_host is None or EXEC not in entries_of(resolved):
+        return None
+    return dataclasses.replace(resolved, entry=EXEC, hooked=True)
+
+
 def space_for(contract: str, space: "list[ResolvedCell]") -> "list[ResolvedCell]":
     """The cells *contract* is parametrised over, before the draw.
 
     Unmarked: *space* itself, entry-less. Marked: :func:`project` of *space*,
     each crossed with the declared entries the cell admits, entry-major
-    within a cell so the order is a pure function of *space*.
+    within a cell, its :func:`hooked_leg` right after its ``exec`` leg, so
+    the order is a pure function of *space*.
     """
     declared = entries_declared(contract)
     if not declared:
         return list(space)
-    return [
-        with_entry(resolved, entry)
-        for resolved in project(space)
-        for entry in declared
-        if entry in entries_of(resolved)
-    ]
+    crossed: "list[ResolvedCell]" = []
+    for resolved in project(space):
+        for entry in declared:
+            if entry not in entries_of(resolved):
+                continue
+            crossed.append(with_entry(resolved, entry))
+            leg = hooked_leg(resolved) if entry == EXEC else None
+            if leg is not None:
+                crossed.append(leg)
+    return crossed
 
 
 def opened(resolved: ResolvedCell) -> "AbstractAsyncContextManager[BaseHost]":
-    """Open *resolved*'s host the way its entry needs: hooked for ``exec-shell``."""
-    if resolved.entry == EXEC_SHELL:
+    """Open *resolved*'s host the way its kind needs: through the hook for a hooked cell."""
+    if resolved.hooked:
         if resolved.open_shell_host is None:
             raise RuntimeError(
-                f"{cell_label(resolved)} is reached by exec-shell but its venue "
-                f"set no open_shell_host"
+                f"{cell_label(resolved)} is a hooked cell but its venue set no open_shell_host"
             )
         return resolved.open_shell_host()
     return resolved.open_host()
@@ -247,69 +269,25 @@ async def issue(
     cmd: "str | ShellCommand",
     *,
     route_checked: bool = True,
-    ambient_user: bool = False,
-    direct_user: bool = False,
     **kwargs: Any,
 ) -> CommandResult:
     """Issue *cmd* through *resolved*'s entry, then assert the route it took.
 
     *route_checked* False skips the route assertion, for a call that takes no
-    route at all: a dry run declines before any route is chosen. A call that
-    carries ``expects`` (:func:`effective_expects`), ``sudo`` or ``user`` is
-    checked as shell-bound
-    (:func:`expected_route`), and so is one issued inside ``as_user()``
-    (*ambient_user*). *direct_user*: the user the call runs as has a login of
-    their own (:func:`expected_route`); a call that names the cell's second
-    user reads that from the cell, so only an ambient user needs it passed.
+    route at all: a dry run declines before any route is chosen.
     """
-    if resolved.entry in {EXEC, EXEC_SHELL}:
+    if resolved.entry == EXEC:
         result = await host.exec(cmd, **kwargs)
     else:
         result = (await host.run(cmd, **kwargs)).only
     if route_checked:
-        expects = effective_expects(cmd, kwargs.get("expects"))
-        needs_shell = expects or bool(kwargs.get("sudo"))
-        shell_bound = needs_shell or ambient_user or bool(kwargs.get("user"))
-        # A call that names the cell's second user states that user's fact
-        # itself, so no contract can issue such a call and forget it.
-        named_direct = (
-            kwargs.get("user") is not None
-            and kwargs.get("user") == resolved.switch_user
-            and resolved.switch_user_direct
-        )
-        check_route(
-            resolved,
-            result,
-            shell_bound=shell_bound,
-            direct_user=(direct_user or named_direct) and not needs_shell,
-        )
+        check_route(resolved, result)
     return result
 
 
-def effective_expects(cmd: "str | ShellCommand", call_expects: Any) -> bool:
-    """Whether *cmd*, issued with the call's *call_expects*, carries any expect pairs.
-
-    The documented rule, stated here and not asked of otto: a
-    :class:`~otto.host.host.ShellCommand` whose own ``expects`` is set
-    (an empty list included) replaces the call's; otherwise the call's apply.
-    """
-    if isinstance(cmd, ShellCommand) and cmd.expects is not None:
-        return bool(cmd.expects)
-    return bool(call_expects)
-
-
-def check_route(
-    resolved: ResolvedCell,
-    result: CommandResult,
-    *,
-    shell_bound: bool = False,
-    direct_user: bool = False,
-) -> None:
-    """Assert *result* ran on the route *resolved*'s entry must take.
-
-    *shell_bound*, *direct_user*: see :func:`expected_route`.
-    """
-    expected = expected_route(resolved, shell_bound=shell_bound, direct_user=direct_user)
+def check_route(resolved: ResolvedCell, result: CommandResult) -> None:
+    """Assert *result* ran on the route *resolved*'s entry must take (:func:`expected_route`)."""
+    expected = expected_route(resolved)
     assert result.route == expected, (
         f"{cell_label(resolved)}: the command ran on route {result.route!r}, expected {expected!r}"
     )

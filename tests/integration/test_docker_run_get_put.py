@@ -240,21 +240,19 @@ async def test_exec_remains_concurrent_safe(stack):
 
 @pytest.mark.asyncio(loop_scope="module")
 @pytest.mark.parametrize(
-    ("expects", "route"),
-    [
-        (None, ExecRoute.SSH_CHANNEL.value),
-        ([("never-printed", "")], ExecRoute.POOLED_SHELL.value),
-    ],
-    ids=["channel", "pooled"],
+    "expects",
+    [None, [("never-printed", "")]],
+    ids=["no-terminal", "terminal"],
 )
-async def test_exec_logs_its_lines_on_the_container_while_it_runs(stack, expects, route):
+async def test_exec_logs_its_lines_on_the_container_while_it_runs(stack, expects):
     """The issued command and its first lines reach the container's log before the command ends.
 
     The command prints two complete lines (a terminal mapping may hold back
     the newest one), then waits on a gate file the test removes only after
     the first line was seen, so "seen while it runs" is decided by events,
     never by a clock. The parent keeps only the ``docker exec`` wrapper, at
-    DEBUG. A real expect pair forces the parent's pooled shell.
+    DEBUG. The parent runs the wrapper on a pooled session either way: a real
+    expect pair makes it one with a terminal.
     """
     parent = stack.parent
     token = uuid.uuid4().hex
@@ -324,7 +322,7 @@ async def test_exec_logs_its_lines_on_the_container_while_it_runs(stack, expects
                     f"the command ended before its first line was seen: {ended}"
                 )
             finally:
-                # The parent's own ssh channel, independent of the command's route.
+                # The parent's own exec, on a session the gated command does not hold.
                 # Checked after the block: an assertion here would replace the
                 # liveness failure above, which names the host that saw the line.
                 removed = await parent.exec(f'{in_ctr} rm -f "{gate}"', log=LogMode.NEVER)
@@ -344,7 +342,7 @@ async def test_exec_logs_its_lines_on_the_container_while_it_runs(stack, expects
 
     assert removed.is_ok, removed
     assert result.is_ok, (seen_on, result)
-    assert result.route == container_route(route), (seen_on, result)
+    assert result.route == container_route(ExecRoute.POOLED_SHELL.value), (seen_on, result)
     # The fixture's parent and container are built at their default mode and
     # nothing here suppresses either, so the chain stands at NORMAL.
     expected_mode = LogMode.NORMAL

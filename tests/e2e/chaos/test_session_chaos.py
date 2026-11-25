@@ -1,14 +1,14 @@
 """Host/session chaos: interrupt a live remote command at a seeded offset
 inside the command-running phase window; force via a SIGINT-immune remote;
-characterize the nohup survivor. BedHygiene (autouse) asserts the leased
+characterize the nohup'd child's stop. BedHygiene (autouse) asserts the leased
 host is left clean; here we add the remote-reaped / remote-survives assertions the
 hygiene diff cannot express (a foreground child reaped by the teardown's HUP is
-gone either way; a nohup'd one is SUPPOSED to remain, so it is not a leftover).
+gone either way, and so is a nohup'd one, which carries the session's mark).
 
-These scenarios drive the ``exec`` verb, which on a hop-less ssh host takes a
-raw SSH exec channel: no pty, so a teardown hangs the remote command up
-explicitly (``otto.host.process_stop.stop_process``) instead of inheriting the
-pty's own hangup the way the ``run`` verb's persistent shell does. Either way
+These scenarios drive the ``exec`` verb, which on a hop-less ssh host runs on
+a pooled session without a terminal: a teardown stops everything that session
+started by its ``OTTO_SESSION`` mark (``otto.host.process_stop.reap_marked_script``)
+instead of the pty hangup the ``run`` verb's persistent shell gets. Either way
 a *shell* parses each command line like any interactive shell would --
 including stripping everything after a
 ``#`` -- before exec'ing it, so a trailing ``# marker`` comment is invisible
@@ -143,20 +143,15 @@ def test_sigint_immune_remote_hits_deadline_force(chaos_bed, tmp_path):
     p.assert_no_process_group()
 
 
-def test_nohup_remote_survives_graceful_teardown(chaos_bed, tmp_path):
-    """Characterization (todo/chaos-realsignal-followups.md §5): a teardown
-    HANGS UP on the remote command; it does not terminate it. A command the
-    user deliberately ``nohup``'d ignores SIGHUP, so it SURVIVES a graceful
-    teardown — documented contract, not a leak. Teardown must clean up otto's
+def test_nohup_remote_is_stopped_with_its_session_on_graceful_teardown(chaos_bed, tmp_path):
+    """Characterization: an ``exec`` on ssh runs on a pooled session without a
+    terminal, and a graceful teardown stops everything that session started
+    by its ``OTTO_SESSION`` mark (``STOP`` then ``KILL``,
+    ``otto.host.process_stop.reap_marked_script``), a ``nohup``'d child
+    included: ignoring ``HUP`` no longer helps, since no ``HUP`` is sent. A
+    process meant to survive is started with ``OTTO_SESSION`` unset
+    (``otto.host.daemon.detached_command``). Teardown must clean up otto's
     OWN session state regardless.
-
-    The mechanism moved when the CLI verb became ``exec``: this argv now takes
-    the raw SSH exec channel, which has no pty, so there is no terminal whose
-    close would hang the command up for free. otto sends the HUP itself (see
-    ``otto.host.process_stop.stop_process``), which lands on the remote
-    command's whole process group — the foreground hold below dies of it, the
-    nohup'd child ignores it and lives. The contract a reader can hold onto is
-    unchanged from the pty days; only who sends the signal is new.
 
     Deviation from the brief's literal transcription (recorded per the live-bed
     rule: root-cause first, never paper over with a widened assertion): a bare
@@ -208,17 +203,17 @@ def test_nohup_remote_survives_graceful_teardown(chaos_bed, tmp_path):
     assert rc == 143, p.stderr_text()
     p.assert_no_process_group()
     try:
-        # The survivor is EXPECTED to be alive — that is the characterized behavior.
-        assert _remote_pids(chaos_bed.element, "sleep 313"), (
-            "nohup survivor unexpectedly gone — contract changed; update the docstring"
+        # The nohup'd child carries the session's mark, so the stop ends it too.
+        wait_for(
+            lambda: not _remote_pids(chaos_bed.element, "sleep 313"),
+            20.0,
+            interval=0.2,
+            on_timeout="the nohup'd child outlived its session's stop",
         )
     finally:
-        # Both clauses target real argv: "sleep 313" is the nohup survivor
-        # this test expects to still be running; "sleep 314" is its
-        # foreground hold, which PTY-HUP reaping should already have cleaned
-        # up by the time we get here (same mechanism as the first two
-        # tests) -- this second clause is a best-effort belt-and-braces, not
-        # load-bearing.
+        # Both clauses target real argv ("sleep 313" the nohup'd child,
+        # "sleep 314" its foreground hold); the session's stop should have
+        # ended both, so this is best-effort cleanup after a failure only.
         run_probe(
             chaos_bed.element,
             lambda h: h.exec(
@@ -253,10 +248,9 @@ def test_seeded_sigint_mid_command_reaps_the_busybox_guest(busybox_chaos_bed, ch
     (``OTTO_TEARDOWN_DEADLINE`` expiring, no remote probe at all, the force
     path abandoning the remote sweep by design) -- nothing in it reaches the
     device, so pointing it at a guest would re-measure local code through a
-    slower transport. ``test_nohup_remote_survives_graceful_teardown``
-    characterizes the SAME PTY-HUP mechanism this test asserts, read from its
-    other side; the guest has ``nohup``, so it would answer, but it would
-    answer the identical fact twice on one device.
+    slower transport. ``test_nohup_remote_is_stopped_with_its_session_on_graceful_teardown``
+    characterizes the ssh session's marked stop, which a telnet guest does
+    not have.
     """
     from tests.e2e.chaos._seed import offset_in
 

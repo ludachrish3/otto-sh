@@ -52,10 +52,10 @@ on {ref}`Command contracts <command-contracts>`.
 
 A {class}`~otto.result.CommandResult`'s `value` is the command's output with
 **exactly one trailing newline removed**: nothing stripped, nothing added.
-That holds on the ssh `exec` channel; on a local host, for both `exec` and
-`run` (a bash session on pipes, with no terminal); and on a shell session
-whose frame calibrates its terminal (the `bash` and `ash` frames) on every
-term (`ssh`, `telnet`, `console`) and both routes (`run` and `exec`). A
+That holds on a shell session without a terminal (an ssh session that has
+none, and every local session, a bash session on pipes) and on a shell
+session whose frame calibrates its terminal (the `bash` and `ash` frames) on
+every term (`ssh`, `telnet`, `console`), for both `run` and `exec`. A
 docker container's `exec` runs `docker exec` through its parent host, so its
 `value` is designed to follow whichever of these routes the parent takes; the
 command contract does not check the container route yet:
@@ -70,9 +70,12 @@ command contract does not check the container route yet:
 | `a\r\nb\rc` and a newline | `"a\r\nb\rc"` |
 
 Trailing spaces and tabs are kept, and so are the program's own carriage
-returns. stderr arrives in the same stream as stdout. The bytes are decoded as
-UTF-8, with any invalid byte replaced. (The ssh channel and local `exec` share
-one line rule, {func}`otto.host.session.output_line`.)
+returns. stderr arrives in the same stream as stdout, in the order the
+command wrote the two: a session's shell writes both to one pipe or one
+terminal, an ssh session without a terminal included. In a container the
+command's two streams pass through the docker daemon, which can forward them
+in its own order. The bytes are decoded as UTF-8, with any invalid byte
+replaced.
 
 The Zephyr frames (`zephyr` and `zephyr-serial`, and the `zephyr-inline`
 example frame for Zephyr 2.7) follow the same rule. They remove exactly what
@@ -102,8 +105,8 @@ and nothing else:
   `CR NUL` (RFC 854). otto decodes that on every telnet and console stream
   before it reads anything, unless the server negotiated BINARY.
 - **The terminal's newline translation.** `run` runs on a shell session, and
-  so does every shell-routed `exec` (see the note below). A shell session runs
-  on a terminal. By default a Linux terminal sends each `\n` as `\r\n` (`onlcr`).
+  so does every shell-routed `exec` (see the note below). Where that session
+  has a terminal, a Linux terminal by default sends each `\n` as `\r\n` (`onlcr`).
   otto never changes that setting. The session's readiness handshake measures
   it instead with a **calibration line**, a `printf` of known bytes that runs
   just before the handshake's READY marker ({ref}`the session setup section of the host options page <per-host-session-setup>`),
@@ -123,8 +126,9 @@ and nothing else:
     it does not mean Zephyr output arrives untouched: the Zephyr frame itself
     removes the `\r` of each `\r\n`, as described above.
 
-  The ssh `exec` channel has no terminal, so there is nothing to undo there,
-  and `terminal_mapping` always reports the shell session's terminal.
+  A session without a terminal (an ssh `exec`'s by default, every local
+  session) has no translation to undo, and neither has the ssh `exec`
+  channel; `terminal_mapping` always reports the terminal of a session that has one.
 - **The terminal's tab expansion.** A terminal with `tab3` sends each tab as
   the spaces up to the next tab stop, and that has no exact inverse: `a\tb`
   and `a       b` arrive the same. The pty BusyBox telnetd allocates has it
@@ -172,9 +176,10 @@ kept: the fold applies only to a command's `value`.
 
 A command string is text, not keystrokes. Where otto types it into a shell
 on a terminal (`run()`, and `exec()` wherever it runs on a shell session), a
-TAB and a newline arrive as written (one exception: a BusyBox shell whose
+TAB and a newline arrive as written (two exceptions: a BusyBox shell whose
 terminal echo could not be turned off still takes a TAB as its completion
-key). Any other control character, such as
+key, and on a BusyBox serial console a TAB arrives with a Ctrl-V before it,
+[`typed-tab-literal-next`](../subsystems/busybox-support.md#typed-tab-literal-next)). Any other control character, such as
 Ctrl-C, ESC or a carriage return that is not part of a CRLF line ending, raises
 {class}`~otto.host.errors.UntypableCommandError` before the command is sent:
 a terminal would act on it as a keystroke. To send a keystroke, use
@@ -207,8 +212,7 @@ leading and trailing spaces are kept, and a program's own carriage return
 stays inside its line (it never splits a record). A command whose `value` is
 empty logs no output line. The rule is
 {func}`otto.logger.relay.log_lines`, and it is the same for the same command
-and `log=` mode on every route: the ssh channel, local `exec`, and every shell
-session. What {meth}`~otto.host.session.ShellSession.expect` read is logged
+and `log=` mode on every route and every shell session. What {meth}`~otto.host.session.ShellSession.expect` read is logged
 by the same rule: the terminal mapping undone, one trailing newline removed,
 one record per line. Under an unknown terminal mapping there is no mapping to
 undo, so such a record keeps the terminal's `\r`.
@@ -290,14 +294,13 @@ a line as a line of its own.
 A {class}`~otto.result.CommandResult`'s `route` names the route that ran the
 command, so a caller (or a test) can assert how a call was carried out and not
 only what it returned. It is one of the {class}`~otto.host.exec_route.ExecRoute`
-values:
+values (the type also names `ssh-channel` and `local-subprocess`, which no
+host's `exec` reports):
 
 | `route` | The command ran on |
 | --- | --- |
-| `ssh-channel` | a bare ssh exec channel, no pty |
-| `pooled-shell` | a pty shell session kept for `exec` beside the one `run` uses |
+| `pooled-shell` | a shell session `exec` borrows from its pool, beside the one `run` uses, with or without a terminal ({ref}`host-exec-on-sessions`); every `exec` on ssh, telnet and the local host reports this |
 | `default-session` | the host's one default session; every `run` reports this |
-| `local-subprocess` | a local process |
 | `container/<route>` | a container, prefixed to its parent host's route |
 
 `route` is `""` for a result no host route produced: a dry run's
@@ -311,6 +314,8 @@ call's arguments; the routes are listed in
 [Which route your command takes](../../command-contracts/index.md#which-route-your-command-takes),
 and when each command takes each is on its own page ({ref}`run <command-contract-run>`,
 {ref}`exec <command-contract-exec>`).
+
+(exit-codes)=
 
 ## Exit codes
 
@@ -342,30 +347,45 @@ other plain value exits `0` ({ref}`cli-return-values`). See
 
 ## A command killed, timed out or interrupted
 
-The process routes are the ones that run a command as a process of its own:
-the ssh exec channel (`ssh-channel`) and local `exec` (`local-subprocess`).
-Below, the *leader* is the process otto started for the command, and its
-*process group* is that process together with the children it started that
-did not move to a group of their own.
+Every `run` and every `exec` runs on a shell session
+({ref}`host-exec-on-sessions`), so the shell reports how its command ended.
 
 **Killed by a signal.** A command killed by signal `N` reports `retcode`
-`128 + N` on every process route, the number a shell reports for the same
-death, so `kill -TERM` of the command reads `143` whichever route ran it. That
-holds for every signal number the platform has, the real-time signals
-included. A process that ends with no return code at all (an ssh channel that
-closed with neither an exit status nor a signal, or with a signal name the ssh
-library does not know) gives one named error result instead: `status`
-`Error`, `retcode` `-1` and the `value` `Process did not provide a return
-code`. The rule is `otto.host.exit_status.exit_status_of`, and otto's own
-code asks `otto.host.exit_status.gave_no_exit_status` whether a result is one
-of these or a timed-out one before it parses the `value`. A shell route (`run`,
-and an `exec` that otto types into a shell session) reports what the shell
-itself reports for its command, which is the same `128 + N` on a POSIX shell.
-Such an `exec` runs in a subshell. Of the shells measured, only ksh93 reports
-a killed subshell's status differently, as `256 + N`; otto reports that as
-`128 + N` too
-(`otto.host.exit_status.subshell_status_of`), and the session's shell outlives
-the command.
+`128 + N`, the number a POSIX shell reports for the same death, so
+`kill -TERM` of the command reads `143`. An `exec` runs its command in a
+subshell. Of the shells measured, only ksh93 reports a killed subshell's
+status differently, as `256 + N`; otto reports that as `128 + N` too
+(`otto.host.exit_status.subshell_status_of`), and the session's shell
+outlives the command.
+
+On the local host, a command that kills the session's shell itself
+(`kill $$`: in an `exec`'s subshell `$$` is still the session's shell) ends
+the session rather than the command: the call gives an error result,
+`retcode` `-1` and the `value` `Session died unexpectedly`, and the next call
+runs on a fresh session. A child the command started that is killed by a
+signal still reports `128 + N`.
+
+(incomplete-or-invalid-command)=
+A command that is not complete or valid shell, on a session whose shell
+reads a pipe (an ssh `exec` without a terminal, every local `exec`), is typed
+into that shell as it is. An incomplete one (an unclosed quote, here-document
+or `if`) takes in the end of otto's frame, so the call waits out its whole
+timeout and gives the timed-out result (below). An invalid one
+(`echo a; echo )`) runs what comes before the error, then the shell exits on
+it: the call gives the error result above, `retcode` `-1`, `Session died
+unexpectedly`, without the shell's diagnostic. The next call runs on a fresh
+session either way. A caller that builds a command and wants the shell's
+verdict checks it first with `sh -n`.
+
+`otto.host.exit_status.gave_no_exit_status` is what otto's own code asks
+before it parses a `value`: it holds for a timed-out result and for one with
+`retcode` `-1`. A `retcode` of `-1` from a shell or process route is otto's
+own (the session or its transport died before the command gave a status),
+and its `value` is otto's text. Two such results carry the command's own
+output all the same: a timed-out result's `value` holds what the command had
+written (below), and on a Zephyr board a firmware command that returns
+`-EPERM` has `retcode` `-1` from the firmware ({ref}`Exit codes
+<exit-codes>` above).
 
 (timed-out-command-result)=
 **Timed out.** A command that is still running when its budget expires gives
@@ -379,60 +399,63 @@ anything, the next line starts what it had written when
 the budget expired, by the same rule as a finished command's value
 ({ref}`command-output-contract`): one final newline removed and nothing else,
 an unfinished last line included. When it had printed nothing, that first line
-is the whole `value`. On a shell route nothing the shell printed after otto
+is the whole `value`. A `timeout` of zero, or an `exec` whose time ran out
+before its command was typed, types nothing and gives this result; its
+session is still stopped as below, so on an ssh session without a terminal
+whatever earlier commands on that session left running is stopped too. On a shell route nothing the shell printed after otto
 interrupted the command (the echoed `^C`, the next prompt) is in it. It is built in one place,
 {func}`otto.host.session.timed_out_result`; on a shell route the frame says
 what of the unfinished buffer is the command's
 ({meth}`~otto.host.command_frame.CommandFrame.parse_partial_output`).
 
-**How long the stop takes.** After a timeout or an interrupt, a process route
-stops its command. The first signal is `TERM` on a timeout and `HUP` on an
-interrupt; a command that obeys it ends the sequence there, and `KILL` follows
-only when the command has not exited 5 seconds after it, so the stop takes at
-most 10 seconds (`EXEC_CANCEL_REAP_BOUND` in `otto.host.host`). An interrupted
-stop is also cut by the teardown deadline ({doc}`../lifecycle`), counted from
-the interrupt, so a deadline under 5 seconds ends it before `KILL` is sent. A
-further cancellation while the stop runs is held until it ends, on both
-routes. An interrupt that lands while the command is still being started
-(the local process is spawning, the ssh exec channel is opening) waits for the
-start to finish, bounded by the teardown deadline, and the command it started
-gets the same stop. A start still pending at that deadline is abandoned as
-before: asyncio kills only the local leader, and the ssh channel is closed,
-which signals nothing. A stop that fails (the channel already gone) is logged, and the exec
-still returns the timed-out result or re-raises what interrupted it.
+**How the command is stopped.** A timed-out command, one whose password was
+refused, and a cancelled one are stopped before the call returns or the
+cancellation is re-raised. A cancellation landing during the stop is held
+until it ends. How depends on the session:
 
-On a shell route (`run`, and an `exec` typed into a shell session: over
-`telnet`, over `console`, or over `ssh` when the call needs a shell), a
-timed-out command, one whose password was refused, and a cancelled one are
-stopped this way, before the call returns or the cancellation is re-raised:
+- **`run` on a session that is kept** (one with a terminal, or the local
+  host's), **and an `exec` on a console or an embedded host** (the host's one
+  session): otto types an interrupt (`^C`), checks that the
+  shell answers again under one bound (the settle after the interrupt, the
+  recovery deadline and one probe wait, added together) and, for an `exec`,
+  puts the terminal settings and `set -e` back
+  ({ref}`what the exec frame restores <exec-frame-shell-state>`). Once the
+  call returns, either the shell is answering again, as it was before the
+  command, or the session is dead and will not be used again
+  ({ref}`when a dead session is closed <closing-a-session>`). On the local
+  host the interrupt is a `SIGINT` to the shell's children, since `^C` does
+  not cross a pipe.
+- **`run` on an ssh session without a terminal** ends the session
+  ({ref}`the ssh stop <terminal-switch-stop>`).
+- **An `exec` on a pooled session** (ssh, telnet, the local host): the
+  command is stopped as the table below says, nothing is restored, and the
+  session is closed; it is never
+  handed out again, and the next `exec` runs on a fresh session
+  ({ref}`host-exec-pool`).
 
-1. otto types an interrupt (`^C`) to the command.
-2. It checks that the shell answers again, under one bound: the settle after
-   the interrupt, the recovery deadline and one probe wait, added together.
-3. For an `exec`, it then puts the terminal settings and `set -e` back
-   ({ref}`what the exec frame restores <exec-frame-shell-state>`).
+(exec-stop-reach)=
+**What the stop reaches.** Only the command's own end is waited for, never
+its output. What else the stop reaches depends on the session the command
+ran on:
 
-What you can rely on: once the call returns, either the session's shell is
-answering again, with its terminal and `set -e` as before the `exec`, or the
-session is dead and will not be used again
-({ref}`when a dead session is closed <closing-a-session>`); a dead pooled
-session is discarded. What happens to the other processes the command
-started is not promised ({ref}`Undefined <command-contracts-undefined>`). A
-cancellation landing during the stop is held until it ends.
-
-**What survives a stop.** Only the command's own exit is waited for, never its
-output: a member that still holds the output once the command has exited does
-not hold the stop. What else is left running depends on the route:
-
-| A process the command started | Local `exec` | ssh channel |
+| Session | What is stopped | What is left running |
 | --- | --- | --- |
-| Signalled | the signal goes to the command's process group (it runs in a new session), so the command and its members all get it; `KILL` goes to the group too when the leader has not exited in the bound | the signal goes to the server, which decides whether it reaches the command's descendants; that is the server's, and otto does not measure it |
-| Left running | a member that outlives the leader is left alone: once the leader has exited nothing signals the group again, so a member that ignored the first signal keeps running; when the leader had already exited at the timeout (a member still holding its output), nothing is signalled at all | whatever the server did not signal |
+| ssh, without a terminal (an `exec`'s by default, or `run(terminal=False)`) | `STOP`, then `KILL`, with no `TERM` or `HUP` first, so a command gets no chance to flush or clean up (a `tcpdump -w` loses what it buffered), to every process started with the session's `OTTO_SESSION` token in its environment, whether or not it was detached with `setsid`: the shell, the command, what it started, and a background process an earlier command on the session left ({ref}`the ssh stop <terminal-switch-stop>`) | a process started with `OTTO_SESSION` unset, a process running as another user, and one that removed the token from its environment |
+| a session with a terminal (telnet, a proxied or hooked ssh host, an `exec` with `sudo=True`, `expects=` or `terminal=True`) | the command is interrupted with `^C`, and the call returns once the shell answers again (or the bound above ends); a pooled `exec` session is then closed, and what the command left gets whatever the transport does when a terminal hangs up | what ignores the interrupt and the hang-up |
+| the local host | when the session is closed, its shell's process group gets `TERM`, and whatever is still in the group 5 seconds later gets `KILL`, the shell included: so the command and every process left in the group, a `nohup` child and a process that ignores `TERM` included; a group that is empty when the shell exits ends the stop at once | a process that moved into a session of its own (`setsid`) with its output redirected |
+| a docker container | the `docker exec` client on the parent | the command inside the container, which keeps running ({ref}`docker-exec-stop` has the workaround) |
 
-A docker container's `exec` is the exception to all of the above: the stop
-reaches the `docker exec` client on the parent and not the command inside
-the container, which keeps running ({ref}`docker-exec-stop` has the
-workaround).
+When a local `exec` ends normally, otto ends its shell's input and waits up
+to 2 seconds for the shell to exit; a shell that does exit gets no signal, so
+a background process the command left keeps running, and one that did not is
+stopped by the close as above. Either way the close releases the shell's
+pipes, so a background process that still writes to them gets `EPIPE` (or
+`SIGPIPE`): redirect the output of anything you leave running.
+
+To leave a process running past a stop on ssh or the local host, start it in
+a session of its own with its output redirected, and on ssh with the token
+unset: `(unset OTTO_SESSION; setsid my-daemon </dev/null >/dev/null 2>&1 &)`.
+`otto.host.daemon.launch_command` starts otto's own daemons that way.
 
 ## The convention, and its two gates
 

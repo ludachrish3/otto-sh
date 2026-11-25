@@ -3136,8 +3136,9 @@ GAPS: list[Gap] = [
             "refuses against it once the session is open, before typing anything. "
             f"{PTY_TYPED_LINE_MAX} is the Linux terminal's bound, measured on BusyBox "
             "guests, not on bash and not on a Zephyr board. "
-            "`Host.exec()` over ssh opens a bare exec channel with no pty, is unaffected, "
-            "and is NOT refused: it is the way to send this command there. `exec()` on a "
+            "`Host.exec()` over ssh, with no terminal asked for, runs on a pooled session "
+            "without a pty, is unaffected, and is NOT refused: it is the way to send this "
+            "command there. `exec()` on a "
             "telnet or proxied-login host has no stateless primitive and types into a "
             "pooled shell session, so it is refused like `run()`, measured in the exec "
             "frame it types; `ShellFileTransfer` sizes its chunk lines to the same "
@@ -3192,9 +3193,9 @@ GAPS: list[Gap] = [
                     "`isinstance(frame, AshFrame)` -- the DECLARED dialect, free and "
                     "synchronous -- sizes the line otto would TYPE including its own framing, "
                     "and refuses a line over 4095 before `_ensure_session`, so it costs no "
-                    "connection; once the session is open, before anything is typed, it "
-                    "checks again against that session's bound (1022 where its terminal "
-                    "still echoes)"
+                    "connection; once the session is open, before anything is typed, "
+                    "`_run_framed` (the path below) checks again against that session's "
+                    "bound (1022 where its terminal still echoes)"
                 ),
                 pinned_by=(
                     "tests/unit/host/test_run_line_length.py::TestAnAshHostRefusesInsteadOfTruncating"
@@ -3220,17 +3221,20 @@ GAPS: list[Gap] = [
                 ),
             ),
             GapPath(
-                site="otto.host.session.SessionManager._exec_on_pooled",
+                site="otto.host.session.SessionManager._run_framed",
                 state=PATH_WIRED,
                 checked_by="otto.host.session.refuse_if_typed_line_would_be_cut",
                 detail=(
-                    "`exec()` is safe only where it has a stateless primitive. On a "
-                    "`term: telnet` host, and on ANY host whose login is proxied, there is "
-                    "none, so `exec_on_route` types the call into a pooled shell session, "
-                    "line-edited like a typed command. `_exec_on_pooled` therefore refuses a "
-                    "line over the acquired session's bound before typing it, measured in "
-                    "the exec frame, "
-                    "and its message does not advise `exec()`, which is no escape there"
+                    "the one framed step of `SessionManager.run_cmd` and of a pooled "
+                    "`exec()` (`_exec_on_pooled`): on an open session that reads a "
+                    "terminal it refuses a line over that session's bound before typing "
+                    "it, measured in the frame the call types (the exec frame for an "
+                    "`exec()`). A pooled `exec()` reads a terminal on a `term: telnet` "
+                    "host, on ANY host whose login is proxied, and where a terminal is "
+                    "asked for; there the call is line-edited like a typed command and "
+                    "the message does not advise `exec()`, which is no escape. An unset "
+                    "ssh `exec()` borrows a session WITHOUT a terminal, which has no "
+                    "typed-line limit and is not refused"
                 ),
                 pinned_by=(
                     "tests/unit/host/test_run_line_length.py::TestTheRefusalIsScoped"
@@ -3240,54 +3244,43 @@ GAPS: list[Gap] = [
         ],
     ),
     Gap(
-        surface="ssh-exec-string-cap",
+        surface="typed-tab-literal-next",
         status=MEASURED_BROKEN,
         reason=(
-            "an old dropbear sshd caps every SSH protocol string at 1400 bytes and DROPS "
-            "THE CONNECTION on a longer one rather than truncating it -- and an ssh `exec` "
-            "request carries the whole command as ONE string. The `shell` transfer backend "
-            "puts a full 4096-byte chunk on one command line, about 5.5 KB once "
-            "base64-encoded, so a `shell` put of more than about 1 KB over an ssh host "
-            "whose sshd has the cap fails part-way, with the connection closed under it. "
-            "Small commands, `run()`, and small transfers are unaffected: every other "
-            "contract the conformance bed runs passes on the same device. Use `nc` (the "
-            "same device's `nc` transfers pass), or reach the device over telnet, where "
-            "the `shell` backend fits its chunks to the line it can type"
+            "on a BusyBox serial console, a literal TAB in a command sent with `run()` or "
+            "`exec()` reaches the shell with an extra 0x16 byte (Ctrl-V) before it. otto "
+            "types a TAB as Ctrl-V then TAB, so that a line editor takes it as a character "
+            "rather than as completion; the console's terminal has `iexten` off, so nothing "
+            "consumes the Ctrl-V. Punctuation and UTF-8 text arrive intact, and ssh and "
+            "telnet to the same device are unaffected. Avoid literal TABs in commands sent "
+            "to such a console (write `printf '\\t'` instead), or reach the device over "
+            "ssh or telnet"
         ),
         measured_on=(
-            "the conformance bed, 2026-09-24, on `bb1350` -- BusyBox 1.35.0 behind dropbear "
-            "2012.55, whose `MAX_STRING_LEN` is 1400 (`sysoptions.h`), past which "
-            "`buffer.c` exits the connection with 'String too long': "
-            "`test_progress_events_track_the_bytes_in_both_directions` failed on the "
-            "`ssh:shell` cell with the guest journal logging 'Exit (root): String too long' "
-            "at each failure, and passed on `ssh:nc`, `telnet:nc` and `telnet:shell`. "
-            "Declared a strict xfail on that cell by the contract module, so a device that "
-            "stops failing reddens the lane"
+            "the conformance bed, 2026-11-25, on `bb1350` -- BusyBox 1.35.0 over its serial "
+            "console, whose `stty -a` shows `-iexten`: "
+            "`test_a_typed_command_reaches_the_shell_byte_for_byte` and its control failed "
+            "on the `console` cell for both `run` and `exec`, with each TAB arriving as "
+            "`0x16 0x09`, and passed on `ssh` and `telnet` to the same guest and on the GNU "
+            "console of `test2`. Declared a strict xfail on that cell by the contract "
+            "module, so a fix reddens the lane until the declaration is removed"
         ),
         queued_for=(
-            "issue #437: a per-host exec line budget, so `ShellFileTransfer` can fit its "
-            "chunks to the exec channel the way it already fits them to a typed line. "
-            "`SessionManager.line_budget` answers `None` for the bare ssh exec route by "
-            "design today, and giving that route a bound is a new host field, which needs "
-            "its own spec"
+            "issue #1321: type a TAB so that it arrives as one byte whether or not the "
+            "terminal has `lnext`"
         ),
         paths=[
             GapPath(
-                site="otto.host.transfer.shell.Base64Codec.send_chunks",
+                site="otto.host.command_frame.BashFrame.typed",
                 state=PATH_OPEN,
                 detail=(
-                    "the `shell` backend's put loop, which emits one chunk command per "
-                    "stride through the host's exec path. On an ssh host the chunk is sized by "
-                    "`_fitted_chunk_bytes` against the transfer's `exec_line_room`, which "
-                    "is `None` for the bare exec channel, so the full 4096-byte stride goes "
-                    "out and a "
-                    "capped sshd drops the connection. Nothing refuses it: otto has no way "
-                    "to learn an sshd's string cap before sending, and refusing every "
-                    "ssh `shell` put would stop transfers to the devices that have no cap"
+                    "the frame's typing step, which puts Ctrl-V before every TAB of a "
+                    "command typed into a shell session. Nothing refuses a TAB: otto does "
+                    "not know whether a console's terminal has `lnext` before it types"
                 ),
                 pinned_by=(
-                    "tests/conformance/test_progress_contract.py"
-                    "::test_progress_events_track_the_bytes_in_both_directions"
+                    "tests/conformance/test_input_contract.py"
+                    "::test_a_typed_command_reaches_the_shell_byte_for_byte"
                 ),
             ),
         ],

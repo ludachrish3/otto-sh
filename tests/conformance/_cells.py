@@ -409,7 +409,7 @@ def _loopback_opener(
     sampler drew them.
 
     *session_setup* names a registered hook for the host to carry: the
-    ``exec-shell`` entry's opener (``tests/conformance/_entry.py``) is this
+    hooked cell's opener (``tests/conformance/_entry.py``) is this
     same opener with one.
     """
 

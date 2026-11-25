@@ -1,8 +1,9 @@
 """One exit-status rule for the routes that run a command as a process.
 
-A process route -- the ssh exec channel, local ``exec`` and the interactive
-ssh bridge -- learns how a command ended from a return code in asyncio's
-convention: the exit status, or ``-N`` when signal ``N`` ended the process, or
+A process route -- the ssh exec channel and local subprocess primitives
+(which no ``exec`` reaches) and the interactive ssh bridge --
+learns how a command ended from a return code in asyncio's convention: the
+exit status, or ``-N`` when signal ``N`` ended the process, or
 ``None`` when neither was reported. A shell reports the same death as
 ``128 + N``, so a caller would otherwise see the same command end two ways
 depending on the route. :func:`exit_status_of` is that translation, in one

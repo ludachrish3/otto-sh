@@ -83,6 +83,12 @@ class TransferContext:
     host_name: str
     max_filename_len: int = 255
     exec_cmd: "Callable[..., Coroutine[Any, Any, CommandResult]] | None" = None
+    # Starts a command as `exec_cmd` does and returns its task once the command
+    # has been typed (see `otto.host.host.BaseHost._exec_spawned`), so a
+    # backend can time what the command does from that moment, not from a
+    # session still opening. None where the host offers no such entry; a
+    # backend then spawns `exec_cmd` as a task itself.
+    spawn_cmd: "Callable[..., Coroutine[Any, Any, asyncio.Task[CommandResult]]] | None" = None
     # unix-family fields
     connections: "ConnectionManager | None" = None
     nc_options: "NcOptions | None" = None

@@ -118,7 +118,12 @@ async def test_close_stops_a_background_member_that_obeys_term(tmp_path: Path) -
         await _gone(b)
 
 
-async def test_a_member_that_ignores_term_survives_a_prompt_leader_exit(tmp_path: Path) -> None:
+async def test_a_member_that_ignores_term_is_killed_after_the_grace_when_the_leader_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The shell exits on TERM at once; the member that ignores it is what is
+    # left of the group once the grace is over, and gets KILL.
+    monkeypatch.setattr(process_stop, "_EXEC_REAP_TIMEOUT", 0.5)
     w = tmp_path / "w"
     s = LocalSession()
     with _reaping([w]):
@@ -126,12 +131,12 @@ async def test_a_member_that_ignores_term_survives_a_prompt_leader_exit(tmp_path
             await s.run_cmd(cmd=f"""sh -c 'trap "" TERM; {_stamp(w)}; exec sleep 30' &""")
             pid = await _await_witness(w)
             shell = s._pid
+            fields = proc_stat(pid)
+            assert fields is not None
+            assert fields[_PGRP] == str(shell), "the member is in the shell's group"
         finally:
             await s.close()
-        assert observe(w) == RUNNING
-        fields = proc_stat(pid)
-        assert fields is not None
-        assert fields[_PGRP] == str(shell)
+        await _gone(w)
 
 
 async def test_a_member_that_left_the_group_survives(tmp_path: Path) -> None:

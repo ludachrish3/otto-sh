@@ -2251,9 +2251,13 @@ one place:
 2. Its `VOICE` entry in `scripts/render_support_matrix.py`: the
    "You can ..." phrase is the only wording the page uses for the promise.
 3. The contract test under `tests/conformance/`, carrying the
-   `@pytest.mark.entries(...)` marker that names the entries (`run`, `exec`,
-   `exec-shell`) it is checked through; the marker is what puts its row on
-   the page of each command those entries map to (`ENTRY_VOICE`).
+   `@pytest.mark.entries(...)` marker that names the entries (`run`,
+   `exec`) it is checked through; the marker is what puts its row on the
+   page of each command those entries map to (`ENTRY_VOICE`). A contract
+   declaring `exec` is also checked on the hooked-ssh cell kind: an `ssh`
+   cell whose host declares a session-setup hook, so its `exec` takes a
+   session with a terminal where the plain cell's takes one without
+   (`tests/conformance/_entry.py`).
 4. Its positive control (`@pytest.mark.positive_control("<surface id>")`),
    proving the contract can go red on the cell.
 5. Regenerated pages.

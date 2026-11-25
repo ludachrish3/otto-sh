@@ -89,6 +89,8 @@ def test_nothing_the_marked_shell_had_left_to_run_is_run(tmp_path, shell):
 def test_every_marked_process_is_frozen_before_any_is_killed(tmp_path, shell):
     """The order that keeps a waiting shell from running on: all ``STOP`` first, then ``KILL``.
 
+    Those two are the only signals sent.
+
     The sweep visits ``/proc`` in name order, so it can reach a command
     before the shell that waits for it. ``kill`` is wrapped to record what
     the sweep sends, in the order it sends it.
@@ -106,6 +108,8 @@ def test_every_marked_process_is_frozen_before_any_is_killed(tmp_path, shell):
     first_kill = next(i for i, (sig, _) in enumerate(sent) if sig == "-KILL")
     frozen = {int(pid) for sig, pid in sent[:first_kill] if sig == "-STOP"}
     assert marked <= frozen, sent
+    # No TERM or HUP first: a marked process gets no chance to clean up.
+    assert {sig for sig, _ in sent} == {"-STOP", "-KILL"}, sent
 
 
 def test_the_marked_shell_command_starts_a_login_shell_carrying_the_token(tmp_path):
@@ -124,3 +128,26 @@ def test_the_marked_shell_command_starts_a_login_shell_carrying_the_token(tmp_pa
         check=True,
     )
     assert done.stdout.splitlines()[-2:] == [f"{VARIABLE}=feed", "0"]
+
+
+@pytest.mark.parametrize(
+    ("line", "written"),
+    [("echo err >&2; echo out", "err\nout\n"), ("echo out; echo err >&2", "out\nerr\n")],
+)
+def test_the_marked_shell_writes_stderr_into_its_stdout_pipe(tmp_path, line, written):
+    """Started on two pipes, as an ssh server starts it, the shell writes both to the first.
+
+    The server forwards two pipes in the order it finds them, not the order
+    they were written; one pipe keeps the written order.
+    """
+    env = {**os.environ, "SHELL": shutil.which("bash") or "bash", "HOME": str(tmp_path)}
+    done = subprocess.run(
+        ["sh", "-c", marked_shell_command(VARIABLE, "feed")],
+        input=line + "\n",
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=True,
+    )
+    assert (done.stdout, done.stderr) == (written, "")

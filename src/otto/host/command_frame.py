@@ -42,6 +42,7 @@ import enum
 import re
 import shlex
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -190,12 +191,30 @@ class ExecInput:
     under its identity guard (:meth:`CommandFrame.identity_guard`). ``None``
     for every session that carries no mark."""
 
+    disposable: bool = False
+    """Whether the session is closed, not recovered, when otto gives up on this call.
+
+    Set by the exec pool for every pooled ``exec``. A command otto gives up
+    on there (a timeout, a cancel, a refused password) is stopped without
+    the shell being restored, and the session is left dead for
+    the pool to close (``ShellSession._stop_disposable``). ``False`` for an
+    ``exec`` on a host's default session, which is recovered as a ``run``'s
+    is."""
+
     exec_log: ExecLogContext | None = None
     """A delegating host's log context, or ``None`` for a call logged by the host it runs on.
 
     Set only by ``BaseHost._exec_delegated`` and read only through
     ``delegated_exec_log``: by every route's log resolver and by the host that
     logs the line it really runs at DEBUG."""
+
+    on_typed: Callable[[], None] | None = None
+    """Called when the call's framed command has been written to its session, or ``None``.
+
+    Set only by ``BaseHost._exec_spawned``, which returns the call's task the
+    first time it is called. It is called again when the command is written
+    once more, on a fresh session, after the first session lost its user;
+    never when the write fails or is cancelled."""
 
 
 @final

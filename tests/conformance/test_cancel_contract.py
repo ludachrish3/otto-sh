@@ -2,10 +2,15 @@
 
 A caller that cancels an ``exec`` (a ``wait_for`` around it, a task group that
 lost a sibling) gets the cancellation back, and by then the command otto
-started is stopped: on a shell route the interrupt and the shell's
-confirmation (``ShellSession._stop_under_bound``), on a process route the
-hang-up of the process (``otto.host.process_stop.stop_interrupted``). The
-host then answers the next command.
+started is stopped (``ShellSession._stop_under_bound``): on a session with a
+terminal the interrupt, on an ``ssh`` session without one the marked stop of
+everything carrying the session's token, and on the local host the close of
+the session, which stops the shell's process group. The pooled session the
+cancelled ``exec`` ran on is CLOSED, not recovered: the next ``exec`` runs on
+another session, which the contract reads as another shell process
+(``session_pid_command``). A default-session ``exec`` (a console, an embedded
+host) keeps ``run()``'s recovery; neither is in this contract's domain
+(:func:`applicable_cell`). The host then answers the next command.
 
 The command is cancelled once the route under test has relayed its start
 token (:func:`~tests.conformance._started.output_seen`), so the cancel lands
@@ -25,14 +30,13 @@ from contextlib import suppress
 import pytest
 
 from otto.host import process_stop
-from otto.host.exec_route import ExecRoute
 from otto.host.host import _EXEC_REAP_TIMEOUT, EXEC_CANCEL_REAP_BOUND
 from otto.host.session import ShellSession
 from otto.utils import WaitTimeoutError, wait_for_async
 from tests._fixtures import witness_shell
 from tests._fixtures.session_stop import old_mark_only
 from tests._fixtures.witness_shell import STARTED_TOKEN
-from tests.conformance._entry import expected_route, issue, on_console, opened
+from tests.conformance._entry import LOCAL_FAMILY, has_terminal, issue, on_console, opened
 from tests.conformance._framing import assert_single_line_answer
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._started import output_seen
@@ -56,34 +60,31 @@ class CancelForm:
     """The signals the witnessed shell itself ignores (:func:`witness_shell.ignoring`), if any."""
 
 
-CANCEL_FORMS: "dict[str, CancelForm]" = {
-    # The stop is a Ctrl-C on the session's terminal; the release that competes
-    # with it is the hang-up of a session the stop left dead, when it is
+CANCEL_FORMS: "dict[bool, CancelForm]" = {
+    # With a terminal: the stop is a Ctrl-C on the session's terminal; the
+    # release that competes with it is the hang-up of the session when it is
     # closed. A witnessed process that ignores HUP and dies on INT meets the
     # stop alone. The witnessed shell sets the ignore itself: older BusyBox
-    # shells drop one they inherit (`witness_shell.ignoring`). The subshell
-    # keeps the `exec` off the session's own shell.
-    ExecRoute.POOLED_SHELL.value: CancelForm(around="({command})", ignores="HUP"),
-    # The stop signals the command's process group (HUP, then KILL); the
-    # release that competes with it is asyncio's kill of the LEADER alone when
-    # the transport is closed. A witnessed group member that is not the
-    # leader, with HUP at its default, meets the stop alone.
-    ExecRoute.LOCAL_SUBPROCESS.value: CancelForm(around="({command})"),
-    # The stop signals the command through the channel (HUP, then KILL);
-    # closing a pty-less channel signals nothing. The command as it is.
-    ExecRoute.SSH_CHANNEL.value: CancelForm(around="{command}"),
+    # shells drop one they inherit (`witness_shell.ignoring`).
+    True: CancelForm(around="({command})", ignores="HUP"),
+    # Without one: over ssh the marked stop signals every process carrying the
+    # session's token, and closing a pty-less channel signals nothing; on the
+    # local host the session's close signals the shell's process group. The
+    # subshell keeps the `exec` off the session's own shell, as above.
+    False: CancelForm(around="({command})"),
 }
-"""The witnessed stimulus, by the route that runs it: the form ONLY that route's cancel
+"""The witnessed stimulus, by whether the cell's session reads a terminal
+(:func:`~tests.conformance._entry.has_terminal`): the form ONLY that session's cancel
 stop can end before the witness looks, whatever else happens after a cancel. Each
 wraps the vocabulary's ``exec_pid_long_running_template``; what is asserted is the
-same on every route."""
+same on every cell."""
 
 
 def cancel_stimulus(resolved: ResolvedCell, path: str) -> str:
-    """The witnessed command for *resolved*'s route, writing its witness to *path*."""
+    """The witnessed command for *resolved*'s session, writing its witness to *path*."""
     template = resolved.vocabulary.exec_pid_long_running_template
     assert template is not None
-    form = CANCEL_FORMS[expected_route(resolved)]
+    form = CANCEL_FORMS[has_terminal(resolved)]
     command = template.format(path=path)
     if form.ignores:
         command = witness_shell.ignoring(command, form.ignores)
@@ -121,9 +122,9 @@ async def _seen_stopped(w: Witness, words: Vocabulary) -> bool:
     The one judgement the contract and its control share. Nothing more is
     done to the host meanwhile; the first read that sees it stopped answers,
     so a command the cancel already stopped costs one read. A bound at all
-    because on a local process the cancel returns once the leader is ended
-    and its process group hung up, and a member hung up may still be exiting
-    then (the exec page's known gaps).
+    because the witness reads the host on its own connection, after the
+    cancel returned; what a local stop reaches is on the results page's
+    stop table (``exec-stop-reach``).
     """
     assert words.long_running_seconds is not None
     assert words.long_running_seconds >= 2 * _STOPPED_WITHIN_S, (
@@ -176,7 +177,7 @@ async def _cancel_once_started(host, resolved: ResolvedCell, cmd: str) -> None:
                     await task
 
 
-@pytest.mark.entries("exec", "exec-shell")
+@pytest.mark.entries("exec")
 @pytest.mark.observable(
     "after cancelling a witnessed `{words.long_running_command}`, in the form only its "
     "route's cancel stop can end, once the route under test relayed its start token: "
@@ -190,7 +191,11 @@ async def test_cancelling_an_exec_stops_its_command_and_leaves_the_host_usable(
 ) -> None:
     """The cancel returns with the command stopped, and the same host answers the next command."""
     words = resolved_cell.vocabulary
+    pid_word = words.session_pid_command
+    assert pid_word is not None, f"{resolved_cell.cell}: the domain admitted no session pid read"
     async with opened(resolved_cell) as host:
+        # The session the cancelled exec takes: this one, left idle in the pool.
+        before = (await issue(host, resolved_cell, pid_word)).value
         async with witness(resolved_cell, host, purpose="cancel") as w:
             await _cancel_once_started(host, resolved_cell, cancel_stimulus(resolved_cell, w.path))
             assert await _seen_stopped(w, words), (
@@ -198,6 +203,11 @@ async def test_cancelling_an_exec_stops_its_command_and_leaves_the_host_usable(
                 f"{_STOPPED_WITHIN_S}s after the cancel returned"
             )
         afterwards = await issue(host, resolved_cell, words.single_line_command)
+        after = (await issue(host, resolved_cell, pid_word)).value
+    assert after != before, (
+        f"{resolved_cell.cell}: `{pid_word}` answered {after!r} before and after the cancel, "
+        f"so the cancelled exec's session was recovered and reused, not closed"
+    )
     assert afterwards.is_ok, (
         f"{resolved_cell.cell}: the host did not answer after the cancel -- "
         f"{afterwards.status!r} {afterwards.value!r}"
@@ -208,7 +218,7 @@ async def test_cancelling_an_exec_stops_its_command_and_leaves_the_host_usable(
 
 
 class _StopsNothing:
-    """A process route's ``stop_interrupted`` that signals nothing and keeps what it was handed.
+    """A ``process_stop`` stop that signals nothing and keeps what it was handed.
 
     :meth:`released` then waits for those processes to end once the
     witness's cleanup has killed what they run, so a process the disabled
@@ -219,9 +229,7 @@ class _StopsNothing:
     def __init__(self) -> None:
         self._handed: list[process_stop.StoppableProcess] = []
 
-    async def __call__(
-        self, proc: "process_stop.StoppableProcess", _exc: BaseException, *, what: str
-    ) -> None:
+    async def __call__(self, proc: "process_stop.StoppableProcess", *, what: str) -> None:
         self._handed.append(proc)
 
     async def released(self) -> None:
@@ -235,21 +243,23 @@ class _StopsNothing:
 # ==========================================================================
 
 
-@pytest.mark.entries("exec", "exec-shell")
+@pytest.mark.entries("exec")
 @pytest.mark.positive_control("exec-cancel")
 async def test_control_with_the_stop_disabled_the_command_is_seen_running(
     resolved_cell: ResolvedCell,
 ) -> None:
     """With the route's stop disabled, the cancelled command reads as running.
 
-    The one seam each route's cancel stop goes through is replaced: on a
-    shell route ``ShellSession._stop_interrupted_command`` by the cancel arm
-    that only marked the session for its next use, on a process route
-    ``process_stop.stop_interrupted`` by a stop that stops nothing. The
-    witness must then see the command running, so a host whose cancel leaves
-    the command behind fails the contract. The witness context's cleanup
-    kills it, and the host must still answer the next command, through the
-    same route check as the contract's.
+    The seam every session's cancel stop goes through,
+    ``ShellSession._stop_interrupted_command``, is replaced by the cancel arm
+    that only marked the session for its next use. On the local host the
+    session's close is a stop too (it signals the shell's process group), so
+    there ``process_stop.stop_timed_out``, the one stop that close calls, is
+    replaced by a stop that stops nothing as well. The witness must then see
+    the command running, so a host whose cancel leaves the command behind
+    fails the contract. The witness context's cleanup kills it, and the host
+    must still answer the next command, through the same route check as the
+    contract's.
 
     The stimulus is the contract's own (:func:`cancel_stimulus`), so the
     control and the contract differ only in the disabled seam.
@@ -257,10 +267,9 @@ async def test_control_with_the_stop_disabled_the_command_is_seen_running(
     words = resolved_cell.vocabulary
     stops_nothing = _StopsNothing()
     with pytest.MonkeyPatch.context() as patch:
-        if expected_route(resolved_cell) == ExecRoute.POOLED_SHELL.value:
-            patch.setattr(ShellSession, "_stop_interrupted_command", old_mark_only)
-        else:
-            patch.setattr(process_stop, "stop_interrupted", stops_nothing)
+        patch.setattr(ShellSession, "_stop_interrupted_command", old_mark_only)
+        if resolved_cell.family == LOCAL_FAMILY:
+            patch.setattr(process_stop, "stop_timed_out", stops_nothing)
         async with opened(resolved_cell) as host:
             async with witness(resolved_cell, host, purpose="cancel") as w:
                 cmd = cancel_stimulus(resolved_cell, w.path)

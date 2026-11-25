@@ -2107,8 +2107,8 @@ class TestExecProxyRouting:
     ``_apply_login_proxy`` (Task 7).
     """
 
-    def test_no_hops_uses_the_raw_fast_path(self):
-        """Existing fast path preserved: no proxy_hops on ssh -> the raw channel."""
+    def test_no_hops_pools_too(self):
+        """No proxy_hops on ssh is a pooled session as well: no exec takes the raw channel."""
         conn = _proxy_connections([], login_target="alice", credentials=("alice", "alicepw"))
         conn.term = "ssh"
         mgr = session_manager(
@@ -2117,7 +2117,7 @@ class TestExecProxyRouting:
             host_id="h",
         )
 
-        assert mgr.exec_route() is ExecRoute.SSH_CHANNEL
+        assert mgr.exec_route() is ExecRoute.POOLED_SHELL
 
     @pytest.mark.asyncio
     async def test_hops_present_skips_the_raw_path_uses_pool(self):

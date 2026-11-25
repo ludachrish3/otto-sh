@@ -313,9 +313,9 @@ async def put_tree(
     every directory is login-owned with ``mkdir``'s default bits and the
     per-file put — authenticated as *user* — is refused by the destination
     it was just given. What that costs per family is the family's own rule:
-    a unix host whose term carries no SSH exec channel refuses
-    ``exec(user=...)`` by name, so the tree is refused before a byte moves
-    rather than half-landed; a container host ignores it and creates the
+    on ssh and telnet ``exec(user=...)`` runs on a pooled session that is
+    *user* (their own ssh login, or a switch to them), on a console on the
+    default session switched to them; a container host ignores it and creates the
     directories as ``root`` (the identity ``docker cp`` writes as anyway);
     ``LocalHost`` refuses a non-``None`` *user* upstream, before any of
     this runs.
