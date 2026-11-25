@@ -552,6 +552,22 @@ class TestBothDirectionsShareTheWaitAndTheRetry:
         assert message.endswith("(two attempts were made)")
 
     @pytest.mark.asyncio
+    async def test_a_wait_failure_with_an_ended_listener_says_it_had_exited_and_how(self) -> None:
+        """The wording a listener ending during the last check, or before a connect, reaches."""
+
+        async def ended() -> CommandResult:
+            return CommandResult(command="", value="", status=Status.Failed, retcode=1)
+
+        listener = asyncio.ensure_future(ended())
+        await listener
+        message = transfer_mod._nc_wait_failure(
+            "connect", "test2 port 9000", "ss", listener, "refused", "nc"
+        )
+        assert "; the listener process had already exited: " in message
+        assert "the listener command exited with status 1" in message
+        assert "was still running" not in message
+
+    @pytest.mark.asyncio
     async def test_both_directions_end_on_the_same_words(self, tmp_path: Path) -> None:
         answers = [_ok("0\n"), _ok("not a count")]
         put, _, _ = await _transfer("put", tmp_path / "p", answers, _NO_CONNECT)

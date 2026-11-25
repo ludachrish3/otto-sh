@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at hundreds of sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 142 NAMED failures", not "anything otto
+therefore means "one of otto's 143 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,25 +24,25 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers most of those raise sites,
-  and 80 of the 142 named classes. Of the other 62, forty-two are rooted at
+  and 80 of the 143 named classes. Of the other 63, forty-two are rooted at
   plain ``Exception`` (the bootstrap, project-activation,
   project-instruction, lab-repository, term-backend, transfer-backend,
   inventory, creds, templating, reservation, power-controller, field, monitor,
   review-source refusal, init and gcov stamp-guard errors, and the session errors
   other than ``ProjectSelectionError`` and ``LoggingLevelsConflictError``,
-  which are ``ValueError`` subclasses), eighteen sit under
+  which are ``ValueError`` subclasses), nineteen sit under
   ``OSError`` (``AppShellTimeoutError``, ``ConsoleError``, ``ConsoleLoggedInError``,
   ``HostKeyChangedError``, ``HostKeyNotCertifiedError``, ``HostKeyRefusedError``,
   ``HostKeyRevokedError``, ``KnownHostsError``, ``KnownHostsUnwritableError``,
   ``LoginProxyError``,
-  ``NcListenerAnswerError``, ``NcListenerToolError``,
+  ``NcListenerAnswerError``, ``NcListenerExitedError``, ``NcListenerToolError``,
   ``NcPortSharedError``, ``ReadGateClosed``,
   ``RetryAttemptTimeoutError``, ``SessionSetupError``, ``UvNotFoundError``,
   ``WaitTimeoutError``), and
   two sit under ``LookupError``
   (``OptionsNotAvailableError``, for ``ctx.options(Cls)`` asked of a class
   with no bound value, and ``UnknownSessionError``, for a monitor write
-  naming a session its source does not hold) — 80 + 42 + 18 + 2 = 142, so the split accounts for
+  naming a session its source does not hold) — 80 + 42 + 19 + 2 = 143, so the split accounts for
   every named class.
 
 The class counts are measured, not maintained by arithmetic, and gated

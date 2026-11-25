@@ -1097,7 +1097,9 @@ class TestListenerCheckIsLoud:
         assert "never answered" not in str(info.value)
 
     @pytest.mark.asyncio
-    async def test_the_timeout_says_whether_the_listener_had_exited(self):
+    async def test_a_listener_that_has_already_ended_ends_the_wait_with_no_check_sent(self):
+        """The caller reads how it ended; the wait neither polls nor times out."""
+
         async def done() -> None:
             return None
 
@@ -1105,8 +1107,8 @@ class TestListenerCheckIsLoud:
         await listener
         exec_cmd = AsyncMock(return_value=_fail("0\n"))
         ft = make_ft(nc_listener_check="ss", exec_cmd=exec_cmd)
-        with pytest.raises(ConnectionError, match="had already exited"):
-            await ft._wait_for_remote_listener(8080, timeout=0.05, interval=0.01, listener=listener)
+        await ft._wait_for_remote_listener(8080, timeout=60.0, interval=0.01, listener=listener)
+        assert exec_cmd.await_count == 0
 
     @pytest.mark.asyncio
     async def test_a_custom_check_exiting_non_zero_is_polled(self):

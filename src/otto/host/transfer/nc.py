@@ -18,6 +18,7 @@ import asyncio
 import random
 from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import suppress
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -115,6 +116,16 @@ _NC_STALL_TIMEOUT = 5.0
 # Setup-step bound for creating the asyncssh local forward — a wedged hop
 # channel must fail the attempt, not hang it.
 _NC_FORWARD_SETUP_TIMEOUT = 5.0
+
+_NC_SENDER_CONNECT_GRACE = 1.0
+"""Seconds a direct get's sender that exited 0 gets for its stream to be delivered.
+
+The kernel accepts the sender's connection several loop turns before otto's
+server callback runs, so a sender that connects, sends and exits by itself
+can be seen to end first. Only that rainy-day ending (status 0, no
+connection seen yet) waits this long before it is called "ended without
+connecting"; a transfer that works never starts the timer.
+"""
 
 _INTERRUPTED_REAP_TIMEOUT = 5.0
 """Seconds an INTERRUPTED transfer may spend reaping its remote listener.
@@ -279,6 +290,28 @@ class NcListenerToolError(OttoError, ConnectionError):
     :class:`NcPortSharedError` is, so a transfer reports it as the file's
     failed result.
     """
+
+
+class NcListenerExitedError(OttoError, ConnectionError):
+    """The netcat listener ended early with a status a fresh port cannot change.
+
+    Status 127 is a netcat that is not on the host, 126 one that is there and
+    cannot be run: a second attempt would run the same ``exec_name`` and end
+    the same way, so this leaves the attempt as :class:`NcListenerToolError`
+    does and the transfer reports it once. The message names
+    ``nc_options.exec_name``.
+
+    Attributes:
+        status: The listener command's exit status.
+    """
+
+    def __init__(self, message: str, *, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+_NC_STATUSES_A_RETRY_MEETS_AGAIN = frozenset({126, 127})
+"""Exit statuses of a netcat that a retry on a fresh port would meet again."""
 
 
 class NcListenerAnswerError(OttoError, ConnectionError):
@@ -448,14 +481,64 @@ timed here.
 """
 
 
+def _how_netcat_ended(
+    command: "asyncio.Task[CommandResult]", exec_name: str, role: str
+) -> tuple[int | None, str]:
+    """Return how a finished netcat command ended: its exit status, and that in words.
+
+    The one reader of a listener's or a sender's ending. The status is
+    ``None`` when the command raised or gave no exit status
+    (:func:`~otto.host.exit_status.gave_no_exit_status`); the words then
+    carry the cause and never read as an exit status. The status is the whole
+    command line's, so only 127 (the shell found no such program) and 126
+    (found, cannot be run) are worded as the netcat's and point at
+    ``nc_options.exec_name``; any other status is worded as the *role*'s
+    command, whose redirect may have failed before the netcat ever ran. A
+    cancelled *command* raises ``CancelledError``.
+
+    Args:
+        command: The finished netcat command's task.
+        exec_name: ``nc_options.exec_name``, which the command ran.
+        role: ``listener`` or ``sender``, which the words name.
+    """
+    error = command.exception()
+    if error is not None:
+        return None, f"the '{exec_name}' command failed: {error}"
+    result = command.result()
+    if gave_no_exit_status(result):
+        return None, f"the '{exec_name}' command gave no exit status ({result.value or result.msg})"
+    status = result.retcode
+    if status == 127:  # noqa: PLR2004 — the shell's "command not found"
+        because = "so it was not found on the host"
+    elif status == 126:  # noqa: PLR2004 — the shell's "found but cannot be run"
+        because = "so it was found but could not be run"
+    else:
+        return status, f"the {role} command exited with status {status}"
+    words = f"'{exec_name}' exited with status {status}, {because}"
+    return status, f"{words} (nc_options.exec_name names the netcat to run)"
+
+
+def _cancelled_before_start(label: str, role: str, where: str) -> str:
+    """Word a listener's or a sender's task cancelled from outside before the transfer started.
+
+    The one wording for that event, for put, tunnelled get and direct get.
+    """
+    return f"nc {label}: the {role} on {where} was cancelled before the transfer started"
+
+
 def _nc_wait_failure(
-    stage: str, where: str, rung: str, listener: "asyncio.Task[Any] | None", detail: str
+    stage: str,
+    where: str,
+    rung: str,
+    listener: "asyncio.Task[CommandResult] | None",
+    detail: str,
+    exec_name: str,
 ) -> str:
     """Word a failed wait on the remote listener, for any stage.
 
     The one formatter for the readiness wait and the connect, so they read
     alike. The listener's state is read now, when the failure is being
-    reported.
+    reported; a listener that has ended is described by how it ended.
 
     Args:
         stage: ``remote readiness``, ``connect`` or ``forwarded connect``.
@@ -463,11 +546,14 @@ def _nc_wait_failure(
         rung: The listener-check rung that was polled.
         listener: The spawned listener's task, if the caller has one.
         detail: What went wrong.
+        exec_name: ``nc_options.exec_name``, which the listener ran.
     """
     if listener is None:
         process = ""
     elif listener.done():
         process = "; the listener process had already exited"
+        if not listener.cancelled():
+            process += f": {_how_netcat_ended(listener, exec_name, 'listener')[1]}"
     else:
         process = "; the listener process was still running"
     return (
@@ -476,7 +562,74 @@ def _nc_wait_failure(
     )
 
 
-def _listener_fed_by_another(verb: str, path: Path, port: int) -> str:
+async def _join_cancelled(task: "asyncio.Task[CommandResult]") -> None:
+    """Wait for a netcat command's *task*, already cancelled, to end.
+
+    The one join of a cancelled listener's or sender's task. Only the task's
+    own failure is suppressed: a cancellation of the caller still propagates
+    (see :meth:`NcFileTransfer._cancel_and_reap`).
+    """
+    with suppress(Exception):
+        await asyncio.gather(task, return_exceptions=True)
+
+
+class _DirectGetVerdict:
+    """The one verdict of a direct get: whichever of the connection and the sender's end gives it.
+
+    The connection's handler gives the transfer's own result. A sender that
+    ends first gives the failure at once when it raised, was cancelled from
+    outside or exited non-zero. One that exited 0 may have had its stream
+    accepted and not yet delivered to the handler, so its failure waits
+    :data:`_NC_SENDER_CONNECT_GRACE` and is dropped once the connection
+    arrives. The first verdict given stands, and a second never raises.
+    """
+
+    def __init__(self) -> None:
+        self.done: asyncio.Future[Result] = asyncio.get_running_loop().create_future()
+        self.connected = False
+        self._grace: asyncio.TimerHandle | None = None
+
+    def resolve(self, result: Result) -> None:
+        """Give *result* as the verdict, unless one was given already."""
+        if not self.done.done():
+            self.done.set_result(result)
+
+    def on_connect(self) -> None:
+        """Record that the sender's stream reached the handler."""
+        self.connected = True
+        self.close()
+
+    def close(self) -> None:
+        """Drop a pending grace, if one is running."""
+        if self._grace is not None:
+            self._grace.cancel()
+
+    def _unless_connected(self, failure: Result) -> None:
+        if not self.connected:
+            self.resolve(failure)
+
+    def on_sender_end(
+        self,
+        task: "asyncio.Task[CommandResult]",
+        *,
+        failure: "Callable[[asyncio.Task[CommandResult]], Result]",
+    ) -> None:
+        """Judge the sender's ending; *failure* words one that never connected."""
+        if self.done.done():
+            return
+        if not task.cancelled() and task.exception() is not None:
+            self.resolve(Result(status=Status.Error, msg=str(task.exception())))
+        elif self.connected:
+            return  # the handler gives the verdict
+        elif not task.cancelled() and task.result().retcode == 0:
+            self._grace = asyncio.get_running_loop().call_later(
+                _NC_SENDER_CONNECT_GRACE, self._unless_connected, failure(task)
+            )
+        else:
+            self.resolve(failure(task))
+
+
+def _listener_fed_by_another(label: str, port: int) -> str:
     """Word the refusal for a listener that exited before this side ever connected.
 
     A ``nc -l`` serves exactly one connection and exits. Ours gone before we
@@ -487,7 +640,7 @@ def _listener_fed_by_another(verb: str, path: Path, port: int) -> str:
     bytes as success, so the attempt is refused and retried on a fresh port.
     """
     return (
-        f"nc {verb} {path}: the listener on port {port} exited before this side connected, "
+        f"nc {label}: the listener on port {port} exited before this side connected, "
         f"so another process's stream reached it (port shared)"
     )
 
@@ -1211,8 +1364,8 @@ class NcFileTransfer(UnixFileTransfer):
             port: The remote port the listener binds.
             timeout: How long to poll.
             interval: The poll interval after the first fast polls.
-            listener: The spawned listener's task, so a timeout can say
-                whether the process had already exited.
+            listener: The spawned listener's task. The wait ends, with no
+                further poll, as soon as it has ended; the caller reads how.
 
         Raises:
             NcPortSharedError: if more than one listener holds *port*.
@@ -1234,6 +1387,9 @@ class NcFileTransfer(UnixFileTransfer):
 
         async def listening() -> bool:
             nonlocal answered
+            if listener is not None and listener.done():
+                # Ended: the caller reads how, and no further poll is sent.
+                return True
             if rung is None:
                 return (await self._control_run(custom)).retcode == 0
             try:
@@ -1263,7 +1419,12 @@ class NcFileTransfer(UnixFileTransfer):
             if counts and not answered:
                 detail += ", and the check never answered"
             return _nc_wait_failure(
-                "remote readiness", f"{self._name} port {port}", strategy, listener, detail
+                "remote readiness",
+                f"{self._name} port {port}",
+                strategy,
+                listener,
+                detail,
+                self._nc_exec,
             )
 
         try:
@@ -1283,7 +1444,7 @@ class NcFileTransfer(UnixFileTransfer):
         return self._resolved_listener_check or CONTROL_AUTO
 
     async def _await_remote_listener(
-        self, port: int, listener: "asyncio.Task[Any]", label: str
+        self, port: int, listener: "asyncio.Task[CommandResult]", label: str
     ) -> Result | None:
         """Wait for this attempt's remote listener; return the attempt's failure, if any.
 
@@ -1295,11 +1456,21 @@ class NcFileTransfer(UnixFileTransfer):
         reaps the listener, and ``dispatch_per_file`` reports it as the
         file's failed result with its text unchanged.
 
+        A listener that has ended by the time the wait is over -- before the
+        first poll, between polls or during the last one -- is judged by
+        :meth:`_ended_listener_failure` instead, whatever the wait saw.
+
         Args:
             port: The remote port.
             listener: The spawned listener's task.
             label: The attempt's subject, e.g. ``put to /dst/file``.
+
+        Raises:
+            NcListenerToolError: if a built-in check's tool failed.
+            NcListenerExitedError: if the listener ended with a status a
+                fresh port cannot change.
         """
+        failure: Result | None = None
         try:
             await self._wait_for_remote_listener(
                 port, timeout=_NC_LISTENER_READY_TIMEOUT, listener=listener
@@ -1307,15 +1478,56 @@ class NcFileTransfer(UnixFileTransfer):
         except NcListenerToolError:
             raise
         except ConnectionError as not_ours:
-            return Result(status=Status.Error, msg=f"nc {label}: {not_ours}")
-        return None
+            failure = Result(status=Status.Error, msg=f"nc {label}: {not_ours}")
+        if listener.done():
+            return self._ended_listener_failure(port, listener, label)
+        return failure
+
+    def _ended_listener_failure(
+        self, port: int, listener: "asyncio.Task[CommandResult]", label: str
+    ) -> Result:
+        """Return the attempt's failure for a listener that ended before this side connected.
+
+        The one classifier of an ended listener, for put and tunnelled get.
+        Status 0 is a listener another process's stream reached (a shared
+        port), retried on a fresh port. 126 and 127 raise
+        :class:`NcListenerExitedError`, which leaves the attempt unretried.
+        Any other status, a command that raised, one that gave no exit
+        status and a listener task cancelled from outside are retried, the
+        message carrying the status or the cause.
+
+        Args:
+            port: The remote port.
+            listener: The ended listener's task.
+            label: The attempt's subject, e.g. ``put to /dst/file``.
+
+        Raises:
+            NcListenerExitedError: for status 126 or 127.
+        """
+        if listener.cancelled():
+            # Cancelled from outside (a session teardown): the attempt itself
+            # was not, so this is a retryable failure, not a status.
+            return Result(
+                status=Status.Error,
+                msg=_cancelled_before_start(label, "listener", f"{self._name} port {port}"),
+            )
+        status, ending = _how_netcat_ended(listener, self._nc_exec, "listener")
+        if status == 0:
+            return Result(status=Status.Error, msg=_listener_fed_by_another(label, port))
+        message = (
+            f"nc {label}: the listener on {self._name} port {port} ended before the "
+            f"transfer started: {ending}"
+        )
+        if status in _NC_STATUSES_A_RETRY_MEETS_AGAIN:
+            raise NcListenerExitedError(message, status=status)
+        return Result(status=Status.Error, msg=message)
 
     def _connect_failure(
         self,
         label: str,
         port: int,
         local_port: int | None,
-        listener: "asyncio.Task[Any]",
+        listener: "asyncio.Task[CommandResult]",
         error: ConnectionError,
     ) -> Result:
         """Return the attempt's failure when connecting to the remote listener gave up.
@@ -1340,7 +1552,9 @@ class NcFileTransfer(UnixFileTransfer):
         return Result(
             status=Status.Error,
             msg=f"nc {label}: "
-            + _nc_wait_failure(stage, where, self._polled_listener_rung(), listener, str(error)),
+            + _nc_wait_failure(
+                stage, where, self._polled_listener_rung(), listener, str(error), self._nc_exec
+            ),
         )
 
     async def _attempt_twice(self, attempt: Callable[[], Coroutine[Any, Any, Result]]) -> Result:
@@ -1553,8 +1767,8 @@ class NcFileTransfer(UnixFileTransfer):
         local_ip = self._get_local_ip()
 
         # Pre-fetch remote file sizes through `_control_run` — same control-
-        # plane path as the port/listener probes (telnet: serialized onto a
-        # warm pooled session; ssh: direct exec).
+        # plane path as the port/listener probes (serialized onto one warm
+        # pooled session).
         #
         # The size stopped being progress decoration when the read loop below
         # started terminating on it, and the old degrade-to-0 went with that: a
@@ -1585,11 +1799,12 @@ class NcFileTransfer(UnixFileTransfer):
             handler = progress_factory() if progress_factory is not None else None
             _logger.debug(f"{self._name}: NC get {src} -> {dst}")
 
-            done: asyncio.Future[Result] = asyncio.get_running_loop().create_future()  # ty: ignore[unsound-assignment] — typeshed types create_future() as Future[Any]
+            verdict = _DirectGetVerdict()
 
             async def _on_connect(
                 reader: asyncio.StreamReader, writer: asyncio.StreamWriter
             ) -> None:
+                verdict.on_connect()
                 try:
                     # EXACTLY `total` bytes, and then the close -- because the
                     # close is what terminates the sender. Without `-N` a
@@ -1635,7 +1850,7 @@ class NcFileTransfer(UnixFileTransfer):
                     # the same measurement shows ends the sender just as well.
                     writer.close()
                     if bytes_done < total:
-                        done.set_result(
+                        verdict.resolve(
                             Result(
                                 status=Status.Error,
                                 msg=(
@@ -1645,7 +1860,7 @@ class NcFileTransfer(UnixFileTransfer):
                             )
                         )
                         return
-                    done.set_result(Result(status=Status.Success, value=dst))
+                    verdict.resolve(Result(status=Status.Success, value=dst))
                 except (asyncio.TimeoutError, TimeoutError):
                     # EXPLICITLY, and above the generic arm below: `str()` of a
                     # TimeoutError is the empty string, so the generic arm
@@ -1654,7 +1869,7 @@ class NcFileTransfer(UnixFileTransfer):
                     # it is what ends the sender.
                     with suppress(Exception):
                         writer.close()
-                    done.set_result(
+                    verdict.resolve(
                         Result(
                             status=Status.Error,
                             msg=(
@@ -1678,13 +1893,14 @@ class NcFileTransfer(UnixFileTransfer):
                     # close exists to prevent.
                     with suppress(Exception):
                         writer.close()
-                    done.set_result(Result(status=Status.Error, msg=str(e)))
+                    verdict.resolve(Result(status=Status.Error, msg=str(e)))
 
             # Port 0 lets the OS assign a free port — no collisions when
             # multiple hosts transfer concurrently.  asyncio.start_server
             # returns once the socket is bound, so no sleep is needed.
             server = await asyncio.start_server(_on_connect, "0.0.0.0", 0)  # noqa: S104 — intentional all-interface bind
             port = server.sockets[0].getsockname()[1]
+            send_task: asyncio.Task[CommandResult] | None = None
             try:
                 # No `-N`, which BusyBox's applet rejects outright -- and
                 # since this spawn sends the `unrecognized option` saying so to
@@ -1702,22 +1918,72 @@ class NcFileTransfer(UnixFileTransfer):
                     )
                 )
 
-                def _on_send_fail(task: asyncio.Task[Any]) -> None:
-                    if done.done():
-                        return
-                    exc = task.exception()
-                    if exc is not None:
-                        done.set_result(Result(status=Status.Error, msg=str(exc)))
-
-                send_task.add_done_callback(_on_send_fail)
-                result = await done
-                await send_task
+                send_task.add_done_callback(
+                    partial(
+                        verdict.on_sender_end,
+                        failure=partial(self._sender_ended_failure, src, local_ip, port),
+                    )
+                )
+                result = await verdict.done
+                if not send_task.cancelled():
+                    await send_task
+            except asyncio.CancelledError as exc:
+                await self._join_sender_on_cancel(send_task, src, exc)
+                raise
+            else:
                 return result
             finally:
+                verdict.close()
                 server.close()
                 await server.wait_closed()
 
         return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
+
+    def _sender_ended_failure(
+        self, src: Path, local_ip: str, port: int, task: "asyncio.Task[CommandResult]"
+    ) -> Result:
+        """Return a direct get's failure for a sender that ended without connecting.
+
+        The sender's counterpart of :meth:`_ended_listener_failure`: a task
+        cancelled from outside, or how the command ended.
+        """
+        if task.cancelled():
+            return Result(
+                status=Status.Error,
+                msg=_cancelled_before_start(f"get of {src}", "sender", self._name),
+            )
+        ending = _how_netcat_ended(task, self._nc_exec, "sender")[1]
+        return Result(
+            status=Status.Error,
+            msg=(
+                f"nc get of {src}: the sender on {self._name} ended without "
+                f"connecting to {local_ip} port {port}: {ending}"
+            ),
+        )
+
+    async def _join_sender_on_cancel(
+        self,
+        send_task: "asyncio.Task[CommandResult] | None",
+        src: Path,
+        held: asyncio.CancelledError,
+    ) -> None:
+        """Cancel and join a direct get's sender when the caller was cancelled.
+
+        The sender's remote command is unbounded by design, so it would
+        outlive the call; it is joined under the bound an interrupted
+        listener reap has, and *held* is re-raised by the caller either way.
+        """
+        if send_task is None or send_task.done():
+            return
+        from ...lifecycle import compensate  # only once an interrupt needs it (import budget)
+
+        send_task.cancel()
+        await compensate(
+            _join_cancelled(send_task),
+            timeout=_INTERRUPTED_REAP_TIMEOUT,
+            what=f"{self._name}: nc get sender of {src}",
+            held=held,
+        )
 
     async def _get_files_nc_tunneled(
         self,
@@ -1816,10 +2082,6 @@ class NcFileTransfer(UnixFileTransfer):
                 not_ready = await self._await_remote_listener(port, listen_task, f"get of {src}")
                 if not_ready is not None:
                     return not_ready
-                if listen_task.done():
-                    return Result(
-                        status=Status.Error, msg=_listener_fed_by_another("get of", src, port)
-                    )
 
                 try:
                     local_port = await asyncio.wait_for(
@@ -2090,8 +2352,7 @@ class NcFileTransfer(UnixFileTransfer):
             # `_connect_with_retry` against a closed port on every retry.
             return
         listen_task.cancel()
-        with suppress(Exception):
-            await asyncio.gather(listen_task, return_exceptions=True)
+        await _join_cancelled(listen_task)
         with suppress(Exception):
             await self._reap_nc_listener(port)
 
@@ -2167,14 +2428,11 @@ class NcFileTransfer(UnixFileTransfer):
                 # wrapper: an exception out of `_attempt` folds into the file's
                 # Error without passing `_put_one`, whose fresh-port retry is
                 # the whole answer to a port another process shares. Only a
-                # failed tool leaves the attempt, since no retry can change it.
+                # failed tool, or a netcat that is missing or cannot be run,
+                # leaves the attempt, since no retry can change it.
                 not_ready = await self._await_remote_listener(port, listen_task, f"put to {dst}")
                 if not_ready is not None:
                     return not_ready
-                if listen_task.done():
-                    return Result(
-                        status=Status.Error, msg=_listener_fed_by_another("put to", dst, port)
-                    )
                 if self._connections.has_tunnel:
                     try:
                         local_port = await asyncio.wait_for(
@@ -2259,7 +2517,7 @@ class NcFileTransfer(UnixFileTransfer):
             except asyncio.CancelledError as exc:
                 # External cancellation mid-transfer skips listen_task's
                 # normal join points (the success / ConnectionError / timeout
-                # branches below the create_task). Cancel it and reap the
+                # branches below the spawn). Cancel it and reap the
                 # remote `nc -l`: the reap IS the bound here, since the spawn
                 # carries no option that ends a listener and the remote
                 # `timeout` prefix (where the userland has one; see

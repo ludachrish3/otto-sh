@@ -121,9 +121,31 @@ Each message names the host, the remote port and the listener check, and says
 whether the listener process was still running. A ``forwarded connect``
 message also names the forward's local end, ``localhost:<port>``.
 
-A failed attempt (a timeout, a port another listener shares, or an answer that
-is not a count) is retried once on a fresh port, and the message then ends
-``(two attempts were made)``. A failure a second attempt cannot change ends the
-file without a retry: a listener check whose tool failed, a pinned port
-strategy that failed, every port strategy failing, and a file the backend
-cannot send.
+When the netcat command ends before the transfer starts, otto stops waiting at
+once and reports how it ended. A put to ``/srv/data/payload.bin`` whose netcat
+is not on the host reports this, after the local file's path ``<src>``:
+
+```text
+<src>: nc put to /srv/data/payload.bin: the listener on <host> port <port> ended before the transfer started: 'nc' exited with status 127, so it was not found on the host (nc_options.exec_name names the netcat to run)
+```
+
+The status is the whole remote command line's, not only the netcat's. Status
+127 means the netcat in ``nc_options.exec_name`` is not on the host, and 126
+that it is there but cannot be run; only these two point at
+``nc_options.exec_name``. Any other status is reported as the listener's (or
+the sender's) command ending with that status, naming the remote file. It
+usually means the command's redirect failed before the netcat ran: the
+destination directory does not exist or cannot be written, or the source file
+cannot be read. An old BusyBox ``timeout`` (1.16.1 on otto's own test bed)
+reports a missing program as status 1, not 127, so on such a host the message
+does not say "not found" and otto tries twice. On a direct get, where the host
+sends to otto, the message says the sender ended without connecting. A command
+that failed, or gave no exit status, is reported with its cause.
+
+A failed attempt (a timeout, a port another listener shares, an answer that is
+not a count, or a netcat that ended early with any other status) is retried
+once on a fresh port, and the message then ends ``(two attempts were made)``.
+A failure a second attempt cannot change ends the file without a retry: a
+listener check whose tool failed, a netcat that exited with status 126 or 127,
+a pinned port strategy that failed, every port strategy failing, and a file
+the backend cannot send.

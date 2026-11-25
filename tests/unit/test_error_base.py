@@ -109,6 +109,7 @@ from otto.host.recursive_transfer import ListingError
 from otto.host.telnet import ReadGateClosed
 from otto.host.transfer.nc import (
     NcListenerAnswerError,
+    NcListenerExitedError,
     NcListenerToolError,
     NcPortRungError,
     NcPortSharedError,
@@ -286,6 +287,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (ConsoleError, ConnectionError),
     (ConsoleLoggedInError, ConnectionError),
     (NcPortSharedError, ConnectionError),
+    (NcListenerExitedError, ConnectionError),
     (NcListenerToolError, ConnectionError),
     (NcListenerAnswerError, ConnectionError),
     (ReadGateClosed, ConnectionError),
