@@ -3116,7 +3116,7 @@
             "term": "console",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "`printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal put back as it was, in a clean login shell as run's user",
+            "observable": "`printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal put back as it was, on run's shell, whose directory and variables exec sees",
             "entry": "exec",
             "positive_control": "tests/conformance/test_state_contract.py::test_control_state_set_inside_one_exec_is_seen_by_that_exec[bed-busybox[bb1350:console:shell:exec]]"
           },
@@ -3142,7 +3142,7 @@
           }
         ],
         "not_observable": [],
-        "observable": "`printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal kept | `printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal put back as it was, in a clean login shell as run's user | `printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards; no terminal on this route",
+        "observable": "`printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal kept | `printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal put back as it was, on run's shell, whose directory and variables exec sees | `printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards; no terminal on this route",
         "positive_control": "tests/conformance/test_state_contract.py::test_control_state_set_inside_one_exec_is_seen_by_that_exec[bed-busybox-hooked[bb1350:ssh:shell:exec]]"
       },
       "gnu": {
@@ -3203,7 +3203,7 @@
             "term": "console",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "`printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards, and by exec as 'test': that user, set up as them; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal put back as it was, in a clean login shell as run's user",
+            "observable": "`printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards, and by exec as 'test': that user, set up as them; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal put back as it was, on run's shell, whose directory and variables exec sees",
             "entry": "exec",
             "positive_control": "tests/conformance/test_state_contract.py::test_control_state_set_inside_one_exec_is_seen_by_that_exec[bed-unix[test2:console:scp:exec]]"
           },
@@ -3289,7 +3289,7 @@
           }
         ],
         "not_observable": [],
-        "observable": "`printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards, and by exec as 'test': that user, set up as them; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal kept | `printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards, and by exec as 'test': that user, set up as them; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal put back as it was, in a clean login shell as run's user (on test2) | `printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards, and by exec as 'test': that user, set up as them; no terminal on this route",
+        "observable": "`printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards, and by exec as 'test': that user, set up as them; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal kept | `printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards, and by exec as 'test': that user, set up as them; `if s=$({ stty -a </dev/tty; } 2>/dev/null); then case $s in *-echo\\ *|*-echo) printf noecho;; *) printf echo;; esac; case $s in *-icanon*) echo ' noicanon';; *) echo ' icanon';; esac; else echo unread; fi` by exec after `stty echo -icanon </dev/tty` and a 1,400-character exec: the terminal put back as it was, on run's shell, whose directory and variables exec sees (on test2) | `printf '%s|%s|%s|%s|%s|%s\\n' \"$PWD\" \"${OTTO_CF_RUN-unset}\" \"${OTTO_CF_EXEC-unset}\" \"${OTTO_CF_HOOK-unset}\" \"$(case $- in *f*) printf f;; esac; case $- in *C*) printf C;; esac; case $- in *e*) printf e;; esac; case $- in *u*) printf u;; esac)\" \"$(id -un)\"` by exec before and after run's state, exec's state and `exit`, and by run afterwards, and by exec as 'test': that user, set up as them; no terminal on this route",
         "positive_control": "tests/conformance/test_state_contract.py::test_control_state_set_inside_one_exec_is_seen_by_that_exec[bed-unix-hooked[test1:ssh:scp:exec]]"
       },
       "zephyr-2.7": {
@@ -5468,7 +5468,7 @@
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1161:telnet:shell:exec]]"
           },
@@ -5478,13 +5478,13 @@
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1161:telnet:shell:run]]"
           }
         ],
         "not_observable": [],
-        "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+        "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
         "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1161:telnet:shell:exec]]"
       },
       "busybox-1.21.1": {
@@ -5502,7 +5502,7 @@
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1211:telnet:shell:exec]]"
           },
@@ -5512,13 +5512,13 @@
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1211:telnet:shell:run]]"
           }
         ],
         "not_observable": [],
-        "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+        "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
         "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1211:telnet:shell:exec]]"
       },
       "busybox-1.28.1": {
@@ -5536,7 +5536,7 @@
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1281:telnet:shell:exec]]"
           },
@@ -5546,13 +5546,13 @@
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1281:telnet:shell:run]]"
           }
         ],
         "not_observable": [],
-        "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+        "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
         "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1281:telnet:shell:exec]]"
       },
       "busybox-1.31.0": {
@@ -5570,7 +5570,7 @@
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1310:telnet:shell:exec]]"
           },
@@ -5580,13 +5580,13 @@
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1310:telnet:shell:run]]"
           }
         ],
         "not_observable": [],
-        "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+        "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
         "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1310:telnet:shell:exec]]"
       },
       "busybox-1.35.0": {
@@ -5604,7 +5604,7 @@
             "term": "ssh",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox-hooked[bb1350:ssh:shell:exec]]"
           },
@@ -5614,7 +5614,7 @@
             "term": "console",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1350:console:shell:exec]]"
           },
@@ -5624,7 +5624,7 @@
             "term": "console",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1350:console:shell:run]]"
           },
@@ -5634,7 +5634,7 @@
             "term": "ssh",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1350:ssh:shell:exec]]"
           },
@@ -5644,7 +5644,7 @@
             "term": "ssh",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1350:ssh:shell:run]]"
           },
@@ -5654,7 +5654,7 @@
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1350:telnet:shell:exec]]"
           },
@@ -5664,13 +5664,13 @@
             "term": "telnet",
             "transfer": "shell",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox[bb1350:telnet:shell:run]]"
           }
         ],
         "not_observable": [],
-        "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+        "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
         "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-busybox-hooked[bb1350:ssh:shell:exec]]"
       },
       "gnu": {
@@ -5691,7 +5691,7 @@
             "term": "ssh",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix-hooked[test1:ssh:scp:exec]]"
           },
@@ -5701,7 +5701,7 @@
             "term": "ssh",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test1:ssh:scp:exec]]"
           },
@@ -5711,7 +5711,7 @@
             "term": "ssh",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test1:ssh:scp:run]]"
           },
@@ -5721,7 +5721,7 @@
             "term": "telnet",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test1:telnet:scp:exec]]"
           },
@@ -5731,7 +5731,7 @@
             "term": "telnet",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test1:telnet:scp:run]]"
           },
@@ -5741,7 +5741,7 @@
             "term": "ssh",
             "transfer": "nc",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix-hooked[test2:ssh:nc:exec]]"
           },
@@ -5751,7 +5751,7 @@
             "term": "console",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test2:console:scp:exec]]"
           },
@@ -5761,7 +5761,7 @@
             "term": "console",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test2:console:scp:run]]"
           },
@@ -5771,7 +5771,7 @@
             "term": "ssh",
             "transfer": "nc",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test2:ssh:nc:exec]]"
           },
@@ -5781,7 +5781,7 @@
             "term": "ssh",
             "transfer": "nc",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test2:ssh:nc:run]]"
           },
@@ -5791,7 +5791,7 @@
             "term": "telnet",
             "transfer": "nc",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test2:telnet:nc:exec]]"
           },
@@ -5801,7 +5801,7 @@
             "term": "telnet",
             "transfer": "nc",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test2:telnet:nc:run]]"
           },
@@ -5811,7 +5811,7 @@
             "term": "ssh",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix-hooked[test3:ssh:scp:exec]]"
           },
@@ -5821,7 +5821,7 @@
             "term": "ssh",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test3:ssh:scp:exec]]"
           },
@@ -5831,7 +5831,7 @@
             "term": "ssh",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test3:ssh:scp:run]]"
           },
@@ -5841,7 +5841,7 @@
             "term": "telnet",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test3:telnet:scp:exec]]"
           },
@@ -5851,7 +5851,7 @@
             "term": "telnet",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test3:telnet:scp:run]]"
           },
@@ -5861,7 +5861,7 @@
             "term": "ssh",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix-hooked[test4:ssh:scp:exec]]"
           },
@@ -5871,7 +5871,7 @@
             "term": "ssh",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test4:ssh:scp:exec]]"
           },
@@ -5881,7 +5881,7 @@
             "term": "ssh",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test4:ssh:scp:run]]"
           },
@@ -5891,7 +5891,7 @@
             "term": "telnet",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "exec",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test4:telnet:scp:exec]]"
           },
@@ -5901,13 +5901,13 @@
             "term": "telnet",
             "transfer": "scp",
             "outcome": "passed",
-            "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+            "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
             "entry": "run",
             "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix[test4:telnet:scp:run]]"
           }
         ],
         "not_observable": [],
-        "observable": "CommandResult.status, .retcode, .route, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
+        "observable": "CommandResult.status, .retcode, .command and .value of a command that leaves a file at a fresh scratch path, issued under a dry run on an opened host, and whether that file is there when the host is asked live afterwards",
         "positive_control": "tests/conformance/test_dry_run_contract.py::test_control_a_command_issued_live_leaves_its_mark[bed-unix-hooked[test1:ssh:scp:exec]]"
       },
       "zephyr-2.7": {
