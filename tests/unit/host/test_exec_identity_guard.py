@@ -249,7 +249,7 @@ async def test_a_session_reached_by_a_login_proxy_hop_is_marked_and_kept(pool, h
         first = await _exec(mgr, "echo one")
         second = await _exec(mgr, "echo two")
         assert (first.value, second.value) == ("one", "two")
-        (kept,) = mgr._exec_pools[_ME]
+        (kept,) = mgr._exec_pools[(_ME, False)]
         assert kept._session.reached_by_switch
         assert kept._session.identity_mark is not None
         assert not kept._session.identity_lost

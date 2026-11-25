@@ -32,7 +32,13 @@ from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.private_root import CONTAINER_STAGING_ROOT
 from tests.conftest import active_context
-from tests.unit.host._exec_log import SU_LOGIN, all_records, records_of
+from tests.unit.host._exec_log import (
+    SU_LOGIN,
+    all_records,
+    close_ssh_parent,
+    records_of,
+    ssh_parent_over_shells,
+)
 
 # The container's parent here is a mock, not a unix host with a login, so its
 # private staging root is answered for it; the root itself is pinned in
@@ -2569,11 +2575,12 @@ async def test_a_shell_command_s_own_mode_decides_a_container_exec_s_log(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_a_parent_overriding_run_plan_with_today_s_signature_forwards_the_context():
+async def test_a_parent_overriding_run_plan_with_today_s_signature_forwards_the_context(
+    tmp_path,
+):
     """An override that hands its ``exec_input`` on to the stock dispatch logs on the container."""
     from otto.host.unix_host import UnixHost
     from otto.logger.mode import LogMode
-    from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn
 
     calls = 0
 
@@ -2591,23 +2598,17 @@ async def test_a_parent_overriding_run_plan_with_today_s_signature_forwards_the_
                 exec_input=exec_input,
             )
 
-    parent = _OldSignatureParent(
-        ip="10.0.0.1",
-        element=Element(name="box"),
-        creds=[Cred(login="u", password="p")],
-        term="ssh",
-        log=LogMode.NORMAL,
+    parent, dial = ssh_parent_over_shells(
+        _OldSignatureParent, tmp_path, {"wire-old": f"echo {_OUT_TOK}"}
     )
-    connections = MagicMock()
-    connections.term = "ssh"
-    connections.proxy_hops = []
-    connections.ssh = AsyncMock(return_value=FakeConn(FakeChannelProcess([f"{_OUT_TOK}\n"])))
-    parent._session_mgr._connections = connections
     container = _make_container(parent)
     container.log = LogMode.NORMAL
     wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-old"))
-    with wired, all_records() as records:
-        result = await container.exec("echo old")
+    try:
+        with wired, all_records() as records:
+            result = await container.exec("echo old")
+    finally:
+        await close_ssh_parent(parent, dial)
     assert (result.retcode, result.value, calls) == (0, _OUT_TOK, 1)
     assert _container_trace(records, container) == [
         (logging.INFO, "cmd", "echo old", LogMode.NORMAL),
@@ -2643,28 +2644,8 @@ async def test_a_structural_parent_keeps_today_s_public_exec():
     )
 
 
-def _ssh_parent(cls, out: str):
-    """A *cls* ssh parent standing at NORMAL whose exec channel prints *out*, and its dialler."""
-    from otto.logger.mode import LogMode
-    from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn
-
-    parent = cls(
-        ip="10.0.0.1",
-        element=Element(name="box"),
-        creds=[Cred(login="u", password="p")],
-        term="ssh",
-        log=LogMode.NORMAL,
-    )
-    connections = MagicMock()
-    connections.term = "ssh"
-    connections.proxy_hops = []
-    connections.ssh = AsyncMock(return_value=FakeConn(FakeChannelProcess([f"{out}\n"])))
-    parent._session_mgr._connections = connections
-    return parent, connections.ssh
-
-
 @pytest.mark.asyncio
-async def test_a_parent_s_exec_override_that_refuses_refuses_its_containers_commands():
+async def test_a_parent_s_exec_override_that_refuses_refuses_its_containers_commands(tmp_path):
     """A project ``exec`` override keeps running for the commands of the containers on it."""
     from otto.host.unix_host import UnixHost
 
@@ -2672,7 +2653,7 @@ async def test_a_parent_s_exec_override_that_refuses_refuses_its_containers_comm
         async def exec(self, cmd, **kwargs):
             raise PermissionError(f"refused: {cmd}")
 
-    parent, dial = _ssh_parent(_Refusing, _OUT_TOK)
+    parent, dial = ssh_parent_over_shells(_Refusing, tmp_path)
     container = _make_container(parent)
     wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-r"))
     with wired, pytest.raises(PermissionError, match="refused: wire-r"):
@@ -2681,7 +2662,9 @@ async def test_a_parent_s_exec_override_that_refuses_refuses_its_containers_comm
 
 
 @pytest.mark.asyncio
-async def test_a_parent_s_exec_override_that_audits_sees_the_wrapper_and_logs_it_as_its_own():
+async def test_a_parent_s_exec_override_that_audits_sees_the_wrapper_and_logs_it_as_its_own(
+    tmp_path,
+):
     """An override that records and calls ``super().exec`` sees the wrapper; the lines are its."""
     from otto.host.unix_host import UnixHost
     from otto.logger.mode import LogMode
@@ -2693,12 +2676,15 @@ async def test_a_parent_s_exec_override_that_audits_sees_the_wrapper_and_logs_it
             seen.append(cmd)
             return await super().exec(cmd, **kwargs)
 
-    parent, _ = _ssh_parent(_Auditing, _OUT_TOK)
+    parent, dial = ssh_parent_over_shells(_Auditing, tmp_path, {"wire-au": f"echo {_OUT_TOK}"})
     container = _make_container(parent)
     container.log = LogMode.NORMAL
     wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-au"))
-    with wired, all_records() as records:
-        result = await container.exec("echo audited")
+    try:
+        with wired, all_records() as records:
+            result = await container.exec("echo audited")
+    finally:
+        await close_ssh_parent(parent, dial)
     assert (result.value, result.command, seen) == (_OUT_TOK, "echo audited", ["wire-au"])
     assert _container_trace(records, container) == []
     assert _container_trace(records, parent) == [
@@ -2727,15 +2713,16 @@ def test_a_container_cannot_be_reparented_onto_a_container():
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_delegated_exec_keeps_its_lines_on_the_container():
+async def test_a_cancelled_delegated_exec_keeps_its_lines_on_the_container(tmp_path):
     """Lines read before a cancel are the container's; the parent keeps only the wrapper."""
+    from otto.host.unix_host import UnixHost
     from otto.logger.mode import LogMode
     from tests.conformance._log import _watching_records
-    from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_host
 
-    proc = FakeChannelProcess(["outtok-x\n", "outtok-y\n"], hold_from=1, eof=False)
-    parent = channel_host(FakeConn(proc))
-    parent.log = LogMode.NORMAL
+    # The second line never comes: the command is still running when it is cancelled.
+    parent, dial = ssh_parent_over_shells(
+        UnixHost, tmp_path, {"wire-cx": "echo outtok-x; exec sleep 3600; echo outtok-y"}
+    )
     container = _make_container(parent)
     container.log = LogMode.NORMAL
     first_line = asyncio.Event()
@@ -2755,6 +2742,7 @@ async def test_a_cancelled_delegated_exec_keeps_its_lines_on_the_container():
         finally:
             call.cancel()
             await asyncio.gather(call, return_exceptions=True)
+            await close_ssh_parent(parent, dial)
     assert _container_trace(records, container) == [
         (logging.INFO, "cmd", "echo cancelled", LogMode.NORMAL),
         (logging.INFO, "out", "outtok-x", LogMode.NORMAL),
@@ -2772,7 +2760,7 @@ async def test_a_cancelled_delegated_exec_keeps_its_lines_on_the_container():
 
 
 @pytest.mark.asyncio
-async def test_a_parent_that_runs_and_logs_a_command_by_its_own_means_keeps_the_lines():
+async def test_a_parent_that_runs_and_logs_a_command_by_its_own_means_keeps_the_lines(tmp_path):
     """A ``_run_plan`` that ignores the call's context logs the command as its own host's.
 
     A pin of the documented contract for a host class that runs a command
@@ -2794,7 +2782,7 @@ async def test_a_parent_that_runs_and_logs_a_command_by_its_own_means_keeps_the_
                 route=plan.route.value,
             )
 
-    parent, dial = _ssh_parent(_OwnMeans, _OUT_TOK)
+    parent, dial = ssh_parent_over_shells(_OwnMeans, tmp_path)
     container = _make_container(parent)
     container.log = LogMode.NORMAL
     wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-own"))

@@ -440,7 +440,12 @@ async def run_listener_rung(rung: ListenerRung, run: Runner, port: int) -> int |
 
 
 _NC_LISTENER_READY_TIMEOUT = 5.0
-"""How long the put and tunnelled-get paths wait for the remote listener."""
+"""How long the put and tunnelled-get paths wait for the remote listener.
+
+Counted from the listener command being typed, where the host's exec says when
+that is (``TransferContext.spawn_cmd``): the session it opens first is not
+timed here.
+"""
 
 
 def _nc_wait_failure(
@@ -635,6 +640,7 @@ class NcFileTransfer(UnixFileTransfer):
         max_filename_len: int = 255,
         *,
         userland: "Userland | None",
+        spawn_cmd: "Callable[..., Coroutine[Any, Any, asyncio.Task[CommandResult]]] | None" = None,
     ) -> None:
         """Build an nc backend. See :meth:`_nc_listener_prefix` for *userland*.
 
@@ -664,6 +670,7 @@ class NcFileTransfer(UnixFileTransfer):
         self._nc_options = nc_options
         self._get_local_ip = get_local_ip
         self._userland = userland
+        self._spawn_cmd = spawn_cmd
         self._resolved_port_strategy: NcPortStrategy | None = None
         # The ``auto`` port-finder rungs already reported as failed, so each
         # is warned about once per transfer backend.
@@ -671,11 +678,11 @@ class NcFileTransfer(UnixFileTransfer):
         self._resolved_listener_check: NcListenerCheck | None = None
         self._reserved_ports: set[int] = set()
         # Serializes nc control-plane ops (port-find, listener probe, strategy
-        # probe, file-size stats). Not a correctness guard — `_exec_cmd`'s
-        # telnet pool already hands concurrent callers distinct sessions — but
+        # probe, file-size stats). Not a correctness guard — the exec pool
+        # already hands concurrent callers distinct sessions, on any term — but
         # an economy one: serializing control ops makes them reuse a single
-        # warm pooled session instead of fanning out and each paying a cold
-        # auth handshake. Telnet only; SSH exec channels are already cheap.
+        # warm pooled session instead of fanning out and each opening a
+        # session of its own.
         self._control_lock = asyncio.Lock()
         # Serializes port allocation so two concurrent `_find_free_port` calls
         # can't both return the same "free" port from parallel ss scans.
@@ -750,6 +757,7 @@ class NcFileTransfer(UnixFileTransfer):
             exec_cmd=ctx.exec_cmd,
             max_filename_len=ctx.max_filename_len,
             userland=ctx.userland,
+            spawn_cmd=ctx.spawn_cmd,
         )
 
     @property
@@ -1006,17 +1014,13 @@ class NcFileTransfer(UnixFileTransfer):
         probe, remote file-size stats) goes through ``_exec_cmd`` — the same
         exec path the ``nc -l`` listeners use.
 
-        On telnet, ``_control_lock`` serializes these calls so they reuse a
-        single warm pooled session instead of fanning out and each paying a
-        cold auth handshake. It is an economy measure, not a correctness one:
-        the telnet exec pool already hands *concurrent* callers distinct
-        sessions, so there is no shared-stdin corruption to guard against.
-
-        On SSH, exec channels over the existing connection are cheap, so the
-        calls run directly with no serialization.
+        ``_control_lock`` serializes these calls so they reuse a single warm
+        pooled session instead of fanning out and each opening a session of
+        its own (a login handshake on telnet, a login shell on ssh). It is an
+        economy measure, not a correctness one: the exec pool already hands
+        *concurrent* callers distinct sessions, so there is no shared-stdin
+        corruption to guard against.
         """
-        if self._connections.term == "ssh":
-            return await self._exec_cmd(cmd)
         async with self._control_lock:
             return await self._exec_cmd(cmd)
 
@@ -1179,9 +1183,9 @@ class NcFileTransfer(UnixFileTransfer):
         check command.  The ``auto`` strategy probes for available tools
         once and caches the result.
 
-        Every probe runs through ``_control_run``, which on telnet hosts
+        Every probe runs through ``_control_run``, which on every term
         serializes control ops onto a single warm pooled session instead of
-        paying a fresh auth handshake per call.
+        opening a login shell session per call.
 
         The poll interval starts at 0.05 s for the first handful of
         iterations (when nc usually becomes ready on a warm session) and
@@ -1804,19 +1808,9 @@ class NcFileTransfer(UnixFileTransfer):
                 # listeners spawned with `-w 30` were still alive after three
                 # days, so `-w` was never the mechanism here either. Both kill
                 # the process; neither can hand back a short file as success.
-                listen_task = asyncio.create_task(
-                    self._exec_cmd(
-                        f"{self._nc_listener_prefix}{self._nc_exec} -l -p {port} "
-                        f"< {path_operand(src)} 2>/dev/null",
-                        # No otto-side timeout: a healthy transfer of any size
-                        # must not be cut off mid-flight, and this task is the
-                        # only thing that observes the transfer finishing. The
-                        # orphan case is bounded by `_cancel_and_reap` on every
-                        # error path instead, and — where the userland has a
-                        # `timeout` (see `_nc_listener_prefix`) — by the remote
-                        # prefix as well; never by an option in this command.
-                        timeout=float("inf"),
-                    )
+                listen_task = await self._spawn_listener(
+                    f"{self._nc_listener_prefix}{self._nc_exec} -l -p {port} "
+                    f"< {path_operand(src)} 2>/dev/null",
                 )
 
                 not_ready = await self._await_remote_listener(port, listen_task, f"get of {src}")
@@ -2057,6 +2051,23 @@ class NcFileTransfer(UnixFileTransfer):
         with suppress(asyncio.TimeoutError, OSError):
             await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
 
+    async def _spawn_listener(self, cmd: str) -> "asyncio.Task[CommandResult]":
+        """Start the remote listener *cmd*; its task, once the command has been typed.
+
+        No otto-side timeout: a healthy transfer of any size must not be cut
+        off mid-flight, and this task is the only thing that observes the
+        transfer finishing. The orphan case is bounded by `_cancel_and_reap`
+        on every error path instead, and — where the userland has a
+        `timeout` (see `_nc_listener_prefix`) — by the remote prefix as well;
+        never by a netcat option. Through the host's `spawn_cmd` the task is
+        returned once the command is typed, so the readiness wait that
+        follows does not time the session's open; without one it is spawned
+        at once.
+        """
+        if self._spawn_cmd is not None:
+            return await self._spawn_cmd(cmd, timeout=float("inf"))
+        return asyncio.create_task(self._exec_cmd(cmd, timeout=float("inf")))
+
     async def _cancel_and_reap(self, listen_task: "asyncio.Task[CommandResult]", port: int) -> None:
         """Join a cancelled listener task (get or put path), then reap the remote ``nc -l``.
 
@@ -2138,19 +2149,9 @@ class NcFileTransfer(UnixFileTransfer):
                 # styles) -- the remote prefix at `_NC_LISTENER_HARD_CAP_S`.
                 # Both kill the process; neither can hand back a short file as
                 # success.
-                listen_task = asyncio.create_task(
-                    self._exec_cmd(
-                        f"{self._nc_listener_prefix}{self._nc_exec} -l -p {port} "
-                        f"< /dev/null > {path_operand(dst)} 2>/dev/null",
-                        # No otto-side timeout: a healthy transfer of any size
-                        # must not be cut off mid-flight. The orphan case is
-                        # bounded by `_cancel_and_reap` on every error path
-                        # instead, and — where the userland has a `timeout`
-                        # (see `_nc_listener_prefix`) — by the remote prefix as
-                        # well; never by a netcat option (see the spawn comment
-                        # above).
-                        timeout=float("inf"),
-                    )
+                listen_task = await self._spawn_listener(
+                    f"{self._nc_listener_prefix}{self._nc_exec} -l -p {port} "
+                    f"< /dev/null > {path_operand(dst)} 2>/dev/null",
                 )
 
                 # Confirm the remote nc is actually listening before we try to
@@ -2159,8 +2160,8 @@ class NcFileTransfer(UnixFileTransfer):
                 # paths the local asyncssh listener accepts immediately
                 # regardless, hiding the not-yet-listening remote entirely.
                 # `_wait_for_remote_listener` routes through `_control_run`,
-                # which on telnet hosts serializes probes onto one warm
-                # pooled session instead of paying a fresh handshake each.
+                # which on every term serializes probes onto one warm
+                # pooled session instead of opening a session for each.
                 #
                 # Caught HERE, not left to `dispatch_per_file`'s per-file
                 # wrapper: an exception out of `_attempt` folds into the file's

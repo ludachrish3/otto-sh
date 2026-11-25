@@ -80,10 +80,6 @@ class OptionArm:
     after_scope: bool = False
     """Issued after the :attr:`scope_user` scope is left, not inside it."""
 
-    direct_user: bool = False
-    """The user the call runs as has a login of their own (the route's fact,
-    :func:`~tests.conformance._entry.expected_route`)."""
-
     refused_options: "list[str]" = dataclasses.field(default_factory=list)
     """A refusal arm's options the host declares refused: the refusal must name one of them.
 
@@ -191,23 +187,16 @@ def arms(resolved: ResolvedCell, host: BaseHost, *, login: "str | None") -> "lis
     if not user_ok:
         built.append(_refusal("user", {"user": REFUSED_USER}, resolved, host))
     elif whoami is not None and other is not None:
-        direct = resolved.switch_user_direct
-        built.append(OptionArm("user", {"user": other}, whoami, Answer(other), direct_user=direct))
+        built.append(OptionArm("user", {"user": other}, whoami, Answer(other)))
         if login is not None:
             built += [
-                OptionArm(
-                    "as_user", {}, whoami, Answer(other), scope_user=other, direct_user=direct
-                ),
+                OptionArm("as_user", {}, whoami, Answer(other), scope_user=other),
                 OptionArm(
                     "as_user+user",
                     {"user": login},
                     whoami,
                     Answer(login),
                     scope_user=other,
-                    # The login has an ssh login of its own wherever the route
-                    # reads this fact: `expected_route` asks it only of a
-                    # non-proxied ssh cell, whose login is direct by definition.
-                    direct_user=True,
                 ),
                 OptionArm(
                     "after as_user", {}, whoami, Answer(login), scope_user=other, after_scope=True
@@ -268,16 +257,12 @@ async def _plain_answer(host: BaseHost, resolved: ResolvedCell, token: str) -> s
 
 
 async def _issue_arm(host: BaseHost, resolved: ResolvedCell, arm: OptionArm) -> Any:
-    issued = {
-        "ambient_user": arm.scope_user is not None and not arm.after_scope,
-        "direct_user": arm.direct_user,
-    }
     if arm.scope_user is None:
-        return await issue(host, resolved, arm.command, **issued, **arm.kwargs)
+        return await issue(host, resolved, arm.command, **arm.kwargs)
     async with host.as_user(user=arm.scope_user):
         if not arm.after_scope:
-            return await issue(host, resolved, arm.command, **issued, **arm.kwargs)
-    return await issue(host, resolved, arm.command, **issued, **arm.kwargs)
+            return await issue(host, resolved, arm.command, **arm.kwargs)
+    return await issue(host, resolved, arm.command, **arm.kwargs)
 
 
 async def run_arm(host: BaseHost, resolved: ResolvedCell, arm: OptionArm) -> Outcome:

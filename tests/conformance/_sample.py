@@ -65,6 +65,10 @@ from tests.conformance._resolved import ResolvedCell
 _LOG = logging.getLogger(__name__)
 
 
+HOOKED_SUFFIX = "-hooked"
+"""What a hooked cell's label adds to its kind: ``bed-unix-hooked[test1:ssh:scp:exec]``."""
+
+
 def cell_label(resolved: ResolvedCell) -> str:
     """A cell's name, in the ONE spelling the run uses everywhere.
 
@@ -82,11 +86,16 @@ def cell_label(resolved: ResolvedCell) -> str:
     A cell reached through an entry (``tests/conformance/_entry.py``) names
     it as a fourth field; an entry-less cell keeps the three-field spelling,
     so the draw of every unmarked contract is unchanged.
+
+    A hooked cell (:attr:`~tests.conformance._resolved.ResolvedCell.hooked`)
+    names its kind with :data:`HOOKED_SUFFIX`, so it never shares a label, a
+    parametrization id or an observation record with the same cell unhooked.
     """
     cell = resolved.cell
+    kind = f"{resolved.kind}{HOOKED_SUFFIX}" if resolved.hooked else resolved.kind
     if not resolved.entry:
-        return f"{resolved.kind}[{cell.element}:{cell.term}:{cell.transfer}]"
-    return f"{resolved.kind}[{cell.element}:{cell.term}:{cell.transfer}:{resolved.entry}]"
+        return f"{kind}[{cell.element}:{cell.term}:{cell.transfer}]"
+    return f"{kind}[{cell.element}:{cell.term}:{cell.transfer}:{resolved.entry}]"
 
 
 def draw(

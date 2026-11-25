@@ -229,7 +229,12 @@ backend. A custom backend overrides `create` and reads only the fields it needs:
   otto's framing and its quoting of the command counted (`None` when nothing
   bounds it), which a
   backend that puts its payload *in* the command line needs and one that opens
-  its own data channel does not;
+  its own data channel does not. It may also read `spawn_cmd`: awaited with a
+  command, it starts it as `exec_cmd` would and returns its task once the
+  command has been typed, so a backend can time a long-running remote command
+  from that moment rather than from its session opening (`None` where the host
+  offers none, and on a host whose class overrides `exec`, so the override sees
+  that command too);
 - an **embedded** transfer backend reads `exec_cmd` and `filesystem`.
 
 Selector validation runs before construction, so a backend never sees a ctx
@@ -618,8 +623,9 @@ recovery fails, and the open fails as
 
 ### Consequences
 
-- `exec` on a hooked Unix host takes the pooled-session route (as it does
-  for a proxied login): the raw exec channel cannot run setup.
+- `exec` on a hooked Unix host takes a pooled session with a terminal (as it
+  does for a proxied login): the hook is written for a terminal, so a session
+  without one cannot run it ({ref}`host-exec-on-sessions`).
 - `close()` on the handle refuses while the session is being established.
 - On the `login` bridge, the hook runs before the pumps start; the landing
   frame's echo is restored before the hook (so a hook that leaves the landing

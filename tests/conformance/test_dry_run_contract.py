@@ -172,7 +172,7 @@ async def _issue_and_check(resolved: ResolvedCell, *, dry: bool) -> _Issued:
     return _Issued(result, found, leave)
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.observable(
     "CommandResult.status, .retcode, .route, .command and .value of a command that leaves "
     "a file at a fresh scratch path, issued under a dry run on an opened host, and whether "
@@ -194,7 +194,7 @@ async def test_a_dry_run_reaches_no_device_and_returns_one_shape(
 # the collator judges a control's cells by the control's own marker.
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.positive_control("exec-dry-run")
 async def test_control_a_command_issued_live_leaves_its_mark(resolved_cell: ResolvedCell) -> None:
     """Without the dry run the device carries the mark, and the comparison refuses it."""

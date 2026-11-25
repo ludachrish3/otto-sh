@@ -30,9 +30,11 @@ it — which is also the point: nothing was attempted, not even a connection.
 """
 
 import base64
+import itertools
 import re
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -62,6 +64,7 @@ from otto.host.session import (
 )
 from otto.host.terminal_mapping import Measurement
 from otto.host.transfer.shell import Base64Codec
+from otto.host.unix_host import UnixHost
 from otto.host.userland import (
     ASH_ECHOING_LINE_MAX,
     MEASURED_BROKEN,
@@ -74,6 +77,7 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
 from tests.unit.host._sessions import session_manager
+from tests.unit.host.test_terminal_switch import _EitherConnection, _unix
 
 if TYPE_CHECKING:
     from otto.host.connections import ConnectionManager
@@ -455,37 +459,27 @@ class TestTheRefusalIsScoped:
         assert sessions[0].ran
 
     @pytest.mark.asyncio
-    async def test_exec_is_not_refused_on_an_ash_host(self) -> None:
-        """``exec()`` opens a bare channel with no pty, so no line editor sees it.
+    async def test_exec_is_not_refused_on_an_ash_host(self, tmp_path) -> None:
+        """An unset ``exec()`` on ssh runs on a session with no pty, so no line editor sees it.
 
         The number is ``ShellFileTransfer``'s own chunk line, which it emits
         routinely against exactly these devices. If this ever refuses, every
         file transfer to a BusyBox target stops working.
         """
-        seen: list[str] = []
-
-        async def _ssh():
-            return object()
-
-        mgr = session_manager(
-            connections=cast(
-                "ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=[], ssh=_ssh)
-            ),
-            name="bb1",
-            command_frame=AshFrame(),
-        )
-
-        async def _channel(*, conn, cmd, timeout, log, exec_input=None):
-            seen.append(cmd)
-            return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
-
-        mgr.exec_on = _channel  # type: ignore[method-assign]
-        line = "printf '%s' '" + "A" * 5500 + "' | base64 -d >> /tmp/x"
-        route = mgr.exec_route()
-        assert route is ExecRoute.SSH_CHANNEL
-        result = await mgr.exec_on_route(route=route, cmd=line, timeout=10.0, log=LogMode.NORMAL)
+        host = _unix()
+        conn = _EitherConnection(tmp_path)
+        host._connections.ssh = AsyncMock(return_value=conn)  # ty: ignore[invalid-assignment]
+        host._session_mgr._command_frame = AshFrame()
+        # BSD wc pads its count; tr leaves the bare number on every platform.
+        line = "printf '%s' '" + "A" * 5500 + "' | wc -c | tr -d ' '"
+        try:
+            result = await host.exec(line, log=LogMode.NORMAL)
+        finally:
+            await host.close()
+            await conn.reap()
         assert result.is_ok
-        assert seen == [line]
+        assert result.value == "5500"
+        assert [asked.get("request_pty") for asked in conn.asked] == [False]
 
     @pytest.mark.asyncio
     async def test_a_pooled_exec_over_the_line_is_refused_before_anything_is_typed(self) -> None:
@@ -558,10 +552,100 @@ class TestTheRefusalIsScoped:
         )
 
 
+class TestRunAndExecShareOneFramedStep:
+    """``run()`` and a pooled ``exec()`` type their framed command through one function.
+
+    ``SessionManager._run_framed`` makes the measured refusal and stamps the
+    route; each caller only chooses and releases its session.
+    """
+
+    @staticmethod
+    def _spy(monkeypatch) -> list[str]:
+        calls: list[str] = []
+        real = SessionManager._run_framed
+
+        async def spy(self, session, cmd, **kwargs):
+            calls.append(cmd)
+            return await real(self, session, cmd, **kwargs)
+
+        monkeypatch.setattr(SessionManager, "_run_framed", spy)
+        return calls
+
+    @staticmethod
+    def _raised_in_the_shared_step(excinfo) -> bool:
+        names = [entry.name for entry in excinfo.traceback]
+        return any(
+            a == "_run_framed" and b == "refuse_if_typed_line_would_be_cut"
+            for a, b in itertools.pairwise(names)
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_run_passes_through_it_once(self, monkeypatch) -> None:
+        calls = self._spy(monkeypatch)
+        mgr, sessions = _manager(AshFrame())
+        result = await mgr.run_cmd(cmd="true")
+        assert result.is_ok
+        assert result.route == ExecRoute.DEFAULT_SESSION.value
+        assert calls == ["true"]
+        assert sessions[0].ran == ["true"]
+
+    @pytest.mark.asyncio
+    async def test_a_pooled_exec_passes_through_it_once(self, monkeypatch) -> None:
+        calls = self._spy(monkeypatch)
+        mgr, sessions = _manager(AshFrame(), term="telnet")
+        result = await mgr.exec_on_route(
+            route=ExecRoute.POOLED_SHELL,
+            cmd="true",
+            timeout=5,
+            log=LogMode.QUIET,
+            exec_input=ExecInput(stdin_eof=True),
+        )
+        assert result.is_ok
+        assert result.route == ExecRoute.POOLED_SHELL.value
+        assert calls == ["true"]
+        assert [s.ran for s in sessions] == [["true"]]
+
+    @pytest.mark.asyncio
+    async def test_a_run_the_echo_cuts_is_refused_in_it(self) -> None:
+        """Under the widest ceiling, over the echoing session's: refused once measured."""
+        cmd = "a" * 2000
+        assert len(cmd) + _framing_overhead(AshFrame()) < PTY_TYPED_LINE_MAX
+        mgr, sessions = _manager(AshFrame(), echoes=True)
+        with pytest.raises(UnsupportedOnUserlandError) as excinfo:
+            await mgr.run_cmd(cmd=cmd)
+        assert self._raised_in_the_shared_step(excinfo)
+        assert [s.ran for s in sessions] == [[]]
+
+    @pytest.mark.asyncio
+    async def test_a_pooled_exec_the_echo_cuts_is_refused_in_it(self) -> None:
+        mgr, sessions = _manager(AshFrame(), term="telnet", echoes=True)
+        with pytest.raises(UnsupportedOnUserlandError) as excinfo:
+            await mgr.exec_on_route(
+                route=ExecRoute.POOLED_SHELL,
+                cmd="a" * 2000,
+                timeout=5,
+                log=LogMode.QUIET,
+                exec_input=ExecInput(stdin_eof=True),
+            )
+        assert self._raised_in_the_shared_step(excinfo)
+        assert all(s.ran == [] for s in sessions)
+        # The refusal typed nothing, so the keep-or-close rule kept the live
+        # session on its free-list: it is not left checked out.
+        idle = [h._session for pool in mgr._exec_pools.values() for h in pool]
+        assert idle == sessions
+        assert all(s.alive for s in sessions)
+
+
 # ===========================================================================
 # The other half of the same measurement: a BUDGET, for a caller that
 # generates its own command lines
 # ===========================================================================
+
+
+def _planned_budget(host: UnixHost) -> int | None:
+    """The line budget of the plan an unset ``exec()`` on *host* takes."""
+    plan = host._exec_plan(user=None, needs_shell=False)
+    return host._session_mgr.line_budget(route=plan.route, plain=plan.plain)
 
 
 class TestTheExecLineBudget:
@@ -589,15 +673,15 @@ class TestTheExecLineBudget:
     def test_an_ssh_host_has_no_budget_at_all(self) -> None:
         """``None`` is the answer that keeps the path that was never broken still.
 
-        ``exec`` opens a bare pty-less channel there, so no line discipline
+        An unset ``exec`` runs on a session without a pty there (the plan's
+        ``plain``), so no line discipline
         sees the command and the shell backend keeps sending full chunks --
         the 9000-character exec ceiling the retired dropbear rig measured (see
         ``otto.host.transfer.shell``'s module docstring, which records both the
         number and the fact that no test can re-take it) is a bound on the whole
         command, not a per-line budget, and it is not this property's business.
         """
-        mgr, _ = _manager(BashFrame(), term="ssh")
-        assert mgr.line_budget(route=mgr.exec_route()) is None
+        assert _planned_budget(_unix()) is None
 
     def test_a_proxied_login_is_budgeted_on_ssh_too(self) -> None:
         """The case that makes ``term`` the wrong thing to read.
@@ -682,15 +766,13 @@ class TestTheExecLineBudget:
         was built is the wrong answer in the expensive direction.
         """
         connections = SimpleNamespace(term="ssh", proxy_hops=[])
-        mgr = session_manager(
-            connections=cast("ConnectionManager", connections),
-            name="bb1",
-            command_frame=BashFrame(),
-        )
-        assert mgr.line_budget(route=mgr.exec_route()) is None
+        host = _unix()
+        host._session_mgr._connections = cast("ConnectionManager", connections)
+        host._session_mgr._command_frame = BashFrame()
+        assert _planned_budget(host) is None
         connections.term = "telnet"
-        assert mgr.line_budget(route=mgr.exec_route()) == PTY_TYPED_LINE_MAX - _exec_overhead(
-            BashFrame(), mgr.exec_route()
+        assert _planned_budget(host) == PTY_TYPED_LINE_MAX - _exec_overhead(
+            BashFrame(), ExecRoute.POOLED_SHELL
         )
 
     def test_a_term_exec_cannot_run_on_is_not_handed_a_budget(self) -> None:

@@ -40,7 +40,6 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from otto.host import process_stop
 from otto.host.command_frame import BashFrame
 from otto.host.exec_route import ExecRoute
 from otto.host.host import BaseHost, ShellCommand, output_log_prefix
@@ -72,6 +71,7 @@ from scripts.render_support_matrix import (
     HOST_KIND_VOICE,
     PAGE_PATH,
     VOICE,
+    NotChecked,
     Promise,
     _domain_of,
     _domain_rule,
@@ -121,6 +121,7 @@ from tests.conformance import test_cancel_contract as _cancel_contract
 from tests.conformance import test_concurrency_contract as _concurrency_contract
 from tests.conformance import test_dry_run_contract as _dry_run_contract
 from tests.conformance import test_exec_contract as _exec_contract
+from tests.conformance import test_input_contract as _input_contract
 from tests.conformance import test_log_contract as _log_contract
 from tests.conformance import test_options_contract as _options_contract
 from tests.conformance import test_output_contract as _output_contract
@@ -598,12 +599,22 @@ def test_main_writes_the_families_page_it_was_pointed_at(tmp_path, committed):
 
     The second half is the part with teeth: a families page that ignored
     ``--families-page`` would land on the committed one instead, which is how a
-    test run comes to regenerate the artifact another test is checking.
+    test run comes to regenerate the artifact another test is checking. The
+    command contract pages are pointed away from the committed ones too: left
+    at their default, this test rewrote them whenever they were stale, and the
+    guard comparing them with the renderer then passed by running after it.
     """
     matrix, page, families = _rendered_into(tmp_path, committed)
-    argv = ["--matrix", str(matrix), "--page", str(page), "--families-page", str(families)]
+    contracts = tmp_path / "command-contracts"
+    argv = [
+        "--matrix", str(matrix), "--page", str(page), "--families-page", str(families),
+        "--contracts-dir", str(contracts),
+    ]  # fmt: skip
     assert render_main(argv) == 0
     assert families.read_text(encoding="utf-8") == render_families()
+    assert sorted(path.name for path in contracts.glob("*.md")) == sorted(
+        render_command_contracts()
+    )
 
 
 def test_check_reports_a_stale_families_page(tmp_path, committed, capsys):
@@ -2577,7 +2588,10 @@ class _FakeHost:
         self._witnesses = fake_witnesses(POSIX)
 
     #: The route each opener's ``exec`` reports, set by :func:`_fake_cell`.
-    exec_route = "ssh-channel"
+    exec_route = "pooled-shell"
+
+    #: Which shell answers ``session_pid_command``: a cancel closes the session it ran on.
+    session = 4242
 
     name = "fake"
 
@@ -2654,23 +2668,21 @@ class _FakeHost:
         """A witnessed command with no budget: relays its start token, then runs until cancelled.
 
         A cancel stops it through the real seam the cancel contract's control
-        disables for this route, read at call time: ``ShellSession``'s stop on
-        the pooled shell, ``process_stop.stop_interrupted`` otherwise. Either
-        one that runs records the witnessed process as stopped.
+        disables, read at call time: ``ShellSession``'s stop, which records
+        the witnessed process as stopped when it runs. The session it ran on
+        is then closed, so the next one is another shell.
         """
         self._witnesses.record(witnessed, RUNNING)
         self._log_output(STARTED_TOKEN)
         try:
             await asyncio.Event().wait()
-        except asyncio.CancelledError as exc:
+        except asyncio.CancelledError:
 
             def stopped() -> None:
                 self._witnesses.record(witnessed, STOPPED)
 
-            if self.exec_route == "pooled-shell":
-                await ShellSession._stop_interrupted_command(_FakeShell(stopped), restore=None)
-            else:
-                await process_stop.stop_interrupted(_FakeProcess(stopped), exc, what="fake")
+            await ShellSession._stop_interrupted_command(_FakeShell(stopped), restore=None)
+            self.session += 1
             raise
 
     def _routed(self, result: CommandResult, route: str) -> CommandResult:
@@ -2769,9 +2781,28 @@ class _FakeHost:
         given = "x\n" if reads else ""
         return f"{given}otto-cf-eof"
 
+    def _checksum_answer(self, command: str) -> "str | None":
+        """``md5sum``'s answer for the typed checksum command, or ``None`` for any other.
+
+        The twisted host answers one checksum whatever its argument was.
+        """
+        template = POSIX.typed_checksum_template
+        assert template is not None
+        before, after = template.split("{arg}")
+        if not (command.startswith(before) and command.endswith(after)):
+            return None
+        (argument,) = shlex.split(command[len(before) : len(command) - len(after)])
+        if "every-checksum-answers-one-value" in self._twists:
+            argument = ""
+        return f"{_input_contract.md5_of(argument)}  -"
+
     def _honest(self, command: str) -> "tuple[int, str]":  # noqa: PLR0911 — one arm per command the vocabulary names
         if command == POSIX.succeeding_command:
             return 0, ""
+        if command == POSIX.session_pid_command:
+            return 0, str(self.session)
+        if (checksum := self._checksum_answer(command)) is not None:
+            return 0, checksum
         if command == POSIX.whoami_command:
             return 0, "fake"
         if (stdin := self._stdin_answer(command)) is not None:
@@ -3029,19 +3060,6 @@ class _FakeShell:
         self._stopped()
 
 
-class _FakeProcess:
-    """A process for ``process_stop.stop_interrupted``: any signal stops it at once."""
-
-    def __init__(self, stopped: "Callable[[], None]") -> None:
-        self._stopped = stopped
-
-    def send(self, _signal: object) -> None:
-        self._stopped()
-
-    async def wait(self) -> None:
-        return None
-
-
 def _state_words(command: str) -> "list[str] | None":
     """The POSIX vocabulary's state words *command* chains with ``; ``, in order; ``None`` if not.
 
@@ -3089,7 +3107,7 @@ def _fake_cell(host: _FakeHost, entry: str = "") -> ResolvedCell:
     return ResolvedCell(
         cell=Cell("fake", "ssh", "transfer"),
         kind="fake",
-        open_host=opener_for("ssh-channel"),
+        open_host=opener_for("pooled-shell"),
         remote_scratch=lambda tmp: tmp,
         vocabulary=POSIX,
         entry=entry,
@@ -3123,6 +3141,7 @@ CONTROLS = {
     "exec-log": _log_contract.test_control_a_log_that_drops_blank_lines_is_refused,
     "exec-dry-run": _dry_run_contract.test_control_a_command_issued_live_leaves_its_mark,
     "exec-options": _options_contract.test_control_an_answer_otto_did_not_type_is_refused,
+    "typed-input": _input_contract.test_control_the_checksum_comparison_sees_one_changed_byte,
     "transfer-roundtrip": (
         _transfer_contract.test_control_the_roundtrip_comparison_rejects_a_corrupted_byte
     ),
@@ -3235,6 +3254,14 @@ HOST_CASES = [
         "every prompt answers one value",
         "exec-options",
         ("every-prompt-answers-one-value",),
+        True,
+        False,
+    ),
+    ("the checksum follows the bytes typed", "typed-input", (), True, True),
+    (
+        "every checksum answers one value",
+        "typed-input",
+        ("every-checksum-answers-one-value",),
         True,
         False,
     ),
@@ -3397,7 +3424,7 @@ def test_every_control_is_reached_through_exactly_its_contracts_entries(surface)
 
 
 def test_the_schemas_entry_enum_is_every_entry_the_suite_knows():
-    """``CellOutcome.entry`` admits exactly :data:`~tests.conformance._entry.ALL_ENTRIES`."""
+    """``CellOutcome.entry`` admits exactly the entries the suite knows."""
     schema = json.loads(SCHEMA_PATH.read_text())
     assert schema["$defs"]["CellOutcome"]["properties"]["entry"]["enum"] == ALL_ENTRIES
 
@@ -5540,6 +5567,7 @@ def test_the_page_cites_the_control_behind_a_route_it_claims_positively(committe
         ]
         for surface_id, profile_id, cell in mixed:
             block = _evidence_block(page, surface_id, profile_id)
+            varying = split_of(cell).varying
             for entry in cell["observed_cells"]:
                 if entry["outcome"] != "passed":
                     continue
@@ -5553,7 +5581,11 @@ def test_the_page_cites_the_control_behind_a_route_it_claims_positively(committe
                     f"and never cites the control that proved the check could fail there. "
                     f"Evidence was: {block}"
                 )
-                assert f"`{entry['transfer']}`" in block
+                # The route by the name the page gives it, mirroring the renderer's
+                # `_where`: the one varying axis's value, else the cell label. Not
+                # `_where` itself: the page is built from it, so that would be circular.
+                route = entry[varying[0]] if len(varying) == 1 else entry["cell_label"]
+                assert f"`{route}`" in block, (surface_id, profile_id, route)
                 checked += 1
     # No `assert checked` here either, and for the reason given in the sweep above: the
     # injected copy always carries a mixed cell with a cited passing route, so a
@@ -6372,6 +6404,8 @@ def test_rendering_never_writes_to_the_artifact(tmp_path, committed):
                 str(page),
                 "--families-page",
                 str(families),
+                "--contracts-dir",
+                str(tmp_path / "command-contracts"),
             ]
         )
         == 0
@@ -6531,6 +6565,7 @@ def test_the_narrowing_pin_examines_a_real_mechanism_on_every_narrowing_surface(
         "exec-stdin",
         "exec-cancel",
         "exec-dry-run",
+        "typed-input",
         "transfer-roundtrip",
         "transfer-mode",
         "transfer-progress",
@@ -6979,14 +7014,14 @@ def test_a_cell_nothing_has_watched_yet_still_describes_the_promise(committed):
 
 
 def test_a_surface_with_one_observable_still_promises_it(committed):
-    """The accept-control for all of the above: fifteen of the nineteen surfaces are unbranched.
+    """The accept-control for all of the above: sixteen of the twenty surfaces are unbranched.
 
     Without it, a `promise_of` that answered "no promise" for everything would satisfy
     every refusal above and publish a page that promises nothing at all.
     """
     page = _page(committed)
     unbranched = [surface.id for surface in SURFACES if not VOICE[surface.id].branches]
-    assert len(unbranched) == 15, f"the tree's branching surfaces have changed: {unbranched}"
+    assert len(unbranched) == 16, f"the tree's branching surfaces have changed: {unbranched}"
     for surface_id in unbranched:
         cell = committed["cells"][surface_id]["gnu"]
         assert promise_of(surface_id, cell).capability == VOICE[surface_id].capability
@@ -7757,14 +7792,13 @@ def test_every_entry_has_a_command_page_and_every_page_an_entry(monkeypatch):
     assert sorted(pages) == sorted(["index.md", *(f"{command}.md" for command in COMMAND_PAGES)])
     for entry in _entry.ALL_ENTRIES:
         assert ENTRY_VOICE[entry].page in COMMAND_PAGES, entry
-    assert ENTRY_VOICE["exec-shell"].page == "exec", "shell-routed exec is a section of exec"
     for command in COMMAND_PAGES:
         page = pages[f"{command}.md"]
         # Each command page links up to the overview for the general rules.
         assert "{ref}`Command contracts <command-contracts>`" in page.split("\n## ", 1)[0], command
-    dropped = {entry: voice for entry, voice in ENTRY_VOICE.items() if entry != "exec-shell"}
+    dropped = {entry: voice for entry, voice in ENTRY_VOICE.items() if entry != "exec"}
     monkeypatch.setattr("scripts.render_support_matrix.ENTRY_VOICE", dropped)
-    with pytest.raises(ValueError, match="'exec-shell' has no line in ENTRY_VOICE"):
+    with pytest.raises(ValueError, match="'exec' has no line in ENTRY_VOICE"):
         render_command_contracts()
 
 
@@ -7790,7 +7824,6 @@ def test_every_contract_that_declares_entries_has_a_row_on_its_command_pages(mon
         assert rows[0] in _entry_table_lines(page, entry), (entry, rows[0])
         assert f"`{chosen.id}`" in rows[0], rows[0]
         assert f"`{chosen.contract}`" not in page, entry
-    assert "No promise is checked through `exec-shell` yet." in pages["exec.md"]
     tests = [line for line in overview.splitlines() if f"`{chosen.contract}`" in line]
     assert tests == [f"- `{chosen.id}`: `{chosen.contract}`"], overview
     assert overview.index("## For contributors") < overview.index(tests[0])
@@ -7877,7 +7910,7 @@ def test_an_entry_or_host_outside_what_is_collected_never_reads_as_checked():
     """Every declared entry a collected cell lacks, and every host a domain drops, is named.
 
     Driven over the suite's own cells and over a synthetic pair whose second cell
-    admits no ``exec-shell``; and the converse, a space where every cell admits
+    admits no ``exec``; and the converse, a space where every cell admits
     every entry, carries no qualifier at all.
     """
     from tests.conformance._entry import space_for
@@ -7899,12 +7932,12 @@ def test_an_entry_or_host_outside_what_is_collected_never_reads_as_checked():
                 if entry not in admitted:
                     assert entry in entry_notes, (row.surface_id, entry, cell.kind)
     loopback = next(cell for cell in cells if cell.kind == "loopback-ssh")
-    telnet = next(cell for cell in cells if cell.kind == "bed-unix" and cell.cell.term == "telnet")
+    artifact = next(cell for cell in cells if cell.kind == "busybox-artifact")
     exec_contract = next(s.contract for s in SURFACES if s.id == "exec-exit-code")
-    notes = not_checked_notes("exec-exit-code", exec_contract, [loopback, telnet], applies=None)
+    notes = not_checked_notes("exec-exit-code", exec_contract, [loopback, artifact], applies=None)
     assert notes, notes
     assert notes[0].text.startswith("Checked only on"), notes
-    assert (notes[0].entry, notes[0].only) == ("exec-shell", True), notes
+    assert (notes[0].entry, notes[0].only) == ("exec", True), notes
     assert not_checked("exec-exit-code", exec_contract, [loopback], applies=None) == []
 
 
@@ -8020,8 +8053,9 @@ def test_every_declared_limitation_is_on_the_contract_page():
 def test_a_route_limitation_is_linked_only_from_the_commands_taking_that_route():
     """A route's declared exception reaches the pages of the commands that can take the route.
 
-    The `ssh-channel` route's limit is `exec`'s alone; a frame's or a console's
-    reaches every command.
+    A frame's or a console's limit reaches every command; one declared only on
+    a route no command takes any more (`ssh-channel`, which no `exec` answers
+    since every `exec` runs on a session) reaches no page.
     """
     from scripts.render_support_matrix import exception_label
 
@@ -8035,7 +8069,7 @@ def test_a_route_limitation_is_linked_only_from_the_commands_taking_that_route()
             assert (link in pages[f"{command}.md"]) is reaches, (command, item.where)
     ssh_only = next(i for i in declared_limitations() if i.routes == ["ssh-channel"])
     assert exception_label(ssh_only) not in pages["run.md"]
-    assert exception_label(ssh_only) in pages["exec.md"]
+    assert exception_label(ssh_only) not in pages["exec.md"]
 
 
 def test_a_limitation_declared_on_two_routes_is_one_row():
@@ -8289,8 +8323,9 @@ def test_the_contract_page_says_what_a_promise_id_is_and_how_zephyr_exit_codes_r
 def test_a_per_entry_table_names_no_entry_and_drops_a_note_its_only_list_rules_out():
     """An entry's table does not repeat its entry, nor a note its "only on" note covers.
 
-    The shell-routed `exec` table is checked only on SSH hosts, so the timeout
-    row's Zephyr note, true but already implied, is not in that table.
+    No entry is checked only on some hosts today, so the ruling-out is driven
+    over a row built here: an entry checked only on SSH hosts does not carry
+    the Zephyr note, true but already implied, that the other entry does.
     """
     pages = render_command_contracts()
     rows = contract_rows()
@@ -8305,10 +8340,16 @@ def test_a_per_entry_table_names_no_entry_and_drops_a_note_its_only_list_rules_o
     assert zephyr.text.startswith("Not checked on a Zephyr board"), zephyr
     assert zephyr in timeout.notes_for("run")
     assert zephyr in timeout.notes_for("exec")
-    assert zephyr not in timeout.notes_for("exec-shell")
-    shell = _contract_row_line(pages["exec.md"], "timeout", "exec-shell").split("|")[2]
-    assert "Zephyr" not in shell, shell
-    assert shell.strip().startswith("only on some hosts (note "), shell
+    only_ssh = NotChecked(
+        short="only on some hosts",
+        text="Checked only on SSH hosts.",
+        entry="exec",
+        hosts=frozenset({("bed-unix", "ssh")}),
+        only=True,
+    )
+    built = dataclasses.replace(timeout, notes=[zephyr, only_ssh])
+    assert built.notes_for("exec") == [only_ssh]
+    assert built.notes_for("run") == [zephyr]
 
 
 def test_every_exception_link_on_a_command_page_has_readable_text():
@@ -8402,11 +8443,11 @@ def test_a_known_gap_is_published_on_its_command_page_only():
         tail = pages[f"{command}.md"].split("## Declared exceptions and undefined", 1)[1]
         assert f"({known_gaps_label(command)})=" in tail
         assert "### Known gaps (not device limitations)" in tail
-        for gap in KNOWN_GAPS[command]:
+        for gap in KNOWN_GAPS.get(command, []):
             assert f"- {gap}" in tail
         # Only its own page carries a command's gaps.
         other = pages["exec.md" if command == "run" else "run.md"]
-        assert not any(gap in other for gap in KNOWN_GAPS[command]), command
+        assert not any(gap in other for gap in KNOWN_GAPS.get(command, [])), command
 
 
 def test_the_sudo_forms_are_declared_on_the_exec_page_only_and_are_not_a_gap():
@@ -8480,7 +8521,6 @@ def test_every_part_of_a_promise_no_device_proves_is_a_note_in_every_entry_s_tab
     for entry in row.entries:
         assert everywhere <= {note.text for note in row.notes_for(entry)}, entry
     assert zephyr in {note.text for note in row.notes_for("run")}
-    assert zephyr not in {note.text for note in row.notes_for("exec-shell")}
 
 
 @pytest.mark.parametrize("page", ["run.md", "exec.md"])
@@ -8492,3 +8532,37 @@ def test_a_not_checked_cell_lists_its_notes_in_page_order(page):
     for line in text.splitlines():
         numbers = [int(n) for n in re.findall(r"\(note (\d+)\)", line)]
         assert numbers == sorted(numbers), line
+
+
+def test_every_broken_command_cell_is_a_known_gap_on_its_commands_page(committed):
+    """A command page may not promise what the committed matrix measured broken.
+
+    The command pages are DECLARED (:func:`render_command_contracts`), never read
+    off a verdict, so a broken cell reaches them only through the row's
+    :attr:`Voice.gaps`. Every entry that did not pass on a ``measured-broken``
+    cell of a command row must find that row's promise id in the known gaps of
+    the page its entry is on; else the page's promise is untrue on that device
+    and nothing says so.
+    """
+    from tests._fixtures.paths import TESTS_ROOT
+
+    pages = TESTS_ROOT.parent / "docs" / "command-contracts"
+    command_rows = {row.surface_id for row in contract_rows() if row.entries}
+    missing = []
+    for surface_id, profile_id, cell, _ in _cells(committed):
+        if surface_id not in command_rows or cell["status"] != "measured-broken":
+            continue
+        for entry in cell.get("observed_cells", []):
+            if entry["outcome"] == "passed":
+                continue
+            page = (pages / f"{ENTRY_VOICE[entry['entry']].page}.md").read_text()
+            known = page.partition("### Known gaps")[2].partition("\n### ")[0]
+            # The row's line, linking a registered gap the row declares.
+            lines = [line for line in known.splitlines() if f"`{surface_id}`" in line]
+            anchors = [f"#{gap})" for gap in VOICE[surface_id].gaps]
+            if not any(anchor in line for line in lines for anchor in anchors):
+                missing.append(f"{surface_id} x {profile_id} ({entry['cell_label']})")
+    assert not missing, (
+        "measured-broken command cells no page names as a known gap; declare the "
+        f"userland.GAPS record on the row's Voice.gaps and re-render: {sorted(set(missing))}"
+    )

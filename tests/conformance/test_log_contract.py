@@ -97,7 +97,7 @@ async def never_leaks(host: BaseHost, resolved: ResolvedCell) -> "list[str]":
     return list(leaked)
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.observable(
     "the records the host log receives for every output case this userland can produce, "
     "against the lines of `value` and the stamp of the mode, under each log mode; and every "
@@ -153,7 +153,7 @@ def _has_blank_line(case: OutputCase) -> bool:
     return "" in log_lines(case.value)
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.positive_control("exec-log")
 async def test_control_a_log_that_drops_blank_lines_is_refused(resolved_cell: ResolvedCell) -> None:
     """With the output seam dropping blank lines, the comparison refuses a case that has one.

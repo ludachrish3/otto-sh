@@ -172,7 +172,7 @@ def _arm(arm: OutputArm, cases: "list[OutputCase]") -> str:
     )
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.observable(
     "`value` of every output case this userland can produce, compared for equality"
 )
@@ -202,7 +202,7 @@ async def test_a_commands_value_is_its_exact_output(
 # the collator judges a control's cells by the control's own marker.
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.positive_control("exec-output-exact")
 async def test_the_output_comparison_sees_one_added_space(resolved_cell: ResolvedCell) -> None:
     """A real result against an expectation one space, or one exit code, wrong must be refused.

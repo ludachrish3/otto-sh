@@ -24,7 +24,7 @@ What each layer adds:
 | {class}`~otto.host.unix_host.UnixHost` | SSH/Telnet sessions, file ops, privilege, kernel modules, toolchains |
 | {class}`~otto.host.embedded_host.EmbeddedHost` | console-only exec semantics, binary load/unload, on-device filesystems |
 | {class}`~otto.host.embedded_host.ZephyrHost` | Zephyr RTOS defaults |
-| {class}`~otto.host.local_host.LocalHost` | subprocess on the machine otto runs on; a pooled local shell for a call that needs one |
+| {class}`~otto.host.local_host.LocalHost` | bash sessions on the machine otto runs on; `exec` opens one per call |
 | {class}`~otto.host.docker_host.DockerContainerHost` | `docker exec` via a parent `UnixHost` |
 
 {class}`~otto.host.local_host.LocalHost` exists so instructions can mix local
@@ -89,7 +89,9 @@ What is unique about `host` among the first-party commands:
   overlays to the one resolved host before the verb runs
   ({doc}`../../cli/host/connections`).
 
-## Sessions: persistent `run` vs stateless `exec`
+(host-exec-on-sessions)=
+
+## Sessions: persistent `run` vs isolated `exec`
 
 {meth}`~otto.host.host.Host.run` executes on the host's **persistent shell
 session** ({class}`~otto.host.session.HostSession`): working directory,
@@ -98,10 +100,37 @@ environment, and elevation state survive across calls, and the session's
 sessions can be opened explicitly (`open_session`) for parallel stateful
 streams.
 
-{meth}`~otto.host.host.Host.exec` runs each call independently of the
-persistent session *and* of other concurrent `exec` calls, which is what
-makes `asyncio.gather()` fan-out safe. Embedded hosts are exec-only —
-a serial console has no multiplexed channels to hold a session on.
+{meth}`~otto.host.host.Host.exec` also runs on a shell session, on every
+host family, but not on `run`'s: each call borrows a session of its own
+(below), so it is independent of the persistent session *and* of other
+concurrent `exec` calls, which is what makes `asyncio.gather()` fan-out
+safe. Which shell that is:
+
+- **ssh:** the user's login shell, so the login profile has been read.
+- **The local host:** `bash`, started with no profile and no rc file, from
+  the Python process's current directory and environment.
+- **A console, an embedded host:** the host's one session, the one `run`
+  uses; on a console each `exec` starts a clean login shell from it
+  ({ref}`exec-frame-shell-state`).
+- **A container:** a `docker exec` the parent host runs on its own `exec`
+  session ({doc}`docker-hosts`).
+
+On ssh and on the local host the default session has no terminal. On ssh
+that holds when the host can open such a session at all (no proxied login,
+no `session_setup` hook) and the call needs none: `sudo=True`, `expects=`,
+`terminal=True` and a user reached only by switching take a session with a
+terminal instead. Telnet, console and embedded sessions always have one.
+What a terminal changes, and how to ask for one or refuse it, is
+{ref}`terminal-switch`; in short, a command typed without a terminal has no
+line-length limit, and one typed into a terminal has the limits
+{ref}`the run contract <command-contract-run>` lists.
+
+A session is reused (the pool, {ref}`host-exec-pool`), so a background
+process an `exec` leaves running that still holds the session's output
+writes into a later command's output. Redirect a background process's
+output (`cmd >/dev/null 2>&1 &`). Which background processes a timed-out
+or cancelled `exec` stops, per family, is on
+{ref}`the results page <exec-stop-reach>`.
 
 Both return the command's exact output, whichever route carried it;
 {ref}`command-output-contract` says what that means and what otto undoes to
@@ -112,12 +141,13 @@ get there.
 ### With or without a terminal
 
 `run()`, `exec()` and `open_session()` take `terminal=`. Left unset, nothing
-is refused and every call runs as it did before the switch existed: each
-host uses its own kind of session.
+is refused and each host uses its own kind of session, as the table's
+"Unset" column says: on ssh that is a terminal for `run` and named sessions,
+and no terminal for an `exec` that does not need one.
 
 | Host | Unset | `terminal=True` | `terminal=False` |
 | --- | --- | --- | --- |
-| ssh | `run` and named sessions have a terminal; `exec` takes a bare channel where it can | a session with a terminal (for `exec`, a pooled shell) | a session without one; `exec` takes the bare channel |
+| ssh | `run` and named sessions have a terminal; `exec` takes a pooled session without one where it can ({ref}`above <host-exec-on-sessions>`) | a session with a terminal | a session without one |
 | telnet, console, embedded | a terminal | the same | refused: the transport is a terminal |
 | local host | a pipe | refused: its sessions read a pipe | the same as unset, in every respect |
 | container | `run` and named sessions have a terminal; `exec` has none (`docker exec -i`) | `exec` is refused | `run` and `open_session` are refused |
@@ -153,10 +183,10 @@ ssh host whose login is proxied through another user, or that has a
 **What it changes for the command.** Without a terminal there is no line
 discipline: nothing is echoed, a TAB arrives as a TAB, and the length of a
 line is not limited ({ref}`the run contract <command-contract-run>` has the
-limits a terminal sets). An ssh session without a terminal (the one `run`
-uses, or a named one) runs the login shell of the user, started with
+limits a terminal sets). An ssh session without a terminal (`run`'s, a
+named one, or an `exec`'s) runs the login shell of the user, started with
 `OTTO_SESSION=<token>` in its environment, which every command it starts
-inherits. An `exec` on the bare channel has no such shell and no token.
+inherits and can read. No other session sets it.
 
 `terminal=True` gives an `exec` command a terminal on its output. Its input
 is still at end of file unless the call answers prompts (`expects=`), as for
@@ -166,8 +196,10 @@ every `exec`.
 **On an ssh session without a terminal, a timed-out or cancelled command ends the session.** With a terminal otto
 types Ctrl-C and the session lives on. Without one Ctrl-C is only a byte, and
 closing the channel leaves the command running. otto instead opens a second
-channel and stops every process that carries the session's token, then kills
-the session's shell. The next `run` opens a new session, so the working
+channel and stops every process that carries the session's token with
+`STOP`, then `KILL` (`otto.host.process_stop.reap_marked_script`), then kills
+the session's shell. No `TERM` or `HUP` comes first, so a command gets no
+chance to flush or clean up (a `tcpdump -w` loses what it had buffered). The next `run` opens a new session, so the working
 directory and variables of the old one are gone; a named session is dead and
 is opened again by name. The stop reaches everything
 the session started, a background job from an earlier command included. It
@@ -180,11 +212,14 @@ dropbear server the command it was running is then left behind.
 
 ### The exec pool: one free-list per user
 
-Where an `exec` cannot have a channel of its own (telnet, a proxied login, a
-`session_setup` hook, a call that needs a shell, another user), it runs on a
-pooled shell session, and `SessionManager` keeps one free-list of idle ones per user
+On ssh, telnet and the local host an `exec` runs on a pooled shell session,
+and `SessionManager` keeps one free-list of idle ones per user and per mode
 (`_exec_pools`, keyed by `_pool_key`: the call's `user`, else the login, so
-`exec()` and `exec(user=<the login>)` share one). A session for another user
+`exec()` and `exec(user=<the login>)` share one; and by whether the session
+has a terminal, so the two modes never share a session). A call that finds an
+idle session reuses it and opens nothing; one that finds none (the first, a
+concurrent one, every call on the local host) opens a session.
+A session for another user
 is opened **for** them, in `SessionManager.open_session`'s order: their own
 SSH login when they have a direct credential on an SSH host (no proxy hops),
 otherwise the login's session with its proxy hops and then a switch to them.
@@ -196,9 +231,9 @@ Nothing is switched per call, and a switch that cannot be made fails the
 open. On a `console` term there is no pool: `exec(user=...)` switches the
 one session inside its line turn ({ref}`console-term`).
 
-The local host keeps the same pool over local shells. Its plain `exec` is a
-subprocess of its own; one with `expects=`, `sudo=` or `user=` (or inside an
-`as_user()` block) runs on a pooled local shell instead. The shells start as
+The local host uses the same pool over local shells, but keeps none idle:
+each call opens a shell for itself and closes it after, so the shell starts
+from the Python process's current directory and environment. The shells start as
 the invoking user, which is the login there, and a switch to another user is
 the same switch a remote host makes: the target's credential from
 `LocalHost(creds=...)` when it has one, otherwise an ad-hoc `su`. `sudo` is
@@ -209,8 +244,13 @@ fails.
 Retention: a session goes back to its user's free-list after every `exec`
 that leaves it alive, still that user, and with its terminal record intact,
 when it does not need an identity guard its frame cannot give (below);
-anything else closes it. Nothing is evicted, so each free-list holds at most
-that user's peak of concurrent `exec` calls, and `close_all` (host close)
+anything else closes it. A timed-out or cancelled `exec` leaves its session
+dead, so that session is closed and the next call runs on a fresh one
+({ref}`command-ends-abnormally`). How many idle sessions a free-list keeps
+depends on the transport (`_idle_exec_sessions_kept`): on ssh one, since
+every idle session holds a channel of the one connection and a server allows
+few; on the local host none; on telnet every one, so a free-list holds at
+most that user's peak of concurrent `exec` calls. `close_all` (host close)
 closes them all.
 
 A session reached by a switch (any login-proxy hop, `su`, `sudo su` or
@@ -246,7 +286,7 @@ profile that defines a function of that name defeats it.
 
 ### Concurrency and the line turn
 
-On most hosts an `exec` has a process or a channel of its own, so gathered
+On most hosts an `exec` has a session of its own, so gathered
 `exec` calls run at the same time. A host whose commands all share one line
 cannot do that: a unix host on a `console` term (`run` and `exec` both type
 on the console's one shell) and every embedded host (one console, nothing

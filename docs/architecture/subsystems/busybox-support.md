@@ -210,7 +210,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a tagged daemon needs bash, which a stock BusyBox userland does not have, so `link impair --expire` is refused rather than left with a timer that never runs. Impair without `--expire` and it works. |
 | [`shutdown-command`](#shutdown-command) | `measured-broken` | Nothing, on any measured device: `Host.shutdown()` asks which spelling your device has and emits `poweroff` where there is no `shutdown`. Only a device with neither is refused. `Host.reboot()` is unaffected. |
 | [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 4095 characters, or 1022 where the terminal still echoes, rather than let the terminal truncate it. `Host.exec()` over ssh is safe and is not refused; on a `console`, `telnet` or proxied-login host it types into a shell session and is refused the same way. |
-| [`ssh-exec-string-cap`](#ssh-exec-string-cap) | `measured-broken` | A `shell` put of more than about 1 KB over ssh fails part-way on a device whose old dropbear caps an SSH string at 1400 bytes. Nothing is refused; use `nc`, or reach the device over telnet. |
+| [`typed-tab-literal-next`](#typed-tab-literal-next) | `measured-broken` | On a BusyBox serial console, a literal TAB in a `run` or `exec` command reaches the shell with an extra `0x16` byte before it. Nothing is refused; avoid literal TABs there, or use ssh or telnet. |
 | [`product-lifecycle`](#product-lifecycle) | `untested` | otto's `stage`/`install`/`uninstall` verbs emit no command of their own. Whether they work on your device is decided by your own product code. |
 | [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | Every target is local or on host-local virtual wire, so nothing has met a physical path's latency or loss. |
 
@@ -603,12 +603,13 @@ refused" below says why it must stay that way for now.
 - `otto.host.session.HostSession.run` — **OPEN**: a named session's `run()` calls
   `ShellSession.run_cmd` directly, one layer below the guard, so an over-long
   typed line is still silently truncated there.
-- `otto.host.session.SessionManager._exec_on_pooled` — **WIRED** by the same
-  function: on a `term: telnet` host, and on *any* host whose login is proxied,
-  `exec()` has no stateless primitive and types into a pooled shell session, so
-  it is line-edited like a typed command. The line is measured in the exec frame
-  it is typed in, against that session's bound, and refused before it is typed;
-  the message advises splitting it, since `exec()` is no escape there.
+- `otto.host.session.SessionManager._run_framed` — **WIRED** by the same
+  function: the one framed step of `run_cmd` and of a pooled `exec()`. On an open
+  session that reads a terminal it measures the line against that session's
+  bound, in the frame it is typed in, and refuses it before it is typed. A pooled
+  `exec()` reads a terminal on a `term: telnet` host, on *any* host whose login
+  is proxied, and where a terminal is asked for; there the message advises
+  splitting the line, since `exec()` is no escape.
 
 A line typed into a shell through a terminal is **silently truncated** past
 4095 characters: the kernel holds one typed line in a 4096-byte buffer, its
@@ -642,8 +643,9 @@ session whose terminal still echoes). A multi-line
 script is judged line by line, because the terminal's buffer holds one line —
 a long here-doc is fine as long as no individual line is over.
 
-**What is not refused.** `Host.exec()` over ssh opens a bare exec channel with
-no pty, is unaffected, and is the way to send an over-long command there. One
+**What is not refused.** `Host.exec()` over ssh, with no terminal asked for,
+runs on a pooled session without a pty, is unaffected, and is the way to send
+an over-long command there. One
 further path stays unguarded deliberately: a named session's
 `HostSession.run()`. Guarding it would make
 {class}`~otto.host.transfer.shell.ShellFileTransfer` refuse its own chunk
@@ -684,43 +686,37 @@ belongs to the device's kernel — and until one exists the record stays `measur
 because the surface still is: otto declines the command rather than running a
 shorter one.
 
-### ssh-exec-string-cap
+### typed-tab-literal-next
 
-**Status:** `measured-broken` — and **not refused**: otto has no way to learn an
-sshd's string cap before it sends, so the one path below is **OPEN**, and a
-`shell` put to a capped device fails part-way rather than up front.
+**Status:** `measured-broken` — and **not refused**: otto cannot tell before it
+types whether a console's terminal honours Ctrl-V, so the one path below is
+**OPEN**.
 
 **Paths otto touches this from:**
 
-- `otto.host.transfer.shell.Base64Codec.send_chunks` — **OPEN**: the `shell`
-  backend's put loop, one chunk command per stride through the host's exec path.
-  On an ssh host nothing bounds that line, so the full 4096-byte stride goes out
-  and a capped sshd drops the connection.
+- `otto.host.command_frame.BashFrame.typed` — **OPEN**: the frame's typing step,
+  which puts Ctrl-V before every TAB of a command typed into a shell session.
 
-An old dropbear caps **every SSH protocol string at 1400 bytes** and exits the
-connection on a longer one rather than truncating it. An ssh `exec` request
-carries the whole command as one string, and the `shell` backend puts a full
-4096-byte chunk on one command line — about 5.5 KB once base64-encoded. So a
-`shell` put of more than about 1 KB to such a device fails with the connection
-closed under it. Short commands, `run()`, and small transfers never come near
-the cap, and are unaffected.
+A command you send with `run` or `exec` to a BusyBox device over its serial
+console, with a literal TAB in it, reaches the shell with an extra `0x16` byte
+(Ctrl-V) before each TAB. otto types a TAB as Ctrl-V then TAB, so a line editor
+takes it as a character rather than as completion. That console's terminal has
+`iexten` off, so nothing consumes the Ctrl-V.
 
-**What to do instead.** Use the `nc` backend, which passes on the same device, or
-reach the device over telnet: on that route the `shell` backend already fits its
-chunks to the line it can type, and passes too.
+Everything else in the command arrives intact: punctuation and UTF-8 text. ssh
+and telnet to the same device are unaffected, and so is a GNU console.
 
-**Measured:** the conformance bed, 2026-09-24, on `bb1350` — BusyBox 1.35.0 behind
-dropbear 2012.55, whose `MAX_STRING_LEN` is 1400. The progress contract failed on
-the `ssh:shell` drawn cell, with the guest journal logging
-`Exit (root): String too long` at each failure, and passed on `ssh:nc`,
-`telnet:nc` and `telnet:shell`. The contract module declares that cell a strict
-xfail, so a device that stops failing reddens the lane
-({doc}`../support-matrix` renders the cell as `partly broken`).
+**What to do instead.** Avoid literal TABs in commands for such a console (write
+`printf '\t'` where you need one), or reach the device over ssh or telnet.
 
-**Queued for:** issue #437 — a
-per-host exec line budget, so the `shell` backend can fit its chunks to the exec
-channel the way it already fits them to a typed line. That is a new host field,
-and needs its own spec.
+**Measured:** the conformance bed, 2026-11-25, on `bb1350` — BusyBox 1.35.0 over
+its serial console, whose `stty -a` shows `-iexten`. The typed-input contract
+failed on the `console` cell for both `run` and `exec`, each TAB arriving as
+`0x16 0x09`, and passed on `ssh` and `telnet` to the same guest and on `test2`'s
+GNU console. The contract module declares that cell a strict xfail, so a fix
+reddens the lane until the declaration is removed.
+
+**Queued for:** [issue #1321](https://github.com/ludachrish3/otto-sh/issues/1321).
 
 ### product-lifecycle
 
@@ -811,7 +807,10 @@ when a record changes:
   argued for it. `nc-transfer` closed 2026-08-25: every listener otto spawns is
   spelled `-l -p PORT` and every GET reads exactly the size its `stat` prefetch
   measured, so there is no option left for a device to reject
-  (`docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md`);
+  (`docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md`).
+  `ssh-exec-string-cap` closed 2026-11-25: an ssh `exec` types its command into
+  a session, so an old dropbear's 1400-byte string cap does not reach it;
+  measured passing on `bb1350:ssh:shell`;
 - changing a status means changing it in the row and in the section's
   **Status:** line;
 - adding or re-stating a path means changing the record's `paths` **and** the

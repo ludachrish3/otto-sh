@@ -70,7 +70,6 @@ from tests.conformance import test_dry_run_contract as _dry_run_contract
 from tests.conformance import test_exec_contract as _exec_contract
 from tests.conformance import test_options_contract as _options_contract
 from tests.conformance import test_output_contract as _output_contract
-from tests.conformance import test_progress_contract as _progress_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
 from tests.conformance._bed import (
     _POSIX_SCRATCH_DIR,
@@ -98,10 +97,10 @@ from tests.conformance._controls import discover_controls
 from tests.conformance._entry import (
     ALL_ENTRIES,
     EXEC,
-    EXEC_SHELL,
     RUN,
     entries_declared,
     expected_route,
+    hooked_leg,
     space_for,
 )
 from tests.conformance._framing import framing_leak
@@ -2050,26 +2049,14 @@ def test_a_domain_that_narrows_the_draw_to_nothing_raises_rather_than_skipping(m
     assert metafunc.parametrized is None
 
 
-# --- The declared-failure hook: one declaration, restored 2026-09-24 ---
+# --- The declared-failure hook ---
 #
-# There was one to pin until 2026-08-25: `tests/conformance/test_transfer_contract.py`
-# declared an `expected_failure` hook over the five `bed-busybox[*:telnet:nc]`
-# cells, and two tests here pinned WHICH cells it claimed and that the hermetic
-# venue -- the one CI runs nightly with no lab -- claimed none. The universal
-# `nc -l -p PORT` listener spelling closed otto's `nc-transfer` gap, the
-# declaration was repaid with it, and the pin naming those cells went with its
-# subject (see that module's note under `applicable_cell`, and
-# `docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md`).
-# THE DECLARATION AND ITS PIN ARE BACK AS OF 2026-09-24:
-# `tests/conformance/test_progress_contract.py` now declares an
-# `expected_failure` hook over `bed-busybox[bb1350:ssh:shell]`, and
-# `test_the_progress_contract_declares_exactly_the_dropbear_shell_cell` below
-# pins WHICH cell it claims, by kind and by transfer and by count, failing in
-# BOTH directions -- exactly the shape the note above asked to bring back,
-# keyed on the resolver's answer rather than on a guest's name.
-# The nightly's protection did NOT go with it: see
-# `test_no_hermetic_cell_is_declared_a_known_failure` below, which sweeps every
-# contract module and so covers the next declaration without being edited.
+# One module declares today: `tests/conformance/test_input_contract.py`, over
+# `bed-busybox[*:console]` (a typed TAB arrives as `0x16 0x09`, #1321). No
+# per-cell pin restates it here: the strict xfail on the bed lane already fails
+# in both directions (a widened declaration XPASSes, a narrowed one leaves a
+# failure), and `test_no_hermetic_cell_is_declared_a_known_failure` below keeps
+# every declaration off the nightly's hermetic venue without being edited.
 #
 # WHAT STAYS is everything about the CONFTEST MECHANISM, and it stays because
 # the next declaration will be read by exactly this code: that a declared cell
@@ -2115,17 +2102,12 @@ def test_no_hermetic_cell_is_declared_a_known_failure():
     for a defect that is not in that venue at all, and nobody with a lab is
     watching. The bed lane can afford that conversation; the nightly cannot.
 
-    NO LONGER VACUOUS. Since 2026-09-24 one contract module,
-    `test_progress_contract.py`, defines `expected_failure` -- over a bed-only
-    kind (`bed-busybox`), so the inner loop below now asserts over a REAL
-    hook rather than over nothing. It still answers empty here, by
-    construction rather than by absence: no hermetic cell is ever kind
-    `bed-busybox` (see that module's banner), so the kind check alone keeps
-    every hermetic cell out of what the hook claims. That is why the sweep is
-    the SHAPE it is regardless of which case applies: it enumerates every
-    contract module and fails if it enumerated none, so an empty result below
-    is the tree's answer rather than a broken enumerator's, whether the reason
-    is that nothing declares or that what declares never reaches this venue.
+    `test_input_contract.py` defines `expected_failure` today, over a
+    bed-only kind (`bed-busybox`), so the inner loop asserts over a real hook;
+    no hermetic cell is ever that kind. It enumerates every contract module
+    and fails if it enumerated none, so an empty result below is the tree's
+    answer rather than a broken enumerator's, whether the reason is that
+    nothing declares or that what declares never reaches this venue.
     It RE-ARMS by itself the day any module declares a hook that DOES reach a
     hermetic cell -- no edit here, which is the property the deleted per-cell
     pin did not have. Proved able to fail by injecting a hook onto a real
@@ -2151,36 +2133,6 @@ def test_no_hermetic_cell_is_declared_a_known_failure():
             f"{sorted(cell_label(rc) for rc in declared)} -- on the lane CI runs "
             f"nightly with no lab, a strict xfail there is an XPASS and a red job"
         )
-
-
-def test_the_progress_contract_declares_exactly_the_dropbear_shell_cell():
-    """RESTORED 2026-09-24: WHICH cell ``test_progress_contract.py`` claims, and only it.
-
-    Fails in BOTH directions, the same shape the deleted ``nc``-on-BusyBox pin
-    had: a predicate that WIDENED to a cell that passes would strict-xfail
-    something that works, which is a red lane for the wrong reason; one that
-    NARROWED to zero would let the declaration go quiet with nothing here to
-    notice.
-    """
-    declared = [
-        (resolved.kind, resolved.cell.term, resolved.cell.transfer, resolved)
-        for resolved in bed_space()
-        if _progress_contract.expected_failure(resolved)
-    ]
-    triples = {(kind, term, transfer) for kind, term, transfer, _resolved in declared}
-    assert triples == {(BED_BUSYBOX, "ssh", "shell")}, (
-        f"test_progress_contract.expected_failure claims {sorted(triples)} -- widening to "
-        f"a passing cell is a red lane for the wrong reason, narrowing to zero is the "
-        f"declaration going quiet"
-    )
-    assert len(declared) == 1, (
-        f"expected exactly one declared cell, got {len(declared)}: "
-        f"{[cell_label(resolved) for *_rest, resolved in declared]}"
-    )
-    _kind, _term, _transfer, resolved = declared[0]
-    reason = _progress_contract.expected_failure(resolved)
-    assert reason, "an empty reason is not a reason"
-    assert "MAX_STRING_LEN" in reason, reason
 
 
 def test_a_declared_failure_becomes_a_strict_xfail_on_that_cell_alone(monkeypatch):
@@ -2359,6 +2311,17 @@ CONTRACT_FUNCTIONS = {
 def _entries_of_contract(name: str) -> "list[str]":
     fn = CONTRACT_FUNCTIONS[name]
     return entries_declared(f"{fn.__module__.replace('.', '/')}.py::{fn.__name__}")
+
+
+def _legs_of_contract(name: str) -> "list[tuple[str, bool]]":
+    """Each ``(entry, hooked)`` the contract reaches the scripted cell by: its entries, and
+    the hooked ``exec`` leg beside ``exec`` (``tests/conformance/_entry.py``, ``space_for``)."""
+    legs: "list[tuple[str, bool]]" = []
+    for entry in _entries_of_contract(name):
+        legs.append((entry, False))
+        if entry == EXEC:
+            legs.append((entry, True))
+    return legs
 
 
 #: Each way a host can lie, and every contract that must catch it. A lie whose
@@ -2558,18 +2521,21 @@ class _ScriptedHost:
         return value
 
 
-#: The routes the scripted host reports: what a unix ssh cell's `run`, `exec`
-#: and hooked `exec` take, and one no entry of such a cell takes.
+#: The routes the scripted host reports: what a unix ssh cell's `run` takes, and
+#: one no entry of such a cell takes (its `exec`, hooked or not, takes `pooled-shell`).
 DEFAULT_SESSION_ROUTE = "default-session"
 WRONG_ROUTE = "local-subprocess"
 
 
-def _scripted_cell(words: Vocabulary, lie: "str | None", entry: str = RUN) -> ResolvedCell:
+def _scripted_cell(
+    words: Vocabulary, lie: "str | None", entry: str = RUN, *, hooked: bool = False
+) -> ResolvedCell:
     """A resolved cell whose host is scripted rather than real, reached by *entry*.
 
-    A unix ``ssh`` cell without a proxied login, the one shape that admits all
-    three entries. Its plain opener's ``exec`` takes the ssh channel and its
-    hooked opener's the pooled shell, as a real one's does.
+    A unix ``ssh`` cell without a proxied login, the one shape that has a
+    hooked leg (*hooked*). Both its openers' ``exec`` take the pooled shell,
+    as a real one's does: the hooked one's with a terminal, the plain one's
+    without, which no route says.
     """
 
     witnesses = fake_witnesses(words)
@@ -2581,26 +2547,31 @@ def _scripted_cell(words: Vocabulary, lie: "str | None", entry: str = RUN) -> Re
 
         return opener
 
-    return ResolvedCell(
+    plain = ResolvedCell(
         cell=Cell("scripted", "ssh", "transfer"),
         kind="scripted",
-        open_host=opener_for("ssh-channel"),
+        open_host=opener_for("pooled-shell"),
         remote_scratch=None,
         vocabulary=words,
         entry=entry,
         family="unix",
         open_shell_host=opener_for("pooled-shell"),
     )
+    if not hooked:
+        return plain
+    leg = hooked_leg(plain)
+    assert leg is not None
+    return leg
 
 
 def test_the_scripted_cell_routes_are_the_ones_its_entries_must_take() -> None:
     """The harness's route literals agree with the suite's independent table."""
-    for entry, route in {
-        RUN: DEFAULT_SESSION_ROUTE,
-        EXEC: "ssh-channel",
-        EXEC_SHELL: "pooled-shell",
-    }.items():
-        assert expected_route(_scripted_cell(POSIX, None, entry)) == route
+    for entry, hooked, route in [
+        (RUN, False, DEFAULT_SESSION_ROUTE),
+        (EXEC, False, "pooled-shell"),
+        (EXEC, True, "pooled-shell"),
+    ]:
+        assert expected_route(_scripted_cell(POSIX, None, entry, hooked=hooked)) == route
     assert WRONG_ROUTE not in {
         expected_route(_scripted_cell(POSIX, None, entry)) for entry in ALL_ENTRIES
     }
@@ -2621,8 +2592,8 @@ async def test_an_honest_host_satisfies_every_contract_in_every_vocabulary(vocab
     """
     words = VOCABULARIES[vocab_name]
     for name in _contracts_for(words):
-        for entry in _entries_of_contract(name):
-            await CONTRACTS[name](_scripted_cell(words, lie=None, entry=entry), [])
+        for entry, hooked in _legs_of_contract(name):
+            await CONTRACTS[name](_scripted_cell(words, None, entry, hooked=hooked), [])
 
 
 async def _noted_observable(vocab_name: str) -> str:
@@ -2682,9 +2653,9 @@ async def test_every_lie_is_caught_in_every_vocabulary_that_can_be_asked(
     """
     words = VOCABULARIES[vocab_name]
     for name in caught_by:
-        for entry in _entries_of_contract(name):
+        for entry, hooked in _legs_of_contract(name):
             with pytest.raises(AssertionError) as caught:
-                await CONTRACTS[name](_scripted_cell(words, lie=lie, entry=entry), [])
+                await CONTRACTS[name](_scripted_cell(words, lie, entry, hooked=hooked), [])
             assert "scripted" in str(caught.value), (
                 f"the {name!r} contract caught {lie!r} under {vocab_name} over {entry} but "
                 f"its message does not name the cell: {caught.value}"
@@ -2703,25 +2674,25 @@ async def test_a_host_that_reports_the_wrong_route_fails_every_command_contract(
     """A command that ran on a route its entry does not take is refused, over every entry."""
     words = VOCABULARIES[vocab_name]
     for name in _contracts_for(words):
-        for entry in _entries_of_contract(name):
+        for entry, hooked in _legs_of_contract(name):
             with pytest.raises(AssertionError, match="ran on route"):
                 await CONTRACTS[name](
-                    _scripted_cell(words, lie="reports_the_wrong_route", entry=entry), []
+                    _scripted_cell(words, "reports_the_wrong_route", entry, hooked=hooked), []
                 )
 
 
 @pytest.mark.asyncio
 async def test_a_host_whose_exec_strips_fails_the_output_contract() -> None:
-    """``exec`` trimming whitespace that ``run`` keeps is caught, through both exec entries.
+    """``exec`` trimming whitespace that ``run`` keeps is caught, hooked and not.
 
     POSIX only, and that is the evidence rather than an omission: the Zephyr
     cases' outputs carry no leading or trailing whitespace, so a stripping
     exec answers them correctly.
     """
     await CONTRACTS["output"](_scripted_cell(POSIX, lie="exec_strips", entry=RUN), [])
-    for entry in (EXEC, EXEC_SHELL):
+    for hooked in (False, True):
         with pytest.raises(AssertionError, match="scripted"):
-            await CONTRACTS["output"](_scripted_cell(POSIX, lie="exec_strips", entry=entry), [])
+            await CONTRACTS["output"](_scripted_cell(POSIX, "exec_strips", EXEC, hooked=hooked), [])
 
 
 class _ScriptedConsoleHost(_ScriptedHost):
@@ -3389,6 +3360,8 @@ NEW_STIMULUS_FIELDS = [
     "prompting_whoami_command",
     "prompt_text",
     "whoami_command",
+    "session_pid_command",
+    "typed_checksum_template",
 ]
 
 
@@ -3438,9 +3411,43 @@ def test_zephyr_declares_no_blocking_signal_stdin_state_terminal_or_mark_stimulu
             "prompting_whoami_command",
             "prompt_text",
             "whoami_command",
+            "session_pid_command",
+            "typed_checksum_template",
         ]:
             assert getattr(words, name) is None, name
         assert "{token}" in words.distinct_answer_template
+
+
+def test_the_session_pid_read_is_declared_exactly_where_the_cancel_stimulus_is():
+    """The cancel contract reads both on every cell of its domain, which reads the template."""
+    for words in [POSIX, *ZEPHYR_SHELLS.values()]:
+        assert (words.session_pid_command is None) == (
+            words.exec_pid_long_running_template is None
+        ), words
+    assert POSIX.session_pid_command == "echo $$"
+
+
+def test_the_typed_checksum_reads_its_own_argument_through_one_placeholder():
+    """One ``{arg}`` and ``md5sum``: the contract compares the MD5 of what it sent."""
+    template = POSIX.typed_checksum_template
+    assert template is not None
+    assert template.count("{arg}") == 1
+    assert template.split("|")[-1].split() == ["md5sum"]
+
+
+def test_the_typed_input_arguments_hold_every_class_the_contract_names():
+    """Punctuation, a TAB and multi-byte UTF-8 in the printable argument; BEL in the other."""
+    import string
+
+    from tests.conformance import test_input_contract as _input
+
+    printable = _input.PRINTABLE_ARGUMENT
+    assert set(string.punctuation) <= set(printable)
+    assert "\t" in printable
+    assert any(len(ch.encode("utf-8")) == 2 for ch in printable)
+    assert any(len(ch.encode("utf-8")) == 3 for ch in printable)
+    assert not any(ord(ch) < 0x20 and ch != "\t" for ch in printable)
+    assert "\x07" in _input.BEL_ARGUMENT
 
 
 # --- the netcat rung contract's table and cells (hostless) ---------------------

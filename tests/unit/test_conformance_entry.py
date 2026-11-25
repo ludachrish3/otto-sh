@@ -21,7 +21,6 @@ from tests.conformance._cells import BUSYBOX_ARTIFACT, LOCAL, hermetic_space
 from tests.conformance._entry import (
     EMBEDDED,
     EXEC,
-    EXEC_SHELL,
     LOCAL_FAMILY,
     RUN,
     UNIX,
@@ -30,6 +29,8 @@ from tests.conformance._entry import (
     entries_of,
     entries_of_node,
     expected_route,
+    has_terminal,
+    hooked_leg,
     password_sudo_on,
     project,
     proxied_on,
@@ -65,23 +66,76 @@ def test_a_busybox_artifact_cell_has_no_exec_entry():
     )
     assert entries_of(busybox) == [RUN]
     assert entries_of(local) == [RUN, EXEC]
-    assert expected_route(with_entry(local, EXEC)) == "local-subprocess"
+    assert expected_route(with_entry(local, EXEC)) == "pooled-shell"
+    assert hooked_leg(busybox) is None
 
 
 def test_a_network_hop_does_not_change_the_expected_route():
     hopped = next(r for r in bed_space() if r.cell.term == "ssh" and lab_entry(r).get("hop"))
-    assert expected_route(with_entry(hopped, EXEC)) == "ssh-channel"
-    assert EXEC_SHELL in entries_of(hopped)
-    assert expected_route(with_entry(hopped, EXEC_SHELL)) == "pooled-shell"
+    assert expected_route(with_entry(hopped, EXEC)) == "pooled-shell"
     assert hopped.open_shell_host is not None
+    leg = hooked_leg(hopped)
+    assert leg is not None
+    assert (leg.entry, leg.hooked, expected_route(leg)) == (EXEC, True, "pooled-shell")
 
 
-def test_a_proxied_login_expects_the_pooled_shell():
-    proxied = dataclasses.replace(
-        next(r for r in bed_space() if r.cell.term == "ssh"), proxied_login=True
-    )
+def test_a_proxied_login_expects_the_pooled_shell_with_a_terminal():
+    plain = next(r for r in bed_space() if r.cell.term == "ssh")
+    proxied = dataclasses.replace(plain, proxied_login=True)
     assert expected_route(with_entry(proxied, EXEC)) == "pooled-shell"
-    assert EXEC_SHELL not in entries_of(proxied)
+    assert has_terminal(with_entry(proxied, EXEC)) is True
+    assert has_terminal(with_entry(plain, EXEC)) is False
+
+
+def test_the_exec_route_never_names_a_retired_mechanism():
+    """No cell's ``exec`` expects ``ssh-channel`` or ``local-subprocess``, whatever its kind."""
+    routes = {
+        expected_route(leg)
+        for resolved in bed_space() + hermetic_space()
+        for leg in space_for_all(resolved)
+    }
+    assert routes <= {"pooled-shell", "default-session"}, routes
+
+
+def space_for_all(resolved: ResolvedCell) -> "list[ResolvedCell]":
+    """Every leg of *resolved*: each entry it admits, and its hooked leg."""
+    legs = [with_entry(resolved, entry) for entry in entries_of(resolved)]
+    leg = hooked_leg(resolved)
+    return legs + ([leg] if leg is not None else [])
+
+
+@pytest.mark.parametrize(
+    ("facts", "call", "terminal"),
+    [
+        pytest.param({}, {}, False, id="plain-ssh-exec"),
+        pytest.param({"hooked": True}, {}, True, id="hooked"),
+        pytest.param({"proxied_login": True}, {}, True, id="proxied"),
+        pytest.param({}, {"needs_shell": True}, True, id="needs-shell"),
+        pytest.param({}, {"switched_user": True}, True, id="switched-user"),
+        pytest.param({"entry": RUN}, {}, True, id="run"),
+        pytest.param({"family": LOCAL_FAMILY}, {}, False, id="local-exec"),
+        pytest.param({"family": LOCAL_FAMILY, "entry": RUN}, {}, False, id="local-run"),
+    ],
+)
+def test_has_terminal_is_read_off_the_cells_facts_and_the_calls(facts, call, terminal):
+    """Each fact moves the answer alone, so none of them is the route in disguise."""
+    plain = with_entry(next(r for r in bed_space() if r.cell.term == "ssh"), EXEC)
+    assert has_terminal(dataclasses.replace(plain, **facts), **call) is terminal
+
+
+@pytest.mark.parametrize("term", ["telnet", "console"])
+def test_a_unix_telnet_or_console_exec_reads_a_terminal(term):
+    resolved = next(r for r in bed_space() if r.family == "unix" and r.cell.term == term)
+    assert has_terminal(with_entry(resolved, EXEC)) is True
+
+
+def test_a_hooked_leg_has_a_label_of_its_own():
+    resolved = next(r for r in bed_space() if r.open_shell_host is not None)
+    leg = hooked_leg(resolved)
+    assert leg is not None
+    plain = cell_label(with_entry(resolved, EXEC))
+    assert cell_label(leg) == plain.replace("[", "-hooked[", 1)
+    assert cell_label(leg) != plain
 
 
 def test_no_bed_cell_is_a_proxied_login_today():
@@ -149,11 +203,12 @@ def test_an_embedded_telnet_cell_expects_the_default_session():
 @pytest.mark.parametrize(
     ("term", "route"), [("telnet", "pooled-shell"), ("console", "default-session")]
 )
-def test_a_unix_non_ssh_cell_has_no_exec_shell_entry(term, route):
+def test_a_unix_non_ssh_cell_has_no_hooked_leg(term, route):
     resolved = next(r for r in bed_space() if r.family == "unix" and r.cell.term == term)
     assert entries_of(resolved) == [RUN, EXEC]
     assert expected_route(with_entry(resolved, EXEC)) == route
     assert resolved.open_shell_host is None
+    assert hooked_leg(resolved) is None
 
 
 def test_run_is_always_the_default_session():
@@ -168,8 +223,8 @@ def test_the_label_names_the_entry():
 
 
 def test_two_entries_of_one_cell_rank_independently():
-    resolved = next(r for r in bed_space() if EXEC_SHELL in entries_of(r))
-    legs = [with_entry(resolved, entry) for entry in (RUN, EXEC, EXEC_SHELL)]
+    resolved = next(r for r in bed_space() if hooked_leg(r) is not None)
+    legs = space_for_all(resolved)
     orders = {
         tuple(sorted(range(3), key=lambda i, seed=seed: _rank(seed, legs[i])))
         for seed in range(200)
@@ -181,27 +236,27 @@ def test_two_entries_of_one_cell_rank_independently():
 
 def test_check_route_fails_on_a_wrong_route():
     an_ssh_cell = next(r for r in bed_space() if r.cell.term == "ssh")
-    with pytest.raises(AssertionError, match="ssh-channel"):
+    with pytest.raises(AssertionError, match="pooled-shell"):
         check_route(
             with_entry(an_ssh_cell, EXEC),
-            CommandResult(status=Status.Success, route="pooled-shell"),
+            CommandResult(status=Status.Success, route="ssh-channel"),
         )
     check_route(
-        with_entry(an_ssh_cell, EXEC), CommandResult(status=Status.Success, route="ssh-channel")
+        with_entry(an_ssh_cell, EXEC), CommandResult(status=Status.Success, route="pooled-shell")
     )
 
 
 def test_the_entries_marker_is_read_by_ast():
     module = ast.parse(
         "import pytest\n"
-        "@pytest.mark.entries('run', 'exec', 'exec-shell')\n"
+        "@pytest.mark.entries('run', 'exec')\n"
         "def test_marked(): ...\n"
         "def test_unmarked(): ...\n"
         "@pytest.mark.entries('run', 'teleport')\n"
         "def test_misspelt(): ...\n"
     )
     marked, unmarked, misspelt = module.body[1:]
-    assert entries_of_node(marked) == [RUN, EXEC, EXEC_SHELL]
+    assert entries_of_node(marked) == [RUN, EXEC]
     assert entries_of_node(unmarked) == []
     with pytest.raises(ValueError, match="teleport"):
         entries_of_node(misspelt)
@@ -210,7 +265,7 @@ def test_the_entries_marker_is_read_by_ast():
 def test_the_command_contracts_declare_their_entries():
     assert entries_declared(
         "tests/conformance/test_exec_contract.py::test_exec_reports_the_documented_exit_code"
-    ) == [RUN, EXEC, EXEC_SHELL]
+    ) == [RUN, EXEC]
     assert entries_declared(
         "tests/conformance/test_exec_contract.py::test_a_failing_command_is_not_reported_as_success"
     ) == [RUN]
@@ -224,12 +279,22 @@ def test_the_command_contracts_declare_their_entries():
 
 
 def test_space_for_crosses_the_projection_with_the_declared_entries(monkeypatch):
-    monkeypatch.setattr(_entry, "entries_declared", lambda contract: [RUN, EXEC_SHELL])
+    monkeypatch.setattr(_entry, "entries_declared", lambda contract: [RUN])
     space = bed_space()
-    expected = [
-        with_entry(r, e) for r in project(space) for e in (RUN, EXEC_SHELL) if e in entries_of(r)
+    assert space_for("any::test", space) == [with_entry(r, RUN) for r in project(space)]
+
+
+def test_space_for_adds_the_hooked_leg_right_after_the_exec_leg(monkeypatch):
+    monkeypatch.setattr(_entry, "entries_declared", lambda contract: [RUN, EXEC])
+    space = bed_space()
+    assert space_for("any::test", space) == [
+        leg for r in project(space) for leg in space_for_all(r)
     ]
-    assert space_for("any::test", space) == expected
+    hooked = [leg for leg in space_for("any::test", space) if leg.hooked]
+    assert hooked, "no bed cell has a hooked leg: the hooked-ssh kind would be checked nowhere"
+    assert {(leg.entry, leg.cell.term, leg.proxied_login) for leg in hooked} == {
+        (EXEC, "ssh", False)
+    }
 
 
 class _RecordingMetafunc:
@@ -262,15 +327,10 @@ def test_an_unmarked_contract_draws_full_cells(monkeypatch):
 def test_a_marked_contract_draws_projected_cells_times_its_entries(monkeypatch):
     space = bed_space()
     monkeypatch.setattr(_conformance_conftest, "_SPACE", space)
-    monkeypatch.setattr(_entry, "entries_declared", lambda contract: [RUN, EXEC, EXEC_SHELL])
+    monkeypatch.setattr(_entry, "entries_declared", lambda contract: [RUN, EXEC])
     metafunc = _RecordingMetafunc()
     _conformance_conftest.pytest_generate_tests(metafunc)
-    assert metafunc.parametrized == [
-        with_entry(r, e)
-        for r in project(space)
-        for e in (RUN, EXEC, EXEC_SHELL)
-        if e in entries_of(r)
-    ]
+    assert metafunc.parametrized == [leg for r in project(space) for leg in space_for_all(r)]
     assert len(set(metafunc.ids)) == len(metafunc.ids)
     # The full draw is memoised apart: an unmarked contract in the same session
     # still gets the entry-less cells.
@@ -279,21 +339,3 @@ def test_a_marked_contract_draws_projected_cells_times_its_entries(monkeypatch):
     unmarked.config = metafunc.config
     _conformance_conftest.pytest_generate_tests(unmarked)
     assert unmarked.parametrized == space
-
-
-@pytest.mark.parametrize(
-    ("cmd", "call", "carries"),
-    [
-        pytest.param("true", [("x", "y")], True, id="call-only"),
-        pytest.param(("true", [("x", "y")]), None, True, id="command-only"),
-        pytest.param(("true", []), [("x", "y")], False, id="command-overrides-call-with-none"),
-        pytest.param(("true", None), [("x", "y")], True, id="command-inherits-call"),
-        pytest.param("true", None, False, id="neither"),
-    ],
-)
-def test_the_kit_predicts_expects_from_what_the_command_resolves_to(cmd, call, carries):
-    """A command's own ``expects``, an empty list included, replaces the call's."""
-    from otto.host.host import ShellCommand
-
-    issued = cmd if isinstance(cmd, str) else ShellCommand(cmd=cmd[0], expects=cmd[1])
-    assert _entry.effective_expects(issued, call) is carries

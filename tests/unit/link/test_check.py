@@ -470,7 +470,8 @@ class TestSandboxRows:
             ["read-back", "rate", "port range", "side"], Verdict.PASS
         )
         assert any(
-            c.startswith("ip netns exec otto-check-") and "python3" in c for c in test1.commands
+            c.startswith("unset OTTO_SESSION; ip netns exec otto-check-") and "python3" in c
+            for c in test1.commands
         )
 
     @pytest.mark.asyncio

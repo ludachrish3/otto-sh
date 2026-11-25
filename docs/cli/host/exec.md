@@ -51,7 +51,8 @@ otto --lab my_lab host router1 exec "test -t 1 && echo terminal || echo pipe" --
 Without either flag the host chooses, and nothing is refused. `--terminal`
 runs the command on a shell session that has a terminal; `--no-terminal`
 insists on none. A host that cannot give what is asked refuses and says why.
-Which host gives which is in {ref}`terminal-switch`.
+Which host gives which is in {ref}`terminal-switch`; which shell runs the
+command, on every kind of host, is in {ref}`host-exec-on-sessions`.
 
 ## `exec` options
 

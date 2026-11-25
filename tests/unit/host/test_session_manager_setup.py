@@ -186,7 +186,7 @@ async def test_an_exec_as_a_switched_user_on_a_two_dialect_host_runs_and_is_not_
                 exec_input=ExecInput(stdin_eof=True),
             )
             assert (r.retcode, r.value) == (0, "zephyr:kernel version")
-        assert h.mgr._exec_pools.get("root", []) == []
+        assert h.mgr._exec_pools.get(("root", False), []) == []
         assert len(h.sessions) == 2, "each exec opened its own session"
         assert all(s.closed for s in h.sessions)
         assert not any("__otto_as_" in w for shell in h.shells for w in shell.writes)
@@ -215,7 +215,7 @@ async def test_a_refused_line_on_an_unguarded_switched_session_still_closes_it()
                 user="root",
                 exec_input=ExecInput(stdin_eof=True),
             )
-        assert h.mgr._exec_pools.get("root", []) == []
+        assert h.mgr._exec_pools.get(("root", False), []) == []
         assert all(s.closed for s in h.sessions)
     finally:
         h.unregister()
@@ -391,7 +391,7 @@ async def test_an_exec_as_another_user_is_set_up_as_them_and_reuses_their_sessio
             )
             assert r.retcode == 0
         assert h.calls == [("exec_pool", "root")]
-        assert [s.current_user for s in h.mgr._exec_pools["root"]] == ["root"]
+        assert [s.current_user for s in h.mgr._exec_pools[("root", False)]] == ["root"]
     finally:
         h.unregister()
 
@@ -422,7 +422,7 @@ async def test_a_hook_that_leaves_a_pooled_session_as_someone_else_is_refused_by
         assert f"as 'root', not {opened_for!r}, the user it was opened for" in message
         assert "the handle's as_user" in message
         assert "exec(user=...)" in message
-        assert h.mgr._exec_pools.get(opened_for, []) == []
+        assert h.mgr._exec_pools.get((opened_for, False), []) == []
         assert h.mgr._named_sessions == {}
         assert all(cmd != "id" for shell in h.shells for _mode, cmd in shell.commands)
     finally:
@@ -444,7 +444,7 @@ async def test_a_hook_whose_switch_is_scoped_keeps_the_pooled_session():
             route=ExecRoute.POOLED_SHELL, cmd="id", timeout=10.0, log=LogMode.NORMAL
         )
         assert r.retcode == 0
-        assert [s.current_user for s in h.mgr._exec_pools["admin"]] == ["admin"]
+        assert [s.current_user for s in h.mgr._exec_pools[("admin", False)]] == ["admin"]
         assert any(cmd == "id" for shell in h.shells for _mode, cmd in shell.commands)
     finally:
         h.unregister()
@@ -464,7 +464,7 @@ async def test_a_host_without_a_hook_is_unchanged():
     await mgr._ensure_session()
     readies = [w for w in built[0].shell.writes if "READY__" in w]
     assert len(readies) == 1
-    assert mgr.exec_route() is ExecRoute.SSH_CHANNEL
+    assert mgr.exec_route() is ExecRoute.POOLED_SHELL
 
 
 @pytest.mark.asyncio
@@ -778,8 +778,8 @@ async def test_every_transport_arm_builds_the_session_with_the_landing_frame(
     assert built[0].handed_frame is (landing if has_landing else command)
 
 
-def test_the_raw_channel_does_not_win_on_a_hooked_host():
-    """The route's `hooked` clause: a raw primitive cannot run setup."""
+def test_a_session_without_a_terminal_does_not_win_on_a_hooked_host():
+    """The `hooked` clause: a session without a terminal cannot run setup."""
     register_session_setup("t5-exec-route", _export, overwrite=True)
 
     try:
@@ -790,9 +790,13 @@ def test_the_raw_channel_does_not_win_on_a_hooked_host():
             session_setup=SessionSetup(name="t5-exec-route"),
         )
         assert hooked.exec_route() is ExecRoute.POOLED_SHELL
-        # The same manager without the hook still takes the fast path, so this
-        # cannot be satisfied by pooling everything.
+        assert "cannot run the session setup 't5-exec-route'" in (
+            hooked.no_terminal_limitation() or ""
+        )
+        # The same manager without the hook can open one, so this cannot be
+        # satisfied by refusing it everywhere.
         plain = session_manager(connections=_conn(), name="h", host_id="h")
-        assert plain.exec_route() is ExecRoute.SSH_CHANNEL
+        assert plain.exec_route() is ExecRoute.POOLED_SHELL
+        assert plain.no_terminal_limitation() is None
     finally:
         SESSION_SETUPS.unregister(name="t5-exec-route")

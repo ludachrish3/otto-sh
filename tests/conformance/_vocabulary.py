@@ -406,6 +406,18 @@ class Vocabulary:
     only.
     """
 
+    session_pid_command: str | None
+    """Prints the process id of the shell the command was typed into: ``$$``, which the exec
+    frame's subshell does not change, so two answers differ exactly when two shells answered.
+    ``None`` exactly when :attr:`exec_pid_long_running_template` is (the cancel contract reads
+    it beside that template)."""
+
+    typed_checksum_template: str | None
+    """Prints the MD5 of ``{arg}`` (a shell-quoted word) as the first field of its answer: a
+    checksum the shell computes over the bytes it received, so a typed command's argument is
+    compared byte for byte without trusting how the output is read back. ``None`` where the
+    userland has no such command (the Zephyr shell)."""
+
 
 _PROMPT_TEXT = "otto-cf-answer? "
 """The prompt :attr:`Vocabulary.prompting_command` prints: a token no shell prints by itself."""
@@ -493,6 +505,10 @@ POSIX = Vocabulary(
     process_state_template=witness_shell.format_template(witness_shell.process_state_template),
     witness_cleanup_template=witness_shell.format_template(witness_shell.witness_cleanup_template),
     detached_long_running_command="exec >/dev/null 2>&1; sleep 10",
+    session_pid_command="echo $$",
+    # `md5sum` because otto's own transfer check already relies on it on every
+    # userland the bed has, BusyBox included (`checksum: md5sum`).
+    typed_checksum_template="printf '%s' {arg} | md5sum",
 )
 
 #: The Zephyr RTOS shell. Every spelling below is MEASURED on real guests
@@ -575,6 +591,10 @@ _ZEPHYR_BASE = Vocabulary(
     process_state_template=None,
     witness_cleanup_template=None,
     detached_long_running_command=None,
+    session_pid_command=None,
+    # No firmware command reads its argument back as data: an unknown command is
+    # quoted back by the line editor, which also takes a TAB as completion.
+    typed_checksum_template=None,
 )
 
 

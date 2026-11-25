@@ -672,10 +672,7 @@ Netcat has additional options and auto-detection strategies — see {doc}`../cli
 Every shell otto opens on a Unix host must answer a readiness probe before
 otto sends it a command: the session behind `run`, the named sessions of
 `open_session`, the shells `exec` uses, and the landing shell of an
-`otto login` on a host with a `session_setup` hook. Over ssh, `exec` uses a
-shell only under a proxied login, on a host with a `session_setup` hook, or
-for a call that needs one (an elevation, a user switch, a prompt to answer);
-otherwise it runs on a bare channel and is probed by nothing. If no answer
+`otto login` on a host with a `session_setup` hook. If no answer
 comes back in time, the open fails with `shell never became ready after open`.
 The session behind `run` then retries once, on a fresh connection, after a 2 s
 pause (not on a console whose login has already typed the password); the
@@ -754,7 +751,7 @@ What suppression covers, and what it doesn't:
 |------|-------------|
 | SSH and telnet sessions (`host.run`, named sessions, app shells) | yes |
 | Shells entered via a login proxy — `switch_user`, `as_user` | yes; `su` starts a fresh shell that re-reads rc files, so it is re-applied there |
-| `host.exec(...)` | not needed — an exec channel has no PTY, and a non-interactive shell keeps no history at all |
+| `host.exec(...)` on a session without a terminal | not needed — its shell reads a pipe, is not interactive, and keeps no history at all; an `exec` on a session with a terminal is covered by the first row |
 | Local host commands | not needed — non-interactive |
 | `otto login` | **no** — see the note below |
 | Embedded / Zephyr targets | not applicable — their shell history is a RAM ring buffer, never a file |
@@ -1037,8 +1034,9 @@ sets only `down_timeout` still inherits `timeout` from a preference.
 ## Concurrency and the remote channel budget
 
 An nc transfer is not free of SSH channels just because it moves its bytes over
-its own TCP connection: otto holds one exec channel for the whole life of the
-remote ``nc -l``, and the listener-readiness poll opens another while it is
+its own TCP connection: otto holds one channel (the `exec` session running it)
+for the whole life of the remote ``nc -l``, and the listener-readiness poll
+takes another while it is
 held. A default OpenSSH server allows ``MaxSessions 10`` channels per
 *connection* and **refuses** the excess rather than queueing it, so an
 unbounded bulk transfer turns "many files" into ``open failed`` — or into

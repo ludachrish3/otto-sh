@@ -22,7 +22,7 @@ from collections.abc import Callable
 
 import pytest
 
-from tests.conformance._entry import EXEC, expected_route, issue, opened
+from tests.conformance._entry import EXEC, expected_route, has_terminal, issue, opened
 from tests.conformance._resolved import ResolvedCell
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
@@ -52,7 +52,7 @@ def piped(stdin_command: str) -> str:
     return "printf 'x\\n' | { " + stdin_command + "; }"
 
 
-@pytest.mark.entries("exec", "exec-shell")
+@pytest.mark.entries("exec")
 @pytest.mark.observable(
     "value and timed_out of `{words.stdin_eof_command}` under a 5s budget"
     "; no password prompt on this cell"
@@ -69,15 +69,23 @@ async def test_an_exec_without_expects_reads_end_of_file(
             # Arm: after otto's own password prompt. The prompt otto answered is
             # the terminal's output, ahead of the command's.
             elevated = await host.exec(cmd, timeout=_STDIN_BUDGET_S, sudo=True)
-            assert elevated.route == expected_route(resolved_cell, shell_bound=True)
+            assert elevated.route == expected_route(resolved_cell)
             assert (elevated.timed_out, elevated.value.endswith("otto-cf-eof")) == (False, True)
+            # A sudo exec needs a terminal for the prompt: read the session's own.
+            assert has_terminal(resolved_cell, needs_shell=True)
+            read = resolved_cell.vocabulary.terminal_read_command
+            if read is not None:
+                tty = await host.exec(read, timeout=_STDIN_BUDGET_S, sudo=True)
+                assert not tty.value.endswith("unread"), (
+                    f"{resolved_cell.cell}: a sudo exec read no terminal -- {tty.value!r}"
+                )
             note_observable(
                 f"value and timed_out of `{cmd}` under a 5s budget, plain and under "
                 "sudo=True after otto answers the password"
             )
 
 
-@pytest.mark.entries("exec", "exec-shell")
+@pytest.mark.entries("exec")
 @pytest.mark.positive_control("exec-stdin")
 async def test_control_input_given_to_the_command_is_read(resolved_cell: ResolvedCell) -> None:
     """Input the command is given is read: fails a ``cat`` that never reads."""
@@ -88,6 +96,6 @@ async def test_control_input_given_to_the_command_is_read(resolved_cell: Resolve
         if resolved_cell.password_sudo and resolved_cell.entry == EXEC:
             # The elevated arm, on the same cells as the contract's.
             elevated = await host.exec(piped_cmd, timeout=_STDIN_BUDGET_S, sudo=True)
-            assert elevated.route == expected_route(resolved_cell, shell_bound=True)
+            assert elevated.route == expected_route(resolved_cell)
             # Fails an elevation that swallows the command's input.
             assert elevated.value.endswith("x\notto-cf-eof")

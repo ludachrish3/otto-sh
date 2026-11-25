@@ -405,7 +405,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
 
     @override
     def _shares_one_line(self) -> bool:
-        """Answer True: an embedded target has one console and no stateless exec beside it."""
+        """Answer True: an embedded target has one console and no second session beside it."""
         return True
 
     async def _run_one_in_turn(self, verb: str, *args: Any, **kwargs: Any) -> CommandResult:
@@ -473,7 +473,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
 
     @override
     def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
-        """Plan the default session: one console, and no stateless primitive beside it."""
+        """Plan the default session: one console, and no second session beside it."""
         return ExecPlan(route=ExecRoute.DEFAULT_SESSION)
 
     @override
@@ -490,8 +490,8 @@ class EmbeddedHost(UserlandHost, RemoteHost):
     ) -> CommandResult:
         """Run a single command on the embedded host.
 
-        An embedded target exposes a single console with no stateless exec
-        primitive, so ``exec`` runs on the same persistent session as
+        An embedded target exposes a single console and no second session,
+        so ``exec`` runs on the same persistent session as
         ``run``, and concurrent calls take turns on it (the line turn
         ``exec`` holds). It exists for API parity; use ``run`` for stateful
         workflows.

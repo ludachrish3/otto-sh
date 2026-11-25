@@ -1,10 +1,10 @@
-"""A command's output comes back exactly from the ssh exec channel, every time (#711).
+"""A command's output comes back exactly from an ssh ``exec``, every time (#711).
 
 ``CommandResult.value`` is the command's output with exactly one trailing
 newline removed. asyncssh's exec channel handed back an empty partial line
 when end-of-file landed after the last line (#711): a timing defect, so a
-single run proves nothing, and this module runs each command 20 times on the
-channel.
+single run proves nothing. An ``exec`` runs on a pooled shell session without
+a terminal now, and this module runs each command 20 times on it.
 
 One run of each case on every term, route and log mode is the conformance
 suite's: the value in ``tests/conformance/test_output_contract.py``, what the
@@ -23,12 +23,12 @@ from otto.testing import EXACT_OUTPUT_CASES
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.asyncio,
-    # Every command 20 times over the channel.
+    # Every command 20 times over the session.
     pytest.mark.timeout(75),
 ]
 
 _REPEATS = 20
-"""Runs per command on the SSH exec channel: enough for a 1-in-20 timing flake to show."""
+"""Runs per command on the ssh exec session: enough for a 1-in-20 timing flake to show."""
 
 
 def _report(failures: list[str]) -> str:
@@ -38,9 +38,10 @@ def _report(failures: list[str]) -> str:
 
 
 @pytest.mark.parametrize("host1", ["ssh"], indirect=True)
-async def test_the_ssh_channel_answers_the_exact_output_every_time(host1: Host) -> None:
-    """Every shipped case, 20 times on the ssh exec channel, answers its exact value and code."""
-    assert host1._exec_plan(user=None, needs_shell=False).route is ExecRoute.SSH_CHANNEL
+async def test_an_ssh_exec_answers_the_exact_output_every_time(host1: Host) -> None:
+    """Every shipped case, 20 times on the session without a terminal, answers its exact value."""
+    plan = host1._exec_plan(user=None, needs_shell=False)
+    assert (plan.route, plan.plain) == (ExecRoute.POOLED_SHELL, True)
     failures: list[str] = []
     for case in EXACT_OUTPUT_CASES:
         for iteration in range(1, _REPEATS + 1):

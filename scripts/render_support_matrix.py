@@ -272,10 +272,14 @@ class Voice:
     empty when :attr:`reader_narrowed` already says it (:func:`reader_entry_narrowed`)."""
     unproven: "list[Unproven]" = dataclass_field(default_factory=list)
     """The parts of the promise the contract proves on no device, each a note on the page."""
+    gaps: "tuple[str, ...]" = ()
+    """The :data:`~otto.host.userland.GAPS` records (by ``surface``) that break this
+    promise on some device. Each is a known gap on the page of every entry the row
+    is checked through, in the record's own words (:func:`_registry_gap_lines`)."""
     branches: "tuple[Branch, ...]" = ()
     """The observables this surface can offer, when it offers more than one.
 
-    Empty for a surface with a single observable, which is fifteen of the nineteen today.
+    Empty for a surface with a single observable, which is sixteen of the twenty today.
     Non-empty means :attr:`capability` is never used for a MEASURED cell: the cell's
     own stored ``observable`` decides which arm ran, and an observable matching no arm
     -- or more than one -- publishes NO promise and fails the docs build.
@@ -376,7 +380,7 @@ VOICE: "dict[str, Voice]" = {
         branches=(
             Branch(
                 marker="; no terminal on this route",
-                where="a route that gives `exec` a process of its own (ssh channel, local)",
+                where="a host whose `exec` session has no terminal (ssh by default, local)",
                 capability=(
                     "run an `exec` that starts from the state its session was set up with "
                     "-- nothing a `run` or an earlier `exec` changed -- and trust that its "
@@ -467,8 +471,9 @@ VOICE: "dict[str, Voice]" = {
         short="cancelled exec",
         capability=(
             "cancel an `exec` and have otto stop its command before the cancellation "
-            "reaches you (on the local machine: its leader ended and its process group hung "
-            "up, as the known gaps below say), with the host answering the next command"
+            "reaches you (on the local machine: its process group terminated, and what is left "
+            "in it after the grace killed, as {ref}`What the stop reaches <exec-stop-reach>` "
+            "says), with the host answering the next command"
         ),
         narrowed=(
             "this suite's vocabulary for such a target declares no "
@@ -554,6 +559,23 @@ VOICE: "dict[str, Voice]" = {
                 ),
             ),
         ],
+    ),
+    "typed-input": Voice(
+        short="typed input",
+        capability=(
+            "type a command holding punctuation, a TAB or UTF-8 text and have the shell "
+            "receive it byte for byte; one holding a control character a terminal would act "
+            "on reaches a session without a terminal intact, and on a session with one is "
+            "refused with `UntypableCommandError` before anything is typed"
+        ),
+        narrowed=(
+            "this suite's vocabulary for such a target declares no `typed_checksum_template`"
+        ),
+        reader_narrowed=(
+            "no command of the Zephyr shell reads its own argument back as data, and its line "
+            "editor takes a TAB as completion"
+        ),
+        gaps=("typed-tab-literal-next",),
     ),
     "transfer-roundtrip": Voice(
         short="file roundtrip",
@@ -720,24 +742,14 @@ VOICE: "dict[str, Voice]" = {
 #: a key with no page in :data:`COMMAND_PAGES` refuses the build
 #: (:func:`_check_page_mapping`).
 KNOWN_GAPS: "dict[str, list[str]]" = {
-    "exec": [
-        (
-            "On the local machine, a timed-out `exec` sends TERM, and a cancelled one HUP, "
-            "to the other processes of the command's process group and ends its leader, "
-            "but they may still be exiting when the call returns, and one that ignores the "
-            "signal survives (`tests/unit/host/test_process_stop.py`)."
-        ),
-    ],
     "run": [
         (
             "On the local machine, a timed-out `run` of a command inside a subshell, or of a "
             "list or loop whose remainder runs long, can end the session: it is marked "
             "unusable, and its working directory and variables are lost; a lone command or "
-            "pipeline is stopped and the session kept. Closing that session sends TERM to its "
-            "process group: a process that ignores TERM can outlive a shell that exits "
-            "promptly, and a process that left the group is not signalled. When a given-up "
-            "session is closed is on {ref}`Closing a session <closing-a-session>` "
-            "(issue #1101)."
+            "pipeline is stopped and the session kept. What closing that session stops is "
+            "on {ref}`What the stop reaches <exec-stop-reach>`, and when a given-up session "
+            "is closed is on {ref}`Closing a session <closing-a-session>` (issue #1101)."
         ),
     ],
 }
@@ -875,7 +887,7 @@ def _where(entries: "list[dict]", varying: "list[str]") -> str:
 def split_of(cell: dict) -> Split:
     """Group *cell*'s ``observed_cells`` by outcome, and note which axes vary.
 
-    ``entry`` (how a command was issued: ``run``, ``exec``, ``exec-shell``) is an
+    ``entry`` (how a command was issued: ``run``, ``exec``) is an
     axis only when EVERY drawn cell carries one, which is exactly a command
     contract's cell; a transfer cell carries none and splits as it always has.
     """
@@ -2237,7 +2249,7 @@ def _grid(matrix: dict) -> "list[str]":
         "",
         "`varies`",
         ": the verdict differs between the drawn cells of this device -- one console,",
-        "  transport or way of issuing a command (`run`, `exec`, `exec-shell`) gets one",
+        "  transport or way of issuing a command (`run`, `exec`) gets one",
         "  answer and another gets a different one. The device's section gives one line per",
         "  answer and names where each applies.",
         "",
@@ -2488,7 +2500,7 @@ class ContractRow:
         """Return the notes that apply to *entry*: the domain's, and *entry*'s own.
 
         A "not on" note is left out when one of *entry*'s "only on" notes
-        already rules its hosts out: a reader told `exec-shell` runs only on
+        already rules its hosts out: a reader told an entry runs only on
         SSH hosts needs no note that it skips a Zephyr board. A note that names
         no host (:attr:`Voice.unproven`) is never ruled out.
         """
@@ -2846,7 +2858,7 @@ def exception_title(item: DeclaredLimitation) -> str:
 def _not_checked_cell(row: ContractRow, entry: str, notes: "list[str]") -> str:
     """Say in *entry*'s table where *row* is not checked: each place in words, then its note.
 
-    "`exec-shell` only on ... (note 2); not on a Zephyr board (note 3)", read off
+    "`exec` only on ... (note 2); not on a Zephyr board (note 3)", read off
     :meth:`ContractRow.notes_for` *entry*, numbered by their place in the page's
     *notes*; "--" for none.
     """
@@ -3008,21 +3020,6 @@ class EntryVoice:
 ENTRY_VOICE = {
     "run": EntryVoice(page="run", lead="With `run` you can"),
     "exec": EntryVoice(page="exec", lead="With `exec` you can"),
-    "exec-shell": EntryVoice(
-        page="exec",
-        lead="With `exec` sent through a shell session you can",
-        heading="Shell-routed `exec`",
-        about=(
-            "This section is about one case only: an `exec` on a host reached over",
-            "`ssh` that the cases above send through a shell session (`pooled-shell`)",
-            "instead of its own channel. The conformance suite checks that path as an",
-            "entry of its own, `exec-shell`. A host reached over `telnet` or `console`",
-            "always sends `exec` through a shell session: `pooled-shell` over `telnet`,",
-            "`default-session` (the session `run` uses) over `console`. Their `exec`",
-            "promises are listed and checked in the main `exec` table above, and the",
-            "notes on the table below do not apply to them.",
-        ),
-    ),
 }
 
 
@@ -3075,28 +3072,31 @@ class RouteCase:
     """A sentence printed after the route, such as that the case is not tested."""
 
 
+_UNIX_GROUP = "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):"
+"""The heading line the remote Unix host's cases sit under."""
+
 #: The cases the ``exec`` page lists, each a line of that page and a test case.
 EXEC_ROUTE_CASES = (
     RouteCase(
         "ssh",
-        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
-        "reached over `ssh`, `exec` gets a bare SSH channel of its own, unless a case "
-        "below applies",
-        "ssh-channel",
+        _UNIX_GROUP,
+        "reached over `ssh`, `exec` goes through a shell session otto keeps for it beside "
+        "the one `run` uses, opened without a terminal unless a case below applies",
+        "pooled-shell",
     ),
     RouteCase(
         "telnet",
-        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
-        "reached over `telnet`, it goes through a shell session",
+        _UNIX_GROUP,
+        "reached over `telnet`, it goes through such a shell session, with a terminal",
         "pooled-shell",
     ),
     RouteCase(
         "proxied",
-        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        _UNIX_GROUP,
         "the host's login is **proxied** (otto logs in as one account and then switches "
         "to the one it runs as; [Credentials and login proxies]"
         "(../configuration/host-sources.md#credentials-and-login-proxies)): a shell "
-        "session",
+        "session with a terminal",
         "pooled-shell",
         note=(
             "No host the suite tests has a proxied login "
@@ -3105,38 +3105,40 @@ EXEC_ROUTE_CASES = (
     ),
     RouteCase(
         "hook",
-        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        _UNIX_GROUP,
         "the host declares a **session-setup hook** (project code otto runs on every "
         "shell session it opens; {ref}`Session setup <per-host-session-setup>`): a shell "
-        "session",
+        "session with a terminal",
         "pooled-shell",
     ),
     RouteCase(
         "needs-shell",
-        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
-        "the call needs a shell: it passes `expects` (patterns otto answers while the "
+        _UNIX_GROUP,
+        "the call needs a terminal: it passes `expects` (patterns otto answers while the "
         "command runs, such as a password prompt), `sudo=True`, or a `user` otto cannot "
         "log in as directly; a call with a `user` runs in a shell session opened as "
-        "that user",
+        "that user, with a terminal",
         "pooled-shell",
     ),
     RouteCase(
         "own-ssh-user",
-        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        _UNIX_GROUP,
         "`exec(user=...)` over `ssh` for a user with SSH credentials of its own, and no "
-        "`expects` or `sudo`: an SSH connection as that user",
-        "ssh-channel",
+        "`expects` or `sudo`: a shell session without a terminal, over an SSH connection "
+        "as that user",
+        "pooled-shell",
     ),
     RouteCase(
         "own-ssh-user-shell",
-        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        _UNIX_GROUP,
         "the same call where the login is proxied or the host declares a session-setup "
-        "hook: a shell session opened over that user's own SSH connection and set up as them",
+        "hook: a shell session with a terminal, opened over that user's own SSH "
+        "connection and set up as them",
         "pooled-shell",
     ),
     RouteCase(
         "console",
-        "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):",
+        _UNIX_GROUP,
         "reached over `console`, it uses the same session as `run`: a console serves one client",
         "default-session",
     ),
@@ -3147,7 +3149,11 @@ EXEC_ROUTE_CASES = (
         "default-session",
     ),
     RouteCase(
-        "local", "On other hosts:", "on the local host, a fresh local process", "local-subprocess"
+        "local",
+        "On other hosts:",
+        "on the local host, a shell session of its own that reads a pipe, opened for the "
+        "one call and closed after it",
+        "pooled-shell",
     ),
     RouteCase(
         "container",
@@ -3203,7 +3209,7 @@ COMMAND_PAGES = {
             "CLI it is `otto host <id> exec` ({doc}`/cli/host/exec`); from",
             "Python, {meth}`Host.exec <otto.host.host.Host.exec>`.",
         ),
-        routes=("ssh-channel", "pooled-shell", "default-session", "local-subprocess", "container"),
+        routes=("pooled-shell", "default-session", "container"),
         route_cases=EXEC_ROUTE_CASES,
     ),
 }
@@ -3212,9 +3218,14 @@ COMMAND_PAGES = {
 #: overview lists them. Keyed by :class:`~otto.host.exec_route.ExecRoute` value.
 ROUTE_VOICE = {
     "default-session": "the host's one persistent shell session, the one `run` uses",
-    "pooled-shell": "a shell session otto keeps for `exec` beside the one `run` uses",
-    "ssh-channel": "a bare SSH channel of the command's own, with no terminal",
-    "local-subprocess": "a fresh process on the local machine",
+    "pooled-shell": (
+        "a shell session `exec` borrows from a pool beside the one `run` uses, with or "
+        "without a terminal"
+    ),
+    "ssh-channel": (
+        "a bare SSH channel of the command's own, with no terminal; no `exec` takes it"
+    ),
+    "local-subprocess": "a fresh process on the local machine; no `exec` takes it",
     "container": (
         "a docker container's command, run as `docker exec` through its parent host; "
         "its result reports `container/` and the route the parent took"
@@ -3453,7 +3464,7 @@ def _timed_out_example() -> "CommandResult":
     from otto.host.session import ExecOutput, timed_out_result
 
     return timed_out_result(
-        cmd="sleep 60", timeout=5.0, output=ExecOutput(), route=ExecRoute.SSH_CHANNEL
+        cmd="sleep 60", timeout=5.0, output=ExecOutput(), route=ExecRoute.POOLED_SHELL
     )
 
 
@@ -3490,8 +3501,6 @@ def _not_checked_example(rows: "list[ContractRow]") -> str:
     pairs = sorted(note.hosts, key=lambda p: (order.index(p[0]), p[1]))
     where = _join([_host_phrase(*pair) for pair in pairs])
     through = f" through `{note.entry}`" if note.entry else ""
-    if note.entry == "exec-shell":
-        through += " (an `exec` an `ssh` host sends through a shell session)"
     if note.only:
         return f"`{row.surface_id}` is checked{through} only on {where}."
     return f"`{row.surface_id}` is not checked{through} on {where}."
@@ -3561,10 +3570,10 @@ def render_contracts_overview(
         ">>> from otto.result import CommandResult",
         ">>> from otto.utils import Status",
         ">>> result = CommandResult(",
-        '...     status=Status.Success, retcode=0, value="hello", route="ssh-channel"',
+        '...     status=Status.Success, retcode=0, value="hello", route="pooled-shell"',
         "... )",
         ">>> result.route, result.timed_out, result.value",
-        "('ssh-channel', False, 'hello')",
+        "('pooled-shell', False, 'hello')",
         "```",
         "",
         "## The commands covered",
@@ -3815,10 +3824,11 @@ def render_contracts_overview(
         lines += [f"- `{row.surface_id}`: `{row.contract}`" for row in rows]
         lines += [
             "",
-            "The suite checks shell-routed `exec` (the `exec-shell` entry) on an SSH host",
-            "whose `exec` would otherwise get a channel of its own, by declaring a",
-            "session-setup hook that does nothing: declaring any hook sends `exec` to a",
-            "shell session.",
+            "The suite also checks `exec` on an SSH host whose `exec` would otherwise get",
+            "a session without a terminal, by declaring a session-setup hook that marks",
+            "each session it sets up: declaring any hook sends `exec` to a session with a",
+            "terminal, and the mark shows the hook ran as the user the session is for.",
+            "Those cells' labels name their kind with `-hooked`.",
         ]
     lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -3846,6 +3856,13 @@ def _entry_table(entry: str, rows: "list[ContractRow]", notes: "list[str]") -> "
             "",
             "On some devices a promise above is narrower: see",
             "{ref}`Where a device gets a narrower promise <command-contracts-narrower>`.",
+        ]
+    if any(VOICE[row.surface_id].gaps for row in own):
+        label = known_gaps_label(ENTRY_VOICE[entry].page)
+        lines += [
+            "",
+            "On some devices a promise above has a known gap: see",
+            f"{{ref}}`Known gaps <{label}>`.",
         ]
     return lines
 
@@ -3925,7 +3942,7 @@ def render_command_page(
         "{ref}`Undefined <command-contracts-undefined>`.",
         "",
     ]
-    gaps = KNOWN_GAPS.get(command, [])
+    gaps = [*KNOWN_GAPS.get(command, []), *_registry_gap_lines(entries, rows)]
     if gaps:
         lines += [f"({known_gaps_label(command)})=", "### Known gaps (not device limitations)", ""]
         lines += [f"- {gap}" for gap in gaps]
@@ -3935,6 +3952,33 @@ def render_command_page(
         lines += [f"({host_option_forms_label(command)})=", "### Per-host forms", ""]
         lines += [f"- {form}" for form in forms]
     return "\n".join(lines).rstrip() + "\n"
+
+
+#: Where a userland gap record is rendered, relative to ``docs/command-contracts/``.
+_GAP_REGISTRY_PAGE = "../architecture/subsystems/busybox-support.md"
+
+
+def _registry_gap_lines(entries: "list[str]", rows: "list[ContractRow]") -> "list[str]":
+    """One known-gap line per :attr:`Voice.gaps` record of a row checked through *entries*.
+
+    The sentence is the record's first sentence (its ``reason`` up to the first
+    ``". "``), linked to the record's own section, so the fact has one home.
+    """
+    from otto.host.userland import GAPS
+
+    by_surface = {gap.surface: gap for gap in GAPS}
+    lines = []
+    for row in rows:
+        if not set(entries) & set(row.entries):
+            continue
+        for surface in VOICE[row.surface_id].gaps:
+            if surface not in by_surface:
+                raise ValueError(f"{row.surface_id!r} names gap {surface!r}, which GAPS lacks")
+            sentence = _capitalise(by_surface[surface].reason.split(". ", 1)[0])
+            lines.append(
+                f"`{row.surface_id}`: {sentence} ([`{surface}`]({_GAP_REGISTRY_PAGE}#{surface}))."
+            )
+    return lines
 
 
 def host_option_forms_label(command: str) -> str:

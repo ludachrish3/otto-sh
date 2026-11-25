@@ -18,6 +18,7 @@ No module-level asyncio mark: this module mixes sync and async tests.
 
 import logging
 import re
+from typing import Any
 
 import pytest
 
@@ -108,6 +109,31 @@ async def test_a_console_exec_restores_to_its_own_start_so_run_keeps_its_termina
         await s.exec_("stty echo </dev/tty")
         after = await s.run_cmd(cmd=_read())
     assert after.value == "noecho noicanon"  # M5
+
+
+@pytest.mark.parametrize("name", TERMINAL_SHELLS)
+@pytest.mark.asyncio
+async def test_an_exec_with_no_time_left_types_nothing(name, monkeypatch, tmp_path):
+    """``timeout=0`` times out before the command's frame is written.
+
+    The session's own stop after a timeout may still type (an interrupt and
+    its resync probe); the command never is."""
+    marker = tmp_path / "ran"
+    async with pty_session(name) as s:
+        writes: list[str] = []
+        real = type(s).write_transport
+
+        async def recording(self: Any, *, data: Any) -> None:
+            writes.append(str(data))
+            await real(self, data=data)
+
+        monkeypatch.setattr(type(s), "write_transport", recording)
+        assert (await s.exec_(f"touch {marker}", timeout=0)).timed_out
+        assert [w for w in writes if str(marker) in w] == [], "the command is never typed"
+        monkeypatch.undo()
+        assert s.alive
+        assert (await s.exec_("echo next")).value == "next"
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize("name", TERMINAL_SHELLS)

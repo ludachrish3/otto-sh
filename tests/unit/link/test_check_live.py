@@ -570,10 +570,10 @@ async def test_live_listeners_bind_the_far_endpoints_link_address(
     test2.fingerprint = fingerprint
     _fake(monkeypatch, lab)
     await check_link(lab=lab, ident="edge", live=True, from_host="test1")
-    listeners = [c for c in test2.commands if c.startswith("setsid bash -c ")]
+    listeners = [c for c in test2.commands if c.startswith("unset OTTO_SESSION; setsid bash -c ")]
     assert len(listeners) == 3
     for cmd in listeners:
-        body = shlex.split(cmd)[3]
+        body = shlex.split(cmd)[5]
         if "python3" in body:
             assert f"s.bind(('{EDGE.b.ip}', " in shlex.split(body)[2], cmd
         else:

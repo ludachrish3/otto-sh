@@ -18,6 +18,7 @@ from otto.host.daemon import (
     ps_scan_command,
     split_token,
 )
+from otto.host.process_stop import SESSION_MARK
 
 
 class TestLaunchCommand:
@@ -53,6 +54,18 @@ class TestLaunchCommand:
         assert systemd_run != -1
         assert linger < systemd_run, "linger must be enabled BEFORE the unit launches"
         assert "loginctl enable-linger >/dev/null 2>&1 || true" in cmd
+
+    def test_fallback_starts_the_daemon_without_the_session_mark(self) -> None:
+        # A shell session without a terminal exports the session mark, and a
+        # later timed-out command on it stops every process started with the
+        # mark set. The setsid fallback inherits the shell's environment, so it
+        # drops the mark inside its own subshell before setsid; the systemd
+        # branch's unit gets the user manager's environment and is unchanged.
+        cmd = launch_command("otto-impair:v1:lnk:eth1", ["sleep", "5"])
+        assert f"( unset {SESSION_MARK}; setsid bash -c" in cmd
+        systemd_branch = cmd[: cmd.index("then :; else")]
+        assert "unset" not in systemd_branch
+        assert "timeout 5 systemd-run --user --collect --quiet -- bash -c" in systemd_branch
 
 
 class TestPsScanCommand:

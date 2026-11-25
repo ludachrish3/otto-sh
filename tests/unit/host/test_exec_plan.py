@@ -73,7 +73,7 @@ def _embedded_telnet():
             lambda: _unix_host(term="ssh"),
             None,
             False,
-            ExecPlan(route=ExecRoute.SSH_CHANNEL),
+            ExecPlan(route=ExecRoute.POOLED_SHELL, plain=True),
             id="unix-ssh",
         ),
         pytest.param(
@@ -87,7 +87,7 @@ def _embedded_telnet():
             _unix_with_users,
             "root",
             False,
-            ExecPlan(route=ExecRoute.SSH_CHANNEL, as_user="root"),
+            ExecPlan(route=ExecRoute.POOLED_SHELL, plain=True),
             id="unix-ssh-direct-cred-user",
         ),
         pytest.param(
@@ -139,8 +139,9 @@ def _embedded_telnet():
             ExecPlan(route=ExecRoute.DEFAULT_SESSION),
             id="embedded-telnet",
         ),
+        pytest.param(LocalHost, None, False, ExecPlan(route=ExecRoute.POOLED_SHELL), id="local"),
         pytest.param(
-            LocalHost, None, False, ExecPlan(route=ExecRoute.LOCAL_SUBPROCESS), id="local"
+            LocalHost, None, True, ExecPlan(route=ExecRoute.POOLED_SHELL), id="local-needs-shell"
         ),
         pytest.param(
             _make_container, None, False, ExecPlan(route=ExecRoute.CONTAINER), id="container"
@@ -220,14 +221,19 @@ def test_a_per_user_transfer_budget_reads_that_users_plan(monkeypatch):
         stdin_eof=True, restore=SessionManager._exec_restore_for(ExecRoute.POOLED_SHELL)
     )
     assert budget == typed_line_budget(h._session_mgr._command_frame, echoes=True, exec_input=typed)
-    # The host's own plain exec still rides the bare channel, unbounded.
-    plain = h._exec_plan(user=None, needs_shell=False).route
-    assert h._session_mgr.line_budget(route=plain) is None
+    # The host's own exec rides a session without a terminal, unbounded.
+    plan = h._exec_plan(user=None, needs_shell=False)
+    assert (plan.route, plan.plain) == (ExecRoute.POOLED_SHELL, True)
+    assert h._session_mgr.line_budget(route=plan.route, plain=plan.plain) is None
 
 
 @pytest.mark.asyncio
 async def test_exec_stamps_the_planned_route():
-    assert (await LocalHost().exec("true")).route == "local-subprocess"
+    host = LocalHost()
+    try:
+        assert (await host.exec("true")).route == "pooled-shell"
+    finally:
+        await host.close()
 
 
 @pytest.mark.asyncio
@@ -376,7 +382,7 @@ async def test_inside_as_user_the_transfer_budget_reads_the_plan_exec_dispatches
 
     assert [p.route for p in dispatched] == [ExecRoute.POOLED_SHELL]
     assert captured["ctx"].exec_line_room("") == h._session_mgr.line_budget(
-        route=dispatched[0].route
+        route=dispatched[0].route, plain=dispatched[0].plain
     )
 
 
@@ -488,13 +494,77 @@ def test_a_direct_cred_user_on_a_hooked_or_proxied_host_takes_the_pooled_shell(
         assert host._plan_exec(user="alice", needs_shell=False) == ExecPlan(
             route=ExecRoute.POOLED_SHELL
         )
+        assert host._plan_exec(user=None, needs_shell=False) == ExecPlan(
+            route=ExecRoute.POOLED_SHELL
+        )
 
 
-def test_a_direct_cred_user_on_a_plain_ssh_host_keeps_their_own_channel(unix_host_ssh, monkeypatch):
+def test_a_direct_cred_user_on_a_plain_ssh_host_gets_a_session_without_a_terminal(
+    unix_host_ssh, monkeypatch
+):
+    """Their own login carries a no-terminal session; ``as_user`` (the bare channel) stays unset."""
     with contextlib.ExitStack() as stack:
         host = _hooked_or_proxied(
             unix_host_ssh, None, direct_cred_user="alice", monkeypatch=monkeypatch, stack=stack
         )
         assert host._plan_exec(user="alice", needs_shell=False) == ExecPlan(
-            route=ExecRoute.SSH_CHANNEL, as_user="alice"
+            route=ExecRoute.POOLED_SHELL, plain=True
         )
+
+
+@pytest.mark.parametrize(
+    ("terminal", "plain"), [(None, True), (False, True), (True, False)], ids=str
+)
+@pytest.mark.asyncio
+async def test_the_plan_decides_the_mode_of_an_ssh_exec(terminal, plain, monkeypatch):
+    """``terminal=True`` is a reason to want a shell; unset and ``False`` plan alike."""
+    host = _unix_host(term="ssh")
+    dispatched: list[ExecPlan] = []
+
+    async def _record(self, plan, **_kw):
+        dispatched.append(plan)
+        return CommandResult(
+            status=Status.Success, value="", command="x", retcode=0, route=plan.route.value
+        )
+
+    monkeypatch.setattr(UnixHost, "_run_plan", _record)
+    await host.exec("true", terminal=terminal)
+    assert dispatched == [ExecPlan(route=ExecRoute.POOLED_SHELL, plain=plain)]
+
+
+def _transfer_ctx(host: UnixHost, monkeypatch):
+    captured: dict = {}
+
+    def _capture(*, name, ctx):
+        captured["ctx"] = ctx
+        return object()
+
+    monkeypatch.setattr("otto.host.unix_host.build_transfer_backend", _capture)
+    host._build_file_transfer(user=None)
+    return captured["ctx"]
+
+
+@pytest.mark.parametrize("frame", [None, "ash"], ids=["bash", "ash"])
+def test_the_transfer_line_room_is_unbounded_for_an_exec_without_a_terminal(frame, monkeypatch):
+    host = _unix_host(term="ssh")
+    if frame is not None:
+        from otto.host.command_frame import build_command_frame
+
+        host._session_mgr._command_frame = build_command_frame(type_name=frame)
+    assert _transfer_ctx(host, monkeypatch).exec_line_room("x" * 100) is None
+
+
+@pytest.mark.parametrize("reason", ["session_setup", "telnet"])
+def test_the_transfer_line_room_is_bounded_where_exec_has_a_terminal(reason, monkeypatch):
+    with contextlib.ExitStack() as stack:
+        if reason == "telnet":
+            host = _unix_host(term="telnet")
+        else:
+            from otto.host.session_setup import SessionSetup
+            from tests._fixtures.session_setup_hooks import noop_session_setup
+
+            host = _unix_host(term="ssh")
+            _declare_hook(host, SessionSetup(name=stack.enter_context(noop_session_setup("lr"))))
+        room = _transfer_ctx(host, monkeypatch).exec_line_room("")
+        assert room is not None
+        assert room == host._session_mgr.line_budget(route=ExecRoute.POOLED_SHELL)

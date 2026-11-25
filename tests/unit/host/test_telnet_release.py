@@ -458,65 +458,20 @@ async def test_negotiate_no_echo_times_out_quietly_and_reraises_its_own_error() 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("timeout", [None, 30.0], ids=["no_timeout", "timeout"])
-async def test_await_within_re_cancels_an_inner_await_that_swallows_the_first_cancel(
-    timeout: float | None,
-) -> None:
-    """The caller's cancel propagates at once even when the inner await drops one.
+async def test_negotiate_no_echo_with_no_time_waits_for_nothing() -> None:
+    """``echo_negotiation_timeout=0`` skips the wait: an agreement already there is not read."""
+    writer = _EchoWriter()
+    writer.agreed.set_result(True)
+    waited: list[bool] = []
+    real = writer.wait_for
 
-    telnetlib3's own ``asyncio.wait_for`` on Python 3.10 and 3.11 can swallow
-    the first cancellation and carry on into a long wait (its negotiation, up
-    to ``connect_maxwait``). One cancel of the inner await would leave the
-    caller's cancellation waiting that out.
-    """
-    loop = asyncio.get_running_loop()
-    inner: dict[str, asyncio.Task[Any]] = {}
-    started = asyncio.Event()
+    async def counted(**kwargs: Any) -> Any:
+        waited.append(True)
+        return await real(**kwargs)
 
-    async def swallows_one_cancel() -> None:
-        task = asyncio.current_task()
-        assert task is not None
-        inner["task"] = task
-        started.set()
-        # Dropped, as 3.10/3.11 ``wait_for`` does in the turn its inner await finishes.
-        with contextlib.suppress(asyncio.CancelledError):
-            await loop.create_future()
-        await asyncio.sleep(30)
-
-    outer = asyncio.create_task(telnet._await_within(swallows_one_cancel(), timeout))
-    await started.wait()
-    await asyncio.sleep(0)
-    outer.cancel()
-    cancelled_at = loop.time()
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(outer, 5.0)
-
-    assert loop.time() - cancelled_at < 1.0
-    assert inner["task"].done()
-
-
-@pytest.mark.asyncio
-async def test_await_within_timeout_re_cancels_an_inner_await_that_swallows_the_first_cancel() -> (
-    None
-):
-    """A timeout ends the wait promptly too, with the swallowing inner await finished."""
-    loop = asyncio.get_running_loop()
-    inner: dict[str, asyncio.Task[Any]] = {}
-
-    async def swallows_one_cancel() -> None:
-        task = asyncio.current_task()
-        assert task is not None
-        inner["task"] = task
-        with contextlib.suppress(asyncio.CancelledError):
-            await loop.create_future()
-        await asyncio.sleep(30)
-
-    started = loop.time()
-    outcome = await asyncio.wait_for(telnet._await_within(swallows_one_cancel(), 0.05), 5.0)
-
-    assert outcome is None
-    assert loop.time() - started < 1.0
-    assert inner["task"].done()
+    writer.wait_for = counted  # type: ignore[method-assign]
+    await telnet.negotiate_no_echo(writer, 0)
+    assert waited == []
 
 
 def test_read_gate_close_is_sync_idempotent_and_spares_a_read_in_flight() -> None:

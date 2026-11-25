@@ -62,6 +62,7 @@ from ..utils import (
 # :class:`BaseHost`'s dataclass fields and ``RuntimeOnly`` is field metadata, so
 # all must exist when the class body executes. Each is a leaf (stdlib, or
 # ``otto.errors`` for ``construction``), so none adds an edge beyond itself.
+from .cancel_safe import cancel_until_done
 from .capability_grid import UserSupport
 from .construction import RuntimeOnly
 from .exec_route import ExecRoute, ran_route
@@ -361,9 +362,10 @@ bounded — an unbounded wait here would defeat the timeout it implements.
 """
 
 EXEC_CANCEL_REAP_BOUND = 2 * _EXEC_REAP_TIMEOUT
-"""Seconds a cancelled or timed-out process-route ``exec`` can take to stop its command.
+"""Seconds a cancelled or timed-out started process can take to stop.
 
-Local exec and the ssh channel stop a command with
+A process otto started outside a shell session (the ssh exec channel's
+command, a local process, the coverage scan's) is stopped with
 ``otto.host.process_stop.stop_process``, which signals it, waits
 ``_EXEC_REAP_TIMEOUT``, then kills it and waits once more; the stop runs
 under :func:`otto.lifecycle.compensate` bounded by this. Connection
@@ -1047,7 +1049,7 @@ class Host(Protocol):
                 (``docker exec -u``); every other family refuses loudly — a
                 persistent session's identity is
                 :meth:`~otto.host.privilege.PosixPrivilege.as_user`'s job,
-                and the stateless :meth:`exec`/:meth:`put`/:meth:`get` take
+                and the one-call :meth:`exec`/:meth:`put`/:meth:`get` take
                 ``user=`` directly on unix. ``None`` means the container's
                 declared default, or the connection's own identity elsewhere.
                 On containers the persistent channel binds its user at open;
@@ -1084,14 +1086,14 @@ class Host(Protocol):
         user: str | None = None,
         terminal: bool | None = None,
     ) -> CommandResult:
-        """Run ONE command on a session this host does not keep.
+        """Run ONE command: on a session of its own where the host can open more than one.
 
-        Concurrency safety is implementation-dependent. Host families with an
-        independent exec primitive (e.g.
+        Concurrency safety is implementation-dependent. Host families with a
+        pool of shell sessions (e.g.
         :class:`~otto.host.unix_host.UnixHost`,
-        :class:`~otto.host.local_host.LocalHost`) open a fresh connection or
-        subprocess per call, so ``exec`` is safe to use concurrently from
-        multiple coroutines. Families exposing only a single console (e.g.
+        :class:`~otto.host.local_host.LocalHost`) run each call on a pooled
+        session no other call holds, so ``exec`` is safe to use concurrently
+        from multiple coroutines. Families exposing only a single console (e.g.
         :class:`~otto.host.embedded_host.EmbeddedHost`) share the persistent
         session and are **not** concurrency-safe — see the concrete class.
 
@@ -1099,8 +1101,7 @@ class Host(Protocol):
             cmd: The command, or a :class:`ShellCommand` carrying its own
                 expects/timeout/log (call-level values are its defaults).
             expects: ``(pattern, response)`` pair(s) for interactive prompts,
-                searched as :meth:`run`'s are. A family whose ``exec``
-                otherwise takes a raw channel answers them on a pooled shell.
+                searched as :meth:`run`'s are.
             timeout: Seconds before the command is abandoned.
             log: Logging disposition for this call.
             sudo: Elevate through the host's resolved mechanism. Families
@@ -1111,8 +1112,8 @@ class Host(Protocol):
                 Which families accept it, and how, is declared per family on
                 :class:`~otto.host.capability_grid.HostCapabilities`.
             terminal: Whether the command runs under a terminal. ``None`` (the
-                default) leaves the choice to the host, as before the switch
-                existed, and never refuses. ``True`` runs it on a shell
+                default) leaves the choice to the host (on ssh, no terminal
+                where the call needs none) and never refuses. ``True`` runs it on a shell
                 session with a terminal; ``False`` insists on none, and is
                 refused where the call needs one (a prompt to answer, an
                 elevation, a switched user) — see :ref:`terminal-switch`.
@@ -2445,7 +2446,11 @@ class BaseHost(ABC):
         host) a call waits for the one before it to end.
 
         See Also:
-            :meth:`exec`: stateless, concurrent-safe alternative for one-off commands.
+            :meth:`exec`: one-off commands, on a session of their own on ssh,
+                telnet and local, and on this default session on a console or
+                embedded host. What an ``exec`` leaves in its shell is
+                :attr:`~otto.host.command_frame.CommandFrame.isolates_exec`'s
+                answer for the session's dialect.
         """
         async with self._host_entry("run"):
             return await self._run_in_turn(
@@ -2672,17 +2677,17 @@ class BaseHost(ABC):
         ] = None,
         terminal: Annotated[bool | None, Opt(help=_TERMINAL_HELP)] = None,
     ) -> CommandResult:
-        """Run ONE command on a session this host does not keep.
+        """Run ONE command: on a session of its own where the host can open more than one.
 
         ``run`` is the same execution on the session it does keep; this is
         the single-command shape of ``run``'s signature, parameter for
-        parameter. A family may satisfy it with a raw channel (an ssh exec
-        channel, a subprocess, ``docker exec``) when the call needs nothing a
-        shell provides — that is what makes ``exec`` concurrency-safe where
-        ``run`` is not. Anything a raw channel cannot do (answer *expects*,
-        elevate, switch user, replay proxy hops) runs on a pooled shell
-        session the way ``run`` would. Either way the result's ``value`` is
-        the command's output as :ref:`command-output-contract` defines it.
+        parameter. On ssh, telnet and the local host it runs on a pooled
+        shell session, one no other call holds (with or without a terminal,
+        as the host's plan decides) — that is what makes ``exec``
+        concurrency-safe where ``run`` is not; a container hands it to its
+        parent as ``docker exec``, and a family with a single console runs it
+        on the default session. The result's ``value`` is the command's
+        output as :ref:`command-output-contract` defines it.
 
         Validation and refusals sit ABOVE the dry-run arm, so a dry run of a
         call the family could never honour refuses rather than declining as
@@ -2695,8 +2700,6 @@ class BaseHost(ABC):
             cmd: The command, or a :class:`ShellCommand` carrying its own
                 expects/timeout/log (call-level values are its defaults).
             expects: ``(pattern, response)`` pair(s) for interactive prompts.
-                A family whose ``exec`` otherwise takes a raw channel answers
-                them on a pooled shell.
             timeout: Seconds before the command is abandoned. Defaults to
                 :data:`DEFAULT_COMMAND_TIMEOUT`; ``float("inf")`` for a
                 deliberately unbounded command.
@@ -2709,8 +2712,8 @@ class BaseHost(ABC):
                 Which families accept it, and how, is declared per family on
                 :class:`~otto.host.capability_grid.HostCapabilities`.
             terminal: Whether the command runs under a terminal. ``None`` (the
-                default) leaves the choice to the host, as before the switch
-                existed, and never refuses. ``True`` runs it on a shell
+                default) leaves the choice to the host (on ssh, no terminal
+                where the call needs none) and never refuses. ``True`` runs it on a shell
                 session with a terminal; ``False`` insists on none, and is
                 refused where the call needs one (a prompt to answer, an
                 elevation, a switched user) — see :ref:`terminal-switch`.
@@ -2762,6 +2765,45 @@ class BaseHost(ABC):
                 exec_log=exec_log,
             )
 
+    async def _exec_spawned(
+        self, cmd: str, *, timeout: float, user: str | None = None
+    ) -> "asyncio.Task[CommandResult]":
+        """Start *cmd* as :meth:`exec` does; return its task once the command has been typed.
+
+        The same entry and turn as :meth:`exec`. The task is returned when
+        the command has been written to its session, or when the call has
+        ended without that (a refusal, a failed open, a dry run), whichever
+        comes first, so a caller's own clock can start when the command is
+        typed rather than while its session opens. No timeout of its own: the
+        open is bounded by the session's deadlines. A caller cancelled while
+        it waits cancels the call and waits for it to end, so no exec is left
+        running behind it.
+        """
+        typed = asyncio.Event()
+
+        async def _call() -> CommandResult:
+            async with self._host_entry("exec"):
+                return await self._exec_in_turn(
+                    cmd,
+                    expects=None,
+                    timeout=timeout,
+                    log=LogMode.NORMAL,
+                    sudo=False,
+                    user=user,
+                    on_typed=typed.set,
+                )
+
+        task = asyncio.create_task(_call())
+        waiter = asyncio.ensure_future(typed.wait())
+        try:
+            await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            waiter.cancel()
+            await cancel_until_done(task)
+            raise
+        waiter.cancel()
+        return task
+
     async def _exec_in_turn(
         self,
         cmd: str | ShellCommand,
@@ -2773,6 +2815,7 @@ class BaseHost(ABC):
         user: str | None,
         terminal: bool | None = None,
         exec_log: "ExecLogContext | None" = None,
+        on_typed: "Callable[[], None] | None" = None,
     ) -> CommandResult:
         """Run :meth:`exec`'s body, inside the turn :meth:`exec` took.
 
@@ -2802,7 +2845,9 @@ class BaseHost(ABC):
         # alone knows whether it reads a password off the credential
         # descriptor, so the frame's copy takes that fact from it, here.
         exec_input = ExecInput(
-            stdin_eof=exec_stdin_eof(_normalize_expects(sc.expects)), exec_log=exec_log
+            stdin_eof=exec_stdin_eof(_normalize_expects(sc.expects)),
+            exec_log=exec_log,
+            on_typed=on_typed,
         )
         pc = self._apply_sudo(sc, user, exec_input=exec_input) if sudo else _prepared(sc)
         exec_input = replace(exec_input, credential=pc.reads_credential_fd)
@@ -2876,16 +2921,17 @@ class BaseHost(ABC):
     ) -> None:
         """Refuse an ``exec(terminal=False)`` whose planned route is a session with a terminal.
 
-        Asked of the plan (:meth:`_exec_plan`), so it is the route the call
-        would take that is judged and no condition is restated here: a prompt
-        to answer, an elevation and a user reached by a switch all plan a
-        shell session, and on a family whose sessions are terminals
-        (``SessionManager._wants_plain``) that session has one. The local
-        host's shell session reads a pipe, so nothing is refused there.
+        Asked of the plan (:meth:`_exec_plan`), so it is the route and mode
+        the call would take that are judged and no condition is restated
+        here: a prompt to answer, an elevation and a user reached by a switch
+        all plan a session with the transport's own mode
+        (``ExecPlan.plain`` false), and on a family whose sessions are
+        terminals (``SessionManager._wants_plain``) that session has one. The
+        local host's shell session reads a pipe, so nothing is refused there.
         """
         plan = self._exec_plan(user=user, needs_shell=needs_shell)
         on_a_session = plan.route in (ExecRoute.POOLED_SHELL, ExecRoute.DEFAULT_SESSION)
-        if not on_a_session or not self._live_session_mgr()._wants_plain(False):  # noqa: SLF001 — the manager's own answer
+        if not on_a_session or plan.plain or not self._live_session_mgr()._wants_plain(False):  # noqa: SLF001 — the manager's own answer
             return
         if sudo:
             why = "cannot elevate (sudo=True): the password prompt is answered on a terminal"
@@ -2954,8 +3000,8 @@ class BaseHost(ABC):
     def _ambient_user(self) -> str | None:  # noqa: B027 — an empty default is the POINT: most families have no switchable default session
         """Report the user an enclosing ``as_user()`` switched the default session to, or ``None``.
 
-        ``exec`` runs on a session it does not keep -- a pooled shell, a
-        subprocess, a fresh ``docker exec`` -- so a switch made on the default
+        ``exec`` runs on a session other than the default one -- a pooled
+        shell, a fresh ``docker exec`` -- so a switch made on the default
         session is invisible to it unless the family reports it here. The
         families whose default session can switch identity (every
         :class:`~otto.host.privilege.PosixPrivilege` host, and the remote
@@ -2985,8 +3031,8 @@ class BaseHost(ABC):
         override ``_plan_exec`` and ``_run_plan``, never this.
 
         *expects* and *needs_shell* are the call's own reasons to want a
-        shell; a family whose raw channel cannot honour them plans its
-        pooled shell instead. *exec_input* is what a shell route's exec frame
+        shell with a terminal; a family whose pooled session can run without
+        one plans it with a terminal instead. *exec_input* is what a shell route's exec frame
         needs (:class:`~otto.host.command_frame.ExecInput`), built once by
         :meth:`exec` and carried unchanged to the session.
 
@@ -3045,11 +3091,15 @@ class BaseHost(ABC):
         return self._plan_exec(user=self._effective_exec_user(user), needs_shell=needs_shell)
 
     def _plan_exec(self, *, user: str | None, needs_shell: bool) -> "ExecPlan":
-        """Which route one ``exec`` call as *user* takes on this host. Families override.
+        """Which route and session mode one ``exec`` call as *user* takes. Families override.
 
         Synchronous and free of I/O: the answer comes from the host's
         configuration and its transport's current state, so a query (the
         transfer line budget) can ask it without running anything.
+        *needs_shell* is the call's reason for a session with a terminal (a
+        prompt, an elevation, ``terminal=True``); ``terminal=False`` plans as
+        an unset call does, and is refused before planning where it cannot
+        be honoured.
         """
         raise NotImplementedError from None
 
@@ -3085,13 +3135,15 @@ class BaseHost(ABC):
         user: str | None,
         expects: "list[Expect | CredentialExpect] | None",
         exec_input: "ExecInput | None",
+        plain: bool = False,
     ) -> CommandResult:
         """Run *cmd* on *route* through this host's session manager: the one such dispatch.
 
         Every family whose plan names a session route (the pooled shell, the
-        default session, the host's own ssh channel) runs it here, so the
-        call's *exec_input*, the folded log mode and *user* reach the manager
-        the same way from each.
+        default session) runs it here, so the
+        call's *exec_input*, the folded log mode, *user* and the plan's
+        session mode (*plain*, ``ExecPlan.plain``) reach the manager the same
+        way from each.
         """
         return await self._live_session_mgr().exec_on_route(
             route=route,
@@ -3101,6 +3153,7 @@ class BaseHost(ABC):
             expects=expects,
             user=user,
             exec_input=exec_input,
+            plain=plain,
         )
 
     async def open_session(
@@ -3161,7 +3214,10 @@ class BaseHost(ABC):
                 mode this host cannot give.
 
         See Also:
-            :meth:`~otto.host.host.BaseHost.exec`: stateless alternative for one-off commands.
+            :meth:`~otto.host.host.BaseHost.exec`: one-off commands, on a session
+            of their own on ssh, telnet and local, and on the default session on
+            a console or embedded host.
+
             :meth:`~otto.host.host.BaseHost.run`: default persistent session.
         """
         self._refuse_terminal(terminal, verb="open_session")
@@ -3421,7 +3477,7 @@ class BaseHost(ABC):
         """Whether every command of this host runs on one line (a console, an embedded host).
 
         The one decision :meth:`_line_turn` reads. Families override; the
-        default is a host whose ``exec`` has a session or channel of its own.
+        default is a host whose ``exec`` has a session of its own.
         """
         return False
 
@@ -4922,6 +4978,18 @@ class BaseHost(ABC):
             extra={"host": self, "log_mode": _quieted(self, mode)},
             per_line=True,
         )
+
+
+def runs_stock_exec(host: object) -> "TypeGuard[BaseHost]":
+    """Whether *host* is an otto host whose public ``exec`` is otto's own.
+
+    A private entry that starts a command as ``exec`` does (a container's
+    delegated exec, a netcat listener's spawned exec) is offered only when
+    this holds: a structural stand-in has no such entry, and a project
+    override of ``exec`` (one that refuses, audits or redirects commands)
+    would be bypassed by it. Either keeps the host's public ``exec``.
+    """
+    return isinstance(host, BaseHost) and type(host).exec is BaseHost.exec
 
 
 def output_log_prefix(name: str) -> str:

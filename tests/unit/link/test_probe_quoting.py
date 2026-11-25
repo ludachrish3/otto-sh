@@ -96,8 +96,8 @@ def test_the_python3_listener_binds_the_address_as_one_string_literal(tmp_path):
     marker = tmp_path / "pwned"
     for value in _python_hostile(marker):
         cmd = listener_command("python3", 5205, tag=TAG, bind=value)
-        # setsid bash -c '<body>'; the body is python3 -c '<program>' <tag>
-        body = shlex.split(cmd)[3]
+        # unset OTTO_SESSION; setsid bash -c '<body>'; the body is python3 -c '<program>' <tag>
+        body = shlex.split(cmd)[5]
         program = shlex.split(body)[2]
         _the_literal(program, value)
 

@@ -881,3 +881,22 @@ def open_steps(monkeypatch: pytest.MonkeyPatch) -> OpenSteps:
 
     monkeypatch.setattr(SessionManager, "_apply_session_setup", setup)
     return steps
+
+
+@pytest_asyncio.fixture
+async def piped(tmp_path):
+    """An ssh host whose connection opens real local shells, and that connection.
+
+    The host is ``test_terminal_switch._unix()``; the connection its
+    ``_EitherConnection`` over *tmp_path*, reaped after the host is closed.
+    """
+    from unittest.mock import AsyncMock
+
+    from tests.unit.host.test_terminal_switch import _EitherConnection, _unix
+
+    host = _unix()
+    conn = _EitherConnection(tmp_path)
+    host._connections.ssh = AsyncMock(return_value=conn)  # ty: ignore[invalid-assignment]
+    yield host, conn
+    await host.close()
+    await conn.reap()

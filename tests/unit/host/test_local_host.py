@@ -1,8 +1,11 @@
 import asyncio
+import contextlib
 import logging
 import os
 import pwd
 import re
+import shlex
+import signal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,7 +25,7 @@ from otto.host.output_codec import READ_CHUNK
 from otto.host.session import SessionManager
 from otto.invocation import current_policy
 from otto.logger.mode import LogMode
-from otto.utils import Status
+from otto.utils import Status, wait_for_async
 from tests.conftest import active_context
 from tests.unit.host.conftest import FAKE_ELEVATION_PASSWORD
 
@@ -182,6 +185,115 @@ async def test_exec_is_stateless():
     assert "empty" in result.value
 
 
+@pytest.mark.asyncio
+async def test_exec_follows_the_python_process_s_directory_and_environment(tmp_path, monkeypatch):
+    """Each call opens its own shell, so it sees the process as it is now, warm or cold."""
+    host = LocalHost()
+    try:
+        await host.exec("true")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OTTO_LOCAL_EXEC_VAR", "now")
+        result = await host.exec('echo "$PWD $OTTO_LOCAL_EXEC_VAR"')
+        assert result.value == f"{tmp_path} now"
+        assert result.route == ExecRoute.POOLED_SHELL.value
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_exec_keeps_no_session_after_the_call():
+    host = LocalHost()
+    try:
+        await asyncio.gather(*(host.exec("echo $$") for _ in range(3)))
+        mgr = host._session_mgr
+        assert not mgr._named_sessions
+        assert not any(mgr._exec_pools.values())
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_a_detached_process_an_exec_left_survives_it_and_a_later_timeout(tmp_path):
+    host = LocalHost()
+    pid_file = tmp_path / "pid"
+    try:
+        await host.exec(f"setsid sh -c 'echo $$ > {pid_file}; exec sleep 60' >/dev/null 2>&1 &")
+        from otto.utils import wait_for_async
+
+        await wait_for_async(
+            lambda: pid_file.exists() and pid_file.read_text().strip() != "",
+            10,
+            on_timeout="the detached process never started",
+        )
+        pid = int(pid_file.read_text())
+        os.kill(pid, 0)
+        timed_out = await host.exec("sleep 30", timeout=0.5)
+        assert timed_out.timed_out
+        os.kill(pid, 0)
+    finally:
+        await host.close()
+        with contextlib.suppress(ProcessLookupError, ValueError, FileNotFoundError):
+            os.kill(int(pid_file.read_text()), 9)
+
+
+@pytest.mark.asyncio
+async def test_a_background_process_that_keeps_the_exec_s_output_cannot_write_after_it(tmp_path):
+    """Not promised: once the exec returns, the shell's output pipe is released.
+
+    A process an exec left in the background that still holds the shell's
+    stdout gets ``EPIPE`` on its next write; one that should outlive the call
+    redirects its output (and detaches, as the survivor test above does).
+    """
+    pid, go, wrote, failed = (tmp_path / n for n in ("pid", "go", "wrote", "failed"))
+    host = LocalHost()
+    try:
+        script = (
+            f"trap '' PIPE; echo $$ > {pid}; "
+            f"while [ ! -e {go} ]; do sleep 0.02; done; "
+            f"if echo late; then touch {wrote}; else touch {failed}; fi"
+        )
+        # One literal argument, so the child's own shell expands `$$`.
+        result = await host.exec(f"setsid sh -c {shlex.quote(script)} </dev/null &")
+        assert result.retcode == 0
+        await wait_for_async(
+            lambda: pid.exists() and pid.read_text().endswith("\n"),
+            10,
+            on_timeout="the child never started",
+        )
+        go.touch()
+        await wait_for_async(
+            lambda: wrote.exists() or failed.exists(), 10, on_timeout="the child never wrote"
+        )
+        assert failed.exists()
+        assert "late" not in result.value
+    finally:
+        go.touch()  # releases a child still waiting, whatever failed above
+        await host.close()
+        with contextlib.suppress(ProcessLookupError, ValueError, FileNotFoundError):
+            os.kill(int(pid.read_text()), 9)
+
+
+def _signals_with_numbers() -> list[int]:
+    numbers = [int(signal.SIGTERM)]
+    if hasattr(signal, "SIGRTMIN"):
+        numbers.append(int(signal.SIGRTMIN) + 1)
+    return numbers
+
+
+@pytest.mark.parametrize("number", _signals_with_numbers())
+@pytest.mark.asyncio
+async def test_a_command_killed_by_a_signal_reports_128_plus_it_and_exec_goes_on(number):
+    """A child the command started and a signal killed: its status, and the exec returns."""
+    host = LocalHost()
+    try:
+        killed = await host.exec(f"sh -c 'kill -{number} $$'", timeout=10)
+        nxt = await host.exec("echo ok", timeout=10)
+    finally:
+        await host.close()
+    assert (killed.timed_out, killed.retcode) == (False, 128 + number)
+    assert (nxt.value, nxt.retcode) == ("ok", 0)
+
+
 # ---------------------------------------------------------------------------
 # exec / run with expects=, sudo= and user=: the pooled local shell
 # ---------------------------------------------------------------------------
@@ -279,7 +391,7 @@ async def test_exec_inside_as_user_runs_as_the_switched_user(stand_in_elevation)
     finally:
         await host.close()
     assert (inside.value, inside.route) == (_OTHER, ExecRoute.POOLED_SHELL.value)
-    assert (outside.value, outside.route) == (_INVOKING, ExecRoute.LOCAL_SUBPROCESS.value)
+    assert (outside.value, outside.route) == (_INVOKING, ExecRoute.POOLED_SHELL.value)
 
 
 @pytest.mark.asyncio
@@ -301,21 +413,27 @@ async def test_unix_and_local_hosts_answer_sudo_from_one_lookup():
 
 
 @pytest.mark.asyncio
-async def test_a_plain_exec_spawns_one_process_and_opens_no_session():
+async def test_a_plain_exec_opens_one_session_and_spawns_no_process():
     host = LocalHost()
     try:
         with (
             patch.object(host, "_exec_subprocess", wraps=host._exec_subprocess) as spawn,
-            patch.object(SessionManager, "open_session", autospec=True) as open_session,
+            patch.object(
+                SessionManager,
+                "open_session",
+                autospec=True,
+                side_effect=SessionManager.open_session,
+            ) as open_session,
         ):
             r = await host.exec("true", timeout=5)
     finally:
         await host.close()
-    assert (r.status, spawn.call_count, open_session.call_count) == (Status.Success, 1, 0)
+    assert (r.status, spawn.call_count, open_session.call_count) == (Status.Success, 0, 1)
 
 
 @pytest.mark.asyncio
-async def test_two_optioned_execs_share_one_pooled_session():
+async def test_two_optioned_execs_each_open_a_session_of_their_own():
+    """The local host keeps no idle session: each call's shell is its own, and closed after."""
     host = LocalHost()
     try:
         with (
@@ -330,9 +448,10 @@ async def test_two_optioned_execs_share_one_pooled_session():
             for _ in range(2):
                 r = await host.exec("echo hi", timeout=5, expects=[("never-printed", "x\n")])
                 assert (r.status, r.value) == (Status.Success, "hi")
+                assert [s for s in host._session_mgr._named_sessions.values() if s.alive] == []
     finally:
         await host.close()
-    assert (open_session.call_count, spawn.call_count) == (1, 0)
+    assert (open_session.call_count, spawn.call_count) == (2, 0)
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -37,9 +38,10 @@ from otto.utils import Status
 from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
 from tests._fixtures.ftp_server import served_ftp
 from tests.conftest import active_context
-from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_host
+from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_manager
 from tests.unit.host._sessions import host_session, session_manager
 from tests.unit.host.test_session import idle_exec_sessions
+from tests.unit.host.test_terminal_switch import _EitherConnection
 
 
 def _cs(
@@ -670,16 +672,9 @@ class TestCommandExecution:
 
 
 class TestExec:
-    def _mock_ssh_conn(self) -> MagicMock:
-        conn = MagicMock()
-        conn.wait_closed = AsyncMock()
-        return conn
-
     @pytest.mark.asyncio
-    async def test_exec_ssh_success(self, host: UnixHost):
-        process = FakeChannelProcess(["hello\n"])
-        host._connections._ssh_conn = self._mock_ssh_conn()
-        host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
+    async def test_exec_ssh_success(self, piped):
+        host, _conn = piped
 
         result = await host.exec("echo hello")
 
@@ -688,56 +683,38 @@ class TestExec:
         assert result.value == "hello"
 
     @pytest.mark.asyncio
-    async def test_exec_ssh_nonzero_exit(self, host: UnixHost):
-        process = FakeChannelProcess(["not found\n"], returncode=1, exit_status=1)
-        host._connections._ssh_conn = self._mock_ssh_conn()
-        host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
+    async def test_exec_ssh_nonzero_exit(self, piped):
+        host, _conn = piped
 
-        result = await host.exec("badcmd")
+        result = await host.exec("echo not found; false")
 
         assert result.status == Status.Failed
         assert result.retcode == 1
 
     @pytest.mark.asyncio
-    async def test_exec_user_runs_on_that_users_connection(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_exec_user_runs_on_that_users_connection(self, tmp_path):
         """`exec(user=X)` authenticates as X (spec 2026-09-01 §4): the exec
-        channel must ride the connection `ssh_as(X)` hands back, not the
-        login-target connection the pooled/plain path uses."""
+        session must ride the connection `ssh_as(X)` hands back, not the
+        login-target connection the host's own sessions use."""
         host = UnixHost(
             ip="10.0.0.1",
             element=Element(name="box"),
             creds=[Cred(login="user", password="pass"), Cred(login="postgres", password="pw")],
             log=LogMode.QUIET,
         )
-        seen: dict[str, object] = {}
-        user_conn = MagicMock(name="conn-postgres")
-
-        async def fake_ssh_as(user: str):
-            seen["user"] = user
-            return user_conn
-
-        async def fake_exec_on(conn, cmd, timeout=None, log=None, exec_input=None):
-            seen["exec_conn"] = conn
-            seen["cmd"] = cmd
-            seen["log"] = log
-            return CommandResult(
-                status=Status.Success, value="uid=70", command=cmd, retcode=0, route="ssh-channel"
-            )
-
-        monkeypatch.setattr(host._connections, "ssh_as", fake_ssh_as, raising=False)
-        monkeypatch.setattr(host._session_mgr, "exec_on", fake_exec_on, raising=False)
-        monkeypatch.setattr(
-            host._session_mgr,
-            "exec",
-            AsyncMock(side_effect=AssertionError("per-user exec must not use the pooled path")),
-            raising=False,
+        user_conn = _EitherConnection(tmp_path)
+        host._connections.ssh_as = AsyncMock(return_value=user_conn)  # ty: ignore[invalid-assignment]
+        host._connections.ssh = AsyncMock(  # ty: ignore[invalid-assignment]
+            side_effect=AssertionError("per-user exec must not use the login's connection")
         )
+        try:
+            result = await host.exec("echo uid=70", user="postgres")
+        finally:
+            await host.close()
+            await user_conn.reap()
 
-        result = await host.exec("id", user="postgres")
-
-        assert seen["user"] == "postgres"
-        assert seen["exec_conn"] is user_conn  # the channel rode X's connection
-        assert seen["cmd"] == "id"
+        assert host._connections.ssh_as.await_args.kwargs["user"] == "postgres"
+        assert len(user_conn.processes) == 1  # the session rode X's connection
         assert result.value == "uid=70"
 
     @pytest.mark.asyncio
@@ -765,7 +742,7 @@ class TestExec:
         h._connections.ssh_as.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_exec_user_with_a_direct_cred_on_ssh_authenticates(self):
+    async def test_exec_user_with_a_direct_cred_on_ssh_authenticates(self, tmp_path):
         h = UnixHost(
             ip="10.0.0.1",
             element=Element(name="box"),
@@ -773,19 +750,19 @@ class TestExec:
             term="ssh",
             log=LogMode.QUIET,
         )
-        conn = object()
-        h._connections.ssh_as = AsyncMock(return_value=conn)
-        h._session_mgr.exec_on = AsyncMock(
-            return_value=CommandResult(
-                status=Status.Success, value="root", command="id", retcode=0, route="ssh-channel"
-            )
+        conn = _EitherConnection(tmp_path)
+        h._connections.ssh_as = AsyncMock(return_value=conn)  # ty: ignore[invalid-assignment]
+        h._session_mgr.exec_on = AsyncMock(  # ty: ignore[invalid-assignment]
+            side_effect=AssertionError("the bare channel was taken")
         )
-        h._session_mgr.exec_on_route = AsyncMock()
-        await h.exec("id", user="root")
+        try:
+            await h.exec("id", user="root")
+        finally:
+            await h.close()
+            await conn.reap()
         h._connections.ssh_as.assert_awaited_once_with(user="root")
-        h._session_mgr.exec_on.assert_awaited_once()
-        assert h._session_mgr.exec_on.await_args.kwargs["conn"] is conn
-        h._session_mgr.exec_on_route.assert_not_awaited()
+        assert [asked.get("request_pty") for asked in conn.asked] == [False]
+        h._session_mgr.exec_on.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_exec_user_behind_a_hop_on_ssh_switches_instead_of_refusing(self):
@@ -970,49 +947,45 @@ class TestExec:
 
     @pytest.mark.asyncio
     async def test_exec_timeout_forwarded(self, host: UnixHost):
-        process = FakeChannelProcess([])
-        host._connections._ssh_conn = self._mock_ssh_conn()
-        host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
+        host._session_mgr.exec_on_route = AsyncMock(  # ty: ignore[invalid-assignment]
+            return_value=CommandResult(
+                status=Status.Success, value="", command="sleep 5", retcode=0, route="pooled-shell"
+            )
+        )
 
         await host.exec("sleep 5", timeout=30.0)
 
-        host._connections._ssh_conn.create_process.assert_called_once()
+        host._session_mgr.exec_on_route.assert_awaited_once()
+        assert host._session_mgr.exec_on_route.await_args.kwargs["timeout"] == 30.0
 
     @pytest.mark.asyncio
     async def test_exec_forwards_log_false(self):
-        from unittest.mock import AsyncMock
-
-        from otto.host.unix_host import UnixHost
-        from otto.result import CommandResult
-        from otto.utils import Status
-
         h = UnixHost(
             ip="10.0.0.1",
             element=Element(name="box"),
             creds=[Cred(login="user", password="pass")],
             log=LogMode.QUIET,
         )
-        h._session_mgr = AsyncMock()
-        h._session_mgr.ambient_user = None
-        h._session_mgr.exec_route = MagicMock(return_value=ExecRoute.SSH_CHANNEL)
-        h._session_mgr.exec_on_route.return_value = CommandResult(
-            command="c",
-            value="",
-            status=Status.Success,
-            retcode=0,
-            route="ssh-channel",
+        h._session_mgr.exec_on_route = AsyncMock(  # ty: ignore[invalid-assignment]
+            return_value=CommandResult(
+                command="c",
+                value="",
+                status=Status.Success,
+                retcode=0,
+                route="pooled-shell",
+            )
         )
         # QUIET command composes with the host's standing mode (also QUIET) → QUIET.
         await h.exec("base64 /bin/ls", log=LogMode.QUIET)
-        h._session_mgr.exec_route.assert_called_once_with(needs_shell=False)
         h._session_mgr.exec_on_route.assert_awaited_once_with(
-            route=ExecRoute.SSH_CHANNEL,
+            route=ExecRoute.POOLED_SHELL,
             cmd="base64 /bin/ls",
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
             expects=None,
             user=None,
             exec_input=ExecInput(stdin_eof=True),
+            plain=True,
         )
 
 
@@ -1895,6 +1868,15 @@ class TestSshFileTransfer:
 # ---------------------------------------------------------------------------
 
 
+def _spawned_through(exec_fn: Any) -> Any:
+    """A host's ``_exec_spawned`` that starts *exec_fn*, the test's ``exec``, as a task."""
+
+    async def spawn(cmd: str, **kw: Any) -> "asyncio.Task[CommandResult]":
+        return asyncio.create_task(exec_fn(cmd, **kw))
+
+    return spawn
+
+
 class TestNcFileTransfer:
     @pytest.mark.asyncio
     async def test_nc_get_success(self, tmp_path: Path):
@@ -2015,6 +1997,7 @@ class TestNcFileTransfer:
 
         with (
             patch.object(h, "exec", AsyncMock(side_effect=mock_exec)),
+            patch.object(h, "_exec_spawned", _spawned_through(mock_exec)),
             patch("otto.host.transfer.nc._connect_with_retry", AsyncMock(side_effect=fake_connect)),
         ):
             status, msg = _sm(await h.put([src], Path("/tmp"), show_progress=False))
@@ -2024,6 +2007,141 @@ class TestNcFileTransfer:
         assert sent_data == b"test content"
         mock_writer.drain.assert_called()
         mock_writer.close.assert_called_once()
+        await h.close()
+
+    @pytest.mark.asyncio
+    async def test_nc_put_on_a_host_with_its_own_exec_types_every_command_through_it(
+        self, tmp_path: Path
+    ):
+        """A project's ``exec`` override sees the listener as well as the control commands.
+
+        The spawned entry would bypass the override, so a host whose
+        ``exec`` is not otto's own offers none and the listener goes
+        through the public ``exec`` like every other command.
+        """
+        src = tmp_path / "upload.txt"
+        src.write_bytes(b"test content")
+        connected = asyncio.Event()
+        seen: list[str] = []
+        spawned: list[str] = []
+
+        async def answer(cmd: str) -> CommandResult:
+            if "nc -l" in cmd:
+                await connected.wait()
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
+            if cmd.startswith("type "):
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
+            if "grep -c" in cmd or "echo $n" in cmd:
+                return _cs(command=cmd, output="1", status=Status.Success, retcode=0)
+            if "ss -tln" in cmd or "netstat -tln" in cmd or "/proc/net/tcp" in cmd:
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
+            if cmd.startswith("stat -c %s "):
+                return _cs(
+                    command=cmd, output=str(src.stat().st_size), status=Status.Success, retcode=0
+                )
+            return _cs(command=cmd, output="44444", status=Status.Success, retcode=0)
+
+        class AuditedHost(UnixHost):
+            async def exec(self, cmd: Any, **_kw: Any) -> CommandResult:  # type: ignore[override]
+                seen.append(str(cmd))
+                return await answer(str(cmd))
+
+        async def spawn(cmd: str, **_kw: Any) -> "asyncio.Task[CommandResult]":
+            spawned.append(cmd)
+            return asyncio.create_task(answer(cmd))
+
+        h = AuditedHost(
+            ip="10.0.0.1",
+            element=Element(name="box"),
+            creds=[Cred(login="u", password="p")],
+            transfer="nc",
+            log=LogMode.QUIET,
+        )
+        mock_writer = MagicMock()
+        mock_writer.drain = AsyncMock()
+        mock_writer.wait_closed = AsyncMock()
+
+        async def fake_connect(*_a: Any, **_kw: Any) -> Any:
+            connected.set()
+            return AsyncMock(spec=asyncio.StreamReader), mock_writer
+
+        with (
+            patch.object(h, "_exec_spawned", spawn),
+            patch("otto.host.transfer.nc._connect_with_retry", AsyncMock(side_effect=fake_connect)),
+        ):
+            status, msg = _sm(await h.put([src], Path("/tmp"), show_progress=False))
+
+        assert status == Status.Success, msg
+        assert spawned == []
+        assert any("nc -l" in cmd for cmd in seen)
+        assert any("grep -c" in cmd or "echo $n" in cmd for cmd in seen)
+        await h.close()
+
+    @pytest.mark.asyncio
+    async def test_nc_put_on_a_stock_host_starts_its_listener_through_the_spawn_entry(
+        self, tmp_path: Path
+    ):
+        """A host whose ``exec`` is otto's own starts the listener through ``_exec_spawned``.
+
+        The mirror of the override case: the host's wiring binds the spawn
+        entry, so the listener's readiness clock starts when it is typed.
+        """
+        src = tmp_path / "upload.txt"
+        src.write_bytes(b"test content")
+        connected = asyncio.Event()
+        seen: list[str] = []
+        spawned: list[str] = []
+
+        async def answer(cmd: str) -> CommandResult:
+            if "nc -l" in cmd:
+                await connected.wait()
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
+            if cmd.startswith("type "):
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
+            if "grep -c" in cmd or "echo $n" in cmd:
+                return _cs(command=cmd, output="1", status=Status.Success, retcode=0)
+            if "ss -tln" in cmd or "netstat -tln" in cmd or "/proc/net/tcp" in cmd:
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
+            if cmd.startswith("stat -c %s "):
+                return _cs(
+                    command=cmd, output=str(src.stat().st_size), status=Status.Success, retcode=0
+                )
+            return _cs(command=cmd, output="44444", status=Status.Success, retcode=0)
+
+        async def control(cmd: Any, **_kw: Any) -> CommandResult:
+            seen.append(str(cmd))
+            return await answer(str(cmd))
+
+        async def spawn(cmd: str, **_kw: Any) -> "asyncio.Task[CommandResult]":
+            spawned.append(cmd)
+            return asyncio.create_task(answer(cmd))
+
+        h = UnixHost(
+            ip="10.0.0.1",
+            element=Element(name="box"),
+            creds=[Cred(login="u", password="p")],
+            transfer="nc",
+            log=LogMode.QUIET,
+        )
+        mock_writer = MagicMock()
+        mock_writer.drain = AsyncMock()
+        mock_writer.wait_closed = AsyncMock()
+
+        async def fake_connect(*_a: Any, **_kw: Any) -> Any:
+            connected.set()
+            return AsyncMock(spec=asyncio.StreamReader), mock_writer
+
+        with (
+            patch.object(h, "exec", AsyncMock(side_effect=control)),
+            patch.object(h, "_exec_spawned", spawn),
+            patch("otto.host.transfer.nc._connect_with_retry", AsyncMock(side_effect=fake_connect)),
+        ):
+            status, msg = _sm(await h.put([src], Path("/tmp"), show_progress=False))
+
+        assert status == Status.Success, msg
+        assert [cmd for cmd in spawned if "nc -l" in cmd], spawned
+        assert not any("nc -l" in cmd for cmd in seen)
+        assert any("grep -c" in cmd or "echo $n" in cmd for cmd in seen)
         await h.close()
 
     @pytest.mark.asyncio
@@ -2079,6 +2197,7 @@ class TestNcFileTransfer:
         assert h.log is LogMode.NORMAL
         with (
             patch.object(h, "exec", AsyncMock(side_effect=exec_capturing_log)),
+            patch.object(h, "_exec_spawned", _spawned_through(exec_capturing_log)),
             patch("otto.host.transfer.nc._connect_with_retry", AsyncMock(side_effect=fake_connect)),
         ):
             status, _ = _sm(await h.put([src], Path("/tmp"), show_progress=False))
@@ -3113,12 +3232,14 @@ async def test_unload_dry_run_issues_rmmod_without_idempotency_check():
 
 
 def _exec_on_channel(process: FakeChannelProcess, *, element: str, cmd: str, timeout: float):
-    """``exec`` *cmd* on the ssh channel of a host whose channel is *process*."""
-    return channel_host(FakeConn(process), element=element).exec(cmd, timeout=timeout)
+    """Run *cmd* on the bare ssh exec channel (``SessionManager.exec_on``) that is *process*."""
+    conn = FakeConn(process)
+    mgr = channel_manager(conn, element=element)
+    return mgr.exec_on(conn=conn, cmd=cmd, timeout=timeout)  # ty: ignore[invalid-argument-type]
 
 
 class TestSshExecTimeout:
-    """Regression: UnixHost.exec over SSH must honour its timeout.
+    """Regression: the bare ssh exec channel must honour its timeout.
 
     Before the fix the read loop was never wrapped in asyncio.wait_for, so the
     `except asyncio.TimeoutError` below it was dead code and this test hung.

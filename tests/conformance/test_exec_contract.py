@@ -35,7 +35,7 @@ from tests.conformance._vocabulary import OTTO_SENTINEL_PREFIX
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.observable(
     "otto's CommandResult.retcode, .exit_code and .status for "
     "`{words.failing_command}` (must report {words.failing_code}) and "
@@ -95,7 +95,7 @@ async def test_exec_reports_the_documented_exit_code(resolved_cell: ResolvedCell
     )
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.observable(
     "the framed stdout of `{words.multiline_command}`: more than one line, and none of "
     "otto's `__OTTO_` scaffolding, `retval` line, ANSI escape or echoed command line "
@@ -224,7 +224,7 @@ async def test_a_failing_command_is_not_reported_as_success(resolved_cell: Resol
 # a control from a contract, is in `tests/conformance/_controls.py`.
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.positive_control("exec-exit-code")
 async def test_control_the_exit_code_channel_reports_more_than_one_code(
     resolved_cell: ResolvedCell,
@@ -284,7 +284,7 @@ async def test_control_the_exit_code_channel_reports_more_than_one_code(
     )
 
 
-@pytest.mark.entries("run", "exec", "exec-shell")
+@pytest.mark.entries("run", "exec")
 @pytest.mark.positive_control("exec-framing")
 async def test_control_the_framing_check_sees_planted_pollution(
     resolved_cell: ResolvedCell,

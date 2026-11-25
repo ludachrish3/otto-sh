@@ -13,6 +13,7 @@ import subprocess
 from typing import Any
 
 import pytest
+import pytest_asyncio
 
 from otto.host.command_frame import BashFrame
 from otto.host.exec_route import ExecRoute
@@ -48,21 +49,20 @@ def test_exit_status_of_maps_a_signal_to_128_plus_n(rc: "int | None", expected: 
     assert exit_status_of(rc) == expected
 
 
+@pytest.mark.parametrize("sig", ["TERM", "35"], ids=["term", "real-time"])
 @pytest.mark.asyncio
-async def test_local_exec_reports_a_signal_death_as_128_plus_n():
+async def test_a_local_exec_that_kills_its_own_shell_ends_the_session(sig: str):
+    """``$$`` is the session's shell: killing it ends the session, not the command alone.
+
+    A child the command starts and a signal kills still reports 128+N:
+    ``test_local_host.py::test_a_command_killed_by_a_signal_reports_128_plus_it_and_exec_goes_on``.
+    """
     host = LocalHost()
     try:
-        assert (await host.exec("kill -TERM $$")).retcode == 143
-    finally:
-        await host.close()
-
-
-@pytest.mark.asyncio
-async def test_local_exec_reports_a_real_time_signal_death_as_128_plus_n():
-    host = LocalHost()
-    try:
-        r = await host.exec("kill -35 $$")
-        assert (r.status, r.retcode) == (Status.Failed, 163)  # before: Error, -1
+        r = await host.exec(f"kill -{sig} $$")
+        assert (r.status, r.retcode) == (Status.Error, -1)
+        assert r.value.startswith("Session died unexpectedly"), r.value
+        assert (await host.exec("echo ok")).value == "ok", "the next exec has a shell of its own"
     finally:
         await host.close()
 
@@ -94,7 +94,7 @@ class _NoReturnCodeTransport:
 
 
 async def _local_without_returncode(monkeypatch: pytest.MonkeyPatch) -> CommandResult:
-    """Local ``exec`` of a process whose transport gives no return code after EOF and wait."""
+    """The local subprocess primitive, its transport giving no return code after EOF and wait."""
     loop = asyncio.get_running_loop()
     real = loop.subprocess_shell
 
@@ -105,7 +105,8 @@ async def _local_without_returncode(monkeypatch: pytest.MonkeyPatch) -> CommandR
     monkeypatch.setattr(loop, "subprocess_shell", spy)
     host = LocalHost()
     try:
-        return await host.exec("true")
+        # The subprocess primitive itself: no exec() takes it, and it stays until removed.
+        return await host._exec_subprocess("true", 5.0)
     finally:
         await host.close()
 
@@ -178,3 +179,40 @@ def test_gave_no_exit_status(result: CommandResult, expected: bool):
 def test_the_no_return_code_result_gave_no_exit_status():
     """The one result a process route builds for "no status" is read back as that."""
     assert gave_no_exit_status(no_return_code_result(cmd="c", route=ExecRoute.LOCAL_SUBPROCESS))
+
+
+@pytest_asyncio.fixture(params=["ssh", "local"])
+async def piped_exec_host(request, piped):
+    """A host whose ``exec`` types into a shell that reads a pipe: an ssh host's, the local one."""
+    if request.param == "ssh":
+        yield piped[0]
+        return
+    host = LocalHost()
+    yield host
+    await host.close()
+
+
+@pytest.mark.asyncio
+async def test_an_exec_that_kills_its_own_shell_ends_the_session_on_either_host(piped_exec_host):
+    r = await piped_exec_host.exec("kill $$")
+    assert (r.status, r.retcode) == (Status.Error, -1)
+    assert r.value.startswith("Session died unexpectedly"), r.value
+    assert (await piped_exec_host.exec("echo ok")).value == "ok", "the next exec gets a new shell"
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_command_ends_the_session_without_the_shells_diagnostic(piped_exec_host):
+    # Typed bare into the session's shell, a syntax error ends that shell: the
+    # first statement ran, the diagnostic went with the shell. Declared.
+    r = await piped_exec_host.exec("echo a; echo )")
+    assert (r.status, r.retcode) == (Status.Error, -1)
+    assert r.value.startswith("Session died unexpectedly"), r.value
+    assert (await piped_exec_host.exec("echo ok")).value == "ok", "the next exec gets a new shell"
+
+
+@pytest.mark.asyncio
+async def test_an_incomplete_command_waits_out_its_timeout(piped_exec_host):
+    # An unclosed quote swallows the frame's tail, so no end is ever seen. Declared.
+    r = await piped_exec_host.exec("echo 'oops", timeout=1)
+    assert r.timed_out
+    assert (await piped_exec_host.exec("echo ok")).value == "ok", "the next exec gets a new shell"

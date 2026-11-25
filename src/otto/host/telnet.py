@@ -16,7 +16,7 @@ import re
 import signal
 import struct
 import sys
-from collections.abc import Awaitable, Callable, Generator
+from collections.abc import Callable, Generator
 from dataclasses import (
     dataclass,
     field,
@@ -33,6 +33,7 @@ from .._terminal import interactive_terminal_size
 from ..errors import OttoError
 from ..models.base import as_secret
 from ..utils import WaitTimeoutError, wait_for_async
+from .cancel_safe import await_within
 from .options import TelnetOptions
 from .secret_wire import reveal
 
@@ -215,7 +216,7 @@ async def open_telnet_connection(
     :class:`TelnetClient` knows the server answered (:attr:`TelnetClient.answered`).
 
     The library's opener runs as its own task, observed through
-    ``_await_within``, so this is a real cancellation boundary: a
+    ``otto.host.cancel_safe.await_within``, so this is a real cancellation boundary: a
     cancellation of the caller always ends here in that release and
     re-raises, even when telnetlib3 has dropped it (its own
     ``asyncio.wait_for`` around the TCP setup returns the result instead on
@@ -239,7 +240,7 @@ async def open_telnet_connection(
         factory, single_client=single_client, record=record, on_answer=on_answer
     )
     try:
-        opening = await _await_within(open_connection(*args, **kwargs), None)
+        opening = await await_within(open_connection(*args, **kwargs), None)
         assert opening is not None  # noqa: S101 — internal invariant: with no timeout only the open ending returns
         opened = opening.result()
     except (asyncio.CancelledError, Exception):
@@ -302,7 +303,7 @@ async def negotiate_no_echo(writer: Any, timeout: float) -> None:
     from telnetlib3.telopt import DONT, ECHO
 
     writer.iac(DONT, ECHO)
-    agreed = await _await_within(writer.wait_for(remote={"ECHO": False}), timeout)
+    agreed = await await_within(writer.wait_for(remote={"ECHO": False}), timeout)
     if agreed is None:
         logger.debug("ECHO negotiation timed out — proceeding anyway")
     else:
@@ -579,75 +580,13 @@ async def _abort_and_observe(writer: Any, transport: Any, sock: Any) -> None:
         _unregister_console_transport(transport)
 
 
-async def _await_within(
-    awaitable: Awaitable[Any], timeout: float | None
-) -> "asyncio.Future[Any] | None":
-    """Await *awaitable* for up to *timeout*: its finished future, or None on a timeout.
-
-    A *timeout* of None waits for as long as *awaitable* runs, so only its
-    end or the caller's cancellation ends the wait.
-
-    The cancel-safe replacement for ``asyncio.wait_for`` on a stream. On
-    Python 3.10 and 3.11, ``wait_for`` returns the inner result when the
-    inner await completes in the same loop turn the caller is cancelled, and
-    the cancellation is lost: a release keeps draining instead of aborting,
-    a connect carries on with its stream installed. Here the caller's
-    cancellation always propagates. On a timeout or a cancellation the inner
-    await is cancelled and awaited, so nothing stays pending on the stream.
-    It is cancelled again for as long as it keeps running (see
-    :func:`_cancel_until_done`). The caller reads the outcome with
-    ``.result()``, which re-raises the inner await's own error.
-    """
-    inner = asyncio.ensure_future(awaitable)
-    try:
-        done, _ = await asyncio.wait({inner}, timeout=timeout)
-    except asyncio.CancelledError:
-        await _cancel_until_done(inner)
-        raise
-    if not done:
-        await _cancel_until_done(inner)
-        if inner.cancelled():
-            return None
-    return inner
-
-
-_RECANCEL_INTERVAL: float = 0.05
-"""How long :func:`_cancel_until_done` waits on a cancelled await before cancelling it again."""
-
-
-async def _cancel_until_done(inner: "asyncio.Future[Any]") -> None:
-    """Cancel *inner* until it has finished, then retrieve its outcome.
-
-    One cancel is not always enough: telnetlib3's opener runs its TCP setup
-    under ``asyncio.wait_for``, which on Python 3.10 and 3.11 can drop a
-    cancel and carry on into its negotiation wait (up to
-    ``connect_maxwait``). So *inner* is cancelled again every
-    :data:`_RECANCEL_INTERVAL` while it keeps running. A cancellation of the
-    caller that arrives meanwhile is held until *inner* has finished, then
-    raised, so nothing is left pending on the stream. An *inner* whose own
-    cancellation cleanup awaits longer than :data:`_RECANCEL_INTERVAL` is
-    cancelled again mid-cleanup, so a new caller whose await cleans up that
-    way must check it can bear that.
-    """
-    held: asyncio.CancelledError | None = None
-    while not inner.done():
-        inner.cancel()
-        try:
-            await asyncio.wait({inner}, timeout=_RECANCEL_INTERVAL)
-        except asyncio.CancelledError as exc:
-            held = exc
-    if not inner.cancelled():
-        inner.exception()  # retrieved, so the loop never reports it as unhandled
-    if held is not None:
-        raise held
-
-
 async def _read_within(reader: Any, timeout: float) -> bytes | None:
     """One 4 KiB ``reader.read``, or None if nothing arrives within *timeout*.
 
-    Never swallows the caller's cancellation (see :func:`_await_within`).
+    Never swallows the caller's cancellation
+    (see ``otto.host.cancel_safe.await_within``).
     """
-    read = await _await_within(reader.read(4096), timeout)
+    read = await await_within(reader.read(4096), timeout)
     return None if read is None else read.result()
 
 

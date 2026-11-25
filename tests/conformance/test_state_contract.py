@@ -5,8 +5,7 @@ does to it (a ``cd``, an ``export``, a ``set``) the next ``run`` sees. An
 ``exec`` keeps nothing: it starts from the state its session was set up with,
 and what it changes (an ``exit`` included) reaches neither the next ``exec``
 nor a ``run`` -- in all three directions (``run`` -> ``exec``, ``exec`` ->
-``exec``, ``exec`` -> ``run``). Where ``exec`` is a process of its own that
-holds by construction; where it is typed into a pooled shell session, the
+``exec``, ``exec`` -> ``run``). Where it is typed into a pooled session, the
 exec frame runs it in a subshell of its own; on a console, whose one shell
 ``run`` also uses, in a clean login shell started from it, which runs as
 whoever that shell is (:func:`_console_exec`).
@@ -16,7 +15,7 @@ The stimulus and the read are the cell's vocabulary
 ``state_read_command``, ``exit_session_command``). The read prints the
 working directory, the two state variables, the session-setup hook's mark
 (``OTTO_CF_HOOK``, set by ``tests/conformance/_entry.py``'s marking hook on
-every session of an ``exec-shell`` host), the options ``f``, ``C``, ``e`` and
+every session of a hooked cell's host), the options ``f``, ``C``, ``e`` and
 ``u``, and the user, separated by ``|``. On a cell whose lab entry has a
 second user (``ResolvedCell.switch_user``), an ``exec`` as that user reads
 that user, and the hook's mark the cell's own ``exec`` reads: a session for
@@ -31,8 +30,7 @@ from typing import NamedTuple
 
 import pytest
 
-from otto.host.exec_route import ExecRoute
-from tests.conformance._entry import EXEC_SHELL, UNIX, expected_route, issue, on_console, opened
+from tests.conformance._entry import UNIX, has_terminal, issue, on_console, opened
 from tests.conformance._resolved import ResolvedCell
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
@@ -86,15 +84,17 @@ def _console_exec(resolved: ResolvedCell) -> bool:
 def _terminal_arm(resolved: ResolvedCell) -> bool:
     """Whether *resolved*'s ``exec`` is typed into a terminal whose settings this contract reads.
 
-    A pooled shell session and the default session read a terminal, and the
-    exec frame puts it back after each ``exec``. A local ``exec`` and the ssh
-    channel have none, and a Zephyr shell is outside this contract's domain.
+    Read off the cell's facts (:func:`~tests.conformance._entry.has_terminal`),
+    never the route: a pooled session over ``telnet``, a hooked or proxied
+    ``ssh`` cell's, and the default session read a terminal, and the exec
+    frame puts it back after each ``exec``. A plain ``ssh`` cell's pooled
+    session and the local host's have none, and a Zephyr shell is outside
+    this contract's domain.
     """
     return (
         resolved.family == UNIX
         and resolved.vocabulary.terminal_change_command is not None
-        and expected_route(resolved)
-        in {ExecRoute.POOLED_SHELL.value, ExecRoute.DEFAULT_SESSION.value}
+        and has_terminal(resolved)
     )
 
 
@@ -135,7 +135,7 @@ def _words(resolved: ResolvedCell) -> _StateWords:
     return _StateWords(read, run_set, exec_set, leave)
 
 
-@pytest.mark.entries("exec", "exec-shell")
+@pytest.mark.entries("exec")
 @pytest.mark.observable(
     "`{words.state_read_command}` by exec before and after run's state, exec's state and "
     "`exit`, and by run afterwards"
@@ -177,7 +177,7 @@ async def test_an_exec_starts_from_its_own_state_and_leaves_none(
             if other is not None
             else None
         )
-    assert baseline.hook == ("ran" if resolved_cell.entry == EXEC_SHELL else "unset")
+    assert baseline.hook == ("ran" if resolved_cell.hooked else "unset")
     assert (run_read.cwd, run_read.run, "f" in run_read.opts) == ("/dev", "run", True)
     assert run_after == run_read  # exec -> run: nothing
     if terminal is not None:
@@ -212,7 +212,7 @@ async def test_an_exec_starts_from_its_own_state_and_leaves_none(
         note_observable(f"{state}; {tty} and a 1,400-character exec: the terminal kept")
 
 
-@pytest.mark.entries("exec", "exec-shell")
+@pytest.mark.entries("exec")
 @pytest.mark.positive_control("exec-isolated")
 async def test_control_state_set_inside_one_exec_is_seen_by_that_exec(
     resolved_cell: ResolvedCell,
