@@ -22,6 +22,7 @@ selecting-hosts
 writing-tests
 writing-instructions
 options-classes
+options-advanced
 test-recipes
 host-scopes
 ```

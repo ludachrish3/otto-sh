@@ -2,6 +2,8 @@
 
 import pytest
 
+import otto
+import otto.params
 from otto.params import (
     OPTIONS,
     OptionsEntry,
@@ -78,3 +80,33 @@ def test_the_decorator_passes_overwrite_through():
     assert OPTIONS.peek(name=key).verbs == ("run",)
     _declare(["test"], overwrite=True)
     assert OPTIONS.peek(name=key).verbs == ("test",)
+
+
+@options
+class Built:
+    level: int = 0
+
+
+def test_decorating_a_class_otto_already_built_is_refused():
+    with pytest.raises(OptionsRegistrationError, match=r"otto\.get_options\(Built\)"):
+        otto.options(Built)
+
+
+def test_a_subclass_of_an_options_class_is_decorated_as_before():
+    @options
+    class Child(Built):
+        extra: str = "x"
+
+    assert Child(level=2, extra="y").level == 2
+    assert "__otto_options_class__" in Child.__dict__
+
+
+def test_the_new_names_are_public():
+    assert otto.get_options is otto.params.get_options
+    assert otto.use_options is otto.params.use_options
+    assert {"get_options", "use_options"} <= set(otto.__all__)
+
+
+def test_the_factory_form_refuses_a_class_otto_already_built():
+    with pytest.raises(OptionsRegistrationError, match=r"otto\.get_options\(Built\)"):
+        otto.options(verbs=["run"])(Built)

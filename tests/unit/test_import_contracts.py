@@ -217,9 +217,10 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     # load is otto.cli itself.
     "import otto.project.orchestrator": ["otto.cli"],
     "import otto.project.actions": ["otto.cli"],
-    # typer is otto.params's only heavy import, and it's function-local (see
-    # _default_hidden) -- importing the module alone must never load it.
-    "import otto.params": ["typer"],
+    # typer and pydantic are otto.params's heavy imports, both function-local
+    # (see _default_hidden and options) -- importing the module alone must
+    # never load either.
+    "import otto.params": ["typer", "pydantic"],
     # --- Library facades. ---
     # The composition root's accessors cost nothing until called: importing
     # otto.bootstrap loads neither the settings parsers nor the host classes. It

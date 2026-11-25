@@ -118,7 +118,7 @@ first-party class to inherit, so `DeployOpts` above inherits nothing.
 A test marked `@pytest.mark.ensure("installed")` converges the lab through the
 same `install` bodies before it runs. Under `otto test`, a body's `--variant`
 comes from `otto test`'s own flags, matched by field name
-([Which flags reach an install body under `otto test`](options-classes.md#which-flags-reach-an-install-body-under-otto-test)).
+([Which flags reach an install body under `otto test`](options-advanced.md#which-flags-reach-an-install-body-under-otto-test)).
 So the flag has to be registered for `test` too, which is what the decorator
 on `BedVariant` in the code above does: `@options(verbs=["run", "test"])`.
 The module is one of the example project's init modules, so the registration
@@ -132,7 +132,7 @@ options class, unregistered, because a registration reaches every command of
 the verb: registering it would put `--ensure` and `--recover-partial` on
 `otto run status`, `otto run uninstall` and `otto test` as well. The rule is
 in [A registration reaches every command of the
-verb](options-classes.md#a-registration-reaches-every-command-of-the-verb).
+verb](options-advanced.md#a-registration-reaches-every-command-of-the-verb).
 
 A test then asks for the state, and `otto test --variant` steers the install
 that reaches it:

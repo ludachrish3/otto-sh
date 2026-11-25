@@ -3,7 +3,7 @@
 import pytest
 
 from otto import options
-from otto.params import OptionsRegistrationError, register_options
+from otto.params import register_options
 from otto.registry import RegistrationRefused
 from otto.suite import NoTestsMatchedError, RunOptions, UnknownSelectionError, run_tests
 from otto.suite.run import SuiteRunResult
@@ -81,7 +81,7 @@ def test_a_marker_that_matches_nothing_raises(one_project, tmp_path):
         run_tests(run_options=RunOptions(markers="nosuchmarker"), output_dir=tmp_path / "out")
 
 
-def test_options_reach_ctx_options_and_unregistered_instances_refuse(one_project, tmp_path):
+def test_options_reach_ctx_options_and_any_options_class_is_accepted(one_project, tmp_path):
     @options
     class FirmwareOpts:
         firmware: str = "latest"
@@ -106,8 +106,12 @@ def test_options_reach_ctx_options_and_unregistered_instances_refuse(one_project
     class Stray:
         x: int = 0
 
-    with pytest.raises(OptionsRegistrationError, match="Stray is not registered"):
-        run_tests(names=["test_o"], options=[Stray()], output_dir=tmp_path / "out2")
+    result = run_tests(
+        names=["test_o"],
+        options=[FirmwareOpts(firmware="2.1"), Stray()],
+        output_dir=tmp_path / "out2",
+    )
+    assert result.exit_code == 0
 
 
 @pytest.mark.parametrize(

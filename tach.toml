@@ -950,7 +950,8 @@ layer = "foundation"
 # contains_secret_type's class check is otto.utils.annotation_is_subclass, the
 # one check of an annotation against a class (#1249); otto.utils imports only
 # otto.errors, so the edge stays in the layer and makes no cycle.
-depends_on = ["otto.errors", "otto.registry", "otto.utils"]
+# otto.invocation: recorded_in_force reads the installed run's record; a leaf, no cycle.
+depends_on = ["otto.errors", "otto.registry", "otto.utils", "otto.invocation"]
 
 [[modules]]
 path = "otto.project"

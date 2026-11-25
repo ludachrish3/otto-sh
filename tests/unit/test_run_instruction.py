@@ -10,7 +10,6 @@ from otto.instructions import bind_handler_kwargs, instruction, run_instruction
 from otto.labs.loader import Lab
 from otto.params import (
     OPTIONS,
-    OptionsRegistrationError,
     OptionsValidationError,
     register_options,
 )
@@ -119,14 +118,85 @@ async def test_run_instruction_leaves_an_already_active_context_active(ctx):
         reset_context(token)
 
 
-def test_bind_handler_kwargs_binds_only_option_fields_on_the_verb(ctx):
+def test_bind_handler_kwargs_injects_without_binding(ctx):
     async def handler(verb: _Verb, extra: int) -> None: ...
 
     entry = InstructionEntry(name="h", module=__name__, handler=handler)
     bound = bind_handler_kwargs(ctx, entry, {"tag": "x", "extra": 1})
     assert bound["extra"] == 1
-    assert bound["verb"].tag == "x"
-    assert ctx.verb_option_source().kwargs == {"tag": "x"}
+    assert bound["verb"].tag == "none"
+    assert ctx.verb is None
+
+
+@pytest.mark.asyncio
+async def test_run_instruction_keeps_the_invocations_values(ctx):
+    @instruction()
+    async def tagged(verb: _Verb) -> str:
+        return verb.tag
+
+    ctx.bind_verb_options(verb="run", kwargs={"tag": "before"})
+    assert await run_instruction(ctx, name="tagged") == "before"
+
+
+@pytest.mark.asyncio
+async def test_run_instruction_leaves_ctx_verb_alone(ctx):
+    seen = []
+
+    @instruction()
+    async def which(c: OttoContext) -> None:
+        seen.append(c.verb)
+
+    ctx.bind_verb_options(verb="test", kwargs={})
+    await run_instruction(ctx, name="which", opts=[_Verb(tag="x")])
+    assert seen == ["test"]
+    assert ctx.verb == "test"
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_calls_each_see_their_own_options(ctx):
+    import asyncio
+
+    @instruction()
+    async def tagged(verb: _Verb) -> str:
+        await asyncio.sleep(0)
+        return verb.tag
+
+    results = await asyncio.gather(
+        run_instruction(ctx, name="tagged", opts=[_Verb(tag="a")]),
+        run_instruction(ctx, name="tagged", opts=[_Verb(tag="b")]),
+    )
+    assert results == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_an_instance_handed_in_is_the_object_read_back(ctx):
+    handed = _Own(debug=True)
+
+    @instruction(options=_Own)
+    async def same(opts: _Own) -> bool:
+        return opts is handed and otto.get_options(_Own) is handed
+
+    assert await run_instruction(ctx, name="same", opts=[handed]) is True
+
+
+@pytest.mark.asyncio
+async def test_on_a_context_nothing_bound_the_parameter_is_the_object_the_lookup_returns(ctx):
+    @instruction(options=_Own)
+    async def same(opts: _Own, c: OttoContext) -> bool:
+        return opts is c.options(type(opts))
+
+    assert await run_instruction(ctx, name="same") is True
+
+
+@pytest.mark.asyncio
+async def test_a_non_dataclass_in_opts_is_still_a_registration_error(ctx):
+    from otto.params import OptionsRegistrationError
+
+    @instruction()
+    async def f() -> None: ...
+
+    with pytest.raises(OptionsRegistrationError):
+        await run_instruction(ctx, name="f", opts=[object()])
 
 
 @pytest.mark.asyncio
@@ -166,7 +236,7 @@ async def test_run_instruction_binds_own_class_once_when_it_is_also_registered(c
 
 
 @pytest.mark.asyncio
-async def test_run_instruction_refuses_an_instance_registered_for_another_verb(ctx):
+async def test_run_instruction_accepts_an_instance_registered_for_another_verb(ctx):
     @otto.options(verbs=["test"])
     class TestOnly:
         n: int = 0
@@ -174,8 +244,7 @@ async def test_run_instruction_refuses_an_instance_registered_for_another_verb(c
     @instruction()
     async def f() -> None: ...
 
-    with pytest.raises(OptionsRegistrationError):
-        await run_instruction(ctx, name="f", opts=[TestOnly()])
+    await run_instruction(ctx, name="f", opts=[TestOnly()])
 
 
 @pytest.mark.asyncio
@@ -209,11 +278,11 @@ async def test_run_instruction_routes_a_project_name_through_the_orchestrator(ct
     orchestrator = _orchestrator()
     calls = []
 
-    def validate(name, c, kwargs, *, announce):
+    def validate(name, c, kwargs, *, announce, source=None):
         calls.append(("validate", name, c, kwargs, announce))
         return []
 
-    async def fake(name, kwargs):
+    async def fake(name, kwargs, *, source=None):
         calls.append(("run", name, kwargs))
         return "walked"
 
@@ -235,7 +304,7 @@ async def test_run_instruction_passes_a_project_bodys_own_options_instance(ctx, 
     orchestrator = _orchestrator()
     received = []
 
-    async def fake(name, kwargs):
+    async def fake(name, kwargs, *, source=None):
         received.append(kwargs)
 
     monkeypatch.setattr(orchestrator, "run_project_instruction", fake)
@@ -244,14 +313,13 @@ async def test_run_instruction_passes_a_project_bodys_own_options_instance(ctx, 
 
 
 @pytest.mark.asyncio
-async def test_run_instruction_refuses_a_class_registered_for_test_only_for_a_project_name(ctx):
+async def test_run_instruction_accepts_a_class_registered_for_test_only_for_a_project_name(ctx):
     @otto.options(verbs=["test"])
     class TestOnly:
         n: int = 0
 
     _orchestrator()
-    with pytest.raises(OptionsRegistrationError, match="TestOnly"):
-        await run_instruction(ctx, name="install", opts=[TestOnly()])
+    await run_instruction(ctx, name="install", opts=[TestOnly()])
 
 
 @pytest.mark.asyncio
@@ -259,10 +327,10 @@ async def test_run_instruction_validates_project_bodies_before_any_runs(ctx, mon
     orchestrator = _orchestrator()
     ran = []
 
-    def invalid(name, c, kwargs, *, announce):
+    def invalid(name, c, kwargs, *, announce, source=None):
         raise OptionsValidationError("target: Field required")
 
-    async def fake(name, kwargs):
+    async def fake(name, kwargs, *, source=None):
         ran.append(name)
 
     monkeypatch.setattr(orchestrator, "project_instruction_body_options", invalid)

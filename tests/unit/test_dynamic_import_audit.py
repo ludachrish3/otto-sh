@@ -1003,6 +1003,8 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     # The root facade, the module otto at entry.
     ("otto/__init__.py", "otto.params:options", FACADE_BINDING),
     ("otto/__init__.py", "otto.params:register_options", FACADE_BINDING),
+    ("otto/__init__.py", "otto.params:get_options", FACADE_BINDING),
+    ("otto/__init__.py", "otto.params:use_options", FACADE_BINDING),
     ("otto/__init__.py", "otto.cli:app", FACADE_BINDING),
     ("otto/__init__.py", "otto.fleet:all_hosts", FACADE_BINDING),
     ("otto/__init__.py", "otto.fleet:get_host", FACADE_BINDING),

@@ -37,11 +37,13 @@ populated instance is reconstructed at call time
   ({doc}`registries`). A verb's flag set is the union of its registered
   classes, merged by declaring class: a field two classes inherit from one
   base is one flag, and one name from two unrelated classes is an
-  `OptionsCollisionError` naming both. At dispatch, every class registered
-  for the dispatched verb is built from the parsed flags and bound on the
-  invocation's `OttoContext`, so a validation failure is an exit-2 error
-  before any body runs. Classes registered only for the other verb are not
-  built.
+  `OptionsCollisionError` naming both. At dispatch, the command records on
+  the invocation's `OttoContext` which of its flags were given, and builds
+  every class it offers from the parsed flags, so a validation failure is an
+  exit-2 error before any body runs. A class the command does not offer
+  (registered only for the other verb, or for none) is built on first read,
+  from the values someone gave and its own defaults
+  ({doc}`../../setup/options-advanced`).
 - **An instruction's own options** (`@instruction(options=...)`) are merged
   with the verb's, the own class first. A parameter annotated with a
   registered class is injected with `ctx.options(Cls)`; a parameter annotated
@@ -260,9 +262,10 @@ do:
   something to resolve silently, and a flag set the user cannot see is not
   something to degrade around. Flags merge by declaring class. Under
   `otto test`, an `ensure` converge builds each body's options from the
-  `test` verb's parsed flags, by field name, exactly as `otto run install`
+  `test` verb's flags, by field name, exactly as `otto run install`
   builds them from its own; the collision rule is what makes the name
-  unambiguous, and a body field with no `test` flag takes its default.
+  unambiguous, and a body field whose flag was not given, or that has no
+  `test` flag, takes its default.
   Options modules are leaves — `typer` and `otto.options` — so a
   shared base placed in a required project or a library package can never
   create an import cycle.

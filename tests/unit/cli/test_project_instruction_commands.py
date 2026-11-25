@@ -1643,3 +1643,91 @@ async def test_run_instruction_runs_a_first_party_body_through_the_real_orchestr
 
     assert result.is_ok
     assert seen == [ctx]
+
+
+# ── #1331: one record per command; an unset flag reaches only the classes offered ──
+
+
+def _wire_variant_project(monkeypatch, seen: dict, *, counter=None) -> None:
+    """A one-project lab whose install class adds ``variant`` and whose status class has its own.
+
+    The status body answers INSTALLED, so ``install --ensure`` stops after it.
+    *counter* counts the install class's validator runs.
+    """
+    from otto.project import StatusOptions
+
+    @options
+    class VariantInstall(InstallOptions):
+        variant: Annotated[str, typer.Option(help="Firmware variant.")] = "field"
+
+        def __post_init__(self) -> None:
+            if counter is not None:
+                counter.append(1)
+
+    @options
+    class VariantStatus(StatusOptions):
+        variant: str = "lab"
+
+    with registering_project("widget"):
+
+        @register_project_actions
+        class Widget(ProjectActions):
+            @instruction(options=VariantInstall)
+            async def install(self, opts: VariantInstall) -> Result:
+                seen["install"] = opts
+                return Result(status=Status.Success)
+
+            @instruction(options=VariantStatus)
+            async def status(self, opts: VariantStatus) -> InstallState:
+                seen["status"] = opts
+                return InstallState.INSTALLED
+
+    patch_bootstrap(monkeypatch, [fake_project("widget", project_scope=None, root="/tmp/widget")])
+
+
+def test_install_ensure_passes_only_typed_flags_by_name(monkeypatch, registered) -> None:
+    seen: dict = {}
+    _wire_variant_project(monkeypatch, seen)
+
+    typed = dispatch.invoke(
+        run_app, ["install", "--ensure", "--variant", "debug"], async_leaves=True
+    )
+    assert typed.exit_code == 0, typed.output
+    assert seen["status"].variant == "debug"
+
+    unset = dispatch.invoke(run_app, ["install", "--ensure"], async_leaves=True)
+    assert unset.exit_code == 0, unset.output
+    assert seen["status"].variant == "lab"
+
+
+def test_a_body_class_validator_runs_once_per_command(monkeypatch, registered) -> None:
+    seen: dict = {}
+    counter: list = []
+    _wire_variant_project(monkeypatch, seen, counter=counter)
+
+    result = dispatch.invoke(run_app, ["install"], async_leaves=True)
+
+    assert result.exit_code == 0, result.output
+    assert seen["install"].variant == "field"
+    assert len(counter) == 1
+
+
+def test_the_dry_run_shows_body_options_before_the_run_classes(monkeypatch, registered) -> None:
+    from otto.params import register_options
+    from tests.conftest import active_context
+
+    @options
+    class RunWide:
+        minimum: int = 1
+
+    register_options(RunWide, verbs=["run"])
+    seen: dict = {}
+    _wire_variant_project(monkeypatch, seen)
+
+    with active_context(dry_run=True):
+        dry = dispatch.invoke(run_app, ["install", "--variant", "debug"], async_leaves=True)
+
+    assert dry.exit_code == 0, dry.output
+    assert "variant='debug'" in dry.output
+    assert dry.output.index("VariantInstall:") < dry.output.index("RunWide: minimum=1")
+    assert seen == {}, "the dry run ran a body"

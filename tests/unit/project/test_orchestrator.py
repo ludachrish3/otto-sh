@@ -25,6 +25,7 @@ import io
 import logging
 import re
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -210,6 +211,14 @@ class _FakeCtx:
 
     def all_hosts(self, _scope_owner=None):
         return iter(self.hosts)
+
+    def _recorded_options(self):
+        """The ``ActiveRun`` member ``recorded_in_force`` reads once this double is installed.
+
+        ``run_instruction`` installs the context it is handed as the run; this
+        double's run recorded nothing.
+        """
+        return
 
     async def do_for_all_hosts(self, method, *args, _scope_owner=None, **kwargs):
         """Apply *method* per host EXACTLY as the production seam does.
@@ -3687,3 +3696,448 @@ class TestPerProjectOptions:
         assert len(seen) == 1
         assert isinstance(seen[0], OptionsSource)
         assert seen[0].build(InstallOptions) == InstallOptions(ensure=True, recover_partial=False)
+
+    # ── #1331: the walk validates every body's options first; an unset flag stays put ──
+
+    @staticmethod
+    def _guarded_pair(two_project_lab, ran, *, name="install"):
+        """Projects ``a`` then ``b``, whose *name* class rejects ``minimum < 1``."""
+        from otto import options
+        from otto.cli.run import instruction
+        from otto.project import ProjectActions, StatusOptions, register_project_actions
+
+        base = {"install": InstallOptions, "status": StatusOptions}[name]
+        answer = InstallState.UNINSTALLED if name == "status" else Result(status=Status.Success)
+
+        @options
+        class BGuarded(base):
+            minimum: int = 1
+
+            def __post_init__(self) -> None:
+                if self.minimum < 1:
+                    raise ValueError("minimum must be >= 1")
+
+        async def _a_body(self, opts):
+            ran.append(("a", name))
+            return answer
+
+        async def _b_body(self, opts):
+            ran.append(("b", name))
+            return answer
+
+        _a_body.__name__ = _b_body.__name__ = name
+        _b_body.__annotations__ = {"opts": BGuarded}
+        with registering_project("a"):
+            a_cls = register_project_actions(type("A", (ProjectActions,), {name: _a_body}))
+        with registering_project("b"):
+            b_cls = register_project_actions(
+                type("B", (ProjectActions,), {name: instruction(options=BGuarded)(_b_body)})
+            )
+        two_project_lab(A=a_cls, B=b_cls)
+
+    @pytest.mark.parametrize("path", ["install", "run_project_instruction", "converge"])
+    @pytest.mark.asyncio
+    async def test_a_later_projects_bad_value_stops_the_walk_before_the_first_body(
+        self, two_project_lab, path
+    ):
+        from otto import options
+        from otto.params import OptionsSource, OptionsValidationError
+        from otto.project.orchestrator import run_project_instruction
+        from otto.suite import pytest_plugin
+
+        @options
+        class Probe:
+            minimum: int = 0
+
+        ran: "list[tuple[str, str]]" = []
+        self._guarded_pair(two_project_lab, ran)
+        calls = {
+            "install": lambda: project.install(opts=Probe()),  # ty: ignore[invalid-argument-type]
+            "run_project_instruction": lambda: run_project_instruction("install", {"minimum": 0}),
+            "converge": lambda: pytest_plugin._converge(
+                "installed", OptionsSource.from_kwargs({"minimum": 0})
+            ),
+        }
+        with pytest.raises(OptionsValidationError, match="minimum"):
+            await calls[path]()
+        assert ("a", "install") not in ran
+
+    @pytest.mark.asyncio
+    async def test_status_validates_every_counted_body_before_the_first(self, two_project_lab):
+        from otto.params import OptionsSource, OptionsValidationError
+
+        ran: "list[tuple[str, str]]" = []
+        self._guarded_pair(two_project_lab, ran, name="status")
+        with pytest.raises(OptionsValidationError, match="minimum"):
+            await orchestrator.status(opts=OptionsSource.from_kwargs({"minimum": 0}))
+        assert ran == []
+
+    @staticmethod
+    def _variant_install(two_project_lab, seen, *, status_cls=None, uninstall_cls=None, state=None):
+        """Project ``a`` with ``AInstall.variant = "field"``, then ``b`` on otto's classes.
+
+        *status_cls* / *uninstall_cls* give ``a`` a recording body of that class;
+        every status body answers *state* (UNINSTALLED by default).
+        """
+        from typing import Annotated
+
+        import typer
+
+        from otto import get_options, options
+        from otto.cli.run import instruction
+        from otto.project import ProjectActions, register_project_actions
+
+        answer = state or InstallState.UNINSTALLED
+
+        @options
+        class AInstall(InstallOptions):
+            variant: Annotated[str, typer.Option(help="v")] = "field"
+
+        async def install(self, opts: AInstall):
+            seen["install"] = opts
+            seen["install_read"] = get_options(type(opts))
+            return Result(status=Status.Success)
+
+        async def a_status(self, opts):
+            seen["status"] = opts
+            return answer
+
+        async def a_uninstall(self, opts):
+            seen["uninstall"] = opts
+            return Result(status=Status.Success)
+
+        ns = {"install": instruction(options=AInstall)(install)}
+        if status_cls is not None:
+            a_status.__name__ = "status"
+            a_status.__annotations__ = {"opts": status_cls}
+            ns["status"] = instruction(options=status_cls)(a_status)
+        if uninstall_cls is not None:
+            a_uninstall.__name__ = "uninstall"
+            a_uninstall.__annotations__ = {"opts": uninstall_cls}
+            ns["uninstall"] = instruction(options=uninstall_cls)(a_uninstall)
+
+        async def b_status(self, opts):
+            return answer
+
+        async def b_install(self, opts):
+            seen["b_read"] = get_options(AInstall)
+            return Result(status=Status.Success)
+
+        async def b_uninstall(self, opts):
+            return Result(status=Status.Success)
+
+        b_ns = {"status": b_status, "install": b_install, "uninstall": b_uninstall}
+        with registering_project("a"):
+            a_cls = register_project_actions(type("A", (ProjectActions,), ns))
+        with registering_project("b"):
+            b_cls = register_project_actions(type("B", (ProjectActions,), b_ns))
+        two_project_lab(A=a_cls, B=b_cls)
+        return AInstall
+
+    @pytest.mark.asyncio
+    async def test_install_with_no_options_keeps_the_invocations_value_for_a_project_field(
+        self, two_project_lab
+    ):
+        from otto.params import RecordedOptions, command_options
+
+        seen: "dict[str, Any]" = {}
+        self._variant_install(two_project_lab, seen)
+        recorded = RecordedOptions(
+            group="run", parsed={"variant": "debug"}, given=frozenset({"variant"})
+        )
+        with command_options(recorded):
+            assert (await project.install()).is_ok
+        assert seen["install"].variant == "debug"
+        assert seen["install"].ensure is False
+
+    @pytest.mark.asyncio
+    async def test_an_entry_points_own_instance_comes_first(self, two_project_lab):
+        from otto import get_options
+        from otto.params import RecordedOptions, command_options
+        from otto.project import ProjectActions, register_project_actions
+
+        seen: "dict[str, Any]" = {}
+
+        with registering_project("a"):
+
+            @register_project_actions
+            class A(ProjectActions):
+                async def uninstall_tools(self, opts):
+                    seen["opts"] = opts
+                    seen["read"] = get_options(UninstallToolsOptions)
+                    return Result(status=Status.Success)
+
+        with registering_project("b"):
+
+            @register_project_actions
+            class B(ProjectActions):
+                async def uninstall_tools(self, opts):
+                    del opts
+                    return Result(status=Status.Success)
+
+        two_project_lab(A=A, B=B)
+        recorded = RecordedOptions(
+            group="run", parsed={"toolchain": True}, given=frozenset({"toolchain"})
+        )
+        with command_options(recorded):
+            assert (await project.uninstall_tools()).is_ok
+        assert seen["opts"].toolchain is False
+        assert seen["read"].toolchain is False
+
+    @pytest.mark.asyncio
+    async def test_a_default_instance_gives_nothing_and_a_handed_one_gives_every_field(
+        self, two_project_lab
+    ):
+        from otto import get_options, options
+        from otto.project import ProjectActions, register_project_actions
+
+        @options
+        class Mine:
+            dev: bool = False
+
+        reads: "list[bool]" = []
+
+        with registering_project("a"):
+
+            @register_project_actions
+            class A(ProjectActions):
+                async def install_tools(self, opts):
+                    del opts
+                    reads.append(get_options(Mine).dev)
+                    return Result(status=Status.Success)
+
+        with registering_project("b"):
+
+            @register_project_actions
+            class B(ProjectActions):
+                async def install_tools(self, opts):
+                    del opts
+                    return Result(status=Status.Success)
+
+        two_project_lab(A=A, B=B)
+        await project.install_tools()
+        await project.install_tools(opts=InstallToolsOptions())
+        assert reads == [False, True]
+
+    @staticmethod
+    def _ensure_source(*, offered, variant="field", given=("ensure",)):
+        from otto.params import OptionsSource
+
+        return OptionsSource.from_kwargs(
+            {"ensure": True, "recover_partial": True, "variant": variant},
+            given=frozenset(given),
+            offered=offered,
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_unset_install_flag_leaves_the_status_class_its_own_default(
+        self, two_project_lab
+    ):
+        from otto import options
+        from otto.project import StatusOptions
+        from otto.project.orchestrator import run_project_instruction
+
+        @options
+        class AStatus(StatusOptions):
+            variant: str = "lab"
+
+        seen: "dict[str, Any]" = {}
+        a_install = self._variant_install(two_project_lab, seen, status_cls=AStatus)
+        unset = self._ensure_source(offered=[a_install])
+        await run_project_instruction("install", {}, source=unset)
+        assert seen["status"].variant == "lab"
+        typed = self._ensure_source(
+            offered=[a_install], variant="debug", given=("ensure", "variant")
+        )
+        await run_project_instruction("install", {}, source=typed)
+        assert seen["status"].variant == "debug"
+
+    @pytest.mark.asyncio
+    async def test_the_default_instance_of_a_call_with_no_opts_gives_no_name_away(
+        self, two_project_lab
+    ):
+        """``ensure_installed()``'s own ``InstallOptions()`` is no one's handed value (§5.2).
+
+        ``AStatus.recover_partial`` shares the name with a different default:
+        the status body keeps its own.
+        """
+        from otto import options
+        from otto.project import StatusOptions
+
+        @options
+        class AStatus(StatusOptions):
+            recover_partial: bool = False
+
+        seen: "dict[str, Any]" = {}
+        self._variant_install(two_project_lab, seen, status_cls=AStatus)
+        assert (await project.ensure_installed()).is_ok
+        assert seen["status"].recover_partial is False
+        assert seen["install"].recover_partial is True
+
+    @pytest.mark.asyncio
+    async def test_a_body_reads_its_own_instance_back(self, two_project_lab):
+        from otto.project.orchestrator import run_project_instruction
+
+        seen: "dict[str, Any]" = {}
+        self._variant_install(two_project_lab, seen)
+        await run_project_instruction("install", {"variant": "debug"})
+        assert seen["install"].variant == "debug"
+        assert seen["install_read"] is seen["install"]
+
+    @pytest.mark.asyncio
+    async def test_a_render_callback_still_finds_every_parsed_flag(self, two_project_lab):
+        from otto import options
+        from otto.cli.run import instruction
+        from otto.params import RecordedOptions, options_snapshot
+        from otto.project import ProjectActions, register_project_actions
+        from otto.project.orchestrator import run_project_instruction
+
+        @options
+        class SurveyOptions:
+            depth: int = 1
+
+        rendered: "list[dict[str, Any]]" = []
+
+        def _render(value, source):
+            rendered.append(dict(source.kwargs))
+            return value
+
+        with registering_project("a"):
+
+            @register_project_actions
+            class A(ProjectActions):
+                @instruction(options=SurveyOptions, render=_render)
+                async def survey(self, opts: SurveyOptions):
+                    del opts
+                    return Result(status=Status.Success)
+
+        with registering_project("b"):
+
+            @register_project_actions
+            class B(ProjectActions):
+                pass
+
+        two_project_lab(A=A, B=B)
+        recorded = RecordedOptions(group="run", parsed={"depth": 1}, given=frozenset())
+        await run_project_instruction("survey", {}, source=options_snapshot(recorded))
+        assert rendered == [{"depth": 1}]
+
+    @pytest.mark.asyncio
+    async def test_an_unset_flag_leaves_the_recovery_uninstall_its_default_and_a_typed_one_arrives(
+        self, two_project_lab
+    ):
+        from otto import options
+        from otto.project import StatusOptions
+        from otto.project.orchestrator import run_project_instruction
+
+        @options
+        class AUninstall(UninstallOptions):
+            variant: str = "lab"
+
+        seen: "dict[str, Any]" = {}
+        a_install = self._variant_install(
+            two_project_lab,
+            seen,
+            status_cls=StatusOptions,
+            uninstall_cls=AUninstall,
+            state=InstallState.PARTIAL,
+        )
+        unset = self._ensure_source(offered=[a_install])
+        await run_project_instruction("install", {}, source=unset)
+        assert seen["uninstall"].variant == "lab"
+        typed = self._ensure_source(
+            offered=[a_install], variant="debug", given=("ensure", "variant")
+        )
+        await run_project_instruction("install", {}, source=typed)
+        assert seen["uninstall"].variant == "debug"
+
+    @pytest.mark.asyncio
+    async def test_an_unset_flag_and_a_class_with_no_default_of_its_own(self, two_project_lab):
+        import dataclasses
+
+        from otto import options
+        from otto.params import OptionsSource, OptionsValidationError
+        from otto.project import StatusOptions
+        from otto.project.orchestrator import run_project_instruction
+
+        @options
+        class AStatus(StatusOptions):
+            variant: str  # no default of its own; the install flag `variant` is unset
+
+        seen: "dict[str, Any]" = {}
+        a_install = self._variant_install(two_project_lab, seen, status_cls=AStatus)
+        unset = self._ensure_source(offered=[a_install])
+        with pytest.raises(OptionsValidationError, match="variant"):
+            await run_project_instruction("install", {}, source=unset)
+        assert seen == {}
+
+        @options
+        class Tagged:
+            tags: list = dataclasses.field(default_factory=list)
+
+        unset_tags = OptionsSource.from_kwargs({"tags": ["x"]}, given=frozenset())
+        first, second = unset_tags.build(Tagged), unset_tags.build(Tagged)
+        assert first.tags == []
+        assert first.tags is not second.tags
+
+    @pytest.mark.asyncio
+    async def test_a_project_instruction_handed_its_body_instance_runs_with_that_object(
+        self, two_project_lab
+    ):
+        from otto.instructions import run_instruction
+
+        seen: "dict[str, Any]" = {}
+        a_install = self._variant_install(two_project_lab, seen)
+        x = a_install(variant="debug")
+        ctx = orchestrator._lab()[0]
+        assert (await run_instruction(ctx, name="install", opts=[x])).is_ok
+        assert seen["install"] is x
+        assert seen["install_read"] is x
+
+    @pytest.mark.asyncio
+    async def test_another_projects_body_reads_the_instance_the_first_body_got(
+        self, two_project_lab
+    ):
+        from otto.cli.run import build_instruction_app
+        from otto.instruction_catalog import INSTRUCTIONS
+
+        seen: "dict[str, Any]" = {}
+        self._variant_install(two_project_lab, seen)
+        (command,) = build_instruction_app(INSTRUCTIONS.get("install")).registered_commands
+        assert command.callback is not None
+        await command.callback(ensure=False, recover_partial=True, variant="debug")
+        assert seen["install"].variant == "debug"
+        assert seen["b_read"] is seen["install"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_host_callbacks_each_keep_their_own_block():
+    """Two callbacks through the real ``do_for_all_hosts``: each keeps its own block."""
+    import asyncio
+
+    from otto import get_options, options, use_options
+
+    @options
+    class Acme:
+        debug_level: int = 0
+
+    class _Ctx(_FakeCtx):
+        do_for_all_hosts = OttoContext.do_for_all_hosts
+
+        def all_hosts(self, _scope_owner=None, **_kw):
+            return iter(self.hosts)
+
+    levels = {"h0": 1, "h1": 2}
+    both_open = asyncio.Event()
+    entered: "list[str]" = []
+
+    async def callback(host):
+        with use_options(Acme(debug_level=levels[host.id])):
+            entered.append(host.id)
+            if len(entered) == len(levels):
+                both_open.set()
+            await both_open.wait()
+            return get_options(Acme).debug_level
+
+    ctx = _Ctx([SimpleNamespace(id="h0"), SimpleNamespace(id="h1")])
+    assert await ctx.do_for_all_hosts(callback) == {"h0": 1, "h1": 2}

@@ -384,10 +384,10 @@ def _session_context(log_dir: Path) -> "Generator[OttoContext, None, None]":
     - **Active context**: point its policy's ``output_dir`` at *log_dir* when
       it has none (the same assignment the CLI preamble makes; one it already
       has is left alone), and restore ``output_dir``, ``cov_decision``,
-      ``collecting_coverage``, the cleanup-warning latch and the verb
-      binding (:meth:`~otto.context.OttoContext.verb_binding_preserved` --
-      :func:`run_tests` binds ``test``) afterwards — the run's per-session
-      state never outlives the run on a context the caller owns.
+      ``collecting_coverage`` and the cleanup-warning latch afterwards — the
+      run's per-session state never outlives the run on a context the
+      caller owns. Its recorded flags and ``verb`` are never changed:
+      :func:`run_tests` lays its *options* as a block instead.
     """
     from ..run_context import try_get_context
 
@@ -422,7 +422,7 @@ def _session_context(log_dir: Path) -> "Generator[OttoContext, None, None]":
     if active.policy.output_dir is None:
         active.policy.output_dir = log_dir
     try:
-        with active.verb_binding_preserved(), active.coverage_collection_preserved():
+        with active.coverage_collection_preserved():
             yield active
     finally:
         active.policy.output_dir, active.cov_decision = prior_output_dir, prior_cov
@@ -1784,12 +1784,16 @@ def run_tests(
     into this process's ``test/<ts>/`` run dir under the default xdir,
     ``$OTTO_HOME/otto-xdir`` (:func:`otto.output_dir.resolve_output_dir`).
 
-    *options* are instances of classes registered for the ``test`` verb
-    (:func:`otto.params.register_options`); they are bound on the context, so
-    tests read them with ``ctx.options(Cls)`` and the ``ensure`` marker's
-    converge builds each install body's options from them. A registered class
-    that is not passed is built from its defaults, as the command line would
-    build it, and a required field raises.
+    *options* are instances of any options class, registered for the
+    ``test`` verb (:func:`otto.params.register_options`) or not. They are
+    laid as one :func:`otto.params.use_options` block for the sessions: a
+    read of an instance's own class (``otto.get_options(Cls)``,
+    ``ctx.options(Cls)``) returns that instance, every other class takes the
+    values whose field names it carries, and the ``ensure`` marker's
+    converge builds each install body's options from them. A class not
+    handed in keeps the values of the command the call is made from (the
+    active context's recorded flags); that record and ``ctx.verb`` are never
+    changed.
 
     A project's libraries are imported once per process: after editing one,
     start a new process to see the change.
@@ -1797,8 +1801,10 @@ def run_tests(
     Raises:
         ValueError: neither *names* nor ``run_options.markers`` was given —
             with both empty a run would match every test in every project.
-        otto.params.OptionsRegistrationError: an instance in *options* is of a
-            class not registered for ``test``.
+        ValueError: two instances in *options* give one field name two
+            values.
+        otto.params.OptionsRegistrationError: an entry of *options* is a
+            class or not a dataclass instance.
         otto.suite.selection.UnknownSelectionError: a name matches no test
             in any project although there were collected tests to search; the
             message carries did-you-mean suggestions and names each file
@@ -1826,10 +1832,10 @@ def run_tests(
 
     from ..config.home import workspace_home
     from ..output_dir import LIBRARY_TEST, materialize_output_dir, resolve_output_dir
-    from ..params import flatten_option_instances
+    from ..params import use_options
     from .layout import ArtifactLayout
 
-    flat = flatten_option_instances(list(options or []), verb="test")
+    layer = use_options(*(options or []))  # refuses a non-instance before anything runs
     opts = run_options
     # The stability report is written straight into the dir (even with JUnit
     # redirected), so the run creates it: a library run dir with its marker,
@@ -1837,16 +1843,12 @@ def run_tests(
     log_dir = materialize_output_dir(resolve_output_dir(output_dir, entry=LIBRARY_TEST))
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    with _session_context(log_dir) as session_ctx:
+    with layer, _session_context(log_dir) as session_ctx:
         # The context first, then its projects: an inherited context's snapshot, or
         # the library sentinel's, read once (the sentinel bootstraps lazily).
         projects = session_ctx.projects
         searched = [r for r in projects if any(d.exists() for d in r.tests)]
         multi = len(searched) > 1
-        # Bound first: every test (and the `ensure` converge) reads the
-        # options off this context, and a bad value fails before any
-        # collection or host work.
-        session_ctx.bind_verb_options(verb="test", kwargs=flat)
         if not searched:
             raise NoTestsMatchedError("No tests matched the selection.")
 

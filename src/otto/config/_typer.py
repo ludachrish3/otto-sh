@@ -45,14 +45,18 @@ built on :class:`QuietCompletionGroup`, so every invocation imports it.
 
 import contextlib
 import io
+from collections.abc import Iterable
 from typing import Any
 
 # Click's command, context and parameter base classes. Typer exposes its own
 # subclasses (``typer.core``), but ``TyperCommand.context_class`` is the
 # vendored base ``Context``, and ``typer.Context`` is a subclass no command
 # instantiates; an annotation that must accept what Typer really hands over
-# names the base. No upstream request yet (#1118).
-from typer._click.core import Command, Context, Parameter
+# names the base. ``ParameterSource`` is the record of where each parameter's
+# value came from (command line, environment, default, prompt), which says
+# whether a flag was given; Typer re-exports no spelling of it. No upstream
+# request yet (#1118).
+from typer._click.core import Command, Context, Parameter, ParameterSource
 
 # Usage errors otto raises or catches itself. Typer re-exports only
 # ``BadParameter``, ``Exit``, ``Abort`` and, since fastapi/typer#1942,
@@ -96,8 +100,26 @@ __all__ = [
     "autocompletion_of",
     "get_completion_class",
     "get_current_context",
+    "given_names",
     "pending_subcommand_args",
 ]
+
+
+def given_names(ctx: Context | None, names: Iterable[str]) -> frozenset[str]:
+    """Return the members of *names* whose value the parser did not take from the default.
+
+    A flag typed on the command line, read from its environment variable or
+    prompted for is given, even when it equals the default; a flag nobody
+    supplied is not. With no parser context (*ctx* is ``None``: a library call)
+    every name is given, and so is a name the parser has no record of. The
+    record is the parser's own ``ParameterSource``, so this never compares a
+    value with its default.
+    """
+    if ctx is None:
+        return frozenset(names)
+    return frozenset(
+        name for name in names if ctx.get_parameter_source(name) is not ParameterSource.DEFAULT
+    )
 
 
 def autocompletion_of(param: Parameter) -> Any | None:

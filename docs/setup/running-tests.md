@@ -49,7 +49,7 @@ class DeviceOptions:
 `--firmware` and `--retries` on it. The class has to live in the init module,
 or in a module the init module imports, never in a test module or
 `conftest.py`
-([why](options-classes.md#registering-a-class-for-a-verb)).
+([why](options-advanced.md#registering-a-class-for-a-verb)).
 
 ## A test
 

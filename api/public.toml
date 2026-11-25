@@ -364,6 +364,9 @@ why = "forwards positionals to the called method"
 positional = ["method", "args"]
 why = "forwards positionals to the called method"
 
+[symbols."otto.context:ProjectContextView.options"]
+positional = ["cls"]
+
 [symbols."otto.context:ProjectContextView.run_on_all_hosts"]
 positional = ["args"]
 why = "forwards positionals to the called method"
@@ -3316,6 +3319,9 @@ positional = ["walked"]
 [symbols."otto.monitor:ReviewSourceError"]
 positional = ["message"]
 
+[symbols."otto.params:get_options"]
+positional = ["cls"]
+
 [symbols."otto.params:options"]
 positional = ["cls"]
 why = "third-party: dataclasses (decorator factory, cls beside **dataclass_kwargs)"
@@ -3325,6 +3331,10 @@ positional = ["cls_or_path"]
 
 [symbols."otto.params:register_options"]
 positional = ["cls_or_path"]
+
+[symbols."otto.params:use_options"]
+positional = ["instances"]
+why = "variadic: the instances whose values the block sets"
 
 [symbols."otto.params:verbs_for"]
 positional = ["cls"]
@@ -3915,6 +3925,9 @@ positional = ["host_id"]
 [symbols."otto:load_lab"]
 positional = ["labnames"]
 
+[symbols."otto:get_options"]
+positional = ["cls"]
+
 [symbols."otto:options"]
 positional = ["cls"]
 why = "third-party: dataclasses (decorator factory, cls beside **dataclass_kwargs)"
@@ -3939,3 +3952,7 @@ why = "registrar: the name, then what it registers"
 
 [symbols."otto:run_on_all_hosts"]
 positional = ["cmds"]
+
+[symbols."otto:use_options"]
+positional = ["instances"]
+why = "variadic: the instances whose values the block sets"

@@ -229,7 +229,7 @@ same flags, and a test reads the same values with `ctx.options(ProjectOptions)`
 
 An instruction's own options class may inherit a registered class. Each
 inherited field stays one flag, and the instruction adds its own; see
-[Sharing fields by inheritance](options-classes.md#sharing-fields-by-inheritance).
+[Sharing fields by inheritance](options-advanced.md#sharing-fields-by-inheritance).
 A field an unrelated class of its own declares under the same name as a
 registered one is refused when the command is built.
 

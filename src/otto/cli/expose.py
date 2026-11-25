@@ -179,14 +179,20 @@ def host_class_for_id(host_id: str | None) -> type | None:
     ``ctx.obj``). Calls :func:`get_host`, which builds the host on first access and
     returns the cached instance thereafter — cheap on repeat, but the first call per
     host does build it. Any failure (no lab loaded, unknown id) yields ``None`` → the
-    full (unscoped) menu, and the callback then raises its own clean error.
+    full (unscoped) menu, and the callback then raises its own clean error --
+    except ``OptionsNotAvailableError``: a host constructor that read an
+    option before the command read its flags is a defect, and is raised.
     """
     if not host_id:
         return None
+    from ..params import OptionsNotAvailableError
+
     try:
         from ..fleet import get_host
 
         return type(get_host(host_id))
+    except OptionsNotAvailableError:
+        raise
     except Exception:  # noqa: BLE001 — completion fallback: no lab loaded / unknown id → return None for full menu
         return None
 

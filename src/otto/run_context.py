@@ -29,8 +29,6 @@ from .invocation import ContextBinding, RunPolicy, Variant
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from _typeshed import DataclassInstance
-
     from .config.project import Project
     from .config.scope import ProjectScope
     from .declared import BootstrapResult
@@ -47,7 +45,7 @@ if TYPE_CHECKING:
     from .host.remote_host import RemoteHost
     from .host.unix_host import UnixHost
     from .labs.loader import Lab
-    from .params import OptionsSource
+    from .params import OptionsSource, RecordedOptions
     from .result import Results
 
 __all__ = [
@@ -392,20 +390,23 @@ class OttoContext:
     verb: "str | None" = field(default=None, init=False)
     """The verb this invocation dispatched (``"run"`` or ``"test"``), once bound.
 
-    ``None`` until :meth:`bind_verb_options` runs — a library context that
-    never dispatches a verb keeps this ``None`` forever, and :meth:`options`
-    reports that plainly rather than guessing.
+    ``None`` until :meth:`bind_verb_options` (or the command's record) sets
+    it. A library context that never dispatches a verb keeps this ``None``;
+    :meth:`options` still answers for every class, from defaults.
     """
 
-    _verb_options: "dict[type, Any]" = field(default_factory=dict, init=False, repr=False)
-    """This invocation's built instance of each options class registered for :attr:`verb`."""
+    _recorded: "RecordedOptions | None" = field(default=None, init=False, repr=False, compare=False)
+    """What this context's command recorded: its parsed flags, given names and built instances.
 
-    _verb_option_kwargs: "dict[str, Any]" = field(default_factory=dict, init=False, repr=False)
-    """The flat parsed kwargs :meth:`bind_verb_options` was last called with.
+    ``None`` until bound; until then :meth:`_recorded_options` reads through
+    :attr:`_outer`. Replaced whole by :meth:`bind_verb_options` and
+    :func:`record_options`, never merged.
+    """
 
-    Kept so :meth:`verb_option_source` can replay them for a class that was
-    not itself part of the bound verb's build — e.g. a project instruction
-    body building its own options class that shares fields with a bound one.
+    _outer: "OttoContext | None" = field(default=None, init=False, repr=False, compare=False)
+    """The context active when this one was built, read through until this one is bound.
+
+    Holding it keeps the outer context alive for the inner one's lifetime.
     """
 
     _scopes_refusal: "BaseException | None" = field(
@@ -478,8 +479,8 @@ class OttoContext:
         self.include_projects = include_projects
         self.exclude_projects = exclude_projects
         self.verb = None
-        self._verb_options = {}
-        self._verb_option_kwargs = {}
+        self._recorded = None
+        self._outer = try_get_context()
         self._scopes_refusal = None
         self._bootstrap_result = bootstrap
         self._bootstrap_refusal = None
@@ -561,24 +562,25 @@ class OttoContext:
         return self.policy.output_dir
 
     def bind_verb_options(self, *, verb: str, kwargs: "dict[str, Any]") -> None:
-        """Build every options class registered for *verb* from the parsed *kwargs*.
+        """Record *kwargs* as this context's parsed flags for *verb*, every one of them given.
 
-        Each registered class is constructed with
-        ``OptionsSource.from_kwargs(kwargs).build(cls)``, which raises
-        ``otto.params.OptionsValidationError`` (not a pydantic
-        ``ValidationError``) on a bad value; the CLI translates that to a
-        usage error at its boundary (``otto.cli.invoke.usage_error_from``)
-        before any command body runs. Calling this a second time replaces the
-        earlier binding outright — nothing is merged across calls.
+        Every options class registered for *verb* is built from *kwargs* alone
+        (the task's ``use_options`` blocks play no part) and validated first,
+        raising ``otto.params.OptionsValidationError`` (not a pydantic
+        ``ValidationError``) on a bad value before anything is replaced; the
+        CLI translates that to a usage error at its boundary
+        (``otto.cli.invoke.usage_error_from``) before any command body runs.
+        Calling this a second time replaces the earlier record outright;
+        nothing is merged across calls.
         """
-        from .params import OptionsSource, verb_option_classes
+        from .params import RecordedOptions, build_offered, verb_option_classes
 
-        source = OptionsSource.from_kwargs(kwargs)
-        built = {
-            origin.cls: source.build(cast("type[DataclassInstance]", origin.cls))
-            for origin in verb_option_classes(verb)
-        }
-        self.verb, self._verb_options, self._verb_option_kwargs = verb, built, dict(kwargs)
+        offered = tuple(origin.cls for origin in verb_option_classes(verb))
+        recorded = RecordedOptions(
+            group=verb, parsed=dict(kwargs), given=frozenset(kwargs), offered=offered
+        )
+        recorded.instances = build_offered(recorded)
+        record_options(self, recorded)
 
     @contextmanager
     def verb_binding_preserved(self) -> "Generator[None, None, None]":
@@ -586,58 +588,72 @@ class OttoContext:
 
         For a caller that binds a verb's options on a context it does not own
         -- :func:`otto.suite.run.run_tests` binds ``test`` on the caller's
-        active context -- and must hand it back unchanged: the bound verb, its
-        built instances and its parsed flags all come back, whether the block
-        returns or raises. Nothing is merged; a binding made inside the block
-        is simply discarded.
+        active context -- and must hand it back unchanged: the bound verb and
+        its record (parsed flags and built instances) come back, whether the
+        block returns or raises. Nothing is merged; a binding made inside the
+        block is simply discarded.
         """
-        saved = (self.verb, dict(self._verb_options), dict(self._verb_option_kwargs))
+        saved = (self.verb, self._recorded)
         try:
             yield
         finally:
-            self.verb, self._verb_options, self._verb_option_kwargs = saved
+            self.verb, self._recorded = saved
+
+    def _recorded_options(self) -> "RecordedOptions":
+        """Return the record this context's reads start from.
+
+        Its own; else the nearest outer context's; else the record a
+        contextless command holds now, so a context opened inside a lab-free
+        options command still reads what that command was given; else an
+        empty record created on the outermost context of the chain (assigned
+        directly, so :attr:`verb` stays ``None``), so every read of a class
+        returns one object until a bind replaces it.
+
+        That empty record stays on the context: a context read once outside
+        any command keeps answering from it even if it is later read inside a
+        contextless command's block. That is accepted.
+        """
+        from .params import _COMMAND_OPTIONS, RecordedOptions
+
+        # Every context of the chain is an OttoContext: these are this class's own fields.
+        ctx: OttoContext = self
+        while ctx._recorded is None and ctx._outer is not None:
+            ctx = ctx._outer
+        if ctx._recorded is None:  # noqa: SLF001 — this class's own field
+            # Read directly: recorded_in_force() would loop back through the installed run.
+            command = _COMMAND_OPTIONS.get()
+            if command is not None:
+                return command
+            ctx._recorded = RecordedOptions()  # noqa: SLF001 — this class's own field
+        return ctx._recorded  # noqa: SLF001 — this class's own field
 
     def options(self, cls: "type[T]") -> "T":
-        """Return this invocation's instance of the registered options class *cls*.
+        """Return this context's option values for options class *cls*, registered or not.
+
+        The values this context's command recorded, with every
+        :func:`otto.params.use_options` block around the caller laid over
+        them; a class the command did not offer takes only the values given,
+        and its own defaults for the rest. Two reads return one object.
 
         Raises:
-            otto.params.OptionsNotAvailableError: *cls* is not registered at
-                all; no verb is bound in this context yet; *cls* is
-                registered for a verb other than the one bound here; or it
-                was registered for that verb after the verb was bound.
+            otto.params.OptionsNotAvailableError: *cls* is not an options
+                class, or the command has not read its flags yet.
+            otto.params.OptionsValidationError: The values do not build *cls*.
         """
-        from .params import OptionsNotAvailableError, verbs_for
+        from .params import lookup_options
 
-        if cls in self._verb_options:
-            return cast("T", self._verb_options[cls])
-        verbs = verbs_for(cls)
-        if verbs is None:
-            raise OptionsNotAvailableError(
-                f"{cls.__qualname__} is not registered; declare it with "
-                "@otto.options(verbs=[...]) in an init module"
-            )
-        if self.verb is None:
-            raise OptionsNotAvailableError(
-                f"no verb's options are bound in this context, so {cls.__qualname__} has no value"
-            )
-        if self.verb in verbs:
-            raise OptionsNotAvailableError(
-                f"{cls.__qualname__} was registered after otto {self.verb} bound its options"
-            )
-        raise OptionsNotAvailableError(
-            f"{cls.__qualname__} is registered for {', '.join(verbs)}, not {self.verb}"
-        )
+        return lookup_options(cls, self._recorded_options())
 
     def verb_option_source(self) -> "OptionsSource":
-        """Return the parsed flags of the bound verb, for building a body's options class.
+        """Return the recorded flags of this context's command, without any block's values.
 
-        With nothing bound, returns ``OptionsSource.from_kwargs({})`` — every
-        class built from it takes its own defaults, rather than this raising
-        for a context that never dispatched a verb.
+        otto no longer uses it; read option values with :meth:`options`
+        (or :func:`otto.params.get_options`). With nothing recorded, every
+        class built from it takes its own defaults.
         """
-        from .params import OptionsSource
+        from .params import options_snapshot
 
-        return OptionsSource.from_kwargs(self._verb_option_kwargs)
+        return options_snapshot(self._recorded_options(), layers=False)
 
     @property
     def cov(self) -> bool:
@@ -1313,6 +1329,14 @@ class ProjectContextView:
         """
         return getattr(self._ctx, name)
 
+    def options(self, cls: "type[T]") -> "T":
+        """Return the option values for options class *cls* — :meth:`OttoContext.options`, typed.
+
+        Defined here rather than reached through ``__getattr__`` so the result
+        is typed as *cls*; the values are the live context's.
+        """
+        return self._ctx.options(cls)
+
     def all_hosts(self, *args: Any, **kwargs: Any) -> "Iterator[RemoteHost]":
         """Yield this project's fleet of interest — :meth:`OttoContext.all_hosts`, bound.
 
@@ -1379,6 +1403,12 @@ class ProjectContextView:
         verb fits. No owner is stamped: ``host.run`` takes none.
         """
         return await self._ctx.run_on_all_hosts(*args, _scope_owner=self._project_name, **kwargs)
+
+
+def record_options(ctx: OttoContext, recorded: "RecordedOptions") -> None:
+    """Replace *ctx*'s recorded flags with *recorded* and set ``ctx.verb`` to its group."""
+    ctx._recorded = recorded  # noqa: SLF001 — the context is this module's own
+    ctx.verb = recorded.group
 
 
 def prepared_policy(

@@ -32,3 +32,5 @@ and the reference can link them. The public names are on :doc:`/api/params`.
 .. autofunction:: otto.params.merge_option_params
 
 .. autofunction:: otto.params.flatten_option_instances
+
+.. autoclass:: otto.params.RecordedOptions
