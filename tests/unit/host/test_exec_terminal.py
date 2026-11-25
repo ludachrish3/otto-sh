@@ -220,8 +220,7 @@ def test_exec_restore_line_with_lost_state_answers_and_restores_nothing(name):
     assert pattern is not None
     with interactive_shell(name, setup="set -u") as shell:
         before = _TERMINAL_ANSWER.findall(shell.run(_read()))
-        shell.send(line)
-        shell.wait_for_output(pattern, READY_TIMEOUT)
+        shell.type_line(line, pattern, READY_TIMEOUT)
         out = shell.run("echo probe=${__otto_probe-unset} e=${__otto_e-unset}; " + _read())
     assert "probe=unset e=unset" in out
     assert _TERMINAL_ANSWER.findall(out) == before
@@ -242,8 +241,9 @@ def test_establishing_on_replace_snapshots_the_terminal():
 def test_a_fresh_nounset_shell_establishes_and_a_cut_resend_does_not_confirm(name, options):
     history = BashFrame().quiet_history()
     with interactive_shell(name, setup=options) as shell:
-        shell.send(_identity_probe(TAIL_MARKERS, history))
-        shell.wait_for_output(_identity_pattern(TAIL_MARKERS), READY_TIMEOUT)
+        shell.type_line(
+            _identity_probe(TAIL_MARKERS, history), _identity_pattern(TAIL_MARKERS), READY_TIMEOUT
+        )
         state = shell.run("printf probe=${__otto_probe-unset}' '; " + STATE)
         assert re.search(r"probe=unset bet:\S+", state), state
         # The resend cut just before its final echo: the anchor is not set, so
@@ -274,8 +274,11 @@ def test_the_whole_resync_keeps_a_seeded_outer_record(name, options):
     """The resync probe, typed whole into a shell that has a record, leaves the record alone."""
     seed = "__otto_base=OUTER; __otto_e=e; __otto_tty=T"
     with interactive_shell(name, setup="; ".join(p for p in (options, seed) if p)) as shell:
-        shell.send(_identity_probe(TAIL_MARKERS, BashFrame().quiet_history()))
-        shell.wait_for_output(_identity_pattern(TAIL_MARKERS), READY_TIMEOUT)
+        shell.type_line(
+            _identity_probe(TAIL_MARKERS, BashFrame().quiet_history()),
+            _identity_pattern(TAIL_MARKERS),
+            READY_TIMEOUT,
+        )
         out = shell.run("printf state=; " + STATE)
     assert "state=bet:OUTER" in out
 

@@ -38,9 +38,12 @@ _OD = re.compile(r"^(?:> )*((?: +\S+)+) *\r*$", re.MULTILINE)
 
 
 def _handshaken(shell: InteractiveShell) -> None:
-    """Type the session's whole first line and wait for its answer."""
-    shell.send(render_probe("handshake", TAIL_MARKERS))
-    shell.wait_for_output(probe_answer("handshake", TAIL_MARKERS), READY_TIMEOUT)
+    """Type the session's whole first line; wait for its answer and the prompt after it."""
+    shell.type_line(
+        render_probe("handshake", TAIL_MARKERS),
+        probe_answer("handshake", TAIL_MARKERS),
+        READY_TIMEOUT,
+    )
 
 
 def _bytes_seen(printed: str) -> "list[str]":

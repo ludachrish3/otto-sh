@@ -299,8 +299,11 @@ def test_the_console_handshake_saves_the_settings_it_found_and_the_restore_puts_
     with interactive_shell(name) as shell:
         found = _settings(shell)
         mark = len(shell.output)
-        shell.send(render_probe("console-handshake", TAIL_MARKERS, history=False))
-        reply = shell.wait_for_output(probe_answer("console-handshake", TAIL_MARKERS), 5.0)
+        reply = shell.type_line(
+            render_probe("console-handshake", TAIL_MARKERS, history=False),
+            probe_answer("console-handshake", TAIL_MARKERS),
+            5.0,
+        )
         saved = saved_settings(reply[mark:], TAIL_MARKERS.saved)
         changed = _settings(shell)
         restore = BashFrame().restore_terminal(saved or "")

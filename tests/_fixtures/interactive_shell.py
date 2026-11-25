@@ -199,12 +199,39 @@ class InteractiveShell:
         """
         mark = len(self.output)
         token = uuid.uuid4().hex
-        self.send(f'{command}; echo DONE_"{token}"\n')
-        done = re.compile(rf"\nDONE_{token}\r*\n")
-        found = done.search(self.wait_for_output(done, READY_TIMEOUT), mark)
+        end = self._typed(
+            f'{command}; echo DONE_"{token}"\n', re.compile(rf"\nDONE_{token}\r*\n"), READY_TIMEOUT
+        )
+        return self.output[mark:end]
+
+    def type_line(self, line: str, answered: "re.Pattern[str]", timeout: float) -> str:
+        """Type *line* (its newline included), wait for *answered* and for the next prompt.
+
+        For a line that prints its own answer, such as a session's handshake.
+        Returns everything the terminal printed so far. The prompt is waited
+        for as :meth:`run` waits for it: a shell prints its answer and its
+        next prompt in two writes, and a caller that went on between them
+        would find that prompt at the head of what its next command printed
+        (#1343).
+        """
+        self._typed(line, answered, timeout)
+        return self.output
+
+    def _typed(self, line: str, answered: "re.Pattern[str]", timeout: float) -> int:
+        """Type *line*; wait for *answered* past here, then the prompt. Return the answer's end.
+
+        The one statement of "this line is over": its answer printed and the
+        line editor has the terminal back.
+        """
+        mark = len(self.output)
+        self.send(line)
+        self._wait(
+            lambda: answered.search(self.output, mark) is not None, answered.pattern, timeout
+        )
+        found = answered.search(self.output, mark)
         assert found is not None
         self._wait_for_prompt(after=found.end())
-        return self.output[mark : found.end()]
+        return found.end()
 
     def _wait_for_prompt(self, after: int = 0) -> None:
         """Wait until the output past *after*, control sequences stripped, ends in the PS1 text."""
