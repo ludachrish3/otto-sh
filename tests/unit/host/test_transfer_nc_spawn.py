@@ -18,6 +18,7 @@ import otto.host.transfer.nc as transfer_mod
 from otto.host.transfer import NcFileTransfer
 from otto.result import CommandResult
 from otto.utils import Status
+from tests.unit.host.nc_spawn_support import spawn_once_typed
 from tests.unit.host.test_transfer_nc_shared_port import (
     _Bed,
     _FakeWriter,
@@ -46,18 +47,11 @@ class _SlowOpenBed(_Bed):
 
     async def spawn(self, cmd: str, **kw: Any) -> "asyncio.Task[CommandResult]":
         """What the host's `_exec_spawned` does: the task, once the command is typed."""
-        typed = asyncio.Event()
 
-        async def call() -> CommandResult:
+        async def opened() -> None:
             await _opened_later().wait()
-            typed.set()
-            return await _Bed.exec_side(self, cmd, **kw)
 
-        task = asyncio.create_task(call())
-        waiter = asyncio.ensure_future(typed.wait())
-        await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
-        waiter.cancel()
-        return task
+        return await spawn_once_typed(lambda: _Bed.exec_side(self, cmd, **kw), opened)
 
 
 async def _put(
