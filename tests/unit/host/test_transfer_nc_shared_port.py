@@ -31,8 +31,6 @@ import pytest
 
 import otto.host.transfer.nc as transfer_mod
 from otto.host.connections import ConnectionManager
-from otto.host.exec_route import ExecRoute
-from otto.host.exit_status import NO_RETURN_CODE, no_return_code_result
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
 from otto.host.transfer.nc import NcListenerAnswerError, NcPortSharedError
@@ -47,6 +45,13 @@ def _ok(output: str = "") -> CommandResult:
 
 def _fail(output: str = "") -> CommandResult:
     return CommandResult(command="", value=output, status=Status.Failed, retcode=1)
+
+
+def _never_ran(cmd: str) -> CommandResult:
+    """A command that gave no exit status: the result of a session that died under it."""
+    return CommandResult(
+        command=cmd, value="Session died unexpectedly (EOF)", status=Status.Error, retcode=-1
+    )
 
 
 def _make_ft(
@@ -580,12 +585,12 @@ class TestBothDirectionsShareTheWaitAndTheRetry:
         self, direction: str, tmp_path: Path
     ) -> None:
         """The first attempt polls past it and reaches its connect, as the second does."""
-        never_ran = no_return_code_result(cmd="check", route=ExecRoute.SSH_CHANNEL)
+        never_ran = _never_ran("check")
         connect = AsyncMock(side_effect=ConnectionError("refused"))
         message, bed, _ = await _transfer(direction, tmp_path, [never_ran, _ok("1\n")], connect)
         assert bed.spawns == 2
         assert connect.await_count == 2, "the first attempt spent itself on a poll that never ran"
-        assert NO_RETURN_CODE not in message
+        assert never_ran.value not in message
 
 
 class TestAPinnedPortRungIsNotRetried:

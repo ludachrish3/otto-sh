@@ -1,40 +1,33 @@
-"""A console's ``exec`` runs in a clean login shell started from the console's shell (#935).
+"""A console's ``exec`` runs on the shell ``run`` uses, in an isolating subshell (#935, #1261).
 
 A console has one shell for ``run`` and ``exec``. Its ``exec`` frame
 (:meth:`~otto.host.command_frame.BashFrame.frame_exec` with
 :attr:`~otto.host.command_frame.ExecRestore.START`, the restore a console's
-default session is given) replaces its subshell with ``env -i ... "$SHELL" -l
--c``: the command starts in the login's home directory, environment and
-options, never from what ``run`` left, and nothing it changes reaches a later
-command. Every other promise of the exec frame holds as it does on a pooled
-shell. Each is proved here on the real shells of the matrix on a pty
+default session is given) is the pooled frame plus a snapshot of the
+terminal at its start: the command starts from ``run``'s directory,
+variables and options, and nothing it changes reaches a later command.
+Every other promise of the exec frame holds as it does on a pooled shell.
+Each is proved here on the real shells of the matrix on a pty
 (:mod:`tests.unit.host._pty_session`), through a :class:`SessionManager`
-configured as a console where the route matters.
+configured as a console where the entry matters.
 """
-
-import shlex
 
 import pytest
 
-from otto.host.command_frame import BashFrame, ExecInput, ExecRestore, SessionMarkers
+from otto.host.command_frame import ExecInput, ExecRestore
 from otto.host.errors import PasswordRefusedError
-from otto.host.exec_route import ExecRoute
 from otto.host.session import NEVER_RAN
 from otto.logger.mode import LogMode
 from otto.utils import Status
 from tests.unit.host._pty_session import PTY_SHELLS, console_session, pty_session
+from tests.unit.host.test_exec_frame import _ZSH_INTERACTIVE
 from tests.unit.host.test_exec_stdin import _ADMIN
 from tests.unit.host.test_frame_shell_portability import FRAME_EDGE_CASES
 from tests.unit.host.test_privilege import _host_with_userland
 from tests.unit.host.test_session_exec_pooled import _mgr
 
-M = SessionMarkers.for_session(session_id="0" * 8)
-
-_STATE = 'pwd; echo "${X-unset}"; case $- in *f*) echo f;; *) echo nof;; esac'
-"""Reads what ``run`` can leave: the directory, an exported variable, an option."""
-
-_PROFILE = 'printf \'%s\\n\' {line} >"$HOME/.profile"; cp "$HOME/.profile" "$HOME/.zprofile"'
-"""Writes a login profile every matrix shell reads (zsh reads ``.zprofile``)."""
+_BANG = "echo a !b c"
+"""An unquoted ``!`` before a word: a history event to an interactive bash or zsh."""
 
 _WORDS = [
     ("printf '%s|' 'single' \"double\" '$x' 'a\\b'", "single|double|$x|a\\b|", 0),
@@ -43,42 +36,134 @@ _WORDS = [
     ("printf '%s\\n' a\\\\b", "a\\b", 0),
     ("exit 7", "", 7),
     ("sh -c 'kill -TERM $$'", None, 143),
-    ("kill -TERM $$", None, 143),
+    (_BANG, "a !b c", 0),
 ]
-"""Commands whose quotes, ``$``, backslashes and ends must reach the login shell byte-exact."""
+"""Commands whose quotes, ``$``, backslashes and ends must reach the shell byte-exact."""
 
 
 def test_shells_are_installed():
     assert PTY_SHELLS, "no shell of the matrix is installed: the console exec is proved on none"
 
 
-def test_only_a_console_s_exec_starts_a_clean_login_shell():
-    f = BashFrame()
-    assert "env -i" in f.frame_exec("c", m=M, stdin_eof=True, restore=ExecRestore.START)
-    assert "env -i" not in f.frame_exec("c", m=M, stdin_eof=True, restore=ExecRestore.BASELINE)
-
-
 @pytest.mark.parametrize("case", FRAME_EDGE_CASES)
 @pytest.mark.parametrize("name", PTY_SHELLS)
 @pytest.mark.asyncio
 async def test_a_console_exec_keeps_every_frame_edge_case(case, name):
+    expected = _ZSH_INTERACTIVE.get(case.text, case.expected) if name == "zsh" else case.expected
     async with console_session(name) as s:
         r = await s.exec_(case.text, timeout=5)
-    assert (r.timed_out, r.value, r.retcode) == (False, case.expected, case.code)
+    assert (r.timed_out, r.value, r.retcode) == (False, expected, case.code)
+
+
+_INTERACTIVE_WORDS = {
+    ("zsh", "x='a'\"'\"'b'; echo \"$x\" # it's a comment"): (True, -1),
+    ("zsh", _BANG): (True, -1),
+    ("bash", _BANG): (True, -1),
+}
+"""What an interactive shell does where another shell differs, as ``(timed_out, retcode)``.
+
+Without ``interactivecomments`` (_ZSH_INTERACTIVE) zsh reads the ``#`` as an
+ordinary word, so the apostrophe after it opens a quote that never closes.
+Interactive bash and zsh expand history, so the unquoted ``!b`` is an event
+that is not found and the shell drops the whole typed line. Either way the
+frame never ends and the call times out, as the same command from ``run``
+does, and the next call finds the console working."""
 
 
 @pytest.mark.parametrize(("cmd", "value", "code"), _WORDS)
 @pytest.mark.parametrize("name", PTY_SHELLS)
 @pytest.mark.asyncio
-async def test_a_console_exec_runs_the_command_as_one_word_with_its_own_status(
-    name, cmd, value, code
-):
+async def test_a_console_exec_runs_the_command_with_its_own_status(name, cmd, value, code):
+    differs = _INTERACTIVE_WORDS.get((name, cmd))
     async with console_session(name) as s:
         r = await s.exec_(cmd, timeout=5)
-        assert (r.timed_out, r.retcode) == (False, code)
-        if value is not None:
-            assert r.value == value
+        if differs is not None:
+            assert (r.timed_out, r.retcode) == differs
+        else:
+            assert (r.timed_out, r.retcode) == (False, code)
+            if value is not None:
+                assert r.value == value
         assert (await s.exec_("echo ok", timeout=5)).value == "ok"
+
+
+_STATE = 'pwd; echo "${OTTO_T2-unset}"; case $- in *C*) echo C;; esac'
+"""Reads what ``run`` can leave: the directory, an exported variable, an option.
+
+The option is ``noclobber`` (``set -C``): every matrix shell shows it in ``$-``,
+and none of them starts with it on. ``set -f`` would not do: the matrix's zsh
+runs as ``zsh -f``, where ``f`` is already in ``$-``."""
+
+
+@pytest.mark.parametrize("name", PTY_SHELLS)
+@pytest.mark.asyncio
+async def test_a_console_exec_starts_from_run_s_directory_variables_and_options(name):
+    async with console_session(name) as s:
+        await s.run_cmd(cmd="cd /tmp; export OTTO_T2=1; set -C", timeout=5)
+        r = await s.exec_(_STATE, timeout=5)
+    assert (r.retcode, r.value) == (0, "/tmp\n1\nC")
+
+
+@pytest.mark.parametrize("name", PTY_SHELLS)
+@pytest.mark.asyncio
+async def test_what_a_console_exec_changes_does_not_reach_run(name):
+    async with console_session(name, setup="cd /tmp") as s:
+        await s.exec_("cd /; export OTTO_T2=2; set -C", timeout=5)
+        r = await s.run_cmd(cmd=_STATE, timeout=5)
+    assert r.value.splitlines()[0] != "/"
+    assert "unset" in r.value
+    assert "C" not in r.value.splitlines()
+    assert r.value == "/tmp\nunset"
+
+
+@pytest.mark.parametrize("name", PTY_SHELLS)
+@pytest.mark.asyncio
+async def test_a_console_exec_inherits_run_s_errexit(name):
+    async with console_session(name) as s:
+        await s.run_cmd(cmd="set -e", timeout=5)
+        r = await s.exec_("false; echo continued", timeout=5)
+        off = await s.exec_("set +e; false; echo continued", timeout=5)
+        opts = (await s.run_cmd(cmd="echo $-", timeout=5)).value
+    assert "continued" not in r.value
+    assert r.retcode != 0
+    assert (off.retcode, off.value) == (0, "continued")  # the exec's own `set +e` ...
+    assert "e" in opts  # ... leaves run's `set -e` on
+
+
+@pytest.mark.parametrize("name", PTY_SHELLS)
+@pytest.mark.asyncio
+async def test_a_console_exec_runs_when_run_left_a_directory_that_is_gone(name):
+    async with console_session(name) as s:
+        await s.run_cmd(cmd='cd "$(mktemp -d)"; rmdir "$PWD"', timeout=5)
+        r = await s.exec_("echo ok", timeout=5)
+        still = await s.run_cmd(cmd="echo still", timeout=5)
+    assert (r.value, r.retcode) == ("ok", 0)
+    assert still.value == "still"
+
+
+@pytest.mark.parametrize("name", PTY_SHELLS)
+@pytest.mark.asyncio
+async def test_a_console_exec_under_run_s_nounset_fails_the_command_not_the_console(name):
+    async with console_session(name) as s:
+        await s.run_cmd(cmd="set -u", timeout=5)
+        r = await s.exec_('echo "$OTTO_T2_NEVER_SET"; echo after', timeout=5)
+        opts = await s.run_cmd(cmd="case $- in *u*) echo u;; esac", timeout=5)
+    assert r.retcode != 0
+    assert opts.value == "u"
+
+
+@pytest.mark.parametrize("name", PTY_SHELLS)
+@pytest.mark.asyncio
+async def test_a_console_file_operation_reads_a_relative_path_from_run_s_directory(name, tmp_path):
+    """``exists`` runs through ``exec``, so on a console a relative path is ``run``'s ``cd``'s."""
+    from tests.unit.host.test_unix_host import TestConsoleTermTransfers
+
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "here").touch()
+    async with console_session(name) as s:
+        host = TestConsoleTermTransfers()._console_host()
+        host._live_session_mgr()._session = s
+        await host.run(f"cd {tmp_path / 'sub'}")
+        assert (await host.exists("here"), await host.exists("sub")) == (True, False)
 
 
 async def _console_mgr(session):
@@ -89,8 +174,7 @@ async def _console_mgr(session):
 
 
 async def _mgr_exec(mgr, cmd, **kw):
-    return await mgr.exec_on_route(
-        route=ExecRoute.DEFAULT_SESSION,
+    return await mgr.exec_on_default_session(
         cmd=cmd,
         timeout=5,
         log=LogMode.QUIET,
@@ -101,86 +185,44 @@ async def _mgr_exec(mgr, cmd, **kw):
 
 @pytest.mark.parametrize("name", PTY_SHELLS)
 @pytest.mark.asyncio
-async def test_a_console_manager_s_exec_starts_from_the_login_not_from_run(name):
+async def test_a_console_manager_s_exec_sees_run_and_keeps_its_own_changes(name):
     # pty_session's own restore is the pooled one: the manager gives the console's.
     async with console_session(name) as s:
         s._test_restore = ExecRestore.BASELINE
         mgr = await _console_mgr(s)
-        home = (await mgr.run_cmd(cmd='echo "$HOME"', timeout=5)).value
-        left = await mgr.run_cmd(cmd="cd /tmp; export X=1; set -f", timeout=5)
+        left = await mgr.run_cmd(cmd="cd /tmp; export X=1; set -C", timeout=5)
         assert left.retcode == 0
-        clean = await _mgr_exec(mgr, _STATE)
-        own = await _mgr_exec(mgr, "cd /; export Y=2; X=3; set -u; exit 4")
-        kept = await mgr.run_cmd(cmd=_STATE + '; echo "${Y-unset}"', timeout=5)
-        again = await _mgr_exec(mgr, _STATE)
-    assert (clean.retcode, clean.value) == (0, f"{home}\nunset\nnof")
+        seen = await _mgr_exec(mgr, 'pwd; echo "${X-unset}"; case $- in *C*) echo C;; esac')
+        own = await _mgr_exec(mgr, "cd /; export Y=2; X=3; set +C; exit 4")
+        kept = await mgr.run_cmd(
+            cmd='pwd; echo "${X-unset}"; case $- in *C*) echo C;; esac; echo "${Y-unset}"',
+            timeout=5,
+        )
+    assert (seen.retcode, seen.value) == (0, "/tmp\n1\nC")
     assert own.retcode == 4
-    assert kept.value == "/tmp\n1\nf\nunset"
-    assert again.value == clean.value
+    assert kept.value == "/tmp\n1\nC\nunset"
 
 
+_KILLED = (Status.Error, -1, "Session died unexpectedly")
+"""What a command that kills its session's shell ends as, from ``run`` and from ``exec``."""
+
+
+@pytest.mark.parametrize("entry", ["run", "exec"])
 @pytest.mark.parametrize("name", PTY_SHELLS)
 @pytest.mark.asyncio
-async def test_the_console_s_errexit_is_neither_inherited_nor_changed(name):
-    async with console_session(name, setup="set -e") as s:
-        r = await s.exec_("false; echo continued", timeout=5)
-        opts = (await s.run_cmd(cmd="echo $-", timeout=5)).value
-    assert (r.retcode, r.value) == (0, "continued")
-    assert "e" in opts
-
-
-@pytest.mark.parametrize("name", PTY_SHELLS)
-@pytest.mark.asyncio
-async def test_a_login_profile_s_output_does_not_reach_the_value(name):
-    async with console_session(name) as s:
-        await s.run_cmd(cmd=_PROFILE.format(line="otto-profile-says"), timeout=5)
-        r = await s.exec_("echo value", timeout=5)
-    assert (r.retcode, r.value) == (0, "value")
-
-
-@pytest.mark.parametrize("profile", ["'exit 3'", "'exit 0'", "'exec true'"])
-@pytest.mark.parametrize("name", PTY_SHELLS)
-@pytest.mark.asyncio
-async def test_a_login_shell_that_never_reaches_the_command_is_a_failure_never_a_success(
-    name, profile
+async def test_a_console_command_that_kills_its_session_s_shell_ends_alike_from_run_and_exec(
+    name, entry
 ):
+    # `$$` is the console's one shell from either entry (test_exit_status.py states
+    # the rule for a pooled session), so killing it ends the session both ways.
     async with console_session(name) as s:
-        await s.run_cmd(cmd=_PROFILE.format(line=profile), timeout=5)
-        r = await s.exec_("echo never", timeout=5)
-        await s.run_cmd(cmd='rm "$HOME/.profile" "$HOME/.zprofile"', timeout=5)
-        after = await s.exec_("echo alive", timeout=5)
-    assert (r.timed_out, r.status, r.retcode, r.value) == (False, Status.Failed, -1, NEVER_RAN)
-    assert (after.retcode, after.value) == (0, "alive")
-
-
-@pytest.mark.parametrize("name", PTY_SHELLS)
-@pytest.mark.asyncio
-async def test_a_login_shell_that_does_not_exist_is_the_command_s_failure(name):
-    async with console_session(name, env={"SHELL": "/nonexistent/otto-sh"}) as s:
-        r = await s.exec_("echo never", timeout=5)
-        after = await s.run_cmd(cmd="echo alive", timeout=5)
-    assert (r.timed_out, r.status, r.retcode, r.value) == (False, Status.Failed, -1, NEVER_RAN)
-    assert after.value == "alive"
-
-
-@pytest.mark.parametrize("home", ["unset HOME", "HOME="])
-@pytest.mark.parametrize("name", PTY_SHELLS)
-@pytest.mark.asyncio
-async def test_a_login_with_no_home_starts_in_the_root_directory(name, home):
-    async with console_session(name, setup=f"cd /tmp; {home}") as s:
-        r = await s.exec_("pwd", timeout=5)
-    assert (r.retcode, r.value) == (0, "/")
-
-
-@pytest.mark.parametrize("name", PTY_SHELLS)
-@pytest.mark.asyncio
-async def test_a_home_with_spaces_and_quotes_reaches_the_login_shell(name, tmp_path):
-    home = tmp_path / "a b'c\"d"
-    home.mkdir()
-    async with console_session(name) as s:
-        await s.run_cmd(cmd=f"export HOME={shlex.quote(str(home))}", timeout=5)
-        r = await s.exec_('pwd; printf "%s\\n" "$HOME"', timeout=5)
-    assert (r.retcode, r.value) == (0, f"{home}\n{home}")
+        s._test_restore = ExecRestore.BASELINE
+        mgr = await _console_mgr(s)
+        if entry == "run":
+            r = await mgr.run_cmd(cmd="kill -KILL $$", timeout=5)
+        else:
+            r = await _mgr_exec(mgr, "kill -KILL $$")
+    assert (r.status, r.retcode, r.value[: len(_KILLED[2])]) == _KILLED, r
 
 
 # zsh is not claimed, as on the other routes: its line editor hands the
@@ -207,9 +249,7 @@ def test_the_credential_descriptor_shells_are_installed():
 @pytest.mark.parametrize("form", ["shell", "validate"])
 @pytest.mark.parametrize("name", _FD3_SHELLS)
 @pytest.mark.asyncio
-async def test_a_console_exec_s_password_is_read_on_fd_3_inside_the_login_shell(
-    name, form, fake_sudo_on_path
-):
+async def test_a_console_exec_s_password_is_read_on_fd_3(name, form, fake_sudo_on_path):
     host = await _host_with_userland("sudo", _ADMIN, sudo_form=form)
     e = host._elevate("cat; echo otto-cf-eof", exec_input=ExecInput(stdin_eof=True))
     assert e.reads_credential_fd
@@ -315,34 +355,20 @@ async def test_a_console_exec_under_sudo_starts_the_console_s_own_shell(name, tm
 
 @pytest.mark.parametrize("name", PTY_SHELLS)
 @pytest.mark.asyncio
-async def test_a_console_with_shell_unset_passes_the_program_it_started(name):
-    async with console_session(name, setup="unset SHELL") as s:
-        r = await s.exec_('echo "$SHELL"', timeout=5)
-    assert (r.retcode, r.value) == (0, "/bin/sh"), r
+async def test_a_console_exec_under_sudo_with_shell_unset_runs_in_the_default_shell(name, tmp_path):
+    from otto.host.login_proxy import Cred
+    from otto.host.privilege import _SUDO_SHELL_PROBE
+    from tests._fixtures.fake_elevation import install_fake_elevation
 
-
-# zsh is left out as above: its line editor hands the command the typed answer with its `\r`.
-@pytest.mark.parametrize("name", [n for n in PTY_SHELLS if n != "zsh"])
-@pytest.mark.asyncio
-async def test_a_caller_s_expect_is_never_answered_to_what_the_login_profile_prints(name):
-    async with console_session(name) as s:
-        await s.run_cmd(cmd=_PROFILE.format(line="'Continue? motd'"), timeout=5)
-        typed: list[str] = []
-        write = s.write_transport
-
-        async def counting(*, data):
-            if str(data) == "yes\n":
-                typed.append(str(data))
-            await write(data=data)
-
-        s.write_transport = counting
-        r = await s.exec_(
-            "printf 'Continue? '; read a; echo got-$a",
-            timeout=5,
-            expects=[("Continue\\?", "yes\n")],
-        )
-        s.write_transport = write
-        after = await s.exec_("echo alive", timeout=5)
-    assert (r.timed_out, r.value.endswith("got-yes")) == (False, True), r
-    assert typed == ["yes\n"]
-    assert (after.timed_out, after.value) == (False, "alive")
+    env = install_fake_elevation(tmp_path / "e", password="x", keeps_timestamp=True, nopasswd=True)
+    host = await _host_with_userland("sudo", [Cred(login="admin")], sudo_form="shell")
+    x = ExecInput(stdin_eof=True)
+    elevated = host._elevate("echo otto-posix", exec_input=x)
+    probe = host._sudo_command(_SUDO_SHELL_PROBE, None, exec_input=x)
+    async with console_session(name, env=env, setup="unset SHELL") as s:
+        seen = await s.exec_('echo "${SHELL-unset}"', timeout=5)
+        r = await s.exec_(elevated.command, timeout=5)
+        asked = await s.exec_(probe.command, timeout=5)
+    assert (seen.retcode, seen.value) == (0, "unset"), seen
+    assert (r.retcode, r.value) == (0, "otto-posix"), r
+    assert (asked.retcode, asked.value) == (0, "/bin/sh"), asked

@@ -1,29 +1,20 @@
-"""One stop sequence for a command otto started as a process: a local shell's group, an ssh channel.
+"""One stop for a local shell session's process group, and the marked stop for a remote shell.
 
-A timed-out command is asked to stop with ``TERM`` ("you took too long"); an
-interrupted one is hung up with ``HUP`` ("the terminal went away", the end a
-shell-routed command meets when its pty closes, which spares a deliberately
-``nohup``'d child the hang-up itself). Either way the command can ignore the
-first signal, so the stop is bounded by ``_EXEC_REAP_TIMEOUT`` (the grace): a
-command that OUTLIVES the first signal by the grace is killed, and on a route
-that sees the command's process group, so is whatever is left in the group
-once the grace is over (a member that ignores the signal, a ``nohup`` child).
-A group that is empty when the command exits ends the stop at once. A process
-that left the group (``setsid``) is never reached.
-
-Where the signal goes is each route's adapter:
-
-* :class:`LocalStoppable` signals the command's process group (local exec
-  starts the command in a new session, so the group id is the leader's pid),
-  and never once the leader is known to be reaped (asyncio has set its
-  ``returncode``); see :class:`LocalStoppable` for the window before that.
-* :class:`ChannelStoppable` asks the ssh channel; delivery to the remote
-  command (sshd signals its process group) is the server's, not observed by
-  otto.
+A local shell session (:class:`~otto.host.session.LocalSession`) leads its
+own process group, and closing it stops that group (:func:`stop_local_session_group`):
+``TERM`` first, which the shell or a member can ignore, so the stop is
+bounded by ``_EXEC_REAP_TIMEOUT`` (the grace). A shell that OUTLIVES the
+signal by the grace is killed, and so is whatever is left in the group once
+the grace is over (a member that ignores the signal, a ``nohup`` child). A
+group that is empty when the shell exits ends the stop at once. A process
+that left the group (``setsid``) is never reached. :class:`LocalStoppable`
+signals the group, and never once the leader is known to be reaped (asyncio
+has set its ``returncode``); see :class:`LocalStoppable` for the window
+before that.
 
 Callers reach :func:`stop_process` through this module (``process_stop.
 stop_process``), never a name imported into their own namespace, so one seam
-replaces it on both routes.
+replaces it.
 
 A REMOTE shell otto cannot signal as a group (no terminal to hang up, a server
 that signals one process, a ``docker exec`` whose client went away) is stopped
@@ -35,13 +26,11 @@ that carries it.
 
 import asyncio
 import contextlib
-import enum
 import logging
 import os
 import shlex
 import signal
-from collections.abc import Awaitable, Callable
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Literal, Protocol
 
 from typing_extensions import override
 
@@ -118,34 +107,24 @@ def marked_shell_command(variable: str, token: str) -> str:
     return f"{variable}={token} exec {SESSION_SHELL} -l 2>&1"
 
 
-class StopSignal(enum.Enum):
-    """The first signal a stop sends: what the stop means."""
-
-    TERMINATE = "TERM"
-    """A timeout: the ordinary ask to stop."""
-    HANG_UP = "HUP"
-    """An interrupt: the terminal went away."""
-
-
 class StoppableProcess(Protocol):
     """A started command, as :func:`stop_process` stops it."""
 
-    def send(self, sig: "StopSignal | Literal['KILL']") -> None:
+    def send(self, sig: "Literal['TERM', 'KILL']") -> None:
         """Deliver *sig*; raise :class:`ProcessLookupError` when the command is gone.
 
-        Any other failure to deliver is an :class:`OSError`, whatever the route.
+        Any other failure to deliver is an :class:`OSError`.
         """
         ...
 
     async def wait(self) -> None:
-        """Return once the command has exited; a route failure is an :class:`OSError`."""
+        """Return once the command has exited; a failure to tell is an :class:`OSError`."""
         ...
 
     def group_gone(self) -> bool:
         """Whether nothing is left of the command's process group, as far as otto can see.
 
-        ``True`` on a route that cannot see the group (the server's to
-        signal), so the stop never waits for it there.
+        ``True`` where the group cannot be seen, so the stop never waits for it there.
         """
         ...
 
@@ -163,8 +142,8 @@ async def _exited_within(proc: StoppableProcess, bound: float) -> bool:
     return True
 
 
-async def stop_process(proc: StoppableProcess, *, first: StopSignal) -> None:
-    """Stop *proc*: *first*, then ``KILL`` what outlives it by ``_EXEC_REAP_TIMEOUT``.
+async def stop_process(proc: StoppableProcess) -> None:
+    """Stop *proc*: ``TERM``, then ``KILL`` what outlives it by ``_EXEC_REAP_TIMEOUT``.
 
     The command itself is killed if it has not exited by the end of the
     grace. If it has, what is left of its process group is given the rest
@@ -176,7 +155,7 @@ async def stop_process(proc: StoppableProcess, *, first: StopSignal) -> None:
     loop = asyncio.get_running_loop()
     grace_ends = loop.time() + _EXEC_REAP_TIMEOUT
     try:
-        proc.send(first)
+        proc.send("TERM")
     except ProcessLookupError:
         return
     if await _exited_within(proc, _EXEC_REAP_TIMEOUT):
@@ -211,106 +190,44 @@ _GROUP_POLL_INTERVAL = 0.05
 """Seconds between looks at whether a stopped command's process group has emptied."""
 
 
-async def _stop_quietly(proc: StoppableProcess, *, first: StopSignal) -> None:
-    """:func:`stop_process` for either arm: a failing stop is logged, never raised.
+async def _stop_quietly(proc: StoppableProcess) -> None:
+    """:func:`stop_process`, with a failing stop logged, never raised.
 
-    The stop's own failure (a channel already gone, ``EPERM`` from
-    ``killpg``) must not replace what the exec reports: the exception
-    unwinding an interrupted exec, or a timed-out exec's timed-out result.
-    The command is what the result describes; a stop that could not be
-    delivered changes nothing the caller can act on.
+    The stop's own failure (``EPERM`` from ``killpg``) must not replace what
+    the caller is doing: a stop that could not be delivered changes nothing
+    the caller can act on.
     """
     try:
-        await stop_process(proc, first=first)
+        await stop_process(proc)
     except OSError as exc:
-        logger.debug("stop of %s command failed: %s", first.value, exc)
+        logger.debug("stop of TERM command failed: %s", exc)
 
 
-async def stop_timed_out(proc: StoppableProcess, *, what: str) -> None:
-    """Stop a timed-out process-route command: ``TERM`` first, bounded, never torn.
+async def stop_local_session_group(proc: StoppableProcess, *, what: str) -> None:
+    """Stop a local session's process group *proc*: ``TERM`` first, bounded, never torn.
 
     Run under :func:`~otto.lifecycle.compensate`, so a cancellation landing
-    while the command is stopped is held until the stop finishes, and the
+    while the process is stopped is held until the stop finishes, and the
     stop is bounded by :data:`~otto.host.host.EXEC_CANCEL_REAP_BOUND`. A
-    failing stop is logged, as on :func:`stop_interrupted`, so the caller
-    still returns the timed-out result.
+    failing stop is logged, never raised.
     """
     from ..lifecycle import compensate
 
     await compensate(
-        _stop_quietly(proc, first=StopSignal.TERMINATE),
+        _stop_quietly(proc),
         timeout=EXEC_CANCEL_REAP_BOUND,
         what=what,
     )
-
-
-async def stop_interrupted(proc: StoppableProcess, exc: BaseException, *, what: str) -> None:
-    """Hang up a process-route command whose exec is unwinding with *exc*; never replace *exc*.
-
-    ``HUP`` first, the end a shell-routed command meets when its pty closes,
-    which a ``nohup``'d child ignores; what is still in a local process
-    group after the grace is killed (see the module docstring). A failing stop is logged,
-    and a cancellation *exc* is held by :func:`~otto.lifecycle.compensate`,
-    so the caller's ``raise`` re-raises what unwound the exec.
-    """
-    from ..lifecycle import compensate, held_cancellation
-
-    await compensate(
-        _stop_quietly(proc, first=StopSignal.HANG_UP),
-        timeout=EXEC_CANCEL_REAP_BOUND,
-        what=what,
-        held=held_cancellation(exc),
-    )
-
-
-_T = TypeVar("_T")
-
-
-async def started_or_stopped(
-    start: "Awaitable[_T]",
-    stop: "Callable[[_T, BaseException], Awaitable[None]]",
-    *,
-    what: str,
-) -> _T:
-    """Await *start* (a process start) to the end, even when the caller is cancelled meanwhile.
-
-    A process is running before the await that starts it returns, so a
-    cancellation landing inside it would be handled by the library, which
-    stops the leader only. Here the start runs under
-    :func:`~otto.lifecycle.compensate` instead: a cancellation is held until
-    it has finished (bounded by the run policy's teardown deadline once one
-    is held; unbounded, as before, when nobody cancels), then *stop* is
-    called with what it returned and the cancellation, and the cancellation
-    is re-raised. A start that fails raises its own error; with no
-    cancellation this is a plain await. A start the teardown deadline
-    abandons is cancelled, and what it started is left to the library: the
-    local leader killed alone, the ssh channel closed.
-    """
-    from ..lifecycle import compensate
-
-    started: list[_T] = []
-
-    async def _start() -> None:
-        started.append(await start)
-
-    try:
-        await compensate(_start(), what=what)
-    except asyncio.CancelledError as exc:
-        if started:
-            await stop(started[0], exc)
-        raise
-    return started[0]
 
 
 _LOCAL_SIGNALS = {
-    StopSignal.TERMINATE: signal.SIGTERM,
-    StopSignal.HANG_UP: signal.SIGHUP,
+    "TERM": signal.SIGTERM,
     "KILL": signal.SIGKILL,
 }
 
 
 class LeaderExitProtocol(asyncio.subprocess.SubprocessStreamProtocol):
-    """Local exec's subprocess protocol: also says when the LEADER has exited.
+    """A local shell session's subprocess protocol: also says when the LEADER has exited.
 
     :meth:`asyncio.subprocess.Process.wait` cannot say that on every Python
     otto supports: from 3.11.x on it returns only once every pipe has closed
@@ -333,9 +250,9 @@ class LeaderExitProtocol(asyncio.subprocess.SubprocessStreamProtocol):
 
 
 class LocalStoppable:
-    """A local exec's process: signals go to its process group until the leader is known reaped.
+    """A local shell's process: signals go to its process group until the leader is known reaped.
 
-    The command was started with ``start_new_session=True``, so its group id
+    The shell was started with ``start_new_session=True``, so its group id
     is the leader's pid; no lookup, which could race a fast exit.
 
     "Known reaped" is asyncio's ``returncode``, which lags the reap itself: on
@@ -356,7 +273,7 @@ class LocalStoppable:
         self._proc = proc
         self._leader_exited = leader_exited
 
-    def send(self, sig: "StopSignal | Literal['KILL']") -> None:
+    def send(self, sig: "Literal['TERM', 'KILL']") -> None:
         """Signal the group; raise ProcessLookupError once the leader is known reaped or none is."""
         if self._proc.returncode is not None:
             raise ProcessLookupError(self._proc.pid)
@@ -385,45 +302,3 @@ class LocalStoppable:
         """``KILL`` every member left in the group."""
         with contextlib.suppress(ProcessLookupError):
             os.killpg(self._proc.pid, signal.SIGKILL)
-
-
-class ChannelStoppable:
-    """An ssh exec channel's process: the channel delivers each signal to the remote command.
-
-    An :class:`asyncssh.Error` from the channel is raised as :class:`OSError`
-    (the :class:`StoppableProcess` contract), so the stop's error handling
-    never imports asyncssh on local exec's path.
-    """
-
-    def __init__(self, process: Any) -> None:
-        self._process = process
-
-    def send(self, sig: "StopSignal | Literal['KILL']") -> None:
-        """Ask the channel to deliver *sig*."""
-        from ._asyncssh import asyncssh  # the ssh route has loaded it already
-
-        try:
-            if sig == "KILL":
-                self._process.kill()
-            elif sig is StopSignal.TERMINATE:
-                self._process.terminate()
-            else:
-                self._process.send_signal(sig.value)
-        except asyncssh.Error as exc:
-            raise OSError(str(exc)) from exc
-
-    async def wait(self) -> None:
-        """Return once the channel reports the command's exit."""
-        from ._asyncssh import asyncssh
-
-        try:
-            await self._process.wait()
-        except asyncssh.Error as exc:
-            raise OSError(str(exc)) from exc
-
-    def group_gone(self) -> bool:
-        """Answer ``True``: the remote group is the server's to signal, not otto's to see."""
-        return True
-
-    def kill_group(self) -> None:
-        """Nothing: see :meth:`group_gone`."""

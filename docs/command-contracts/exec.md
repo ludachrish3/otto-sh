@@ -9,34 +9,25 @@
 
 # `exec`: a one-off command
 
-`exec` runs a one-off command: nothing one call changes is carried to the
-next. On a console it starts in a clean login shell, not from what `run`
-left in the console's shell
-({ref}`shell state, by route <exec-frame-shell-state>`). From the
+`exec` runs a one-off command. On most hosts it runs on a session of its
+own and shares nothing with `run`. On a console it starts from what `run`
+left and leaves nothing behind. On an embedded host it shares `run`'s
+session too; a Zephyr shell, whose frame does not isolate, keeps what
+it changes (not measured on a board)
+({ref}`what an exec shares with run <exec-session>`,
+{ref}`shell state <exec-frame-shell-state>`). From the
 CLI it is `otto host <id> exec` ({doc}`/cli/host/exec`); from
 Python, {meth}`Host.exec <otto.host.host.Host.exec>`.
 The rules every command shares -- what a contract is, what its promises
 mean, and how to read what is not promised -- are on
 {ref}`Command contracts <command-contracts>`.
 
-## Which route `exec` takes
+## Which session `exec` takes
 
-On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):
-
-- Reached over `ssh`, `exec` goes through a shell session otto keeps for it beside the one `run` uses, opened without a terminal unless a case below applies (`pooled-shell`).
-- Reached over `telnet`, it goes through such a shell session, with a terminal (`pooled-shell`).
-- The host's login is **proxied** (otto logs in as one account and then switches to the one it runs as; [Credentials and login proxies](../configuration/host-sources.md#credentials-and-login-proxies)): a shell session with a terminal (`pooled-shell`). No host the suite tests has a proxied login ({ref}`What is not covered at all <command-contracts-not-covered>`).
-- The host declares a **session-setup hook** (project code otto runs on every shell session it opens; {ref}`Session setup <per-host-session-setup>`): a shell session with a terminal (`pooled-shell`).
-- The call needs a terminal: it passes `expects` (patterns otto answers while the command runs, such as a password prompt), `sudo=True`, or a `user` otto cannot log in as directly; a call with a `user` runs in a shell session opened as that user, with a terminal (`pooled-shell`).
-- `exec(user=...)` over `ssh` for a user with SSH credentials of its own, and no `expects` or `sudo`: a shell session without a terminal, over an SSH connection as that user (`pooled-shell`).
-- The same call where the login is proxied or the host declares a session-setup hook: a shell session with a terminal, opened over that user's own SSH connection and set up as them (`pooled-shell`).
-- Reached over `console`, it uses the same session as `run`: a console serves one client (`default-session`).
-
-On other hosts:
-
-- On an embedded host, such as a Zephyr board, its one console session, as `run` (`default-session`).
-- On the local host, a shell session of its own that reads a pipe, opened for the one call and closed after it (`pooled-shell`).
-- In a docker container, `docker exec` through its parent host (`container/<the parent's route>`).
+- The host's one persistent shell session, the one `run` uses: when the host is reached over `console` (a console serves one client), or is an embedded host such as a Zephyr board, whatever the call needs; concurrent calls take turns on it. On a console a call with a `user` switches the session to that user for the call and back; an embedded host refuses `user`.
+- A shell session otto keeps for `exec` beside the one `run` uses, with a terminal: when the host is reached over `telnet`; or over `ssh` where the call needs a terminal (it passes `expects` (patterns otto answers while the command runs, such as a password prompt), `sudo=True`, or `terminal=True`), runs as a `user` otto cannot log in as directly, the host's login is **proxied** (otto logs in as one account and then switches to the one it runs as; [Credentials and login proxies](../configuration/host-sources.md#credentials-and-login-proxies)), or the host declares a **session-setup hook** (project code otto runs on every shell session it opens; {ref}`Session setup <per-host-session-setup>`); a call with a `user` runs in a session opened as that user, over their own SSH connection where they have SSH credentials of their own. No host the suite tests has a proxied login ({ref}`What is not covered at all <command-contracts-not-covered>`).
+- A shell session otto keeps for `exec` beside the one `run` uses, without a terminal: when the host is reached over `ssh` and none of the cases above applies, including `exec(user=...)` for a user with SSH credentials of their own, over an SSH connection as that user; or the host is the local host, whose sessions read a pipe (each call opens one of its own and closes it after).
+- `docker exec` through the container's parent host, as one of the parent's own `exec` calls: when the host is a docker container.
 
 ## What `exec` promises
 
@@ -55,10 +46,10 @@ where its **Not checked** column says otherwise; the numbered notes below say wh
 | gather several `exec` calls on one host and have each return its own command's output, never another call's | not on BusyBox's applets run on the local machine (note 1) | `exec-concurrent` |
 | cancel an `exec` and have otto stop its command before the cancellation reaches you (on the local machine: its process group terminated, and what is left in it after the grace killed, as {ref}`What the stop reaches <exec-stop-reach>` says), with the host answering the next command | not on BusyBox's applets run on the local machine (note 1); not on a Zephyr board, a BusyBox device over `console` and a GNU/Linux machine over `console` (note 5) | `exec-cancel` |
 | read the host log and find the lines of each command's `value`, one record per line, blank lines and a program's own `\r` kept, under `log=NORMAL` and `log=QUIET`, and nothing under `log=NEVER` | not on BusyBox's applets run on the local machine (note 1) | `exec-log` |
-| run a command under a dry run and have it reach no device, getting back a `NotRun` result with `retcode == -1`, no route, `command` the line a live call would type, and a `value` that raises `CommandNotRunError` | not on BusyBox's applets run on the local machine (note 1); not on a Zephyr board (note 6) | `exec-dry-run` |
+| run a command under a dry run and have it reach no device, getting back a `NotRun` result with `retcode == -1`, `command` the line a live call would type, and a `value` that raises `CommandNotRunError` | not on BusyBox's applets run on the local machine (note 1); not on a Zephyr board (note 6) | `exec-dry-run` |
 | pass `expects=`, `sudo=` or `user=` to `run` or `exec`, alone or together, on a `ShellCommand` or inside `as_user()`, and get the same effect on every entry; where the device cannot honour an option, the call raises `UnsupportedOptionError` naming it, and nothing is typed | not on BusyBox's applets run on the local machine (note 1); `expects=` on a Zephyr board (note 7); `sudo=` with `user=` on a device (note 8); `user=` and `as_user()` without a second user (note 9) | `exec-options` |
 | type a command holding punctuation, a TAB or UTF-8 text and have the shell receive it byte for byte; one holding a control character a terminal would act on reaches a session without a terminal intact, and on a session with one is refused with `UntypableCommandError` before anything is typed | not on BusyBox's applets run on the local machine (note 1); not on a Zephyr board (note 10) | `typed-input` |
-| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on BusyBox's applets run on the local machine (note 1); not on a Zephyr board (note 11) | `timeout` |
+| give a command a time budget and have a breach reported the same way on every host, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on BusyBox's applets run on the local machine (note 1); not on a Zephyr board (note 11) | `timeout` |
 
 On some devices a promise above is narrower: see
 {ref}`Where a device gets a narrower promise <command-contracts-narrower>`.
@@ -85,7 +76,7 @@ On some devices a promise above has a known gap: see
 These declared exceptions apply to `exec`; each is described on
 {ref}`Command contracts <command-contracts>`:
 
-- {ref}`How long one line of a command can be, on the pooled-shell and default-session routes <exception-how-long-one-line-of-a-command-can-be-on-the-pooled-shell-and-default-session-routes>`
+- {ref}`How long one line of a command can be, on a session with a terminal <exception-how-long-one-line-of-a-command-can-be-on-a-session-with-a-terminal>`
 - {ref}`A 0xFF byte in a command's output, on a console whose host record sets console_options.escapes_iac: false <exception-a-0xff-byte-in-a-command-s-output-on-a-console-whose-host-record-sets-console-options-escapes-iac-false>`
 - {ref}`Elevating a command with sudo= on run and exec, on the embedded and zephyr host families <exception-elevating-a-command-with-sudo-on-run-and-exec-on-the-embedded-and-zephyr-host-families>`
 - {ref}`Running a command as another user= on run and exec, on the embedded and zephyr host families <exception-running-a-command-as-another-user-on-run-and-exec-on-the-embedded-and-zephyr-host-families>`

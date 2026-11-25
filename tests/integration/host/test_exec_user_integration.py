@@ -12,10 +12,9 @@ one. Spec: ``docs/superpowers/specs/2026-09-21-exec-cli-verb-design.md`` §4.1,
 Two accounts, deliberately different in kind (both provisioned on every bed
 VM — see ``provision_test_vm``):
 
-- ``root``: reachable only as a PROXY login (``sudo su`` from vagrant), so a
-  raw exec channel could never authenticate as it. This is the case that
-  proves the promotion off the raw channel end to end — on ssh, where the
-  raw channel exists, AND on telnet, where it never did.
+- ``root``: reachable only as a PROXY login (``sudo su`` from vagrant), so
+  no direct login could authenticate as it. This is the case that proves
+  the pooled session switches to it end to end, on ssh and on telnet.
 - ``test``: a plain bash account with a real password, whose ``sudo``
   therefore challenges. Before the fix, the prompt was answered with the
   SESSION's password (vagrant's), and sudo replied ``Sorry, try again``.

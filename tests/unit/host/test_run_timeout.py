@@ -429,9 +429,9 @@ class TestTimedOutFlag:
         # is exactly what this test proves is ineffective here — so cleanup
         # (and the liveness check below) has no route to the real OS process
         # except capturing it ourselves. Hooked at the Process constructor
-        # rather than at asyncio.create_subprocess_shell because
-        # _exec_subprocess drives loop.subprocess_shell() directly, so that it
-        # holds the transport and can close the pipes on the timeout path.
+        # rather than at asyncio.create_subprocess_exec because
+        # LocalSession.open_transport drives loop.subprocess_exec() directly, so
+        # that it holds the transport and can close the pipes.
         monkeypatch.setattr(asyncio.subprocess, "Process", capturing_process)
 
         host = LocalHost(log=LogMode.QUIET)
@@ -496,18 +496,16 @@ class TestExecTemplate:
     def test_no_subclass_overrides_exec(self):
         """exec is final and so is _exec_one; the container family may only
         rewrite its arguments and delegate — see TestContainerExecOverride
-        below for the shape that override is held to. Families state their
-        route in _plan_exec and run it in _run_plan."""
+        below for the shape that override is held to. Families override
+        _plans_plain_exec and _run_exec under them."""
         from otto.host.docker_host import DockerContainerHost
         from otto.host.embedded_host import EmbeddedHost
         from otto.host.host import BaseHost
         from otto.host.local_host import LocalHost
 
         for cls in (LocalHost, UnixHost, EmbeddedHost):
-            assert "exec" not in vars(cls), f"{cls.__name__} must override _run_plan, not exec"
+            assert "exec" not in vars(cls), f"{cls.__name__} must override _run_exec, not exec"
             assert "_exec_one" not in vars(cls), f"{cls.__name__} must not override _exec_one"
-            assert "_plan_exec" in vars(cls), f"{cls.__name__} must implement _plan_exec"
-            assert "_run_plan" in vars(cls), f"{cls.__name__} must implement _run_plan"
             assert BaseHost.exec is cls.exec
             assert BaseHost._exec_one is cls._exec_one
 
@@ -518,8 +516,6 @@ class TestExecTemplate:
         assert "_exec_one" not in vars(DockerContainerHost), (
             "DockerContainerHost must not override _exec_one"
         )
-        assert "_plan_exec" in vars(DockerContainerHost)
-        assert "_run_plan" in vars(DockerContainerHost)
 
 
 class TestContainerExecOverride:
@@ -715,7 +711,7 @@ class TestExpectSurfaceConsistency:
 class TestExecBoundsTheWholeCommand:
     """LocalHost.exec's timeout must bound the whole command, not each read.
 
-    Before the fix, ``_exec_subprocess`` wrapped only
+    Before the fix, local exec wrapped only
     ``proc.stdout.readline()`` in ``asyncio.wait_for(..., timeout=timeout)``,
     inside the drain loop. A command that emits output more often than the
     timeout period never triggers ``TimeoutError``: each individual readline
@@ -748,8 +744,8 @@ class TestExecBoundsTheWholeCommand:
         regression FAILS this test rather than wedging the suite.
         """
         # Hooked at the Process constructor, not at
-        # asyncio.create_subprocess_shell: _exec_subprocess drives
-        # loop.subprocess_shell() directly so it can close the transport. A
+        # asyncio.create_subprocess_exec: LocalSession.open_transport drives
+        # loop.subprocess_exec() directly so it can close the transport. A
         # capture aimed at the old seam would quietly collect NOTHING, and
         # since nothing below asserts on `spawned`, the runaway-process
         # cleanup in `finally` would be silently dead while this test stayed

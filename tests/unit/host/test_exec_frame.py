@@ -34,7 +34,6 @@ from otto.host.command_frame import (
 )
 from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost
-from otto.host.exec_route import ExecRoute
 from otto.host.exit_status import subshell_status_of
 from otto.host.output_codec import PatternReader
 from otto.host.terminal_mapping import establish_exec_state
@@ -215,7 +214,7 @@ async def test_a_pooled_session_cancelled_mid_exec_is_closed_not_handed_out(name
     exec_input = ExecInput(stdin_eof=True, restore=ExecRestore.BASELINE)
 
     def pooled(cmd):
-        return _exec(mgr, ExecRoute.POOLED_SHELL, cmd=cmd, timeout=40, exec_input=exec_input)
+        return _exec(mgr, cmd=cmd, timeout=40, exec_input=exec_input)
 
     try:
         assert (await pooled("true")).retcode == 0
@@ -273,7 +272,7 @@ _PARTIAL = "otto-part''ial"
 async def _stop_pooled(mgr, made, how):
     """Run one exec on the pooled session, stop the next by *how*, and return what is known."""
     exec_input = ExecInput(stdin_eof=True, restore=ExecRestore.BASELINE)
-    first = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="true", exec_input=exec_input)
+    first = await _exec(mgr, cmd="true", exec_input=exec_input)
     assert first.retcode == 0
     (kept,) = _idle_names(mgr)
     (session,) = made
@@ -281,12 +280,10 @@ async def _stop_pooled(mgr, made, how):
     written = len(session.writes)
     result = None
     if how == "timeout":
-        result = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd=cmd, timeout=3, exec_input=exec_input)
+        result = await _exec(mgr, cmd=cmd, timeout=3, exec_input=exec_input)
         assert session.armed.is_set(), "the command never started within its budget"
     else:
-        task = asyncio.ensure_future(
-            _exec(mgr, ExecRoute.POOLED_SHELL, cmd=cmd, timeout=40, exec_input=exec_input)
-        )
+        task = asyncio.ensure_future(_exec(mgr, cmd=cmd, timeout=40, exec_input=exec_input))
         await asyncio.wait_for(session.armed.wait(), 5)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -314,7 +311,6 @@ async def test_a_stopped_pooled_exec_closes_its_terminal_session_probed_not_rest
         assert kept not in _idle_names(mgr)
         nxt = await _exec(
             mgr,
-            ExecRoute.POOLED_SHELL,
             cmd="echo again",
             exec_input=ExecInput(stdin_eof=True),
         )
@@ -383,7 +379,6 @@ async def test_a_timed_out_pooled_exec_returns_once_its_command_is_gone(name, tm
     try:
         result = await _exec(
             mgr,
-            ExecRoute.POOLED_SHELL,
             cmd=cmd,
             timeout=3,
             exec_input=ExecInput(stdin_eof=True, restore=ExecRestore.BASELINE),
@@ -634,7 +629,7 @@ async def test_a_pooled_exec_reaches_the_session_with_one_exec_input():
         return made[-1]
 
     mgr._session_factory = factory
-    r = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="true", exec_input=ExecInput(stdin_eof=True))
+    r = await _exec(mgr, cmd="true", exec_input=ExecInput(stdin_eof=True))
     assert (r.timed_out, r.retcode) == (False, 0)
     framed = next(
         f for f in map(parse_bash_frame, made[-1].written_frames) if f and f.cmd == "true"
@@ -665,14 +660,12 @@ def test_the_measured_payloads_are_the_product_frames(cmd):
         assert BashFrame().restore_line(restore, M) == exec_frame_payloads.restore_line(var, M)
         for eof in (True, False):
             for credential in (True, False):
-                expected = (
-                    exec_frame_payloads.shape_console(
-                        cmd, m=M, stdin_eof=eof, credential=credential
-                    )
-                    if restore is ExecRestore.START
-                    else exec_frame_payloads.shape_c(
-                        cmd, m=M, stdin_eof=eof, start_var=None, credential=credential
-                    )
+                expected = exec_frame_payloads.shape_c(
+                    cmd,
+                    m=M,
+                    stdin_eof=eof,
+                    start_var=var if restore is ExecRestore.START else None,
+                    credential=credential,
                 )
                 assert (
                     BashFrame().frame_exec(

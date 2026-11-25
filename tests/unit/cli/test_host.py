@@ -110,12 +110,9 @@ def _make_host_with_session(
 ) -> UnixHost:
     """Build a UnixHost whose SessionManager uses a FakeSession.
 
-    ``term="telnet"`` by default: ``exec``'s ``exec_route`` takes the
-    ``POOLED_SHELL`` route (the same ``FakeSession``) only off SSH's fast
-    path — a plain ``exec`` on an SSH host with no hops takes the
-    ``SSH_CHANNEL`` route instead and would try a real
-    ``_connections.ssh()``. The full chain ``exec -> _exec_one ->
-    SessionManager.exec -> _exec_pooled -> ShellSession.run_cmd`` runs for
+    ``term="telnet"`` by default: ``exec`` runs on a pooled session, on the same
+    ``FakeSession``. The full chain ``exec -> _exec_one ->
+    SessionManager.exec_pooled -> ShellSession.run_cmd`` runs for
     real; only the transport is faked. Logging callbacks are suppressed to
     avoid interfering with CliRunner's stdout capture.
     """
@@ -752,10 +749,10 @@ class TestHostTermAndTransfer:
             patch("otto.fleet.get_host", return_value=base),
             patch("otto.run_context._apply_option_overrides", return_value=switched),
             patch.object(
-                base._session_mgr, "exec_on_route", wraps=base._session_mgr.exec_on_route
+                base._session_mgr, "exec_pooled", wraps=base._session_mgr.exec_pooled
             ) as base_exec,
             patch.object(
-                switched._session_mgr, "exec_on_route", wraps=switched._session_mgr.exec_on_route
+                switched._session_mgr, "exec_pooled", wraps=switched._session_mgr.exec_pooled
             ) as switched_exec,
         ):
             result = runner.invoke(host_app, ["--term", "telnet", "router1", "exec", "ls"])
@@ -774,10 +771,10 @@ class TestHostTermAndTransfer:
             patch("otto.fleet.get_host", return_value=base),
             patch("otto.run_context._apply_option_overrides", return_value=switched),
             patch.object(
-                base._session_mgr, "exec_on_route", wraps=base._session_mgr.exec_on_route
+                base._session_mgr, "exec_pooled", wraps=base._session_mgr.exec_pooled
             ) as base_exec,
             patch.object(
-                switched._session_mgr, "exec_on_route", wraps=switched._session_mgr.exec_on_route
+                switched._session_mgr, "exec_pooled", wraps=switched._session_mgr.exec_pooled
             ) as switched_exec,
         ):
             result = runner.invoke(host_app, ["--transfer", "sftp", "router1", "exec", "ls"])

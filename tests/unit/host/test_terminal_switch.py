@@ -28,7 +28,6 @@ from otto.host.daemon import detached_command, launch_command
 from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.errors import UnsupportedOptionError
-from otto.host.exec_route import ExecRoute
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.process_stop import SESSION_MARK
@@ -343,54 +342,52 @@ async def test_a_dry_run_still_refuses_a_mode_the_host_cannot_give():
 # ---------------------------------------------------------------------------
 
 
-def _routes(host: UnixHost) -> AsyncMock:
-    """Record the route each ``exec`` on *host* is dispatched to, running nothing."""
+def _pooled_execs(host: UnixHost) -> AsyncMock:
+    """Record each ``exec`` on *host* that runs on a pooled session, running nothing."""
 
-    async def ran(*, route: ExecRoute, **_kw: object) -> CommandResult:
+    async def ran(**_kw: object) -> CommandResult:
         return CommandResult(
-            status=Status.Success, value="", command="true", retcode=0, route=route.value
+            status=Status.Success,
+            value="",
+            command="true",
+            retcode=0,
         )
 
-    host._session_mgr.exec_on_route = AsyncMock(side_effect=ran)  # ty: ignore[invalid-assignment]
-    return host._session_mgr.exec_on_route  # ty: ignore[invalid-return-type]
+    host._session_mgr.exec_pooled = AsyncMock(side_effect=ran)  # ty: ignore[invalid-assignment]
+    return host._session_mgr.exec_pooled  # ty: ignore[invalid-return-type]
 
 
-@pytest.mark.parametrize(
-    ("terminal", "route"),
-    [
-        (None, ExecRoute.POOLED_SHELL),
-        (False, ExecRoute.POOLED_SHELL),
-        (True, ExecRoute.POOLED_SHELL),
-    ],
-)
+@pytest.mark.parametrize("terminal", [None, False, True])
 @pytest.mark.asyncio
-async def test_exec_on_ssh_takes_a_pooled_session_set_or_not(terminal, route):
+async def test_exec_on_ssh_takes_a_pooled_session_set_or_not(terminal):
     h = _unix()
-    ran = _routes(h)
+    ran = _pooled_execs(h)
+    h._session_mgr.exec_on_default_session = AsyncMock(  # ty: ignore[invalid-assignment]
+        side_effect=AssertionError("an ssh exec reached the default session")
+    )
     result = await h.exec("true", terminal=terminal)
-    assert ran.await_args.kwargs["route"] is route
-    assert result.route == route.value
+    ran.assert_awaited_once()
+    assert result.is_ok
 
 
 @pytest.mark.asyncio
 async def test_exec_with_a_terminal_as_a_direct_login_user_still_takes_a_shell():
-    """The direct-credential shortcut is a bare channel; a terminal is a shell as that user."""
+    """A user with its own login and ``terminal=True`` gets a pooled session with a terminal."""
     h = _unix(creds=[Cred(login="user", password="pass"), Cred(login="root", password="pw")])
-    ran = _routes(h)
-    h._connections.ssh_as = AsyncMock()  # ty: ignore[invalid-assignment]
+    ran = _pooled_execs(h)
     await h.exec("id", user="root", terminal=True)
-    assert ran.await_args.kwargs["route"] is ExecRoute.POOLED_SHELL
+    ran.assert_awaited_once()
     assert ran.await_args.kwargs["user"] == "root"
-    h._connections.ssh_as.assert_not_awaited()
+    assert ran.await_args.kwargs["plain"] is False
 
 
 @pytest.mark.parametrize("terminal", [None, True])
 @pytest.mark.asyncio
 async def test_exec_on_telnet_is_a_shell_with_a_terminal_set_or_not(terminal):
     h = _unix("telnet")
-    ran = _routes(h)
+    ran = _pooled_execs(h)
     await h.exec("true", terminal=terminal)
-    assert ran.await_args.kwargs["route"] is ExecRoute.POOLED_SHELL
+    ran.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -412,7 +409,7 @@ async def test_exec_without_a_terminal_refuses_what_only_a_terminal_session_does
             Cred(login="app", password="pw", via="user"),
         ]
     )
-    ran = _routes(h)
+    ran = _pooled_execs(h)
     monkeypatch.setattr(h._connections, "has_direct_cred", lambda *, user: False)
     monkeypatch.setattr(h, "_prepare_exec_elevation", AsyncMock())
     with pytest.raises(UnsupportedOptionError) as refused:
@@ -493,11 +490,7 @@ async def test_a_named_session_without_a_terminal_refuses_a_user_switch(piped, s
 async def test_an_unset_exec_on_ssh_runs_on_a_session_without_a_terminal(piped):
     host, conn = piped
     result = await host.exec('test -t 1 && echo tty || echo pipe; echo "${OTTO_SESSION:+set}"')
-    assert (result.status, result.value, result.route) == (
-        Status.Success,
-        "pipe\nset",
-        "pooled-shell",
-    )
+    assert (result.status, result.value) == (Status.Success, "pipe\nset")
     assert [asked.get("request_pty") for asked in conn.asked] == [False]
 
 
@@ -579,7 +572,8 @@ async def test_an_unset_exec_on_a_hooked_host_runs_on_a_terminal_session(piped):
         host.session_setup = SessionSetup(name=name)
         host._session_mgr._session_setup = host.session_setup
         result = await host.exec("echo $APP_ENV")
-    assert (result.status, result.value, result.route) == (Status.Success, "lab", "pooled-shell")
+    assert (result.status, result.value) == (Status.Success, "lab")
+    assert host._session_mgr._exec_pool_count == 1, "the exec ran on a pooled session"
     assert [asked.get("request_pty") for asked in conn.asked] == [None]
 
 
@@ -603,7 +597,7 @@ async def test_a_direct_login_user_s_exec_is_a_session_over_their_own_login(tmp_
     h._connections.ssh_as = AsyncMock(return_value=own)  # ty: ignore[invalid-assignment]
     try:
         result = await h.exec("echo hi", user="root", terminal=terminal)
-        assert (result.value, result.route) == ("hi", "pooled-shell")
+        assert result.value == "hi"
         assert h._connections.ssh_as.await_args.kwargs["user"] == "root"
         assert [asked.get("request_pty") for asked in own.asked] == [False]
     finally:

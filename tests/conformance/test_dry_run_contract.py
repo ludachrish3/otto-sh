@@ -3,7 +3,7 @@
 Under a dry run (``otto -n``, ``OttoContext.policy.dry_run``) ``run`` and
 ``exec`` decline: they contact nothing and return a
 :class:`~otto.result.NotRunResult` -- ``Status.NotRun``, ``retcode == -1``,
-no route, ``command`` the line a live call would type, and a ``value`` that
+``command`` the line a live call would type, and a ``value`` that
 raises :exc:`~otto.result.CommandNotRunError`
 (``docs/extend/dry-run-contract.md``).
 
@@ -123,9 +123,9 @@ def dry_run_mismatch(result: CommandResult, left: CommandResult, command: str) -
         )
     elif found:
         wrong.append("the device carries the mark, so the command ran")
-    shape = (result.status, result.retcode, result.route, result.command)
-    if shape != (Status.NotRun, -1, "", command):
-        wrong.append(f"the result is {shape!r}, not (NotRun, -1, '', {command!r})")
+    shape = (result.status, result.retcode, result.command)
+    if shape != (Status.NotRun, -1, command):
+        wrong.append(f"the result is {shape!r}, not (NotRun, -1, {command!r})")
     else:
         try:
             _ = result.value
@@ -154,7 +154,7 @@ async def _issue_and_check(resolved: ResolvedCell, *, dry: bool) -> _Issued:
 
     The dry run covers the one leave call: the host is opened, and the mark
     checked and removed, outside it. Before it, the check is issued live
-    through the same entry, its route asserted, so the session the leave
+    through the same entry, so the session the leave
     call would use is open and writable when the dry run begins (a host's
     sessions open on first use), and the mark is asserted absent.
     """
@@ -167,14 +167,14 @@ async def _issue_and_check(resolved: ResolvedCell, *, dry: bool) -> _Issued:
             f"{cell_label(resolved)}: {path} was there before the command was issued"
         )
         with declined:
-            result = await issue(host, resolved, leave, route_checked=not dry)
+            result = await issue(host, resolved, leave)
         found = await issue(host, resolved, left)
     return _Issued(result, found, leave)
 
 
 @pytest.mark.entries("run", "exec")
 @pytest.mark.observable(
-    "CommandResult.status, .retcode, .route, .command and .value of a command that leaves "
+    "CommandResult.status, .retcode, .command and .value of a command that leaves "
     "a file at a fresh scratch path, issued under a dry run on an opened host, and whether "
     "that file is there when the host is asked live afterwards"
 )

@@ -41,6 +41,7 @@ here as ``UnixHost``.
 # Main problem here is that eash library uses its own method names to run commands and put/get files
 # Possibly make the homegrown TelnetClient class mirror asyncssh? that could really help with design symmetry.  # noqa: E501 — TODO comment
 import asyncio
+import contextlib
 import logging
 import socket
 from dataclasses import (
@@ -87,7 +88,6 @@ from .errors import (
     HostCommandError,
     UnsupportedOnUserlandError,
 )
-from .exec_route import ExecRoute
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
@@ -116,7 +116,6 @@ from .privilege import PosixPrivilege
 from .remote_host import RemoteHost
 from .session import (
     BridgeSetup,
-    ExecPlan,
     SessionManager,
 )
 from .telnet import TelnetClient
@@ -637,13 +636,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                         if runs_stock_exec(self)
                         else None
                     ),
-                    # Asked of `_exec_plan`, the plan `exec_cmd`'s `exec`
-                    # dispatches, with the same effective user: `user=None`
+                    # Asked of `_exec_plain`, the session mode `exec_cmd`'s
+                    # `exec` runs by, with the same effective user: `user=None`
                     # is an enclosing `as_user()`'s identity on both, read
                     # when the budget is asked. Never predicted from
-                    # `self.term`: whether `exec` types into a line-disciplined
-                    # shell depends on the route (a proxied login, or a user
-                    # without a direct cred, rides the pooled shell on ssh
+                    # `self.term` alone: whether `exec` types into a terminal
+                    # depends on the call (a proxied login, or a user without
+                    # a direct cred, takes a session with a terminal on ssh
                     # too), and the framing it subtracts is the session
                     # manager's frame's.
                     exec_line_room=lambda cmd: self._exec_line_room(user=user, cmd=cmd),
@@ -653,18 +652,22 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         )
 
     def _exec_line_room(self, *, user: str | None, cmd: str) -> int | None:
-        """Room a transfer's *cmd* line has on the plan its ``exec`` as *user* would take.
+        """Room a transfer's *cmd* line has on the session its ``exec`` as *user* would take.
 
-        One plan, read once: its route and its session mode both decide.
+        Which session the ``exec`` takes is the host's (:meth:`_shares_one_line`);
+        whether it has a terminal is :meth:`_exec_plain`'s.
         """
-        plan = self._exec_plan(user=user, needs_shell=False)
-        return self._session_mgr.line_room(route=plan.route, cmd=cmd, plain=plan.plain)
+        return self._session_mgr.line_room(
+            cmd=cmd,
+            shared=self._shares_one_line(),
+            plain=self._exec_plain(user=user, needs_shell=False),
+        )
 
     def _refuse_console_transfer(self, user: "str | None") -> None:
         """Refuse a console-term transfer that would need a second session.
 
         A console serves ONE client, so ``exec`` — and with it a transfer's
-        commands — runs on the host's one session (see ``_exec_on_console``),
+        commands — runs on the host's one session (see :meth:`_run_exec`),
         one at a time, as whoever that session is logged in as. Two things need more than that:
 
         - ``transfer="nc"``: its remote ``nc -l`` listener holds the shell's
@@ -1008,57 +1011,40 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return self._reset_outcome(found)
 
     @override
-    def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
-        """Plan one ``exec`` call as *user*: which route, and which session mode.
+    def _plans_plain_exec(self, *, user: str | None, needs_shell: bool) -> bool:
+        """Whether a pooled ``exec`` as *user* opens its session without a terminal.
 
-        Synchronous and free of I/O, so the transfer line budget can ask it
-        (through ``BaseHost._exec_plan``, which resolves *user* first) without
-        running anything; :meth:`_run_plan` runs the answer.
-
-        The route is the transport's answer,
-        :meth:`~otto.host.session.SessionManager.exec_route`: a ``console``
-        term is ``DEFAULT_SESSION``, ssh and telnet ``POOLED_SHELL``. The
-        pooled session is opened FOR *user* (over their own ssh login where
-        they have a direct credential, else switched to them) and set up as
-        them (:meth:`~otto.host.session.SessionManager.open_session`).
-
-        The mode is decided here and nowhere else: the session has no
-        terminal (``ExecPlan.plain``) when the call needs no shell (no
-        ``terminal=True``, no prompt, no elevation), runs as the login or as a user
-        with a direct credential (no switch), and the manager can open a
-        session without a terminal at all (ssh, with no proxied login and no
-        ``session_setup`` hook:
+        Decided here and nowhere else (asked through ``BaseHost._exec_plain``,
+        which resolves *user* first): no terminal when the host does not
+        share one line between ``run`` and ``exec`` (:meth:`_shares_one_line`),
+        the call needs no shell (no ``terminal=True``, no prompt, no
+        elevation), runs as the login or as a user with a direct credential
+        (no switch), and the manager can open a session without a terminal
+        at all (ssh, with no proxied login and no ``session_setup`` hook:
         :meth:`~otto.host.session.SessionManager.no_terminal_limitation`).
-        Anything else takes the transport's own mode, a terminal.
-
-        What each route does for the caller (concurrency, shell state, how
-        a console switches user) is :meth:`exec`'s and :meth:`_run_plan`'s to
-        say.
+        Anything else takes the transport's own mode, a terminal. The pooled
+        session is opened FOR *user* (over their own ssh login where they
+        have a direct credential, else switched to them) and set up as them
+        (:meth:`~otto.host.session.SessionManager.open_session`).
 
         Args:
             user: The effective user of the call, or ``None`` for the login
                 target.
             needs_shell: The call needs a shell with a terminal (*expects*,
                 *sudo*, ``terminal=True``).
-
-        Returns:
-            The :class:`~otto.host.session.ExecPlan` :meth:`_run_plan` runs.
         """
         mgr = self._live_session_mgr()
-        route = mgr.exec_route(needs_shell=needs_shell or user is not None)
-        plain = (
-            route is ExecRoute.POOLED_SHELL
+        return (
+            not self._shares_one_line()
             and not needs_shell
             and (user is None or mgr.can_ssh_as(user=user))
             and mgr._wants_plain(False)  # noqa: SLF001 — the manager's own answer: its sessions are terminals
             and mgr.no_terminal_limitation() is None
         )
-        return ExecPlan(route=route, plain=plain)
 
     @override
-    async def _run_plan(
+    async def _run_exec(
         self,
-        plan: ExecPlan,
         *,
         cmd: str,
         timeout: float,
@@ -1066,82 +1052,38 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         user: str | None,
         expects: "list[Expect | CredentialExpect] | None",
         exec_input: "ExecInput | None",
+        plain: bool,
     ) -> CommandResult:
-        """Run *cmd* on the route :meth:`_plan_exec` chose."""
-        if plan.route is ExecRoute.DEFAULT_SESSION:
-            return await self._exec_on_console(
-                cmd, timeout=timeout, log=log, user=user, expects=expects, exec_input=exec_input
-            )
-        mgr = self._live_session_mgr()
-        if plan.as_user is not None:
-            conn = await self._live_connections().ssh_as(user=plan.as_user)
-            return await mgr.exec_on(
-                conn=conn,
+        """Run *cmd* through the session manager; on a console, switch user first.
+
+        A console serves ONE client, so the session ``run`` uses is the only
+        one there is (the pool would be a second connection): ``exec`` is a
+        special case of ``run`` there, with the same shell state and one
+        :class:`~otto.result.CommandResult`. Concurrent calls take turns
+        through the line turn ``exec`` already holds (``BaseHost._line_turn``).
+        A *user* other than the session's current one switches the session
+        for the call and back, as ``run(user=...)`` does, inside that turn, so
+        no other call runs while the session is switched; the command then
+        runs as the session's user. Either way it runs through
+        ``BaseHost._exec_on_manager``.
+        """
+        console = self._shares_one_line()
+        switch = console and user is not None and user != self._live_session_mgr().current_user
+        async with self.as_user(user=user) if switch else contextlib.nullcontext():
+            return await self._exec_on_manager(
                 cmd=cmd,
                 timeout=timeout,
-                log=self._effective_log(log),
+                log=log,
+                user=None if console else user,
+                expects=expects,
                 exec_input=exec_input,
+                plain=plain,
             )
-        return await self._exec_on_manager_route(
-            plan.route,
-            cmd=cmd,
-            timeout=timeout,
-            log=log,
-            user=user,
-            expects=expects,
-            exec_input=exec_input,
-            plain=plan.plain,
-        )
 
     @override
     def _shares_one_line(self) -> bool:
         """Answer whether the term is ``console``, where ``run`` and ``exec`` share one session."""
         return self.term == "console"
-
-    async def _exec_on_console(
-        self,
-        cmd: str,
-        *,
-        timeout: float,
-        log: LogMode,
-        user: str | None,
-        expects: "list[Expect | CredentialExpect] | None",
-        exec_input: "ExecInput | None" = None,
-    ) -> CommandResult:
-        """``exec`` on a ``console`` term: one command on the default session.
-
-        A console serves ONE client, so the session ``run`` uses is the only
-        one there is (the pool would be a second connection; see
-        ``SessionManager._exec_on_default_session``).
-        ``exec`` is a special case of ``run`` here: the same marker and exit
-        code handling, the same shell state, one
-        :class:`~otto.result.CommandResult`.
-
-        Concurrent calls take turns through the line turn ``exec`` already
-        holds (``BaseHost._line_turn``). A *user* other than the session's
-        current one switches the session for the call and back, as
-        ``run(user=...)`` does, inside that turn, so no other call runs while
-        the session is switched.
-        """
-        mgr = self._live_session_mgr()
-        if user is None or user == mgr.current_user:
-            return await mgr.exec_on_route(
-                route=ExecRoute.DEFAULT_SESSION,
-                cmd=cmd,
-                timeout=timeout,
-                log=self._effective_log(log),
-                expects=expects,
-                exec_input=exec_input,
-            )
-        async with self.as_user(user=user):
-            return await mgr.exec_on_route(
-                route=ExecRoute.DEFAULT_SESSION,
-                cmd=cmd,
-                timeout=timeout,
-                log=self._effective_log(log),
-                expects=expects,
-                exec_input=exec_input,
-            )
 
     ####################
     #  File transfer
@@ -1368,7 +1310,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         It is asked for rather than assumed because the answer has to be an
         ABSOLUTE path: a relative destination is read by the transfer against
         the login directory and by a command against the SHELL's own, and
-        those are the same place only on a direct SSH exec channel.
+        those need not be the same place.
 
         ``printf %s "$HOME"`` rather than ``echo ~`` or ``pwd``: ``pwd``
         answers where the session happens to BE (a ``session_setup`` hook may

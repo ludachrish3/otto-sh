@@ -1,6 +1,6 @@
 """How otto decodes the bytes a host's command prints into text.
 
-One decision for every reader of command output, so no two routes can decode
+One decision for every reader of command output, so no two sessions can decode
 the same bytes differently: UTF-8, with a byte that is not valid UTF-8 replaced
 (U+FFFD) instead of raised. The contract it serves is
 :ref:`command-output-contract`.
@@ -19,18 +19,16 @@ from collections.abc import Awaitable, Callable
 OUTPUT_ENCODING = "utf-8"
 """The encoding otto decodes a command's output bytes with.
 
-The readers that turn a command's output bytes into text use it: local exec;
-the ssh exec channel, which passes it to asyncssh; and, through
+The readers that turn a command's output bytes into text use it: through
 :func:`output_decoder`, the ssh, telnet and local shell sessions and the
 interactive bridge; and the console login client's line reads.
 """
 
 READ_CHUNK = 2**16
-"""How many bytes a local reader asks its pipe for at a time.
+"""How many bytes a shell session's reader asks its stream for at a time.
 
-Local exec's line reader and the local shell session's
-:class:`PatternReader` both read this much, so a long line arrives in a few
-reads, not one read per byte.
+The ssh and local shell sessions' :class:`PatternReader` both read this
+much, so a long line arrives in a few reads, not one read per byte.
 """
 
 OUTPUT_ERRORS = "replace"

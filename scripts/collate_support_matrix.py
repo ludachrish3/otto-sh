@@ -569,8 +569,8 @@ def _verdict(
         )
     order = _element_order(matrix, profile)
     # THE CONTRADICTION IS PER DRAWN CELL, never per element. A domain can
-    # depend on the entry and the route (`exec-signal-exit`: `exec` is in it
-    # only where it takes a process route), so one element honestly has
+    # depend on the entry and the session (`exec-signal-exit`: `exec` is in it
+    # only where its session allows), so one element honestly has
     # observations on some cells and exclusions on others. What no honest run
     # pair can say is that the SAME cell was evaluated and was not.
     both = sorted(

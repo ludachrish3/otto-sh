@@ -14,7 +14,6 @@ from pydantic import SecretStr
 import otto.host.session as session_mod
 from otto.host.command_frame import ZephyrFrame
 from otto.host.errors import PasswordRefusedError
-from otto.host.exec_route import ExecRoute
 from otto.host.host import CredentialExpect
 from otto.host.session import ShellSession
 from otto.utils import wait_for_async
@@ -116,7 +115,7 @@ async def test_an_ordinary_command_completes_without_a_stop():
 async def test_a_timed_out_pooled_exec_whose_stop_fails_is_closed_not_pooled():
     mgr = _mgr()
     mgr._session_factory = lambda **kw: scripted_shell_unopened(confirms=False)
-    r = await _exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", timeout=0.2)
+    r = await _exec(mgr, cmd="c", timeout=0.2)
     assert r.timed_out
     assert idle_exec_sessions(mgr) == []
 
@@ -210,7 +209,7 @@ async def test_a_pooled_exec_cancelled_with_a_blocked_interrupt_is_disposed(monk
         return made[-1]
 
     mgr._session_factory = factory
-    task = asyncio.ensure_future(_exec(mgr, ExecRoute.POOLED_SHELL, cmd="c", timeout=60))
+    task = asyncio.ensure_future(_exec(mgr, cmd="c", timeout=60))
     await wait_for_async(
         lambda: bool(made) and made[-1].began.is_set(),
         10.0,
@@ -240,3 +239,69 @@ async def test_control_with_the_old_mark_only_branch_the_command_is_not_stopped(
     s = await scripted_shell()
     await _cancel_once_begun(s, asyncio.ensure_future(s.run_cmd(cmd="c", timeout=60)))
     assert "write:'\\x03'" not in s.ops
+
+
+@pytest.mark.timeout(10)
+async def test_a_stop_that_raises_never_replaces_the_cancellation(monkeypatch):
+    # The cancel path's stop runs under `compensate` holding the cancellation
+    # (`_stop_under_bound(held=...)`): a stop that raises is logged, and the
+    # held cancellation is what the caller sees.
+    stops: list[str] = []
+
+    async def stop_broke(self, *, restore, disposable=False):
+        stops.append("stop")
+        raise RuntimeError("stop broke")
+
+    monkeypatch.setattr(ShellSession, "_stop_interrupted_command", stop_broke)
+    mgr = _mgr()
+    made = []
+
+    def factory(**kw):
+        made.append(scripted_shell_unopened())
+        return made[-1]
+
+    mgr._session_factory = factory
+    task = asyncio.ensure_future(_exec(mgr, cmd="c", timeout=60))
+    await wait_for_async(
+        lambda: bool(made) and made[-1].began.is_set(),
+        10.0,
+        interval=0.01,
+        on_timeout="the pooled command never began",
+    )
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert stops == ["stop"]
+    assert not made[-1].alive
+    assert idle_exec_sessions(mgr) == []
+
+
+@pytest.mark.timeout(10)
+async def test_a_stop_that_raises_never_replaces_the_error_that_unwound_the_exec():
+    """A stop that fails because the transport is lost never replaces the timed-out result.
+
+    `ShellSession._recover_session` catches the connection-lost error on its interrupt write.
+    """
+    made = []
+
+    def factory(**kw):
+        s = scripted_shell_unopened()
+        write = s.write_transport
+
+        async def write_or_break(data):
+            if data == "\x03":
+                s.ops.append("write:'\\x03'")
+                raise BrokenPipeError("stop broke")
+            await write(data)
+
+        s.write_transport = write_or_break
+        made.append(s)
+        return s
+
+    mgr = _mgr()
+    mgr._session_factory = factory
+    r = await _exec(mgr, cmd="c", timeout=0.2)
+    assert r.timed_out
+    assert made[-1].ops.count("write:'\\x03'") == 1  # the stop ran, and failed
+    assert not made[-1].alive
+    assert idle_exec_sessions(mgr) == []

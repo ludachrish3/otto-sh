@@ -2229,11 +2229,11 @@ test fixtures, so edit them with the tie in mind:
 - **`docs/command-contracts/` is generated** by the
   same script, from the `@pytest.mark.entries(...)` marker on each command
   contract under `tests/conformance/` and every `Limitation` declared on a
-  built-in command frame (`exact_output`), exec route (`EXEC_ROUTES`) or
-  console setting. `index.md` is the overview and holds everything the
-  commands share (the routes, what the promises mean, the declared
-  exceptions, what is undefined); each command gets a page of its own with its
-  routes and promise tables. Which page an entry's promises go on is
+  built-in command frame (`exact_output`), on the session manager's exec
+  (`SESSION_EXEC_LIMITATIONS`) or on a console setting. `index.md` is the
+  overview and holds everything the commands share (the sessions, what the
+  promises mean, the declared exceptions, what is undefined); each command
+  gets a page of its own with its sessions and promise tables. Which page an entry's promises go on is
   `ENTRY_VOICE` in the script, and a command's page words are its
   `COMMAND_PAGES` entry, so a new command is one `ENTRY_VOICE` line per entry,
   one `COMMAND_PAGES` entry and its contracts. The pages are committed and
@@ -2272,8 +2272,9 @@ Where a device or a library makes a promise impossible, declare it on its
 owner, never in the docs:
 
 - **The owner** is the command frame (`exact_output` in its own class body;
-  not inherited) when the dialect causes it, the exec route's record in
-  `EXEC_ROUTES` (`src/otto/host/session.py`) when the route does, or
+  not inherited) when the dialect causes it,
+  `SESSION_EXEC_LIMITATIONS` (`src/otto/host/session.py`) when the shell
+  session an `exec` is typed into does, or
   `ConsoleOptions.declared_limitations` (`src/otto/host/options.py`) when a
   console server does, keyed by the lab-data field that states it, or the
   host family's `HostCapabilities` (`sudo`, `expects`, `user_refusal`) when

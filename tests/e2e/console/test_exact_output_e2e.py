@@ -16,7 +16,6 @@ corrupted ``value``, which every repeat still asserts.
 
 import pytest
 
-from otto.host.exec_route import ExecRoute
 from otto.host.host import Host
 from otto.testing import EXACT_OUTPUT_CASES
 
@@ -40,8 +39,8 @@ def _report(failures: list[str]) -> str:
 @pytest.mark.parametrize("host1", ["ssh"], indirect=True)
 async def test_an_ssh_exec_answers_the_exact_output_every_time(host1: Host) -> None:
     """Every shipped case, 20 times on the session without a terminal, answers its exact value."""
-    plan = host1._exec_plan(user=None, needs_shell=False)
-    assert (plan.route, plan.plain) == (ExecRoute.POOLED_SHELL, True)
+    assert not host1._shares_one_line()
+    assert host1._exec_plain(user=None, needs_shell=False) is True
     failures: list[str] = []
     for case in EXACT_OUTPUT_CASES:
         for iteration in range(1, _REPEATS + 1):

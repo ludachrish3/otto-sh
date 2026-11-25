@@ -376,7 +376,6 @@ async def test_a_container_over_a_session_backed_parent_runs_users_prompts_and_l
     assert answered.status is Status.Success, answered.value
     assert answered.value.splitlines()[-1].endswith("hello bob")
     for result in (plain, as_user, answered):
-        assert result.route == f"container/{'pooled-shell'}"
         _no_banner(result.value)
     _no_banner(*(r.getMessage() for r in records))
     mine = [r.getMessage() for r in records if getattr(r, "host", None) is container]

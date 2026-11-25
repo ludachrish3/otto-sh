@@ -488,10 +488,8 @@ def _applet_probe_command(applets: "list[str]") -> str:
     the module asks its presence questions one way.
 
     A PROBE IS NOT EXEMPT FROM THE LINE BOUNDS, which is why the length is
-    guarded rather than eyeballed. Probes go out through ``Host.exec``, whose
-    9000-character exec-channel ceiling is roomy -- but ``exec`` has no
-    stateless primitive on a ``term: telnet`` host or on any host whose login
-    is proxied, and there it routes through a pooled shell session where
+    guarded rather than eyeballed. Probes go out through ``Host.exec``, which
+    types into a shell session; where that session reads a terminal,
     :data:`PTY_TYPED_LINE_MAX` (4095, minus otto's own BEGIN/END framing)
     applies instead. The shipped seven names emit 135 characters, so the slack
     against the tighter of the two is a factor of about seven -- comfortable,

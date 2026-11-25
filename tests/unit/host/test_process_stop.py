@@ -1,11 +1,10 @@
-"""One stop for a process-route command: local exec and the ssh exec channel.
+"""One stop for a local shell's process group, and a local exec on its session.
 
 The escalation (first signal, ``KILL`` for a leader that outlives it and for
-what is left of a local group once the grace is over),
-local exec's process-group delivery (M14: before, a background member of the
-command's group received neither signal), stdin at end of file, one bounded
-drain-and-wait (#1063), and a stop that never replaces the error or the
-cancellation that unwound the exec (M10).
+what is left of a local group once the grace is over), the group delivery
+(M14: before, a background member of the command's group received neither
+signal), stdin at end of file, and a timeout that bounds the command, not
+only its output (#1063).
 """
 
 import asyncio
@@ -14,18 +13,15 @@ import os
 import signal
 from pathlib import Path
 
-import asyncssh
 import pytest
 
 from otto.host import process_stop
 from otto.host.local_host import LocalHost
-from otto.host.process_stop import LocalStoppable, StopSignal, stop_process
-from otto.logger.mode import LogMode
+from otto.host.process_stop import LocalStoppable, stop_process
 from otto.utils import wait_for_async
 from scripts.process_group import group_members, signal_group
 from tests._fixtures import witness_shell as wit
 from tests._fixtures.liveness import pid_running
-from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_manager
 
 pytestmark = [pytest.mark.asyncio]
 
@@ -41,12 +37,11 @@ class FakeStoppable:
         self.group_probes = 0
         self.group_killed = False
 
-    def send(self, sig: "StopSignal | str") -> None:
-        name = sig if isinstance(sig, str) else sig.value
+    def send(self, sig: str) -> None:
         if self._exited.is_set():
             raise ProcessLookupError
-        self.sent.append(name)
-        if name in self._obeys or name == "KILL":
+        self.sent.append(sig)
+        if sig in self._obeys or sig == "KILL":
             self._exited.set()
 
     async def wait(self) -> None:
@@ -97,23 +92,20 @@ def _signal_logger(log: Path, child: Path, leader: Path) -> str:
 async def test_stop_escalates_to_kill_only_when_the_leader_outlives_the_first_signal(monkeypatch):
     monkeypatch.setattr(process_stop, "_EXEC_REAP_TIMEOUT", 0)
     p = FakeStoppable(obeys=set())
-    await stop_process(p, first=StopSignal.TERMINATE)
+    await stop_process(p)
     assert p.sent == ["TERM", "KILL"]
 
 
-@pytest.mark.parametrize(
-    ("first", "name"), [(StopSignal.TERMINATE, "TERM"), (StopSignal.HANG_UP, "HUP")]
-)
-async def test_a_leader_that_obeys_ends_the_escalation(first, name):
-    p = FakeStoppable(obeys={name})
-    await stop_process(p, first=first)
-    assert p.sent == [name]
+async def test_a_leader_that_obeys_ends_the_escalation():
+    p = FakeStoppable(obeys={"TERM"})
+    await stop_process(p)
+    assert p.sent == ["TERM"]
 
 
 async def test_a_process_already_gone_is_not_signalled_again():
     p = FakeStoppable(obeys={"TERM"})
     p._exited.set()
-    await stop_process(p, first=StopSignal.TERMINATE)
+    await stop_process(p)
     assert p.sent == []
 
 
@@ -124,7 +116,7 @@ async def test_a_reaped_leader_is_never_signalled_even_if_its_group_remains():
         # No ProcessLookupError, no killpg.
         exited = asyncio.Event()
         exited.set()
-        await stop_process(LocalStoppable(proc, exited), first=StopSignal.TERMINATE)
+        await stop_process(LocalStoppable(proc, exited))
         assert group_members(proc.pid) != []  # the background sleep was not signalled
     finally:
         signal_group(proc.pid)
@@ -152,60 +144,15 @@ async def test_local_cancel_terminates_the_whole_group_first(tmp_path):
         _kill_if_running(leader)
 
 
-async def test_a_cancel_during_the_local_spawn_still_hangs_up_the_whole_group(tmp_path):
-    """The cancel lands while ``subprocess_shell`` is still pending, the command already running.
-
-    The spawn is held open until the command has written its marker, as a
-    cold or loaded process holds it; a cancellation there must still reach
-    the command's group through otto's stop, not only asyncio's kill of the
-    leader.
-    """
-    log, child, leader = tmp_path / "log", tmp_path / "child", tmp_path / "leader"
-    loop = asyncio.get_running_loop()
-    real = loop.subprocess_shell
-    started, release = asyncio.Event(), asyncio.Event()
-
-    async def slow_spawn(*args, **kwargs):
-        transport, protocol = await real(*args, **kwargs)
-        try:
-            await _written(log, "ready")
-            await _written(leader)
-            started.set()
-            await release.wait()
-        except BaseException:
-            transport.close()  # what asyncio does to a spawn it cancels: the leader only
-            raise
-        return transport, protocol
-
-    loop.subprocess_shell = slow_spawn
-    # The subprocess primitive itself: no exec() takes it, and it stays until removed.
-    task = asyncio.ensure_future(
-        LocalHost()._exec_subprocess(_signal_logger(log, child, leader), 30.0)
-    )
-    try:
-        await asyncio.wait_for(started.wait(), 10)
-        task.cancel()  # lands inside the pending spawn, at its `release.wait()`
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        await _written(log, "HUP")
-        assert log.read_text().splitlines() == ["ready", "HUP"]
-        assert not pid_running(int(leader.read_text()))
-    finally:
-        del loop.subprocess_shell
-        _kill_if_running(child)
-        _kill_if_running(leader)
-
-
 async def test_local_timeout_terminates_the_whole_group_first(tmp_path, monkeypatch):
     log, child, leader = tmp_path / "log", tmp_path / "child", tmp_path / "leader"
     real = process_stop.stop_process
 
-    async def gated(p, *, first):
+    async def gated(p):
         # The timeout fires first and drives the real stop; TERM is sent only
         # once the child has installed its traps, so the budget is no race.
         await _written(log, "ready")
-        await real(p, first=first)
+        await real(p)
 
     monkeypatch.setattr(process_stop, "stop_process", gated)
     r = await LocalHost().exec(_signal_logger(log, child, leader), timeout=0.5)
@@ -223,9 +170,9 @@ def _gate_the_stop_on(monkeypatch, ready: Path) -> None:
     """Send the timed-out stop only once *ready* is written, so the budget is no race."""
     real = process_stop.stop_process
 
-    async def gated(p, *, first):
+    async def gated(p):
         await _written(ready)
-        await real(p, first=first)
+        await real(p)
 
     monkeypatch.setattr(process_stop, "stop_process", gated)
 
@@ -332,13 +279,13 @@ async def test_a_local_stop_whose_group_empties_with_its_shell_kills_nothing(mon
 async def test_stop_kills_what_is_left_of_the_group_once_the_grace_is_over(monkeypatch):
     monkeypatch.setattr(process_stop, "_EXEC_REAP_TIMEOUT", 0.05)
     p = FakeStoppable(obeys={"TERM"}, group_left=True)
-    await stop_process(p, first=StopSignal.TERMINATE)
+    await stop_process(p)
     assert (p.sent, p.group_killed) == (["TERM"], True)
 
 
 async def test_a_group_empty_when_its_leader_exits_is_probed_once_and_not_killed():
     p = FakeStoppable(obeys={"TERM"})
-    await stop_process(p, first=StopSignal.TERMINATE)
+    await stop_process(p)
     assert (p.sent, p.group_probes, p.group_killed) == (["TERM"], 1, False)
 
 
@@ -375,23 +322,6 @@ async def test_local_exec_gives_the_command_end_of_file_on_stdin():
     assert (r.timed_out, r.value) == (False, "otto-cf-eof")
 
 
-async def test_the_local_subprocess_spawns_at_end_of_file_in_a_session_of_its_own(monkeypatch):
-    seen: dict = {}
-    loop = asyncio.get_running_loop()
-    real = loop.subprocess_shell
-
-    async def spy(*a, **kw):
-        seen.update(kw)
-        return await real(*a, **kw)
-
-    monkeypatch.setattr(loop, "subprocess_shell", spy)
-    # The subprocess primitive itself: no exec() takes it, and it stays until removed.
-    r = await LocalHost()._exec_subprocess("cat; echo otto-cf-eof", 5)
-    assert (r.timed_out, r.value) == (False, "otto-cf-eof")
-    assert seen["stdin"] is asyncio.subprocess.DEVNULL
-    assert seen["start_new_session"] is True
-
-
 async def test_local_exec_keeps_a_line_longer_than_64_kib():
     # Regression only: pull request 1 fixed it.
     r = await LocalHost().exec("head -c 200000 /dev/zero | tr '\\0' a")
@@ -403,102 +333,6 @@ async def test_local_eof_before_exit_still_times_out_inside_the_budget():
     r = await LocalHost().exec("exec >/dev/null 2>&1; sleep 10", timeout=0.5)
     assert r.timed_out  # before: returned after 10 s, timed_out=False
     assert r.value == "Command timed out after 0.5s"
-
-
-async def test_the_ssh_channel_bounds_the_wait_after_the_drain():
-    proc = FakeChannelProcess(
-        [], returncode=None, exit_status=None, eof=True, obeys=frozenset({"TERM"})
-    )
-    proc.exits_on_eof = False  # drains to EOF, never exits by itself
-    r = await channel_manager().exec_on(
-        conn=FakeConn(proc), cmd="x", timeout=0.05, log=LogMode.NEVER
-    )
-    assert r.timed_out
-    assert proc.signals[0] == "TERM"
-
-
-async def test_a_cancel_landing_during_the_timeout_stop_is_held_until_the_stop_finishes(
-    monkeypatch,
-):
-    gate, stopping = asyncio.Event(), asyncio.Event()
-    firsts: "list[StopSignal]" = []
-    finished: "list[bool]" = []
-
-    async def slow_stop(_stoppable, *, first):  # gets a ChannelStoppable: touch only `first`
-        firsts.append(first)
-        stopping.set()
-        await gate.wait()
-        finished.append(True)
-
-    # The one seam: session.py calls process_stop.stop_process.
-    monkeypatch.setattr(process_stop, "stop_process", slow_stop)
-    proc = FakeChannelProcess([], returncode=None, exit_status=None, eof=False)
-    task = asyncio.ensure_future(
-        channel_manager().exec_on(conn=FakeConn(proc), cmd="x", timeout=0, log=LogMode.NEVER)
-    )
-    await stopping.wait()
-    task.cancel()
-    # One loop turn, so the cancellation reaches compensate while the stop is
-    # still blocked on the gate; nothing in the stop can observe it being held.
-    await asyncio.sleep(0)
-    assert not task.done()  # held: the cancel did not end the exec
-    gate.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert (firsts, finished) == ([StopSignal.TERMINATE], [True])  # the stop ran to its end
-
-
-async def test_an_interrupted_channel_exec_hangs_up_and_keeps_the_cancellation_when_the_stop_fails(
-    monkeypatch,
-):
-    firsts: "list[StopSignal]" = []
-
-    async def failing_stop(_proc, *, first):
-        firsts.append(first)
-        raise OSError("channel gone")
-
-    monkeypatch.setattr(process_stop, "stop_process", failing_stop)
-    proc = FakeChannelProcess([], returncode=None, exit_status=None, eof=False)
-    task = asyncio.ensure_future(
-        channel_manager().exec_on(conn=FakeConn(proc), cmd="x", timeout=60, log=LogMode.NEVER)
-    )
-    await proc.reading.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):  # not OSError (M10)
-        await task
-    assert firsts == [StopSignal.HANG_UP]
-
-
-async def test_a_cancel_while_the_channel_opens_still_hangs_up_the_command():
-    proc = FakeChannelProcess([], returncode=None, exit_status=None, eof=False)
-    opening, release = asyncio.Event(), asyncio.Event()
-
-    class SlowConn(FakeConn):
-        async def create_process(self, _cmd: str, **kw):
-            opening.set()
-            await release.wait()
-            return self.process
-
-    task = asyncio.ensure_future(
-        channel_manager().exec_on(conn=SlowConn(proc), cmd="x", timeout=60, log=LogMode.NEVER)
-    )
-    await opening.wait()
-    task.cancel()  # lands inside the pending create_process
-    release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert proc.signals[:1] == ["HUP"]
-
-
-async def test_a_failing_stop_never_replaces_a_non_cancellation_error(monkeypatch):
-    async def failing_stop(_proc, *, first):
-        raise OSError("channel gone")
-
-    monkeypatch.setattr(process_stop, "stop_process", failing_stop)
-    proc = FakeChannelProcess([], returncode=None, exit_status=None, eof=False)
-    proc.stdout.fail_with = asyncssh.ConnectionLost("lost")  # the drain itself raises
-    with pytest.raises(asyncssh.ConnectionLost):
-        await channel_manager().exec_on(conn=FakeConn(proc), cmd="x", timeout=60, log=LogMode.NEVER)
 
 
 async def test_local_stop_ends_when_the_leader_exits_though_a_survivor_holds_its_output(
@@ -555,15 +389,3 @@ async def test_local_stop_ends_when_the_leader_exits_though_a_survivor_holds_its
     finally:
         _kill_if_running(child)
         _kill_if_running(leader)
-
-
-async def test_a_timed_out_exec_whose_stop_fails_still_returns_the_timed_out_result(monkeypatch):
-    # The stop's own failure (the channel already gone) is logged, as on the
-    # interrupt arm: the command did time out, and that is the result.
-    async def failing_stop(_proc, *, first):
-        raise OSError("channel gone")
-
-    monkeypatch.setattr(process_stop, "stop_process", failing_stop)
-    proc = FakeChannelProcess([], returncode=None, exit_status=None, eof=False)
-    r = await channel_manager().exec_on(conn=FakeConn(proc), cmd="x", timeout=0, log=LogMode.NEVER)
-    assert r.timed_out  # before: OSError raised out of exec_on

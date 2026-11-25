@@ -65,7 +65,6 @@ from ..utils import (
 from .cancel_safe import cancel_until_done
 from .capability_grid import UserSupport
 from .construction import RuntimeOnly
-from .exec_route import ExecRoute, ran_route
 from .identity import ROOT_LOGIN
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
@@ -82,7 +81,7 @@ if TYPE_CHECKING:
     from .element import Element
     from .power import PowerController
     from .product import Product
-    from .session import ExecPlan, HostSession, SessionManager
+    from .session import HostSession, SessionManager
 
     # Quoted-forward-ref only (see BaseHost.app_shell); keeping this TypeVar
     # under TYPE_CHECKING avoids a runtime import of otto.host.app_shell,
@@ -364,12 +363,11 @@ bounded — an unbounded wait here would defeat the timeout it implements.
 EXEC_CANCEL_REAP_BOUND = 2 * _EXEC_REAP_TIMEOUT
 """Seconds a cancelled or timed-out started process can take to stop.
 
-A process otto started outside a shell session (the ssh exec channel's
-command, a local process, the coverage scan's) is stopped with
+A process otto stops itself (a local shell session's, on close) is stopped with
 ``otto.host.process_stop.stop_process``, which signals it, waits
 ``_EXEC_REAP_TIMEOUT``, then kills it and waits once more; the stop runs
-under :func:`otto.lifecycle.compensate` bounded by this. Connection
-acquisition and channel creation are asyncssh's own and not bounded here.
+under :func:`otto.lifecycle.compensate` bounded by this. The coverage
+scan's reap is bounded by it too.
 """
 
 
@@ -683,7 +681,7 @@ def decline_command(
     (``HostSession``). *mode* is the command's (:func:`command_log_mode`);
     *fold* folds in the host's standing mode, so the announcement is logged
     exactly as a live call would log the command. The result is
-    ``Status.NotRun``, ``retcode`` -1, no route, and a ``value`` that raises
+    ``Status.NotRun``, ``retcode`` -1, and a ``value`` that raises
     :exc:`~otto.result.CommandNotRunError`.
     """
     log_command(f"[DRY RUN] {cmd}", fold(mode))
@@ -2683,7 +2681,7 @@ class BaseHost(ABC):
         the single-command shape of ``run``'s signature, parameter for
         parameter. On ssh, telnet and the local host it runs on a pooled
         shell session, one no other call holds (with or without a terminal,
-        as the host's plan decides) — that is what makes ``exec``
+        as the host decides) — that is what makes ``exec``
         concurrency-safe where ``run`` is not; a container hands it to its
         parent as ``docker exec``, and a family with a single console runs it
         on the default session. The result's ``value`` is the command's
@@ -2692,7 +2690,7 @@ class BaseHost(ABC):
         Validation and refusals sit ABOVE the dry-run arm, so a dry run of a
         call the family could never honour refuses rather than declining as
         though it could have. Do not override this method — override
-        ``_plan_exec`` and ``_run_plan``, so that ordering cannot be bypassed — the container
+        ``_plans_plain_exec`` and ``_run_exec``, so that ordering cannot be bypassed — the container
         family rewrites its arguments and delegates, which is the one
         permitted shape.
 
@@ -2751,8 +2749,8 @@ class BaseHost(ABC):
         The entry for a host that runs its commands through this one (a
         container through its parent). The same entry and turn as
         :meth:`exec`, so nothing of it is restated; *exec_log* rides on the
-        call's ``ExecInput`` to whichever route the plan names, so a
-        ``_run_plan`` override with the usual signature forwards it unawares.
+        call's ``ExecInput`` to whichever session runs it, so a
+        ``_run_exec`` override with the usual signature forwards it unawares.
         """
         async with self._host_entry("exec"):
             return await self._exec_in_turn(
@@ -2919,19 +2917,20 @@ class BaseHost(ABC):
     def _refuse_exec_on_a_terminal(
         self, *, user: str | None, needs_shell: bool, sudo: bool, expects: bool
     ) -> None:
-        """Refuse an ``exec(terminal=False)`` whose planned route is a session with a terminal.
+        """Refuse an ``exec(terminal=False)`` that would run on a session with a terminal.
 
-        Asked of the plan (:meth:`_exec_plan`), so it is the route and mode
-        the call would take that are judged and no condition is restated
-        here: a prompt to answer, an elevation and a user reached by a switch
-        all plan a session with the transport's own mode
-        (``ExecPlan.plain`` false), and on a family whose sessions are
-        terminals (``SessionManager._wants_plain``) that session has one. The
-        local host's shell session reads a pipe, so nothing is refused there.
+        Asked of :meth:`_exec_plain`, so it is the session mode the call would
+        take that is judged and no condition is restated here: a prompt to
+        answer, an elevation and a user reached by a switch all take a
+        session with the transport's own mode, and on a family whose sessions
+        are terminals (``SessionManager._wants_plain``) that session has one.
+        The local host's shell session reads a pipe, so nothing is refused
+        there. A family whose ``exec`` runs on no session of its own (a
+        container, through its parent) overrides this.
         """
-        plan = self._exec_plan(user=user, needs_shell=needs_shell)
-        on_a_session = plan.route in (ExecRoute.POOLED_SHELL, ExecRoute.DEFAULT_SESSION)
-        if not on_a_session or plan.plain or not self._live_session_mgr()._wants_plain(False):  # noqa: SLF001 — the manager's own answer
+        if self._exec_plain(user=user, needs_shell=needs_shell):
+            return
+        if not self._live_session_mgr()._wants_plain(False):  # noqa: SLF001 — the manager's own answer
             return
         if sudo:
             why = "cannot elevate (sudo=True): the password prompt is answered on a terminal"
@@ -2939,7 +2938,9 @@ class BaseHost(ABC):
             why = "cannot answer prompts (expects=): they are answered on a terminal"
         elif user is not None:
             why = f"cannot run as {user!r}, who is reached by switching users on a terminal"
-        else:  # pragma: no cover — _terminal_limitation(False) names every other cause first
+        # No built-in family reaches the arm below; a custom ssh family that
+        # keeps the default `_plans_plain_exec` (False) does.
+        else:  # pragma: no cover — no test drives a custom family here
             why = "cannot be given: this call runs on a session with a terminal"
         self._raise_terminal_refusal(False, why)
 
@@ -3021,91 +3022,76 @@ class BaseHost(ABC):
         needs_shell: bool = False,
         exec_input: "ExecInput | None" = None,
     ) -> CommandResult:
-        """Run one command: plan its route once, then run that plan.
+        """Run one command: decide its session mode once, then run it.
 
-        The one place an ``exec`` call is dispatched. Which route it takes is
-        :meth:`_plan_exec`'s answer alone, asked through :meth:`_exec_plan`
-        with the effective user, and :meth:`_run_plan` runs what that answer
-        names, so any other reader of the decision (the transfer line budget)
-        asks :meth:`_exec_plan` too rather than re-deriving it. Families
-        override ``_plan_exec`` and ``_run_plan``, never this.
+        The one place an ``exec`` call is dispatched. Whether the session it
+        takes has a terminal is :meth:`_exec_plain`'s answer alone, so any
+        other reader of the decision (the transfer line budget, the
+        ``terminal=False`` refusal) asks :meth:`_exec_plain` too rather than
+        re-deriving it; which session it takes is :meth:`_shares_one_line`'s,
+        read by :meth:`_exec_on_manager`. Families override
+        :meth:`_plans_plain_exec` and :meth:`_run_exec`, never this.
 
         *expects* and *needs_shell* are the call's own reasons to want a
         shell with a terminal; a family whose pooled session can run without
-        one plans it with a terminal instead. *exec_input* is what a shell route's exec frame
-        needs (:class:`~otto.host.command_frame.ExecInput`), built once by
-        :meth:`exec` and carried unchanged to the session.
-
-        The result's ``route`` is recorded by the primitive that ran, never
-        copied from the plan, and is checked against it here: a ``_run_plan``
-        that dispatched a different primitive than its plan names is a bug in
-        otto, and raises rather than reporting the route it meant to take.
-
-        Raises:
-            AssertionError: the primitive that ran is not the one the plan
-                names.
+        one takes it with a terminal instead. *exec_input* is what the
+        session's exec frame needs (:class:`~otto.host.command_frame.ExecInput`),
+        built once by :meth:`exec` and carried unchanged to the session.
         """
-        from .session import delegated_exec_log  # beside the route that reads it
+        from .session import delegated_exec_log  # beside the session that reads it
 
-        plan = self._exec_plan(user=user, needs_shell=needs_shell)
+        plain = self._exec_plain(user=user, needs_shell=needs_shell)
         if (delegated := delegated_exec_log(exec_input)) is not None:
             # The line this host really runs, once per call, under the delegated mode.
             self._log_command(cmd, delegated.mode, level=DEBUG)
-        result = await self._run_plan(
-            plan,
+        return await self._run_exec(
             cmd=cmd,
             timeout=timeout,
             log=log,
             user=user,
             expects=expects,
             exec_input=exec_input,
+            plain=plain,
         )
-        if isinstance(result, NotRunResult):
-            return result
-        if ran_route(result.route) is not plan.route:
-            raise AssertionError(
-                f"{self.name}: exec planned the {plan.route.value!r} route but ran on "
-                f"{result.route!r}; _run_plan dispatched a primitive its plan does not "
-                f"name, which is a bug in otto"
-            )
-        return result
 
     @final
     def _effective_exec_user(self, user: str | None) -> str | None:
         """Return the user one ``exec`` call runs as: *user*, else an enclosing ``as_user()``'s.
 
         The one place ``exec``'s ``user=None`` is resolved, so :meth:`exec`
-        and every query of its plan (:meth:`_exec_plan`) read the same
-        identity. Idempotent: a resolved user resolves to itself.
+        and every query of its session mode (:meth:`_exec_plain`) read the
+        same identity. Idempotent: a resolved user resolves to itself.
         """
         return self._ambient_user() if user is None else user
 
     @final
-    def _exec_plan(self, *, user: str | None, needs_shell: bool) -> "ExecPlan":
-        """Return the plan one ``exec`` call as *user* runs: effective user, then family plan.
+    def _exec_plain(self, *, user: str | None, needs_shell: bool) -> bool:
+        """Whether one ``exec`` call as *user* takes a session without a terminal.
 
-        :meth:`_exec_one` dispatches this and the transfer line budget asks
-        it, so a query cannot plan for a different user than the call it
-        sizes (``user=None`` inside ``as_user()`` is that user, on both).
+        The effective user first, then the family's answer
+        (:meth:`_plans_plain_exec`). :meth:`_exec_one` runs by it and the
+        transfer line budget asks it, so a query cannot decide for a
+        different user than the call it sizes (``user=None`` inside
+        ``as_user()`` is that user, on both).
         """
-        return self._plan_exec(user=self._effective_exec_user(user), needs_shell=needs_shell)
+        return self._plans_plain_exec(user=self._effective_exec_user(user), needs_shell=needs_shell)
 
-    def _plan_exec(self, *, user: str | None, needs_shell: bool) -> "ExecPlan":
-        """Which route and session mode one ``exec`` call as *user* takes. Families override.
+    def _plans_plain_exec(self, *, user: str | None, needs_shell: bool) -> bool:  # noqa: ARG002 — the override's parameters; this default reads neither
+        """Whether a pooled ``exec`` as *user* opens its session without a terminal.
 
-        Synchronous and free of I/O: the answer comes from the host's
-        configuration and its transport's current state, so a query (the
-        transfer line budget) can ask it without running anything.
+        ``False`` here: a session of the transport's own mode. Families
+        override. Synchronous and free of I/O: the answer comes from the
+        host's configuration and its transport's current state, so a query
+        (the transfer line budget) can ask it without running anything.
         *needs_shell* is the call's reason for a session with a terminal (a
-        prompt, an elevation, ``terminal=True``); ``terminal=False`` plans as
-        an unset call does, and is refused before planning where it cannot
-        be honoured.
+        prompt, an elevation, ``terminal=True``); ``terminal=False`` is
+        answered as an unset call is, and is refused before running where it
+        cannot be honoured.
         """
-        raise NotImplementedError from None
+        return False
 
-    async def _run_plan(
+    async def _run_exec(
         self,
-        plan: "ExecPlan",
         *,
         cmd: str,
         timeout: float,
@@ -3113,21 +3099,30 @@ class BaseHost(ABC):
         user: str | None,
         expects: "list[Expect | CredentialExpect] | None",
         exec_input: "ExecInput | None",
+        plain: bool,
     ) -> CommandResult:
-        """Run *cmd* on the route *plan* names. Families override.
+        """Run *cmd* on its session, without a terminal when *plain*. Families may override.
 
-        The only place a family calls its exec primitive; the route is
-        already decided, so this chooses nothing. Every route forwards
-        *exec_input* to its primitive: a shell route's session frames the
-        command by it, and every route logs by it (``resolve_exec_log``),
-        so a route that drops it logs a delegated call on this host
-        instead of on the host that delegated it.
+        The one family hook that runs an ``exec``: here, through the session
+        manager (:meth:`_exec_on_manager`). A family that runs it elsewhere
+        (a container, through its parent) overrides this. Every override
+        forwards *exec_input*: the session frames the command by it, and
+        every path logs by it (``resolve_exec_log``), so one that drops it
+        logs a delegated call on this host instead of on the host that
+        delegated it.
         """
-        raise NotImplementedError from None
+        return await self._exec_on_manager(
+            cmd=cmd,
+            timeout=timeout,
+            log=log,
+            user=user,
+            expects=expects,
+            exec_input=exec_input,
+            plain=plain,
+        )
 
-    async def _exec_on_manager_route(
+    async def _exec_on_manager(
         self,
-        route: ExecRoute,
         *,
         cmd: str,
         timeout: float,
@@ -3137,16 +3132,28 @@ class BaseHost(ABC):
         exec_input: "ExecInput | None",
         plain: bool = False,
     ) -> CommandResult:
-        """Run *cmd* on *route* through this host's session manager: the one such dispatch.
+        """Run *cmd* on a session of this host's session manager.
 
-        Every family whose plan names a session route (the pooled shell, the
-        default session) runs it here, so the
-        call's *exec_input*, the folded log mode, *user* and the plan's
-        session mode (*plain*, ``ExecPlan.plain``) reach the manager the same
-        way from each.
+        The one such dispatch, so the call's *exec_input*, the folded log
+        mode, *user* and *plain* reach the manager the same way from every
+        family. On a host that :meth:`_shares_one_line` it is the host's one
+        default session
+        (:meth:`~otto.host.session.SessionManager.exec_on_default_session`),
+        whatever *plain* says; otherwise a pooled session
+        (:meth:`~otto.host.session.SessionManager.exec_pooled`), without a
+        terminal when *plain*.
         """
-        return await self._live_session_mgr().exec_on_route(
-            route=route,
+        mgr = self._live_session_mgr()
+        if self._shares_one_line():
+            return await mgr.exec_on_default_session(
+                cmd=cmd,
+                timeout=timeout,
+                log=self._effective_log(log),
+                expects=expects,
+                user=user,
+                exec_input=exec_input,
+            )
+        return await mgr.exec_pooled(
             cmd=cmd,
             timeout=timeout,
             log=self._effective_log(log),

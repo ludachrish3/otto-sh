@@ -12,7 +12,6 @@ from unittest.mock import patch
 import pytest
 from pydantic import SecretStr
 
-from otto.host.exec_route import ExecRoute
 from otto.host.host import (
     SuppressCommandOutput,
     _HostFilter,
@@ -21,7 +20,6 @@ from otto.host.host import (
 from otto.host.inventory_ref import InventoryRef
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
-from otto.host.output_codec import READ_CHUNK
 from otto.host.session import SessionManager
 from otto.invocation import current_policy
 from otto.logger.mode import LogMode
@@ -195,7 +193,6 @@ async def test_exec_follows_the_python_process_s_directory_and_environment(tmp_p
         monkeypatch.setenv("OTTO_LOCAL_EXEC_VAR", "now")
         result = await host.exec('echo "$PWD $OTTO_LOCAL_EXEC_VAR"')
         assert result.value == f"{tmp_path} now"
-        assert result.route == ExecRoute.POOLED_SHELL.value
     finally:
         await host.close()
 
@@ -329,11 +326,7 @@ async def test_exec_answers_a_prompt_with_expects_on_the_pooled_shell():
         )
     finally:
         await host.close()
-    assert (r.status, r.route, r.value.endswith("got-otto")) == (
-        Status.Success,
-        ExecRoute.POOLED_SHELL.value,
-        True,
-    )
+    assert (r.status, r.value.endswith("got-otto")) == (Status.Success, True)
 
 
 @pytest.mark.asyncio
@@ -345,9 +338,8 @@ async def test_exec_sudo_is_answered_once_from_the_invoking_user_s_credential(st
         await host.close()
     # The prompt otto answered is the shell's output, ahead of the command's.
     # The prompt is fresh per call (otto-sudo- and 16 letters and digits).
-    assert (r.status, r.route, bool(re.fullmatch(r"otto-sudo-[A-Za-z0-9]{16}:root", r.value))) == (
+    assert (r.status, bool(re.fullmatch(r"otto-sudo-[A-Za-z0-9]{16}:root", r.value))) == (
         Status.Success,
-        ExecRoute.POOLED_SHELL.value,
         True,
     ), r.value
     assert FAKE_ELEVATION_PASSWORD not in r.value
@@ -377,7 +369,7 @@ async def test_run_and_exec_with_user_run_as_that_user(stand_in_elevation):
         after = (await host.run("id -un", timeout=10)).only
     finally:
         await host.close()
-    assert (ran.value, execd.value, execd.route) == (_OTHER, _OTHER, ExecRoute.POOLED_SHELL.value)
+    assert (ran.value, execd.value) == (_OTHER, _OTHER)
     assert after.value == _INVOKING  # run(user=) restores the session's user after
 
 
@@ -390,8 +382,7 @@ async def test_exec_inside_as_user_runs_as_the_switched_user(stand_in_elevation)
         outside = await host.exec("id -un", timeout=10)
     finally:
         await host.close()
-    assert (inside.value, inside.route) == (_OTHER, ExecRoute.POOLED_SHELL.value)
-    assert (outside.value, outside.route) == (_INVOKING, ExecRoute.POOLED_SHELL.value)
+    assert (inside.value, outside.value) == (_OTHER, _INVOKING)
 
 
 @pytest.mark.asyncio
@@ -415,9 +406,11 @@ async def test_unix_and_local_hosts_answer_sudo_from_one_lookup():
 @pytest.mark.asyncio
 async def test_a_plain_exec_opens_one_session_and_spawns_no_process():
     host = LocalHost()
+    loop = asyncio.get_running_loop()
     try:
         with (
-            patch.object(host, "_exec_subprocess", wraps=host._exec_subprocess) as spawn,
+            patch.object(loop, "subprocess_exec", wraps=loop.subprocess_exec) as spawn,
+            patch.object(loop, "subprocess_shell", wraps=loop.subprocess_shell) as shell_spawn,
             patch.object(
                 SessionManager,
                 "open_session",
@@ -428,16 +421,20 @@ async def test_a_plain_exec_opens_one_session_and_spawns_no_process():
             r = await host.exec("true", timeout=5)
     finally:
         await host.close()
-    assert (r.status, spawn.call_count, open_session.call_count) == (Status.Success, 0, 1)
+    # The one process is the session's shell.
+    assert (r.status, open_session.call_count) == (Status.Success, 1)
+    assert (spawn.call_count, shell_spawn.call_count) == (1, 0)
 
 
 @pytest.mark.asyncio
 async def test_two_optioned_execs_each_open_a_session_of_their_own():
     """The local host keeps no idle session: each call's shell is its own, and closed after."""
     host = LocalHost()
+    loop = asyncio.get_running_loop()
     try:
         with (
-            patch.object(host, "_exec_subprocess", wraps=host._exec_subprocess) as spawn,
+            patch.object(loop, "subprocess_exec", wraps=loop.subprocess_exec) as spawn,
+            patch.object(loop, "subprocess_shell", wraps=loop.subprocess_shell) as shell_spawn,
             patch.object(
                 SessionManager,
                 "open_session",
@@ -451,7 +448,7 @@ async def test_two_optioned_execs_each_open_a_session_of_their_own():
                 assert [s for s in host._session_mgr._named_sessions.values() if s.alive] == []
     finally:
         await host.close()
-    assert (open_session.call_count, spawn.call_count) == (2, 0)
+    assert (open_session.call_count, spawn.call_count, shell_spawn.call_count) == (2, 2, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -1076,37 +1073,6 @@ async def test_overlapping_global_suppressions_leave_command_output_on():
 
         assert get_logging_command_output_enabled() is True
         assert current_policy().log_command_output is True
-
-
-async def _chunks_of(data: bytes) -> list[str]:
-    from otto.host.local_host import _decoded_chunks
-
-    stream = asyncio.StreamReader(limit=4 * READ_CHUNK)
-    stream.feed_data(data)
-    stream.feed_eof()
-    return [c async for c in _decoded_chunks(stream)]
-
-
-@pytest.mark.parametrize(
-    ("data", "text"),
-    [
-        pytest.param(
-            b"x" * (READ_CHUNK - 1) + "é".encode() + b"x" * (READ_CHUNK - 1) + b"\r\n",
-            "x" * (READ_CHUNK - 1) + "é" + "x" * (READ_CHUNK - 1) + "\r\n",
-            id="char-and-crlf-split-across-reads",
-        ),
-        pytest.param(b"ok\n" + "€".encode()[:2], "ok\n�", id="incomplete-char-at-eof"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_decoded_chunks_keep_one_decoder_across_reads(data: bytes, text: str):
-    """One decoder across reads: a character split by a read stays whole, a cut one is replaced."""
-    from otto.host.session import ExecOutput
-
-    out = ExecOutput()
-    for c in await _chunks_of(data):
-        out.feed(c)
-    assert out.raw() == text
 
 
 @pytest.mark.asyncio

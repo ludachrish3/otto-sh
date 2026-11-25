@@ -18,8 +18,7 @@ import pytest
 
 import otto.host.transfer.nc as transfer_mod
 from otto.host.connections import ConnectionManager
-from otto.host.exec_route import ExecRoute
-from otto.host.exit_status import gave_no_exit_status, no_return_code_result
+from otto.host.exit_status import gave_no_exit_status
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
 from otto.result import CommandResult, Result
@@ -34,6 +33,13 @@ def _ok(output: str = "") -> CommandResult:
 def _status(code: int) -> CommandResult:
     return CommandResult(
         command="", value="", status=Status.Success if code == 0 else Status.Failed, retcode=code
+    )
+
+
+def _no_status() -> CommandResult:
+    """A listener that gave no exit status: the result of a session that died under it."""
+    return CommandResult(
+        command="nc", value="Session died unexpectedly (EOF)", status=Status.Error, retcode=-1
     )
 
 
@@ -288,7 +294,7 @@ async def test_a_listener_command_that_raises_is_retried_with_its_cause(
 async def test_a_listener_with_no_exit_status_is_retried_and_never_worded_as_a_status(
     direction: str, tmp_path: Path
 ) -> None:
-    host = _Host(no_return_code_result(cmd="nc", route=ExecRoute.SSH_CHANNEL))
+    host = _Host(_no_status())
     message = _assert_failed(*await _transfer(host, direction, True, tmp_path))
     assert len(host.listen_cmds) == 2
     assert "no exit status" in message
@@ -335,7 +341,7 @@ _ENDINGS = [
     pytest.param(_status(127), 1, "not found", id="status-127"),
     pytest.param(OSError("the cause"), 2, "the cause", id="raised"),
     pytest.param(
-        no_return_code_result(cmd="nc", route=ExecRoute.SSH_CHANNEL),
+        _no_status(),
         2,
         "no exit status",
         id="no-status",

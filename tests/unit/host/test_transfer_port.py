@@ -8,8 +8,6 @@ import pytest
 
 from otto.host.connections import ConnectionManager
 from otto.host.errors import CommandValueError, HostCommandError, HostUnreachableError
-from otto.host.exec_route import ExecRoute
-from otto.host.exit_status import no_return_code_result
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
 from otto.host.transfer import nc as nc_module
@@ -1040,20 +1038,13 @@ class TestListenerCheckIsLoud:
         assert exec_cmd.await_count == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "never_ran",
-        [
-            no_return_code_result(cmd="check", route=ExecRoute.SSH_CHANNEL),
-            CommandResult(
-                status=Status.Error,
-                value="Session died unexpectedly (EOF)",
-                command="check",
-                retcode=-1,
-            ),
-        ],
-        ids=["no-return-code", "session-died"],
-    )
-    async def test_a_check_that_never_ran_is_no_answer_and_is_polled_again(self, never_ran):
+    async def test_a_check_that_never_ran_is_no_answer_and_is_polled_again(self):
+        never_ran = CommandResult(
+            status=Status.Error,
+            value="Session died unexpectedly (EOF)",
+            command="check",
+            retcode=-1,
+        )
         exec_cmd = AsyncMock(side_effect=[never_ran, _ok("1\n")])
         ft = make_ft(nc_listener_check="ss", exec_cmd=exec_cmd)
         await ft._wait_for_remote_listener(8080, timeout=5.0, interval=0.01)

@@ -27,7 +27,7 @@ this workstream one bug.
 import pytest
 
 from otto.utils import Status
-from tests.conformance._entry import check_route, issue, opened
+from tests.conformance._entry import issue, opened
 from tests.conformance._framing import assert_single_line_answer, framing_leak
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._vocabulary import OTTO_SENTINEL_PREFIX
@@ -178,9 +178,6 @@ async def test_a_failing_command_is_not_reported_as_success(resolved_cell: Resol
         results = await host.run(
             [words.succeeding_command, words.sequence_failing_command, words.single_line_command]
         )
-    for entry in results:
-        check_route(resolved_cell, entry)
-
     cell = resolved_cell.cell
     assert results.is_ok is False, (
         f"{cell}: a sequence containing `{words.sequence_failing_command}` reported is_ok=True"
@@ -375,9 +372,6 @@ async def test_control_a_succeeding_sequence_is_not_reported_as_failed(
         results = await host.run(
             [words.succeeding_command, words.single_line_command, words.succeeding_command]
         )
-    for entry in results:
-        check_route(resolved_cell, entry)
-
     cell = resolved_cell.cell
     assert results.is_ok is True, (
         f"{cell}: a sequence of three commands that all exit 0 reported is_ok=False "

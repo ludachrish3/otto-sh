@@ -1,33 +1,28 @@
-"""One exit-status rule on the process routes: a signal death is 128+N, no status is one error.
+"""One exit-status rule: a signal death is 128+N, and one reader of "no exit status".
 
 The ssh exec channel used to report a command killed by a signal as ``0``
 (``exit_status or 0``) and local ``exec`` as ``-N`` (asyncio's convention);
-a shell reports the same death as ``128 + N``. ``run`` is not translated at
-all: its status is what the shell printed, and a shell can print 256+N for a
-function's own return, so a magnitude rule there would rewrite a real status.
+a shell reports the same death as ``128 + N``, and so does
+:func:`~otto.host.exit_status.exit_status_of`, which the interactive ssh bridge
+reads its status through. ``run`` is not translated at all: its status is
+what the shell printed, and a shell can print 256+N for a function's own
+return, so a magnitude rule there would rewrite a real status.
 """
 
-import asyncio
 import signal
 import subprocess
-from typing import Any
 
 import pytest
 import pytest_asyncio
 
 from otto.host.command_frame import BashFrame
-from otto.host.exec_route import ExecRoute
 from otto.host.exit_status import (
-    NO_RETURN_CODE,
     exit_status_of,
     gave_no_exit_status,
-    no_return_code_result,
 )
 from otto.host.local_host import LocalHost
-from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
-from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_manager
 from tests.unit.host.test_frame_shell_portability import M
 
 
@@ -67,79 +62,11 @@ async def test_a_local_exec_that_kills_its_own_shell_ends_the_session(sig: str):
         await host.close()
 
 
-@pytest.mark.asyncio
-async def test_ssh_channel_reports_a_signal_death_as_128_plus_n():
-    # asyncssh's completed process for a signal death: exit_status -1, returncode -N.
-    process = FakeChannelProcess([], returncode=-15, exit_status=-1)
-    r = await channel_manager().exec_on(
-        conn=FakeConn(process), cmd="x", timeout=5, log=LogMode.NEVER
-    )
-    assert (r.retcode, r.status) == (143, Status.Failed)
-
-
-class _NoReturnCodeTransport:
-    """A subprocess transport that reaps its child but reports no return code."""
-
-    def __init__(self, transport: Any) -> None:
-        self._transport = transport
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._transport, name)
-
-    def get_returncode(self) -> None:
-        return None
-
-    async def _wait(self) -> None:
-        await self._transport._wait()
-
-
-async def _local_without_returncode(monkeypatch: pytest.MonkeyPatch) -> CommandResult:
-    """The local subprocess primitive, its transport giving no return code after EOF and wait."""
-    loop = asyncio.get_running_loop()
-    real = loop.subprocess_shell
-
-    async def spy(*args: Any, **kwargs: Any) -> Any:
-        transport, protocol = await real(*args, **kwargs)
-        return _NoReturnCodeTransport(transport), protocol
-
-    monkeypatch.setattr(loop, "subprocess_shell", spy)
-    host = LocalHost()
-    try:
-        # The subprocess primitive itself: no exec() takes it, and it stays until removed.
-        return await host._exec_subprocess("true", 5.0)
-    finally:
-        await host.close()
-
-
-@pytest.mark.parametrize("route", ["local", "channel"])
-@pytest.mark.asyncio
-async def test_a_process_with_no_status_and_no_signal_is_one_error_result(
-    route: str, monkeypatch: pytest.MonkeyPatch
-):
-    if route == "local":
-        r = await _local_without_returncode(monkeypatch)
-    else:
-        process = FakeChannelProcess([], returncode=None, exit_status=None)
-        r = await channel_manager().exec_on(
-            conn=FakeConn(process), cmd="x", timeout=5, log=LogMode.NEVER
-        )
-    assert (r.status, r.retcode, r.value) == (Status.Error, -1, NO_RETURN_CODE)
-
-
 def test_run_s_brace_frame_status_is_what_the_shell_reports():
     # dash, ksh and zsh report a genuine 271 from a function; run must not rewrite it.
     framed = BashFrame().frame("f() { return 271; }; f", m=M)
     out = subprocess.run(["dash"], check=False, input=framed, capture_output=True, text=True).stdout
     assert BashFrame().extract_retcode(out, m=M) == 271
-
-
-def test_no_return_code_result_says_so_in_its_msg():
-    # #1098: the CLI prints only `msg` for a failed result.
-    from otto.host.exec_route import ExecRoute
-    from otto.host.exit_status import NO_RETURN_CODE, no_return_code_result
-
-    r = no_return_code_result(cmd="c", route=ExecRoute.LOCAL_SUBPROCESS)
-    assert r.msg == NO_RETURN_CODE == r.value
 
 
 @pytest.mark.parametrize(
@@ -174,11 +101,6 @@ def test_no_return_code_result_says_so_in_its_msg():
 )
 def test_gave_no_exit_status(result: CommandResult, expected: bool):
     assert gave_no_exit_status(result) is expected
-
-
-def test_the_no_return_code_result_gave_no_exit_status():
-    """The one result a process route builds for "no status" is read back as that."""
-    assert gave_no_exit_status(no_return_code_result(cmd="c", route=ExecRoute.LOCAL_SUBPROCESS))
 
 
 @pytest_asyncio.fixture(params=["ssh", "local"])

@@ -1,8 +1,8 @@
-"""The record of where otto's behaviour on one host, frame or route falls short.
+"""The record of where otto's behaviour on one host, frame or session falls short.
 
 otto's behaviour promises (a command's ``value`` is its exact output, a
 command line of any length runs whole, and so on) hold on every host, frame
-and route unless the device makes them impossible. A difference is never
+and session unless the device makes them impossible. A difference is never
 left implicit: it is declared, in data, as a :class:`Limitation` next to the
 code it applies to, with the reason it cannot be helped and what it was
 measured on.
@@ -17,7 +17,7 @@ implements the code:
   intrinsically, and otto cannot change it without replacing the library.
 
 The places that declare are :attr:`otto.host.command_frame.CommandFrame.exact_output`,
-:data:`otto.host.session.EXEC_ROUTES`, a console server's own facts in
+:data:`otto.host.session.SESSION_EXEC_LIMITATIONS`, a console server's own facts in
 :class:`otto.host.options.ConsoleOptions` (:attr:`~otto.host.options.ConsoleOptions.exact_output`),
 and a host family's refused options in
 :class:`otto.host.capability_grid.HostCapabilities`.

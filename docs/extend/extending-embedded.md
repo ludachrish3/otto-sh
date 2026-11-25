@@ -93,10 +93,10 @@ command, and its stdin is at end of file when `stdin_eof` is true. `restore`
 names which terminal record to put back: `BASELINE`, the one the session's
 handshake recorded (`BashFrame`'s handshake keeps it in `__otto_base`), or
 `START`, the terminal as this `exec` found it. `START` is what a console's
-default session passes, and `BashFrame` then runs the command in a clean
-login shell rather than a subshell ({ref}`exec-frame-shell-state`); a frame
-of your own decides from `restore` too, so the line budget measures what it
-types.
+default session passes: the command runs on the shell `run` uses, so
+`BashFrame` first saves the terminal as it found it and puts that back at
+the end ({ref}`exec-frame-shell-state`); a frame of your own decides from
+`restore` too, so the line budget measures what it types.
 {attr}`~otto.host.command_frame.CommandFrame.isolates_exec` is derived from the
 override alone, so an override that only delegates to `frame` claims an
 isolation the frame does not give: override it to isolate, or not at all.

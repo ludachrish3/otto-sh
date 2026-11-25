@@ -46,20 +46,12 @@ from tests.unit.host._exec_log import (
 pytestmark = pytest.mark.usefixtures("trusted_container_staging")
 
 
-_PARENT_ROUTE = "ssh-channel"
-"""The route a faked parent ``exec`` records, as the real parent's primitive would."""
-
-
 def _ok(cmd: str = "", out: str = "") -> CommandResult:
-    return CommandResult(
-        status=Status.Success, value=out, command=cmd, retcode=0, route=_PARENT_ROUTE
-    )
+    return CommandResult(status=Status.Success, value=out, command=cmd, retcode=0)
 
 
 def _fail(cmd: str = "", out: str = "boom") -> CommandResult:
-    return CommandResult(
-        status=Status.Failed, value=out, command=cmd, retcode=1, route=_PARENT_ROUTE
-    )
+    return CommandResult(status=Status.Failed, value=out, command=cmd, retcode=1)
 
 
 def _sm(result) -> tuple[Status, str]:
@@ -221,7 +213,6 @@ async def test_exec_preserves_every_field_through_the_command_rebuild():
         command=wrapped_cmd,
         retcode=-1,
         timed_out=True,
-        route=_PARENT_ROUTE,
     )
 
     result = await h.exec("sleep 10")
@@ -301,9 +292,7 @@ async def test_exec_sudo_runs_as_root_in_the_container():
     parent = _mock_parent()
     container = _make_container(parent)
     container.parent.exec = AsyncMock(
-        return_value=CommandResult(
-            status=Status.Success, value="uid=0", command="x", retcode=0, route=_PARENT_ROUTE
-        )
+        return_value=CommandResult(status=Status.Success, value="uid=0", command="x", retcode=0)
     )
     container._ensure_running = AsyncMock()
     await container.exec("id", sudo=True)
@@ -2575,7 +2564,7 @@ async def test_a_shell_command_s_own_mode_decides_a_container_exec_s_log(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_a_parent_overriding_run_plan_with_today_s_signature_forwards_the_context(
+async def test_a_parent_overriding_run_exec_with_its_signature_forwards_the_context(
     tmp_path,
 ):
     """An override that hands its ``exec_input`` on to the stock dispatch logs on the container."""
@@ -2584,22 +2573,22 @@ async def test_a_parent_overriding_run_plan_with_today_s_signature_forwards_the_
 
     calls = 0
 
-    class _OldSignatureParent(UnixHost):
-        async def _run_plan(self, plan, *, cmd, timeout, log, user, expects, exec_input):
+    class _ForwardingParent(UnixHost):
+        async def _run_exec(self, *, cmd, timeout, log, user, expects, exec_input, plain):
             nonlocal calls
             calls += 1
-            return await super()._run_plan(
-                plan,
+            return await super()._run_exec(
                 cmd=cmd,
                 timeout=timeout,
                 log=log,
                 user=user,
                 expects=expects,
                 exec_input=exec_input,
+                plain=plain,
             )
 
     parent, dial = ssh_parent_over_shells(
-        _OldSignatureParent, tmp_path, {"wire-old": f"echo {_OUT_TOK}"}
+        _ForwardingParent, tmp_path, {"wire-old": f"echo {_OUT_TOK}"}
     )
     container = _make_container(parent)
     container.log = LogMode.NORMAL
@@ -2761,7 +2750,7 @@ async def test_a_cancelled_delegated_exec_keeps_its_lines_on_the_container(tmp_p
 
 @pytest.mark.asyncio
 async def test_a_parent_that_runs_and_logs_a_command_by_its_own_means_keeps_the_lines(tmp_path):
-    """A ``_run_plan`` that ignores the call's context logs the command as its own host's.
+    """A ``_run_exec`` that ignores the call's context logs the command as its own host's.
 
     A pin of the documented contract for a host class that runs a command
     by its own means, not of something this family does: the container gets
@@ -2771,7 +2760,7 @@ async def test_a_parent_that_runs_and_logs_a_command_by_its_own_means_keeps_the_
     from otto.logger.mode import LogMode
 
     class _OwnMeans(UnixHost):
-        async def _run_plan(self, plan, *, cmd, timeout, log, user, expects, exec_input):
+        async def _run_exec(self, *, cmd, timeout, log, user, expects, exec_input, plain):
             self._log_command(cmd, log)
             self._log_output(_OUT_TOK, log)
             return CommandResult(
@@ -2779,7 +2768,6 @@ async def test_a_parent_that_runs_and_logs_a_command_by_its_own_means_keeps_the_
                 value=_OUT_TOK,
                 command=cmd,
                 retcode=0,
-                route=plan.route.value,
             )
 
     parent, dial = ssh_parent_over_shells(_OwnMeans, tmp_path)
@@ -2822,7 +2810,6 @@ async def _began(made: "list[asyncio.Event]", sessions: list, index: int) -> Non
 @pytest.mark.asyncio
 async def test_two_containers_on_one_parent_keep_their_own_lines_and_modes(monkeypatch):
     """Concurrent delegated calls cross nothing; the reused pooled session logs as the parent's."""
-    from otto.host.exec_route import ExecRoute, container_route
     from otto.logger.mode import LogMode
     from tests.unit.host._session_feed import _completion
 
@@ -2862,11 +2849,8 @@ async def test_two_containers_on_one_parent_keep_their_own_lines_and_modes(monke
             call.cancel()
         await asyncio.gather(*calls, return_exceptions=True)
         await parent.close()
-    pooled_route = container_route(ExecRoute.POOLED_SHELL.value)
-    assert [(r.value, r.route) for r in results] == [
-        ("outtok-n", pooled_route),
-        ("outtok-q", pooled_route),
-    ]
+    # Each ran on a pooled session of the parent's own, one each.
+    assert [r.value for r in results] == ["outtok-n", "outtok-q"]
     assert len(sessions) == 2, "the later ordinary command reused a pooled session"
     leaked = [
         r.getMessage()
@@ -2895,9 +2879,9 @@ async def test_two_containers_on_one_parent_keep_their_own_lines_and_modes(monke
 async def test_direct_parent_calls_carry_no_context_and_own_helpers_do(monkeypatch, tmp_path):
     """Probe, staging, ``docker cp``, unstage and root chown/chmod are the parent's own calls."""
     from otto.logger.mode import LogMode
-    from tests.unit.host._fake_channel import channel_host
+    from tests.unit.host._ssh_parent import ssh_parent_host
 
-    parent = channel_host()
+    parent = ssh_parent_host()
     public: list = []
     delegated: list = []
 
@@ -2957,9 +2941,9 @@ async def test_direct_parent_calls_carry_no_context_and_own_helpers_do(monkeypat
 
 @pytest.mark.asyncio
 async def test_exec_dry_run_reaches_no_delegated_entry(monkeypatch):
-    from tests.unit.host._fake_channel import channel_host
+    from tests.unit.host._ssh_parent import ssh_parent_host
 
-    parent = channel_host()
+    parent = ssh_parent_host()
     entry = AsyncMock()
     monkeypatch.setattr(parent, "_exec_delegated", entry)
     monkeypatch.setattr(parent, "exec", AsyncMock())

@@ -141,10 +141,6 @@ stability = "provisional"
 tier = 2
 stability = "provisional"
 
-[namespaces."otto.host.exec_route"]
-tier = 2
-stability = "provisional"
-
 [namespaces."otto.host.login_proxy"]
 tier = 2
 stability = "provisional"
@@ -960,12 +956,6 @@ why = "implementer-facing"
 [symbols."otto.host.embedded_filesystem:register_filesystem"]
 positional = ["type_name", "cls"]
 why = "registrar: the name, then what it registers"
-
-[symbols."otto.host.exec_route:container_route"]
-positional = ["parent_route"]
-
-[symbols."otto.host.exec_route:ran_route"]
-positional = ["route"]
 
 [symbols."otto.host.login_proxy:Cred"]
 subclass = false

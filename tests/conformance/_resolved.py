@@ -119,14 +119,14 @@ class ResolvedCell:
 
     family: str = ""
     """``"unix"``, ``"embedded"`` or ``"local"``: the host family the venue
-    built this cell's host as, read from the lab entry it built it from. The
-    exec route a cell must report is decided by this and the term, never by
+    built this cell's host as, read from the lab entry it built it from. What
+    a cell's contracts expect is decided by this and the term, never by
     asking the host's own resolver."""
 
     proxied_login: bool = False
     """Whether this cell's login on its term goes through another user (a
     cred with a ``proxy``, replayed as ``proxy_hops``). NOT a network ``hop``:
-    a jump host does not change the exec route."""
+    a jump host does not change which session an ``exec`` takes."""
 
     password_sudo: bool = False
     """Whether ``exec(sudo=True)`` on this cell makes sudo ask for a password

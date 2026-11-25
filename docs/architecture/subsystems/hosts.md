@@ -100,26 +100,16 @@ environment, and elevation state survive across calls, and the session's
 sessions can be opened explicitly (`open_session`) for parallel stateful
 streams.
 
-{meth}`~otto.host.host.Host.exec` also runs on a shell session, on every
-host family, but not on `run`'s: each call borrows a session of its own
-(below), so it is independent of the persistent session *and* of other
-concurrent `exec` calls, which is what makes `asyncio.gather()` fan-out
-safe. Which shell that is:
+{meth}`~otto.host.host.Host.exec` also runs on a shell session. On most
+hosts it is not `run`'s: each call borrows a session of its own (below), so
+it is independent of the persistent session *and* of other concurrent
+`exec` calls, which is what makes `asyncio.gather()` fan-out safe. A
+console and an embedded host have one session for both. Which session each
+family's `exec` takes, and whether it has a terminal, is {ref}`exec-session`. On ssh the pooled shell is the user's
+login shell, so the login profile has been read; on the local host it is
+`bash`, started with no profile and no rc file, from the Python process's
+current directory and environment.
 
-- **ssh:** the user's login shell, so the login profile has been read.
-- **The local host:** `bash`, started with no profile and no rc file, from
-  the Python process's current directory and environment.
-- **A console, an embedded host:** the host's one session, the one `run`
-  uses; on a console each `exec` starts a clean login shell from it
-  ({ref}`exec-frame-shell-state`).
-- **A container:** a `docker exec` the parent host runs on its own `exec`
-  session ({doc}`docker-hosts`).
-
-On ssh and on the local host the default session has no terminal. On ssh
-that holds when the host can open such a session at all (no proxied login,
-no `session_setup` hook) and the call needs none: `sudo=True`, `expects=`,
-`terminal=True` and a user reached only by switching take a session with a
-terminal instead. Telnet, console and embedded sessions always have one.
 What a terminal changes, and how to ask for one or refuse it, is
 {ref}`terminal-switch`; in short, a command typed without a terminal has no
 line-length limit, and one typed into a terminal has the limits
@@ -132,7 +122,7 @@ output (`cmd >/dev/null 2>&1 &`). Which background processes a timed-out
 or cancelled `exec` stops, per family, is on
 {ref}`the results page <exec-stop-reach>`.
 
-Both return the command's exact output, whichever route carried it;
+Both return the command's exact output, on every session;
 {ref}`command-output-contract` says what that means and what otto undoes to
 get there.
 

@@ -15,7 +15,6 @@ promise on each kind of host is on :ref:`Command contracts <command-contracts>`.
    options
    command_frame
    limitation
-   exec_route
    login_proxy
    session_setup
    app_shell

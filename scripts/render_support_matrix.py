@@ -74,9 +74,7 @@ if TYPE_CHECKING:
 
     from otto.host.capability_grid import HostCapabilities, HostFamily
     from otto.host.command_frame import CommandFrame
-    from otto.host.exec_route import ExecRoute
     from otto.host.limitation import Limitation
-    from otto.host.session import RouteRecord
     from otto.result import CommandResult
     from tests.conformance._resolved import ResolvedCell
 
@@ -107,7 +105,7 @@ The pages are :func:`render_command_contracts`' answer; which entry goes on
 which page is :data:`ENTRY_VOICE`. COMMITTED, for the reason
 :data:`FAMILIES_PAGE_PATH` is: their sources are the tree's own declarations
 (the ``entries`` marker on each command contract, and every
-:class:`~otto.host.limitation.Limitation` on a built-in frame, exec route or
+:class:`~otto.host.limitation.Limitation` on a built-in frame, session or
 console setting), they carry no date and no measurement, and
 ``tests/unit/test_support_matrix.py`` compares them byte for byte.
 """
@@ -398,31 +396,14 @@ VOICE: "dict[str, Voice]" = {
                 ),
             ),
             Branch(
-                marker="in a clean login shell as run's user",
+                marker="on run's shell, whose directory and variables exec sees",
                 where="a console",
                 capability=(
-                    "run an `exec` in a clean login shell started from the console's one "
-                    "shell -- in the login's home directory, with the login's environment "
-                    "and options, nothing a `run` or an earlier `exec` changed -- and trust "
-                    "that its `cd`, variables, options, `exit` and terminal settings reach no "
-                    "later `exec` or `run`. Where it differs from a pooled shell's `exec`: it "
-                    "runs as whoever the console's shell is at that moment (after a `su`, the "
-                    "switched user); its `HOME`, `TERM`, `USER`, `LOGNAME` and `PATH` are the "
-                    "console shell's as they are then, so a `run` that changed one of them is "
-                    "seen through it, and its `SHELL` names the program it runs in (the "
-                    "console shell's `$SHELL`, `/bin/sh` when that is unset); a session setup "
-                    "hook's effect on the console's shell is not carried into it; what the "
-                    "login profile prints when the shell starts does not reach its output, "
-                    "and no `expects` pattern is answered to it; what a login shell's logout "
-                    "file prints (bash's `~/.bash_logout`, run when the command ends the "
-                    "shell with the `exit` builtin) does reach its output; a login with no "
-                    "`HOME` (unset or empty) "
-                    "starts in `/`; a login shell that never reaches the command (no `env`, "
-                    "no such `$SHELL`, a `$SHELL` that does not take `-l -c` such as csh, or a "
-                    "profile that exits or `exec`s) gives a failed result, never a success, "
-                    'with `retcode` -1 and the value "the command never ran: its end record '
-                    'arrived with no BEGIN marker before it"; and a console whose `$SHELL` '
-                    "is not a POSIX shell (the csh family) cannot run `exec` at all"
+                    "run an `exec` on the console's one shell, the one `run` uses: it starts "
+                    "from `run`'s directory, variables and options, and its `cd`, variables, "
+                    "options, `exit` and terminal settings reach no later `exec` or `run`. A "
+                    "command that kills `$$` kills that shell, so it ends the session as the "
+                    "same command from `run` does"
                 ),
             ),
         ),
@@ -507,7 +488,7 @@ VOICE: "dict[str, Voice]" = {
         short="dry run",
         capability=(
             "run a command under a dry run and have it reach no device, getting back a "
-            "`NotRun` result with `retcode == -1`, no route, `command` the line a live call "
+            "`NotRun` result with `retcode == -1`, `command` the line a live call "
             "would type, and a `value` that raises `CommandNotRunError`"
         ),
         narrowed=(
@@ -705,7 +686,7 @@ VOICE: "dict[str, Voice]" = {
         short="timeout",
         capability=(
             "give a command a time budget and have a breach reported the same way on every "
-            "route, with the process otto started stopped, the call returned once the budget "
+            "host, with the process otto started stopped, the call returned once the budget "
             "and otto's bounded cleanup have passed, even when the command closed its output, "
             "and the session usable afterwards"
         ),
@@ -2738,15 +2719,16 @@ def contract_rows(cells: "list[ResolvedCell] | None" = None) -> "list[ContractRo
 class DeclaredLimitation:
     """One :class:`~otto.host.limitation.Limitation`, and every place that declares it.
 
-    One object declared in two places (the same line-budget limitation on two
-    routes) is ONE record naming both, so a reader meets it once.
+    One object declared in two places is ONE record naming both, so a reader
+    meets it once.
     """
 
     frames: "list[str]"
     """The dialect names of the command frames declaring it as ``exact_output``."""
 
-    routes: "list[str]"
-    """The :class:`~otto.host.exec_route.ExecRoute` values whose record declares it."""
+    sessions: "list[str]"
+    """The keys of :data:`~otto.host.session.SESSION_EXEC_LIMITATIONS` that declare it:
+    a shell session's ``exec`` takes it."""
 
     limitation: "Limitation"
 
@@ -2760,12 +2742,13 @@ class DeclaredLimitation:
 
     @property
     def where(self) -> str:
-        """Name the declaring frames, routes and console settings for a reader."""
+        """Name the declaring frames, sessions and console settings for a reader."""
         parts = []
-        for names, noun in ((self.frames, "command frame"), (self.routes, "route")):
-            if names:
-                plural = "s" if len(names) > 1 else ""
-                parts.append(f"the {_join(_code(names))} {noun}{plural}")
+        if self.frames:
+            plural = "s" if len(self.frames) > 1 else ""
+            parts.append(f"the {_join(_code(self.frames))} command frame{plural}")
+        if self.sessions:
+            parts.append("a session with a terminal")
         if self.consoles:
             settings = _join(_code([f"console_options.{name}" for name in self.consoles]))
             parts.append(f"a console whose host record sets {settings}")
@@ -2789,17 +2772,18 @@ def _builtin_frames() -> "list[type[CommandFrame]]":
 def declared_limitations(
     *,
     frames: "list[type[CommandFrame]] | None" = None,
-    routes: "dict[ExecRoute, RouteRecord] | None" = None,
+    sessions: "dict[str, Limitation] | None" = None,
     consoles: "dict[str, Limitation] | None" = None,
     families: "list[HostFamily] | None" = None,
 ) -> "list[DeclaredLimitation]":
-    """Every limitation declared on *frames*, *routes*, *consoles* and *families*: otto's own.
+    """Every limitation declared on *frames*, *sessions*, *consoles* and *families*: otto's own.
 
     Each source defaults to otto's own declarations.
 
     Grouped by object identity, in first-declared order (frames, then
-    routes, then console settings, then host families): a frame's is its
-    ``exact_output``, a route's are its record's ``limitations``, a console
+    sessions, then console settings, then host families): a frame's is its
+    ``exact_output``, a session's are
+    :data:`~otto.host.session.SESSION_EXEC_LIMITATIONS`, a console
     setting's is :attr:`ConsoleOptions.declared_limitations
     <otto.host.options.ConsoleOptions.declared_limitations>`, and a family's
     are its refused options' (:class:`~otto.host.capability_grid.HostCapabilities`
@@ -2807,10 +2791,10 @@ def declared_limitations(
     """
     from otto.host.capability_grid import RunOption, shipped_host_families
     from otto.host.options import ConsoleOptions
-    from otto.host.session import EXEC_ROUTES
+    from otto.host.session import SESSION_EXEC_LIMITATIONS
 
     frames = _builtin_frames() if frames is None else frames
-    routes = EXEC_ROUTES if routes is None else routes
+    sessions = SESSION_EXEC_LIMITATIONS if sessions is None else sessions
     consoles = ConsoleOptions.declared_limitations if consoles is None else consoles
     families = shipped_host_families() if families is None else families
     grouped: "dict[int, DeclaredLimitation]" = {}
@@ -2818,15 +2802,14 @@ def declared_limitations(
     def record(limitation: "Limitation") -> DeclaredLimitation:
         return grouped.setdefault(
             id(limitation),
-            DeclaredLimitation(frames=[], routes=[], consoles=[], limitation=limitation),
+            DeclaredLimitation(frames=[], sessions=[], consoles=[], limitation=limitation),
         )
 
     for frame in frames:
         if frame.exact_output is not None:
             record(frame.exact_output).frames.append(frame.type_name)
-    for route, route_record in routes.items():
-        for limitation in route_record.limitations.values():
-            record(limitation).routes.append(route.value)
+    for name, limitation in sessions.items():
+        record(limitation).sessions.append(name)
     for name, limitation in consoles.items():
         value = "true" if ConsoleOptions.declaring_value(name) else "false"
         record(limitation).consoles.append(f"{name}: {value}")
@@ -3036,146 +3019,87 @@ class CommandPage:
     opening: "tuple[str, ...]"
     """The page's first sentences: what the command is, and how you issue it."""
 
-    routes: "tuple[str, ...]"
-    """The :class:`~otto.host.exec_route.ExecRoute` values this command can take, in
-    :data:`ROUTE_VOICE`; a limitation declared on one of them applies to it."""
+    session_rules: "tuple[str, ...]" = ()
+    """Which session the command takes, as markdown lines."""
 
-    route_rules: "tuple[str, ...]" = ()
-    """When the command takes each of :attr:`routes`, as markdown lines."""
-
-    route_cases: "tuple[RouteCase, ...]" = ()
-    """The same, as one case per line: rendered under their groups after
-    :attr:`route_rules`, and each driven through otto's real route decision by
-    ``tests/unit/host/test_exec_plan.py``, so a routing change fails a test."""
+    session_cases: "tuple[SessionCase, ...]" = ()
+    """The same, as one case per line: rendered after :attr:`session_rules`, and
+    each driven through otto's real session choice by
+    ``tests/unit/host/test_exec_session_choice.py``, so a change of choice fails
+    a test."""
 
 
 @dataclass(frozen=True)
-class RouteCase:
-    """One case a command page lists: when it applies, and the route it takes."""
+class SessionCase:
+    """One case a command page lists: which session the command takes, and when."""
 
     id: str
-    """The case's name, the key ``tests/unit/host/test_exec_plan.py`` builds a host by."""
+    """What is decided, the key ``tests/unit/host/test_exec_session_choice.py``
+    builds its hosts by: ``shared``, ``pooled-terminal``, ``pooled-no-terminal``
+    or ``container``."""
 
-    group: str
-    """The heading line the case sits under on the page."""
+    session: str
+    """The session, in a reader's words."""
 
     when: str
-    """The case, in a reader's words."""
-
-    route: str
-    """The :class:`~otto.host.exec_route.ExecRoute` value it takes."""
-
-    route_words: str = ""
-    """What to print for the route instead of the bare value (a container's prefix form)."""
+    """When the command takes it, in a reader's words."""
 
     note: str = ""
-    """A sentence printed after the route, such as that the case is not tested."""
+    """A sentence printed after the case, such as that part of it is not tested."""
 
-
-_UNIX_GROUP = "On a remote Unix host (one otto reaches over `ssh`, `telnet` or `console`):"
-"""The heading line the remote Unix host's cases sit under."""
 
 #: The cases the ``exec`` page lists, each a line of that page and a test case.
-EXEC_ROUTE_CASES = (
-    RouteCase(
-        "ssh",
-        _UNIX_GROUP,
-        "reached over `ssh`, `exec` goes through a shell session otto keeps for it beside "
-        "the one `run` uses, opened without a terminal unless a case below applies",
-        "pooled-shell",
+EXEC_SESSION_CASES = (
+    SessionCase(
+        "shared",
+        "the host's one persistent shell session, the one `run` uses",
+        "the host is reached over `console` (a console serves one client), or is an "
+        "embedded host such as a Zephyr board, whatever the call needs; concurrent "
+        "calls take turns on it. On a console a call with a `user` switches the "
+        "session to that user for the call and back; an embedded host refuses `user`",
     ),
-    RouteCase(
-        "telnet",
-        _UNIX_GROUP,
-        "reached over `telnet`, it goes through such a shell session, with a terminal",
-        "pooled-shell",
-    ),
-    RouteCase(
-        "proxied",
-        _UNIX_GROUP,
-        "the host's login is **proxied** (otto logs in as one account and then switches "
-        "to the one it runs as; [Credentials and login proxies]"
-        "(../configuration/host-sources.md#credentials-and-login-proxies)): a shell "
-        "session with a terminal",
-        "pooled-shell",
+    SessionCase(
+        "pooled-terminal",
+        "a shell session otto keeps for `exec` beside the one `run` uses, with a terminal",
+        "the host is reached over `telnet`; or over `ssh` where the call needs a "
+        "terminal (it passes `expects` (patterns otto answers while the command runs, "
+        "such as a password prompt), `sudo=True`, or `terminal=True`), runs as a "
+        "`user` otto cannot log in as directly, the host's login is **proxied** (otto "
+        "logs in as one account and then switches to the one it runs as; "
+        "[Credentials and login proxies]"
+        "(../configuration/host-sources.md#credentials-and-login-proxies)), or the "
+        "host declares a **session-setup hook** (project code otto runs on every "
+        "shell session it opens; {ref}`Session setup <per-host-session-setup>`); a "
+        "call with a `user` runs in a session opened as that user, over their own SSH "
+        "connection where they have SSH credentials of their own",
         note=(
             "No host the suite tests has a proxied login "
             "({ref}`What is not covered at all <command-contracts-not-covered>`)."
         ),
     ),
-    RouteCase(
-        "hook",
-        _UNIX_GROUP,
-        "the host declares a **session-setup hook** (project code otto runs on every "
-        "shell session it opens; {ref}`Session setup <per-host-session-setup>`): a shell "
-        "session with a terminal",
-        "pooled-shell",
+    SessionCase(
+        "pooled-no-terminal",
+        "a shell session otto keeps for `exec` beside the one `run` uses, without a terminal",
+        "the host is reached over `ssh` and none of the cases above applies, including "
+        "`exec(user=...)` for a user with SSH credentials of their own, over an SSH "
+        "connection as that user; or the host is the local host, whose sessions read "
+        "a pipe (each call opens one of its own and closes it after)",
     ),
-    RouteCase(
-        "needs-shell",
-        _UNIX_GROUP,
-        "the call needs a terminal: it passes `expects` (patterns otto answers while the "
-        "command runs, such as a password prompt), `sudo=True`, or a `user` otto cannot "
-        "log in as directly; a call with a `user` runs in a shell session opened as "
-        "that user, with a terminal",
-        "pooled-shell",
-    ),
-    RouteCase(
-        "own-ssh-user",
-        _UNIX_GROUP,
-        "`exec(user=...)` over `ssh` for a user with SSH credentials of its own, and no "
-        "`expects` or `sudo`: a shell session without a terminal, over an SSH connection "
-        "as that user",
-        "pooled-shell",
-    ),
-    RouteCase(
-        "own-ssh-user-shell",
-        _UNIX_GROUP,
-        "the same call where the login is proxied or the host declares a session-setup "
-        "hook: a shell session with a terminal, opened over that user's own SSH "
-        "connection and set up as them",
-        "pooled-shell",
-    ),
-    RouteCase(
-        "console",
-        _UNIX_GROUP,
-        "reached over `console`, it uses the same session as `run`: a console serves one client",
-        "default-session",
-    ),
-    RouteCase(
-        "embedded",
-        "On other hosts:",
-        "on an embedded host, such as a Zephyr board, its one console session, as `run`",
-        "default-session",
-    ),
-    RouteCase(
-        "local",
-        "On other hosts:",
-        "on the local host, a shell session of its own that reads a pipe, opened for the "
-        "one call and closed after it",
-        "pooled-shell",
-    ),
-    RouteCase(
+    SessionCase(
         "container",
-        "On other hosts:",
-        "in a docker container, `docker exec` through its parent host",
-        "container",
-        route_words="`container/<the parent's route>`",
+        "`docker exec` through the container's parent host, as one of the parent's own "
+        "`exec` calls",
+        "the host is a docker container",
     ),
 )
 
 
-def _route_case_lines(cases: "tuple[RouteCase, ...]") -> "list[str]":
-    """*cases* as markdown: each group's heading line, then one bullet per case."""
-    lines: "list[str]" = []
-    group = None
-    for case in cases:
-        if case.group != group:
-            group = case.group
-            lines += ["", group, ""] if lines else [group, ""]
-        route = case.route_words or f"`{case.route}`"
-        lines.append(f"- {_capitalise(case.when)} ({route}).{f' {case.note}' if case.note else ''}")
-    return lines
+def _session_case_lines(cases: "tuple[SessionCase, ...]") -> "list[str]":
+    """*cases* as markdown: one bullet per case."""
+    return [
+        f"- {_capitalise(case.session)}: when {case.when}.{f' {case.note}' if case.note else ''}"
+        for case in cases
+    ]
 
 
 #: Every command with a contract page, in the order the overview lists them. A
@@ -3190,45 +3114,27 @@ COMMAND_PAGES = {
             "there for the next. You call it from Python, as",
             "{meth}`Host.run <otto.host.host.Host.run>`; the CLI has no `run`.",
         ),
-        routes=("default-session",),
-        route_rules=(
-            "`run` always uses the host's one persistent shell session, the",
-            "`default-session` route, whatever the host's term. On an embedded host,",
-            "such as a Zephyr board, that session is the board's one console session.",
-            "So `result.route` is `default-session` for every `run`.",
+        session_rules=(
+            "`run` always uses the host's one persistent shell session, whatever the",
+            "host's term. On an embedded host, such as a Zephyr board, that session is",
+            "the board's one console session.",
         ),
     ),
     "exec": CommandPage(
         title="`exec`: a one-off command",
-        summary="runs a one-off command, with no state carried from one call to the next",
+        summary="runs a one-off command, on a session of its own or the host's one session",
         opening=(
-            "`exec` runs a one-off command: nothing one call changes is carried to the",
-            "next. On a console it starts in a clean login shell, not from what `run`",
-            "left in the console's shell",
-            "({ref}`shell state, by route <exec-frame-shell-state>`). From the",
+            "`exec` runs a one-off command. On most hosts it runs on a session of its",
+            "own and shares nothing with `run`. On a console it starts from what `run`",
+            "left and leaves nothing behind. On an embedded host it shares `run`'s",
+            "session too; a Zephyr shell, whose frame does not isolate, keeps what",
+            "it changes (not measured on a board)",
+            "({ref}`what an exec shares with run <exec-session>`,",
+            "{ref}`shell state <exec-frame-shell-state>`). From the",
             "CLI it is `otto host <id> exec` ({doc}`/cli/host/exec`); from",
             "Python, {meth}`Host.exec <otto.host.host.Host.exec>`.",
         ),
-        routes=("pooled-shell", "default-session", "container"),
-        route_cases=EXEC_ROUTE_CASES,
-    ),
-}
-
-#: What each route a command can take is, in a reader's words, in the order the
-#: overview lists them. Keyed by :class:`~otto.host.exec_route.ExecRoute` value.
-ROUTE_VOICE = {
-    "default-session": "the host's one persistent shell session, the one `run` uses",
-    "pooled-shell": (
-        "a shell session `exec` borrows from a pool beside the one `run` uses, with or "
-        "without a terminal"
-    ),
-    "ssh-channel": (
-        "a bare SSH channel of the command's own, with no terminal; no `exec` takes it"
-    ),
-    "local-subprocess": "a fresh process on the local machine; no `exec` takes it",
-    "container": (
-        "a docker container's command, run as `docker exec` through its parent host; "
-        "its result reports `container/` and the route the parent took"
+        session_cases=EXEC_SESSION_CASES,
     ),
 }
 
@@ -3261,7 +3167,7 @@ def entries_on_page(command: str) -> "list[str]":
 
 
 def _check_page_mapping() -> None:
-    """Refuse an entry with no page, a page no entry reaches, or a route with no words."""
+    """Refuse an entry with no page, or a page no entry reaches."""
     from tests.conformance._entry import ALL_ENTRIES
 
     problems = [
@@ -3287,39 +3193,10 @@ def _check_page_mapping() -> None:
         for command in COMMAND_PAGES
         if not any(voice.page == command for voice in ENTRY_VOICE.values())
     ]
-    from otto.host.exec_route import ExecRoute
-
-    # Every route a result can report has words, and nothing else does: bare
-    # `container` stands for its `container/<parent route>` form, and
-    # `unsupported` is never reported (an unsupported term raises first).
-    reported = {route.value for route in ExecRoute} - {ExecRoute.UNSUPPORTED.value}
-    if set(ROUTE_VOICE) != reported:
-        problems.append(
-            f"ROUTE_VOICE {sorted(ROUTE_VOICE)} != the ExecRoute values {sorted(reported)}"
-        )
-    problems += [
-        f"command page {command!r} names route {route!r}, which ROUTE_VOICE does not hold"
-        for command, page in COMMAND_PAGES.items()
-        for route in page.routes
-        if route not in ROUTE_VOICE
-    ]
     if problems:
         raise ValueError(
             "the command contract pages cannot be laid out:\n  " + "\n  ".join(problems)
         )
-
-
-def _applies_to(item: DeclaredLimitation, page: CommandPage) -> bool:
-    """Whether *item* reaches a command taking *page*'s routes.
-
-    A frame's or a console setting's limitation holds on every route that types
-    into the session or reads that console, so on every command; a route's only
-    on the commands that can take that route. A host family's refused option is
-    refused by ``run`` and ``exec`` alike, so it reaches every command too.
-    """
-    return bool(
-        item.frames or item.consoles or item.families or set(item.routes) & set(page.routes)
-    )
 
 
 def _narrowed(rows: "list[ContractRow]") -> "list[tuple[str, Branch]]":
@@ -3342,7 +3219,7 @@ def render_command_contracts(
 
     DECLARED, like :func:`render_families`: read off the ``entries`` marker on
     each command contract (:func:`contract_rows`) and the limitations the
-    built-in frames, exec routes and console settings declare
+    built-in frames, shell sessions and console settings declare
     (:func:`declared_limitations`). ``index.md`` is the overview, holding what
     every command shares; each :data:`COMMAND_PAGES` key gets a page carrying
     the entries :data:`ENTRY_VOICE` maps to it. *rows*, *limitations* and
@@ -3435,17 +3312,6 @@ GLOSSARY = {
 }
 
 
-def _reaches_a_container(cells: "list[ResolvedCell]") -> bool:
-    """Whether some cell's command, through some entry it has, reports a container route."""
-    from tests.conformance._entry import entries_of, expected_route, with_entry
-
-    return any(
-        expected_route(with_entry(cell, entry)).startswith("container")
-        for cell in cells
-        for entry in entries_of(cell)
-    )
-
-
 def _signalled() -> "CommandResult":
     """Build the failed result of a command killed by SIGTERM, as a shell reports it."""
     import signal as _signal
@@ -3460,12 +3326,9 @@ def _signalled() -> "CommandResult":
 
 def _timed_out_example() -> "CommandResult":
     """Build a timed-out result with the one function that builds every one."""
-    from otto.host.exec_route import ExecRoute
     from otto.host.session import ExecOutput, timed_out_result
 
-    return timed_out_result(
-        cmd="sleep 60", timeout=5.0, output=ExecOutput(), route=ExecRoute.POOLED_SHELL
-    )
+    return timed_out_result(cmd="sleep 60", timeout=5.0, output=ExecOutput())
 
 
 def exception_link(item: DeclaredLimitation) -> str:
@@ -3479,11 +3342,9 @@ def exception_link(item: DeclaredLimitation) -> str:
 
 def _line_budget_link(limitations: "list[DeclaredLimitation]") -> str:
     """Link the line-length exception's section: the one place its rule is stated."""
-    from otto.host.exec_route import ExecRoute
-    from otto.host.session import EXEC_ROUTES
+    from otto.host.session import LINE_BUDGET_LIMITATION
 
-    budget = EXEC_ROUTES[ExecRoute.POOLED_SHELL].limitations.get("line_budget")
-    item = next((i for i in limitations if i.limitation is budget), None)
+    item = next((i for i in limitations if i.limitation is LINE_BUDGET_LIMITATION), None)
     return exception_link(item) if item else "[Declared exceptions](#declared-exceptions)"
 
 
@@ -3518,7 +3379,7 @@ def render_contracts_overview(
     signalled = _signalled()
     lines = _contract_page_header(
         "the `entries` marker on each command contract and the limitations\n"
-        "     declared on otto's built-in command frames, exec routes and console settings"
+        "     declared on otto's built-in command frames, shell sessions and console settings"
     )
     lines += [
         f"({COMMAND_CONTRACTS_LABEL})=",
@@ -3536,14 +3397,14 @@ def render_contracts_overview(
         "| Word | Means | Examples |",
         "| --- | --- | --- |",
         "| **term** | how otto reaches the host | `ssh`, `telnet`, `console` |",
-        "| **entry** | which call you made | `run`, `exec`, shell-routed `exec` |",
+        "| **entry** | which call you made | `run`, `exec` |",
         (
-            "| **route** | which path the command then took | listed in "
-            "[Which route your command takes](#which-route-your-command-takes) |"
+            "| **session** | which shell session the command then ran on | listed in "
+            "[Which session your command takes](#which-session-your-command-takes) |"
         ),
         "",
         "A host's term is set in its record in the lab file",
-        "({doc}`Host options </configuration/host-options>`). The route follows from",
+        "({doc}`Host options </configuration/host-options>`). The session follows from",
         "the term, the entry and the call's arguments; each command's page says how.",
         "Other words these pages use:",
         "",
@@ -3570,10 +3431,10 @@ def render_contracts_overview(
         ">>> from otto.result import CommandResult",
         ">>> from otto.utils import Status",
         ">>> result = CommandResult(",
-        '...     status=Status.Success, retcode=0, value="hello", route="pooled-shell"',
+        '...     status=Status.Success, retcode=0, value="hello"',
         "... )",
-        ">>> result.route, result.timed_out, result.value",
-        "('pooled-shell', False, 'hello')",
+        ">>> result.retcode, result.timed_out, result.value",
+        "(0, False, 'hello')",
         "```",
         "",
         "## The commands covered",
@@ -3612,19 +3473,14 @@ def render_contracts_overview(
         "page and by the support matrix. The `exec-` at the start of most ids is",
         "historical; it does not mean the `exec` command.",
         "",
-        "## Which route your command takes",
+        "## Which session your command takes",
         "",
-        "otto picks the route for each call. A command takes one of these:",
+        "otto picks the session for each call. `run` always takes the host's one",
+        "persistent shell session; `exec` takes one of these:",
         "",
-        *[f"- `{route}`: {words}." for route, words in ROUTE_VOICE.items()],
+        *[f"- {_capitalise(case.session)}." for case in EXEC_SESSION_CASES],
         "",
-        "Each command's page says when it takes each. From Python, read the result's",
-        "`route` field",
-        (
-            "([Which route ran a command]"
-            "(../architecture/utilities/results.md#which-route-ran-a-command));"
-        ),
-        "`otto host <id> exec` does not print it.",
+        "Each command's page says when it takes each.",
         "",
         "(command-contracts-not-promised)=",
         "",
@@ -3697,18 +3553,17 @@ def render_contracts_overview(
     if not any(cell.proxied_login for cell in cells):
         lines += [
             "No host the conformance suite reaches has a **proxied** login, so the",
-            "route a proxied login takes is covered by unit tests only, and none of",
+            "session a proxied login takes is covered by unit tests only, and none of",
             "the promises on these pages is checked through it.",
             "",
         ]
-    if not _reaches_a_container(cells):
-        lines += [
-            "A docker container's `exec` is designed to follow its parent host's route",
-            "({ref}`What a command's value holds <command-output-contract>`), but no",
-            "host the conformance suite reaches is a container, so nothing on these",
-            "pages is promised for one.",
-            "",
-        ]
+    lines += [
+        "A docker container's `exec` is designed to follow its parent host's session",
+        "({ref}`What a command's value holds <command-output-contract>`), but no",
+        "host the conformance suite reaches is a container, so nothing on these",
+        "pages is promised for one.",
+        "",
+    ]
     lines += [
         "## Declared exceptions",
         "",
@@ -3778,7 +3633,7 @@ def render_contracts_overview(
         "  `, tabs expanded` after it, logs a warning once, and the tab arrives as",
         "  spaces.",
         "- Output after a command changes its own terminal settings on a shell",
-        "  session, whether `run` or a shell-routed `exec` reached it: for example",
+        "  session, whether `run` or `exec` reached it: for example",
         "  `stty -onlcr`, which stops the terminal turning a newline into `\\r\\n`, or",
         "  a program that leaves the terminal in raw mode, passing every byte through",
         "  unchanged. The session measured its terminal when it opened and does not",
@@ -3788,12 +3643,12 @@ def render_contracts_overview(
         "- An `exec(sudo=True)` whose sudo or su asks for a password that otto answers,",
         "  where no device measures it. Password sudo over `ssh` is measured on the",
         "  lab's test1 (sudo's default timestamp) and test3 (`timestamp_timeout=0`):",
-        "  the command reads end of file. Password sudo on a `telnet` or `console`",
-        "  route, and password su on any route (every lab host that elevates with su",
+        "  the command reads end of file. Password sudo over `telnet` or on a console,",
+        "  and password su on any host (every lab host that elevates with su",
         "  logs in as root), are checked only against a stand-in sudo and su.",
         "  Whether the password prompt otto answers appears in the returned value is",
         "  not promised either, for `run` and `exec` alike.",
-        "  On BusyBox 1.16.1, a shell-routed `exec` for which otto answers a password",
+        "  On BusyBox 1.16.1, an `exec` for which otto answers a password",
         "  is expected to fail with that shell's `Bad file descriptor` (status 2): otto",
         "  keeps the terminal for the password on file descriptor 3 (`3<&0`), and",
         "  BusyBox 1.16.1's shell refuses to copy file descriptor 0. The refusal of",
@@ -3870,7 +3725,7 @@ def _entry_table(entry: str, rows: "list[ContractRow]", notes: "list[str]") -> "
 def render_command_page(
     command: str, rows: "list[ContractRow]", limitations: "list[DeclaredLimitation]"
 ) -> str:
-    """Render *command*'s page: its routes, and the promises of each entry mapped to it."""
+    """Render *command*'s page: its sessions, and the promises of each entry mapped to it."""
     page = COMMAND_PAGES[command]
     entries = entries_on_page(command)
     notes = list(
@@ -3895,10 +3750,10 @@ def render_command_page(
         "mean, and how to read what is not promised -- are on",
         f"{{ref}}`Command contracts <{COMMAND_CONTRACTS_LABEL}>`.",
         "",
-        f"## Which route `{command}` takes",
+        f"## Which session `{command}` takes",
         "",
-        *page.route_rules,
-        *_route_case_lines(page.route_cases),
+        *page.session_rules,
+        *_session_case_lines(page.session_cases),
         "",
         f"## What `{command}` promises",
         "",
@@ -3926,7 +3781,6 @@ def render_command_page(
         lines.append(
             "Every promise on this page is checked on every kind of host the suite reaches."
         )
-    applying = [item for item in limitations if _applies_to(item, page)]
     lines += [
         "",
         "## Declared exceptions and undefined behaviour",
@@ -3935,7 +3789,7 @@ def render_command_page(
         f"{{ref}}`Command contracts <{COMMAND_CONTRACTS_LABEL}>`:",
         "",
     ]
-    lines += [f"- {exception_link(item)}" for item in applying] or ["- None declared."]
+    lines += [f"- {exception_link(item)}" for item in limitations] or ["- None declared."]
     lines += [
         "",
         f"What is never measured, so not promised, for `{command}` as for every command:",

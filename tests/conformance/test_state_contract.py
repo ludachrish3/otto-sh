@@ -2,13 +2,14 @@
 
 Two promises, one per entry. ``run`` keeps one shell, so what one ``run``
 does to it (a ``cd``, an ``export``, a ``set``) the next ``run`` sees. An
-``exec`` keeps nothing: it starts from the state its session was set up with,
-and what it changes (an ``exit`` included) reaches neither the next ``exec``
-nor a ``run`` -- in all three directions (``run`` -> ``exec``, ``exec`` ->
-``exec``, ``exec`` -> ``run``). Where it is typed into a pooled session, the
-exec frame runs it in a subshell of its own; on a console, whose one shell
-``run`` also uses, in a clean login shell started from it, which runs as
-whoever that shell is (:func:`_console_exec`).
+``exec`` keeps nothing: what it changes (an ``exit`` included) reaches
+neither the next ``exec`` nor a ``run`` (``exec`` -> ``exec``, ``exec`` ->
+``run``), because the exec frame runs it in a subshell of its own. Where it
+is typed into a pooled session, it also starts from the state that session
+was set up with, so nothing a ``run`` did reaches it (``run`` -> ``exec``).
+On a console, whose one shell ``run`` also uses, the subshell is a child of
+that shell, so the ``exec`` sees ``run``'s directory and variables
+(:func:`_console_exec`).
 
 The stimulus and the read are the cell's vocabulary
 (``run_state_set_command``, ``exec_state_set_command``,
@@ -71,12 +72,11 @@ def _fields(value: str) -> StateRead:
 
 
 def _console_exec(resolved: ResolvedCell) -> bool:
-    """Whether *resolved* is a unix console, whose ``exec`` runs in a clean login shell.
+    """Whether *resolved* is a unix console, whose ``exec`` runs on ``run``'s shell.
 
-    A console has one shell for ``run`` and ``exec``, so its ``exec`` starts
-    a clean login shell from it: the login's directory, environment and
-    options, as the user that shell is at that moment. The contract checks
-    that user too, the console's declared difference.
+    A console has one shell for ``run`` and ``exec``, so its ``exec``'s
+    subshell starts from what ``run`` left there: its directory, variables,
+    options, the session-setup hook's mark and its user.
     """
     return on_console(resolved) and resolved.family == UNIX
 
@@ -143,7 +143,10 @@ def _words(resolved: ResolvedCell) -> _StateWords:
 async def test_an_exec_starts_from_its_own_state_and_leaves_none(
     resolved_cell: ResolvedCell, note_observable: "Callable[[str], None]"
 ) -> None:
-    """Nothing reaches an ``exec`` from a ``run`` or another ``exec``, and nothing leaves it.
+    """Nothing leaves an ``exec``, and nothing reaches it from another ``exec``.
+
+    Off a console nothing reaches it from a ``run`` either; on a console it
+    starts from ``run``'s state, as a subshell of ``run``'s shell.
 
     Where the ``exec`` is typed into a terminal (:func:`_terminal_arm`), that
     includes the terminal's settings: an ``exec`` that changes them, and a
@@ -183,16 +186,26 @@ async def test_an_exec_starts_from_its_own_state_and_leaves_none(
     if terminal is not None:
         # exec -> exec, the terminal: a change and a long exec after it leave the baseline
         assert terminal_reads == [terminal.baseline, "otto-cf-long", terminal.baseline]
-    assert after_set == baseline  # exec -> exec: nothing, before the exit
-    assert after_exec == baseline  # exec -> exec: nothing, after it
-    assert after_run == baseline  # run -> exec: nothing
+    console = _console_exec(resolved_cell)
+    if console:
+        # run -> exec: the exec's subshell is a child of run's shell, so it sees
+        # run's directory, variable, option (`f`), the hook's mark that shell
+        # carries, and its user.
+        assert (after_run.cwd, after_run.run, after_run.hook, after_run.user) == (
+            run_read.cwd,
+            run_read.run,
+            run_read.hook,
+            run_read.user,
+        )
+        assert "f" in after_run.opts
+    else:
+        assert after_run == baseline  # run -> exec: nothing
+    assert after_set == after_run  # exec -> exec: nothing, before the exit
+    assert after_exec == after_run  # exec -> exec: nothing, after it
     state = (
         f"`{read}` by exec before and after run's state, exec's state and `exit`, "
         "and by run afterwards"
     )
-    if _console_exec(resolved_cell):
-        # The declared difference: the clean login shell runs as run's user.
-        assert baseline.user == run_read.user
     if as_other is not None:
         # exec as another user: a session that is them, set up as them.
         assert (as_other.user, as_other.hook) == (other, baseline.hook)
@@ -203,10 +216,10 @@ async def test_an_exec_starts_from_its_own_state_and_leaves_none(
         note_observable(f"{state}; no terminal on this route")
         return
     tty = f"`{terminal.read}` by exec after `{terminal.change}`"
-    if _console_exec(resolved_cell):
+    if console:
         note_observable(
             f"{state}; {tty} and a 1,400-character exec: the terminal put back as it was, "
-            "in a clean login shell as run's user"
+            "on run's shell, whose directory and variables exec sees"
         )
     else:
         note_observable(f"{state}; {tty} and a 1,400-character exec: the terminal kept")

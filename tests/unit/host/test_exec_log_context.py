@@ -15,7 +15,6 @@ import pytest
 
 from otto.host.command_frame import ExecInput
 from otto.host.element import Element
-from otto.host.exec_route import ExecRoute
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.options import ConsoleOptions
@@ -55,16 +54,17 @@ def test_context_is_immutable_and_defaults_off() -> None:
 
 
 @pytest.mark.asyncio
-async def test_delegated_entry_reaches_run_plan_on_exec_input(monkeypatch) -> None:
+async def test_delegated_entry_reaches_the_session_on_exec_input(monkeypatch) -> None:
     parent = LocalHost()
     seen: list = []
-    original = parent._run_plan
+    mgr = parent._live_session_mgr()
+    original = mgr.exec_pooled
 
-    async def spy(plan, **kwargs):  # today's signature, by keyword
+    async def spy(**kwargs):
         seen.append(kwargs["exec_input"].exec_log)
-        return await original(plan, **kwargs)
+        return await original(**kwargs)
 
-    monkeypatch.setattr(parent, "_run_plan", spy)
+    monkeypatch.setattr(mgr, "exec_pooled", spy)
     ctx = _ctx(LogMode.NORMAL, [])
     await parent._exec_delegated("printf 'a\\n'", exec_log=ctx, expects=None, timeout=10.0)
     await parent.exec("true")
@@ -263,11 +263,7 @@ async def test_an_ssh_exec_logs_as_the_context_says_live(
     finally:
         await close_ssh_parent(parent, dial)
         await own.reap()
-    assert (result.route, result.retcode, result.value) == (
-        ExecRoute.POOLED_SHELL.value,
-        0,
-        "outtok-a\nouttok-b",
-    )
+    assert (result.retcode, result.value) == (0, "outtok-a\nouttok-b")
     assert ssh_as.await_count == (1 if as_user else 0)
     _assert_logged_as_context(
         records,
@@ -281,12 +277,9 @@ async def test_an_ssh_exec_logs_as_the_context_says_live(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("log", "ctx_mode"), _OPPOSED)
-@pytest.mark.parametrize(
-    ("term", "route"),
-    [("telnet", ExecRoute.POOLED_SHELL), ("console", ExecRoute.DEFAULT_SESSION)],
-)
+@pytest.mark.parametrize("term", ["telnet", "console"])
 async def test_a_shell_session_logs_as_the_context_says(
-    log: LogMode, ctx_mode: LogMode, term: str, route: ExecRoute
+    log: LogMode, ctx_mode: LogMode, term: str
 ) -> None:
     wire = f"cmdtok-{term}"
     out = f"outtok-{term}"
@@ -312,7 +305,7 @@ async def test_a_shell_session_logs_as_the_context_says(
             )
     finally:
         await parent.close()
-    assert (result.route, result.retcode, result.value) == (route.value, 0, out)
+    assert (result.retcode, result.value) == (0, out)
     _assert_logged_as_context(
         records, parent=parent, container=container, ctx_mode=ctx_mode, wire=wire, out_token=out
     )
@@ -361,11 +354,7 @@ async def test_a_local_exec_logs_as_the_context_says(log: LogMode, ctx_mode: Log
         result = await parent._exec_one(
             wire, 10.0, log=log, exec_input=ExecInput(stdin_eof=True, exec_log=ctx)
         )
-    assert (result.route, result.retcode, result.value) == (
-        ExecRoute.POOLED_SHELL.value,
-        0,
-        "outtok-local",
-    )
+    assert (result.retcode, result.value) == (0, "outtok-local")
     _assert_logged_as_context(
         records,
         parent=parent,

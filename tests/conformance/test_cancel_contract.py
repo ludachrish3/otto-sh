@@ -17,7 +17,7 @@ token (:func:`~tests.conformance._started.output_seen`), so the cancel lands
 on a command that is running, not on one still being written. Whether it
 still runs is read off the route under test by the witness
 (:func:`~tests.conformance._witness.witness`). Each call goes through
-``issue``, which asserts the route the cell's entry must take.
+``issue``.
 
 WHAT THIS CONTRACT IS ABOUT: see :func:`applicable_cell`.
 """
@@ -147,7 +147,7 @@ async def _seen_stopped(w: Witness, words: Vocabulary) -> bool:
 async def _cancel_once_started(host, resolved: ResolvedCell, cmd: str) -> None:
     """Issue *cmd*, cancel it once its start token arrived, and require the cancellation back.
 
-    A call that ends before its token arrives (a route refused by ``issue``,
+    A call that ends before its token arrives (a call that raised,
     a command that returned) re-raises or fails here at once rather than
     waiting out the bound.
     """
@@ -254,12 +254,11 @@ async def test_control_with_the_stop_disabled_the_command_is_seen_running(
     ``ShellSession._stop_interrupted_command``, is replaced by the cancel arm
     that only marked the session for its next use. On the local host the
     session's close is a stop too (it signals the shell's process group), so
-    there ``process_stop.stop_timed_out``, the one stop that close calls, is
+    there ``process_stop.stop_local_session_group``, the one stop that close calls, is
     replaced by a stop that stops nothing as well. The witness must then see
     the command running, so a host whose cancel leaves the command behind
     fails the contract. The witness context's cleanup kills it, and the host
-    must still answer the next command, through the same route check as the
-    contract's.
+    must still answer the next command, issued as the contract's is.
 
     The stimulus is the contract's own (:func:`cancel_stimulus`), so the
     control and the contract differ only in the disabled seam.
@@ -269,7 +268,7 @@ async def test_control_with_the_stop_disabled_the_command_is_seen_running(
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(ShellSession, "_stop_interrupted_command", old_mark_only)
         if resolved_cell.family == LOCAL_FAMILY:
-            patch.setattr(process_stop, "stop_timed_out", stops_nothing)
+            patch.setattr(process_stop, "stop_local_session_group", stops_nothing)
         async with opened(resolved_cell) as host:
             async with witness(resolved_cell, host, purpose="cancel") as w:
                 cmd = cancel_stimulus(resolved_cell, w.path)

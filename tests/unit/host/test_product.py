@@ -146,9 +146,8 @@ async def test_resolve_stage_dir_always_answers_an_absolute_path(stage_dir, defa
 
     Absolute is the point, not a detail: a relative destination is resolved by
     whoever reads it, and a transfer reads it against the login directory
-    while a command reads it against the SHELL's own — the same place only on
-    a direct SSH exec channel, and a different one on the pooled-shell route
-    (telnet, a proxied login, a `session_setup` hook that cd's).
+    while a command reads it against the SHELL's own, which a `session_setup`
+    hook or a proxied login can move away from the login directory.
     """
     p = _DummyShellProduct(artifact=Path("/builds/app.bin"), stage_dir=stage_dir)
     assert await _resolve(p, _double(default)) == Path(expected)

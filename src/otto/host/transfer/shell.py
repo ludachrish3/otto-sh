@@ -118,10 +118,10 @@ ARG_MAX IS NOT THE CONSTRAINT. Measured device-side: a single exec argument
 of >=4 MB succeeds inside a BusyBox-only chroot, nowhere near a chunk
 command's line.
 
-THE EXEC CHANNEL CARRIES A FULL CHUNK WITH ROOM TO SPARE, which is what Phase
-5 added and what an earlier version of this note called UNMEASURED and
-plausibly negative. Real chunk commands were put through a real dropbear over
-a real ssh exec channel, and both halves of the inequality measured: the
+THE BARE EXEC CHANNEL CARRIED A FULL CHUNK WITH ROOM TO SPARE. This is a
+historical measurement: no ``exec()`` sends its command over that channel now,
+it types it into a session (below). Real chunk commands were put through a
+real dropbear over a real ssh exec channel, and both halves of the inequality measured: the
 channel takes 9000 characters intact and breaks at 9001 (re-measured one
 character at a time), while the longest line this backend emitted for a full
 chunk measured 5535. Roughly 3465 characters of headroom, positive rather
@@ -154,7 +154,7 @@ line is over that by a factor of five.
 
 WHICH OF THE TWO THIS BACKEND GETS IS THE HOST'S ``term``, not this module's
 choice. ``_exec_cmd`` is ``UnixHost.exec``, which runs on a pooled shell session
-on every term; on ``term: "ssh"`` its plan may open that session without a
+on every term; on ``term: "ssh"`` it may open that session without a
 terminal, and telnet's always has one -- the line-edited path. A
 ``term: telnet`` BusyBox host is therefore exactly the case this note used
 to worry about, and it is NO LONGER
@@ -182,8 +182,8 @@ open sessions measured (1022-based while no session is open when the transfer
 is planned).
 
 THE RESPONSE IS A BUDGET, NOT A SMALLER CONSTANT AND NOT A DIFFERENT CODEC.
-``exec``'s route decides whether a budget exists at all (``None`` on the ssh
-channel, so its chunk lines stay byte-identical -- the path that was never
+``exec``'s session decides whether a budget exists at all (``None`` on a
+session without a terminal, so its chunk lines stay byte-identical -- the path that was never
 broken does not move), and :meth:`Base64Codec.send_chunks` spends whatever it
 is handed by MEASURING its own empty command line and giving the payload what
 is left, rounded down to the largest whole base64 quantum. On the bed that is
@@ -475,9 +475,8 @@ class PutChunkLoop:
     ``docker exec`` -- and a codec should then do exactly what it
     did before this field existed. It is not "unknown" and never a reason to
     guess: the number comes from
-    :meth:`~otto.host.session.SessionManager.line_room` for the host's exec plan, which is the
-    object that decides which primitive :meth:`~otto.host.session.SessionManager.exec_on_route`
-    routes through, and it is already net of otto's own framing and the command's
+    :meth:`~otto.host.session.SessionManager.line_room` for the session the host's ``exec``
+    takes, and it is already net of otto's own framing and the command's
     own characters as typed, so a codec spends it on the payload and
     nothing else.
 
@@ -874,8 +873,8 @@ def _uu_unframe(text: str) -> bytes:
     anywhere, on all five matrix rows and over the real ssh channel.
 
     Lines are matched after stripping a trailing CARRIAGE RETURN, because the
-    device's text arrives through
-    :meth:`~otto.host.session.SessionManager.exec_on_route`'s line rejoin; nothing else
+    device's text arrives through the shell session's line rejoin
+    (:meth:`~otto.host.session.ShellSession.run_cmd`); nothing else
     is stripped, since a correctly framed line contains no whitespace at all
     (see :func:`_uu_frame`).
     """
@@ -986,7 +985,8 @@ class UuencodeCodec(ShellCodec):
     one of 500 such lines (9009) drops the connection, which is the same
     ~9000-character boundary the retired dropbear rig measured one character
     at a time for a SINGLE line (see the module docstring on what that
-    retirement cost). So the multi-line shape buys no room against that limit
+    retirement cost). Both are historical measurements of the bare channel,
+    which no ``exec()`` uses now. So the multi-line shape buys no room against that limit
     and is not claimed to: for a 26-character destination a full chunk's command
     is 5952 characters (5953 for an appending one) against base64's 5533,
     leaving about 3047 characters of headroom rather than base64's 3466. uu
@@ -1471,14 +1471,14 @@ class ShellFileTransfer(UnixFileTransfer):
 
         ASKED, NEVER PREDICTED. The obvious cheap answer is in reach from here
         -- ``self._connections.term`` is right there -- and it is wrong twice
-        over: a PROXIED login routes ``exec`` through the pooled shell on an
-        ``ssh`` host too, and the framing this number is net of belongs to the
+        over: a PROXIED login gives an ``ssh`` host's ``exec`` session a
+        terminal too, and the framing this number is net of belongs to the
         host's command frame, which no transfer backend can see. So the
         question goes to the object that decides both
-        (:meth:`~otto.host.session.SessionManager.line_room` for the host's exec plan, reached
+        (:meth:`~otto.host.session.SessionManager.line_room`, reached
         through the context this backend was built with) and a
         ``None`` callable -- an embedded builder, a direct construction in a
-        test -- means the same thing an unbudgeted route means.
+        test -- means the same thing an unbudgeted session means.
 
         Read per file rather than cached per transfer, because it is free and
         because the two halves of the arithmetic belong together: the other

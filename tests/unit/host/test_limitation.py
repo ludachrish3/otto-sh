@@ -13,9 +13,13 @@ from otto.host.command_frame import (
     build_command_frame,
     register_command_frame,
 )
-from otto.host.exec_route import ExecRoute
 from otto.host.limitation import Limitation
-from otto.host.session import EXEC_ROUTES, SessionManager, typed_line_budget
+from otto.host.session import (
+    LINE_BUDGET_LIMITATION,
+    SESSION_EXEC_LIMITATIONS,
+    SessionManager,
+    typed_line_budget,
+)
 from otto.registry import Ref
 from tests.unit.host._sessions import session_manager
 
@@ -84,34 +88,28 @@ def test_a_frame_declaring_its_own_limitation_registers():
 
 
 def test_code_otto_implements_declares_no_library_limitation():
-    for route, record in EXEC_ROUTES.items():
-        if record.implemented_by == "otto":
-            assert all(lim.kind == "device" for lim in record.limitations.values()), route
+    # Every exec on a shell session is otto's own code.
+    for name, lim in SESSION_EXEC_LIMITATIONS.items():
+        assert lim.kind == "device", name
     for frame in BUILTIN_FRAMES:
         lim = type(build_command_frame(type_name=frame.name)).exact_output
         assert lim is None or lim.kind == "device", frame.name
 
 
-def test_every_route_has_a_record_and_the_shell_routes_declare_the_line_budget():
-    assert set(EXEC_ROUTES) == set(ExecRoute) - {ExecRoute.UNSUPPORTED}
-    assert {r for r, rec in EXEC_ROUTES.items() if "line_budget" in rec.limitations} == {
-        ExecRoute.POOLED_SHELL,
-        ExecRoute.DEFAULT_SESSION,
-    }
+def test_a_session_exec_declares_the_line_budget_in_one_place():
+    assert SESSION_EXEC_LIMITATIONS["line_budget"] is LINE_BUDGET_LIMITATION
 
 
-def test_the_line_budget_is_read_from_the_route_record():
+def test_each_session_is_budgeted_in_the_exec_frame_it_types():
     manager = session_manager(
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet", proxy_hops=[])),
         name="h",
         command_frame=BashFrame(),
     )
-    assert manager.line_budget(route=ExecRoute.SSH_CHANNEL) is None
-    assert manager.line_budget(route=ExecRoute.UNSUPPORTED) is None
-    # Each shell route is budgeted in the exec frame it types, with its restore.
-    for route in (ExecRoute.POOLED_SHELL, ExecRoute.DEFAULT_SESSION):
-        typed = ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(route))
-        assert manager.line_budget(route=route) == typed_line_budget(
+    # A pooled session and the default one, each with its own restore.
+    for shared in (False, True):
+        typed = ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(shared))
+        assert manager.line_budget(shared=shared) == typed_line_budget(
             BashFrame(), echoes=True, exec_input=typed
         )
 
@@ -119,56 +117,38 @@ def test_the_line_budget_is_read_from_the_route_record():
 def test_the_line_budget_reads_its_measurements_from_their_one_home():
     from otto.host.session import (
         _LINE_EDITOR_RECORD,
-        _SSH_CHANNEL_COMMAND_MEASUREMENT,
         _TYPED_LINE_MEASUREMENTS,
     )
     from otto.host.userland import gap_for
 
     gap = gap_for(_LINE_EDITOR_RECORD)
     assert gap is not None, _LINE_EDITOR_RECORD
-    measured = EXEC_ROUTES[ExecRoute.POOLED_SHELL].limitations["line_budget"].measured_on
+    measured = LINE_BUDGET_LIMITATION.measured_on
     assert measured == _TYPED_LINE_MEASUREMENTS
     # The gap record's measured_on is prose, so the short entries cannot be
     # derived from it; instead EVERY number each entry states (dates, versions,
     # character counts, read off the entry itself rather than listed here) must
     # be one the record states.
-    entries = [*_TYPED_LINE_MEASUREMENTS, _SSH_CHANNEL_COMMAND_MEASUREMENT]
-    for entry in entries:
+    for entry in _TYPED_LINE_MEASUREMENTS:
         numbers = re.findall(r"\d+(?:[.-]\d+)*", entry)
         assert numbers, entry
         for number in numbers:
             assert number in gap.measured_on, (number, entry)
 
 
-def test_the_ssh_channel_declares_its_measured_command_length_and_is_not_budgeted():
-    from otto.host.session import _SSH_CHANNEL_COMMAND_MEASUREMENT, SSH_CHANNEL_COMMAND_MAX
-
-    record = EXEC_ROUTES[ExecRoute.SSH_CHANNEL]
-    assert set(record.limitations) == {"command_length"}
-    lim = record.limitations["command_length"]
-    assert lim.kind == "device"
-    assert lim.measured_on == [_SSH_CHANNEL_COMMAND_MEASUREMENT]
-    assert "dropbear 2022.83" in lim.reason
-    assert f"{SSH_CHANNEL_COMMAND_MAX + 1}" in lim.reason
-    assert "OpenSSH" not in lim.reason
-
-
 def test_the_line_budget_reason_states_the_ceiling_from_its_constant():
-    from otto.host.session import SSH_CHANNEL_COMMAND_MAX
     from otto.host.userland import PTY_TYPED_LINE_MAX
 
-    reason = EXEC_ROUTES[ExecRoute.POOLED_SHELL].limitations["line_budget"].reason
+    reason = LINE_BUDGET_LIMITATION.reason
     assert str(PTY_TYPED_LINE_MAX) in reason
-    # The ssh channel's figure is that route's own declaration, not restated here.
-    assert str(SSH_CHANNEL_COMMAND_MAX) not in reason
 
 
 def test_a_local_shell_reads_a_pipe_so_no_line_budget_bounds_it():
     from otto.host import LocalHost
 
     mgr = LocalHost()._session_mgr
-    assert mgr.line_budget(route=ExecRoute.DEFAULT_SESSION) is None
-    assert mgr.line_budget(route=ExecRoute.POOLED_SHELL) is None
+    assert mgr.line_budget(shared=True) is None
+    assert mgr.line_budget(shared=False) is None
 
 
 def test_a_missing_line_editor_record_breaks_the_build(monkeypatch):

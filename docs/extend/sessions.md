@@ -54,19 +54,18 @@ does not compose the standing mode yet; the container's own `send` and
 
 | | Named session | `exec` |
 | --- | --- | --- |
-| Shell state | Persistent (per session) | Carried to no later command; on a `console` route, `exec` starts in a clean login shell ({ref}`by route <exec-frame-shell-state>`; routes are listed in {ref}`Command contracts <command-contracts>`) |
+| Shell state | Persistent (per session) | Depends on the host: on most hosts nothing is shared with `run` or kept; on a console it starts from what `run` left; on a Zephyr board what it changes stays ({ref}`exec-session`) |
 | Setup cost | One session, reused | Depends on the host ({ref}`host-exec-pool`) |
 | Use case | Multi-step workflows in parallel | One-off independent commands |
 
-Every `exec` is typed into a shell. Over `ssh`, `telnet` and on the local
-host that is a **pooled shell**, a shell session otto keeps for `exec` beside
-the one `run` uses (on ssh and the local host without a terminal unless the
-call needs one: {ref}`host-exec-on-sessions`). Over `console`, `exec` is typed
-into the console's one shell, the one `run` uses. Which route a call
-takes is on {doc}`../command-contracts/exec`.
+Every `exec` is typed into a shell: a **pooled shell**, a shell session otto
+keeps for `exec` beside the one `run` uses, or on a console or an embedded
+host the host's one session. Which one each host's `exec` takes, and what it
+shares with `run`, is {ref}`exec-session`.
 
 When otto types an `exec` into a shell, it wraps the command in an **exec
-frame**: a line that runs the command in a subshell, then restores the
+frame**: a line that runs the command in a subshell (where the frame
+isolates; a Zephyr shell's does not), then restores the
 terminal and prints otto's **end record**, a marker line carrying the
 command's exit status that tells otto the command is over.
 
@@ -123,7 +122,7 @@ has one keeps it. How such a command ends, times out or is stopped is on
 {ref}`the results page <command-ends-abnormally>`.
 
 (exec-frame-shell-state)=
-#### Shell state, by route
+#### Shell state
 
 Where an `exec` starts, and what it can leave behind:
 
@@ -134,34 +133,24 @@ Where an `exec` starts, and what it can leave behind:
   profile has been read; on the local host it is `bash` with no profile,
   opened for the call from the Python process's current directory and
   environment.
-- **A console's `exec`** runs in a clean login shell that the console's one
-  shell (the shell `run` uses) starts for it: `env -i` keeps only `HOME`,
-  `TERM`, `USER`, `LOGNAME` and `PATH`, and sets `SHELL` to the program it
-  starts (`"${SHELL:-/bin/sh}"`, so the sudo `shell` form inside it names the
-  same shell), then `"${SHELL:-/bin/sh}" -l -c`
-  reads the login profile, changes to `$HOME` (`/` when it is unset or
-  empty, as a login with no home starts) and runs the command. So it
-  starts in the login's home directory with the login's environment and
-  options, not from what a `run` left, and its own changes reach no later
-  `run` or `exec`. What differs from a pooled shell, and what the console
-  promises, is on {ref}`the console's promise <command-contracts-narrower>`.
-  Anything the profile prints comes before otto's BEGIN marker, which the
-  login shell prints, so it is not part of the command's output, and no
-  `expects=` pattern is answered to it (on every frame, nothing before BEGIN
-  is matched). What a logout file prints is: bash runs `~/.bash_logout` when
-  a command ends the login shell with the `exit` builtin, after BEGIN. A login
-  shell that never gets as far as the command (no `env`, no such `$SHELL`, a
-  `$SHELL` that does not take `-l -c`, a profile that exits or `exec`s)
-  prints no BEGIN marker, and the `exec` is a failed result whatever status
-  its end record carries ({py:data}`~otto.host.session.NEVER_RAN`); the raw
-  text is in the session's DEBUG log. otto has no fallback for a device
-  without `env` or with a csh-family `$SHELL`.
+- **A console's `exec`** runs in a subshell of the console's one shell, the
+  shell `run` uses. It starts from what `run` left there: the same working
+  directory, variables and shell options. Nothing it changes (a `cd`, a
+  variable, an option, an `exit`) reaches a later `run` or `exec`. `$$`
+  inside it is the console's one shell, so a command that kills `$$` ends
+  the session, from `exec` as from `run`. On otto's pty test fixture that
+  call returns an error result with `retcode` `-1` and a `value` beginning
+  `Session died unexpectedly`; a real console line need not close when the
+  device's shell dies. On an interactive zsh console without
+  `interactivecomments`, `#` does not start a comment, as for `run`. On an
+  interactive bash or zsh console an unquoted `!` before a word is history
+  expansion, as for `run`: `echo a !b c` finds no event `b`, the shell drops
+  the line, and the call times out. What the console promises is on
+  {ref}`the console's promise <command-contracts-narrower>`.
 
-A pooled shell's subshell inherits the shell's `set -e`: under it, the
-command stops at its first failing statement and reports that status, while
-the shell itself does not exit and still prints otto's end record. A
-console's login shell starts with the login's own options, so the console
-shell's `set -e` is neither inherited nor changed.
+The subshell inherits its shell's `set -e`: under it, the command stops at
+its first failing statement and reports that status, while the shell itself
+does not exit and still prints otto's end record.
 
 When an `exec` times out, has its password refused, or is cancelled, the
 frame's own end never ran. A pooled shell is then stopped and closed, never
@@ -193,11 +182,12 @@ these variables changes what otto restores.
 
 On a host declared as an ash shell (`command_frame: "ash"`, as BusyBox
 devices are), a line the terminal would cut is refused before anything is
-typed, for `run` and a shell-routed `exec` alike. To send such a command,
-split it into shorter lines, put it in a script file and run that, or, over
-`ssh`, use an `exec` that takes its own channel, which types nothing. The
+typed, for `run` and an `exec` on a session with a terminal alike. To send
+such a command, split it into shorter lines, put it in a script file and run
+that, or, over `ssh`, use an `exec` without a terminal (the default), whose
+shell reads a pipe and cuts no line. The
 limits are a
-{ref}`declared exception <exception-how-long-one-line-of-a-command-can-be-on-the-pooled-shell-and-default-session-routes>`.
+{ref}`declared exception <exception-how-long-one-line-of-a-command-can-be-on-a-session-with-a-terminal>`.
 
 #### Which shells this was measured on
 
@@ -226,8 +216,8 @@ A sudo or su password answered with the command still reading end of file:
 - password sudo over `ssh` measured on the lab's test1 (sudo 1.9.15p5,
   default timestamp) and test3 (`timestamp_timeout=0`) by otto's lab
   integration tests, on 2026-11-14;
-- password sudo on a `telnet` or `console` route, and password su on any
-  route, checked only against the stand-in
+- password sudo over `telnet` or on a console, and password su on any
+  host, checked only against the stand-in
   ({ref}`Undefined <command-contracts-undefined>` says why).
 
 Whether one `exec` changes the state the next one sees:
