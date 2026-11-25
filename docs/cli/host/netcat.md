@@ -8,11 +8,16 @@ auto-detecting strategies. This page collects everything netcat-specific.
 Select it per invocation with `--transfer nc` (see {doc}`Connection control <connections>`) or
 persist it with `"transfer": "nc"` in `lab.json`.
 
+Which netcat implementations and which strategies work on which hosts is on
+{doc}`netcat-compatibility`, written from what the test bed proves. otto starts
+the remote listener as `<exec_name> -l -p <port>` and adds no other flag, so
+the netcat in `nc_options.exec_name` has to accept that form.
+
 ## Through hops
 
 Netcat (PUT and GET) works through SSH hops using SSH port forwarding. PUT
-connects otto to a remote ``nc -l`` listener that receives data. GET uses a
-reversed-listener approach: the remote runs ``nc -l <port> < <file>`` and otto
+connects otto to a remote ``nc -l -p <port>`` listener that receives data. GET uses a
+reversed-listener approach: the remote runs ``nc -l -p <port> < <file>`` and otto
 connects through the port forward to read the data. (The other transfer protocols
 through hops are covered in {doc}`Connection control <connections>`.)
 

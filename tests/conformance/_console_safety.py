@@ -63,7 +63,8 @@ WHAT THIS DOES NOT PROTECT AGAINST, stated here rather than discovered later:
   reproduced by any one- or two-client probe, so nothing here can claim it is
   impossible.
 
-THE BUSYBOX GUESTS get their own, SEPARATE lock (:func:`serialized_family`),
+THE BUSYBOX GUESTS get their own, SEPARATE lock (:data:`BUSYBOX_FAMILY_LOCK`,
+held by :func:`serialized_shared_cpu`),
 and for a different reason. Their ``telnetd`` serves several clients, so they
 carry no wedge risk; what they carry is a CPU risk (five TCG guests sharing
 ``test1``'s two cores) that the integration tree answers with a family
@@ -80,7 +81,10 @@ against the Zephyr cells too, which share no resource with them), while
 staying parallel with everything else. The same ``xdist_group`` and
 timeout-raising alternatives were considered and rejected for the same
 reasons as above — a distribution hint fails silently, and a longer timeout
-just moves the load level at which the flake returns.
+just moves the load level at which the flake returns. The Ubuntu 24.04 guest
+emulated on ``test4`` takes a third lock of the same kind, for the same
+reason; :func:`shared_cpu_lock` is the one place that decides which of the
+two shared-CPU locks a cell takes.
 
 WHY NOT ``xdist_group``, which is what the integration tree uses -- AND THE
 PLAN'S REASON FOR RULING IT OUT DOES NOT HOLD HERE, so this records the one
@@ -129,12 +133,14 @@ import fcntl
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from otto.host.telnet import abort_console_transports
 from tests._fixtures._console_lock import RESOURCE_NAME, console_access
 from tests._fixtures.bed_locks import lock_dir_or_root
-from tests.conformance._bed import BED_BUSYBOX, BED_ZEPHYR
+from tests._fixtures.labdata import host_data
+from tests.conformance._bed import BED_BUSYBOX, BED_TECH, BED_UNIX, BED_ZEPHYR
 from tests.conformance._entry import on_console
 from tests.conformance._resolved import ResolvedCell
 
@@ -172,6 +178,31 @@ SHARED_CPU_FAMILY_KINDS = frozenset({BED_BUSYBOX})
 FAMILY_GATE_NAME = "busybox_family.gate"
 FAMILY_RESOURCE_NAME = "busybox_family.resource"
 
+# The guests emulated on `test4` (the Ubuntu 24.04 guest beside the Zephyr
+# guests) contend for its CPU the way the BusyBox guests contend for
+# `test1`'s. A guest whose lab entry hops through this host, and that is not a
+# single-client console cell, takes the lock below. Keyed on the hop and not
+# on the kind: the Ubuntu guest's kind is `bed-unix`, the same as `test1` to
+# `test4` themselves.
+TEST4_GUESTS_HOP = "test4"
+TEST4_GUESTS_GATE_NAME = "test4_guests.gate"
+TEST4_GUESTS_RESOURCE_NAME = "test4_guests.resource"
+
+
+@dataclass(frozen=True)
+class SharedCpuLock:
+    """One shared-CPU lock: what it serializes, and its own two lock files."""
+
+    name: str
+    gate_name: str
+    resource_name: str
+
+
+BUSYBOX_FAMILY_LOCK = SharedCpuLock("the BusyBox family", FAMILY_GATE_NAME, FAMILY_RESOURCE_NAME)
+TEST4_GUESTS_LOCK = SharedCpuLock(
+    "the guests on test4", TEST4_GUESTS_GATE_NAME, TEST4_GUESTS_RESOURCE_NAME
+)
+
 # The lock this process currently holds, innermost last. A list rather than a
 # bool so the state is the PATH: the guard below re-derives nothing, it probes
 # the very file the hold was taken on.
@@ -183,27 +214,48 @@ def opens_a_single_client_console(resolved: ResolvedCell) -> bool:
     return resolved.kind in SINGLE_CLIENT_CONSOLE_KINDS or on_console(resolved)
 
 
-def shares_a_family_cpu_budget(resolved: ResolvedCell) -> bool:
-    """Whether *resolved*'s guest contends for one CPU budget with its family."""
-    return resolved.kind in SHARED_CPU_FAMILY_KINDS
+def shared_cpu_lock(kind: str, element: str) -> "SharedCpuLock | None":
+    """The shared-CPU lock a cell of *element*, of venue *kind*, takes; None when it takes none.
+
+    The one decision, for every caller: ``tests/conformance/conftest.py``'s
+    ``_shared_cpu_family`` asks it for each ``resolved_cell`` item, and the
+    netcat contract's items (``tests/conformance/test_nc_rung_contract.py``),
+    whose own parameters that fixture reads. A BusyBox guest takes the family lock, by its kind. A
+    guest whose lab entry hops through ``test4`` takes the ``test4`` guests'
+    lock, unless it is a single-client console guest (the Zephyr guests),
+    which this lock does not cover yet. Any other host takes none.
+    """
+    if kind in SHARED_CPU_FAMILY_KINDS:
+        return BUSYBOX_FAMILY_LOCK
+    # Only a bed unix host can be a non-console guest on test4: the Zephyr
+    # guests are console cells, and a hermetic cell's element is not in the
+    # bed lab data at all.
+    if kind != BED_UNIX:
+        return None
+    if host_data(element, BED_TECH).get("hop") == TEST4_GUESTS_HOP:
+        return TEST4_GUESTS_LOCK
+    return None
 
 
 @contextmanager
-def serialized_family(lock_dir: Path | None = None) -> "Iterator[None]":
-    """Hold the shared-CPU family lock EXCLUSIVELY for the duration of the block.
+def serialized_shared_cpu(lock: SharedCpuLock, lock_dir: Path | None = None) -> "Iterator[None]":
+    """Hold the shared-CPU *lock* EXCLUSIVELY for the duration of the block.
 
-    One family item at a time across every session's workers — the runtime-lock
-    translation of the integration tree's family ``xdist_group``. Unlike
-    :func:`serialized_console` there is no held-path record and no transport
-    sweep on exit: an interrupted BusyBox item leaves nothing wedged (its
-    ``telnetd`` is multi-client), so the only job here is the flock itself,
-    and closing the fds releases that even through a pytest-timeout signal.
+    One item of *lock*'s guests at a time across every session's workers — the
+    runtime-lock translation of the integration tree's family ``xdist_group``.
+    Unlike :func:`serialized_console` there is no held-path record and no
+    transport sweep on exit: an interrupted item on these guests leaves nothing
+    wedged (none of them is a single-client console), so the only job here is
+    the flock itself, and closing the fds releases that even through a
+    pytest-timeout signal. A cell that also takes the console lock takes this
+    one first (``tests/conformance/conftest.py``'s console fixture depends on
+    the shared-CPU one).
     """
     with console_access(
         lock_dir,
         exclusive=True,
-        gate_name=FAMILY_GATE_NAME,
-        resource_name=FAMILY_RESOURCE_NAME,
+        gate_name=lock.gate_name,
+        resource_name=lock.resource_name,
     ):
         yield
 

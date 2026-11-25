@@ -341,7 +341,7 @@ _LOCK_CALLS = {
     "lease_unix_host": 1,
     "console_access": 0,
     "serialized_console": 0,
-    "serialized_family": 0,
+    "serialized_shared_cpu": 1,
 }
 
 
@@ -393,7 +393,7 @@ def test_the_lock_call_scanner_sees_the_shapes_it_judges() -> None:
         "lease_unix_host(UNIX_POOL, lock_dir=tmp_path_factory.mktemp('x'))\n",
         "d = tmp_path_factory.getbasetemp().parent\nconsole_access(d, exclusive=True)\n",
         "serialized_console(tmp_path)\n",
-        "_console_safety.serialized_family(d)\n",
+        "_console_safety.serialized_shared_cpu(lock, d)\n",
     ]
     allowed = [
         "lease_unix_host(('test2',))\n",

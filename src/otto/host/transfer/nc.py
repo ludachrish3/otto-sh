@@ -2043,11 +2043,12 @@ class NcFileTransfer(UnixFileTransfer):
                 #
                 # `-l -p PORT` is the ONE listener spelling every measured
                 # netcat accepts: OpenBSD 1.226 and all five BusyBox matrix
-                # rows (2026-08-25), plus traditional netcat and ncat, which
-                # document it. What stood here was `-Nl`, which stacked two
-                # rejections into a single option string — the applet has no
-                # `-N` at all, and reads the lone port of the OpenBSD `-l PORT`
-                # as the HOST — and the spawn sends both complaints to
+                # rows (2026-08-25); docs/cli/host/netcat-compatibility.md
+                # lists every netcat the bed runs it with. What stood here
+                # was `-Nl`, which stacked two rejections into a single
+                # option string — the applet has no `-N` at all, and reads the
+                # lone port of the OpenBSD `-l PORT` as the HOST — and the
+                # spawn sends both complaints to
                 # /dev/null, so they arrived as a forward onto a listener that
                 # had already exited.
                 #
@@ -2383,11 +2384,12 @@ class NcFileTransfer(UnixFileTransfer):
                 #
                 # `-l -p PORT` is the ONE listener spelling every measured
                 # netcat accepts: OpenBSD 1.226 and all five BusyBox matrix
-                # rows (2026-08-25), plus traditional netcat and ncat, which
-                # document it. The bare `-l PORT` emitted before was an
-                # OpenBSD-ism — BusyBox reads the lone port as the HOST and
-                # dies with `bad address`, which is why every nc-transfer cell
-                # on the BusyBox profiles was measured-broken.
+                # rows (2026-08-25); docs/cli/host/netcat-compatibility.md
+                # lists every netcat the bed runs it with. The bare `-l PORT`
+                # emitted before was an OpenBSD-ism — BusyBox reads the lone
+                # port as the HOST and dies with `bad address`, which is why
+                # every nc-transfer cell on the BusyBox profiles was
+                # measured-broken.
                 #
                 # `-w` is deliberately absent, and its removal is not a
                 # simplification. This comment used to read OpenBSD's "the -w

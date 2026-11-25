@@ -31,13 +31,37 @@ Usage::
 """
 
 import argparse
+import importlib.util
 import shutil
 import subprocess
 import sys
+from pathlib import Path
+from types import ModuleType
+
+
+def _load_netcat_names() -> ModuleType:
+    """Load ``tests/_fixtures/netcat_names.py`` by its path, and nothing beside it.
+
+    Not the ``tests`` package (``tests/__init__.py`` imports pytest, and this
+    script runs on a box with a bare ``python3``), and not the fixtures
+    directory on ``sys.path``, which a unit worker importing this script would
+    inherit with its hundred generically named modules.
+    """
+    path = Path(__file__).resolve().parent.parent / "tests" / "_fixtures" / "netcat_names.py"
+    spec = importlib.util.spec_from_file_location("_find_test_orphans_netcat_names", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"find_test_orphans: cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+NETCAT_EXEC_NAMES = _load_netcat_names().NETCAT_EXEC_NAMES
 
 # Process names worth checking for. Keyed on `comm`, which is the executable's
-# name — not a substring of somebody's command line.
-_DAEMON_COMMS = frozenset({"sshd", "nc", "socat", "ncat", "telnetd", "vsftpd", "python3"})
+# name — not a substring of somebody's command line. The netcat names are the
+# one list the bed's leftover-listener probe uses too.
+_DAEMON_COMMS = frozenset({"sshd", "socat", "telnetd", "vsftpd", "python3", *NETCAT_EXEC_NAMES})
 
 # A hit also has to reference a pytest-owned temp directory. `python3` is in
 # the list above because a test helper can daemonise as one, but it needs this

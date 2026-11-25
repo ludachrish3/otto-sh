@@ -961,7 +961,7 @@ The `nc_options` object accepts all eight fields of {class}`~otto.host.options.N
 
 | Field                        | Default    | Purpose                                                                   |
 |------------------------------|------------|---------------------------------------------------------------------------|
-| ``exec_name``                | ``"nc"``   | Netcat binary on both sides (e.g. ``ncat``, ``netcat``).                  |
+| ``exec_name``                | ``"nc"``   | Netcat binary on both sides; {doc}`which ones work <../cli/host/netcat-compatibility>`. |
 | ``port``                     | ``9000``   | Base port; the ss/netstat/proc scans start at a random offset above it.   |
 | ``port_strategy``            | ``"auto"`` | Strategy for finding a free remote port (see {doc}`../cli/host/netcat`; {ref}`measured by the probe <netcat-strategy-probe>`). |
 | ``port_cmd``                 | ``null``   | Shell command printing a free port; used when ``port_strategy="custom"``. |

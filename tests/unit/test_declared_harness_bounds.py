@@ -79,6 +79,8 @@ _BROWSER_TIMEOUT_FLOOR_MS = 30_000
 _PYTEST_TIMEOUT_FLOOR_S = 60
 # The fourth: the Makefile's session-wide wrap. Derived below, next to its test.
 _MAKE_SESSION_CAP_FLOOR_S = 1800
+# The conformance bed lane has its own wrap. Derived below, next to its test.
+_CONFORMANCE_BED_CAP_FLOOR_S = 1527
 # A CI job that invokes a wrapped lane must outlast the wrap AND the setup
 # steps ahead of it, or GitHub cancels the job before `timeout` reports.
 _CI_SETUP_MARGIN_S = 300
@@ -359,6 +361,31 @@ def test_make_declares_a_session_cap_far_above_the_leg() -> None:
     )
 
 
+# `make conformance-bed` is not a coverage leg and has its own wrap,
+# `CONFORMANCE_BED_TIMEOUT`: its slowest cells are on real lab guests, one of
+# them emulated, so its runtime is set by the bed and not by this machine's
+# suite. The rule is the same one level across: a runaway guard, never a
+# discriminator. Three clean runs of the whole lane with the netcat contract on
+# every netcat host took 1377 s, 1296 s and 1290 s, a spread of 87 s. The floor
+# is the slowest of them plus 150 s: a cap under it is inside the lane's own
+# spread, and a slow guest would end a healthy run as exit 124 with no failing
+# test behind it. A lane that grows past the floor's premise re-measures and
+# raises both numbers together.
+
+
+def test_make_declares_a_conformance_bed_cap_above_the_measured_lane() -> None:
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
+    cap = makefile_session_cap(makefile, "CONFORMANCE_BED_TIMEOUT")
+    assert cap >= _CONFORMANCE_BED_CAP_FLOOR_S, (
+        f"CONFORMANCE_BED_TIMEOUT is {cap}s, below the {_CONFORMANCE_BED_CAP_FLOOR_S}s floor. "
+        f"The whole lane has been measured at 1377s on the bed; a cap within 150s of that is "
+        f"inside the lane's spread and reddens a healthy run on a slow guest"
+    )
+    assert "$(CONFORMANCE_BED_TIMEOUT)" in makefile, (
+        "premise: no recipe line uses $(CONFORMANCE_BED_TIMEOUT), so the cap bounds nothing"
+    )
+
+
 def makefile_wrapped_targets(text: str) -> "set[str]":
     """Every Makefile target that reaches a ``$(TIMEOUT_CMD)`` recipe line.
 
@@ -474,6 +501,12 @@ def test_declared_bound_scanners_observe_red() -> None:
         makefile_session_cap("TIMEOUT := 900s\n")
     with pytest.raises(AssertionError, match="2 times"):
         makefile_session_cap("LANE_TIMEOUT := 900s\nLANE_TIMEOUT := 120s\n")
+    # A named cap is read by the same rules, and never satisfied by another cap's line.
+    both = "LANE_TIMEOUT := 900s\nCONFORMANCE_BED_TIMEOUT := 1650s\n"
+    assert makefile_session_cap(both, "CONFORMANCE_BED_TIMEOUT") == 1650
+    assert makefile_session_cap(both) == 900
+    with pytest.raises(AssertionError, match="no longer declares CONFORMANCE_BED_TIMEOUT"):
+        makefile_session_cap("LANE_TIMEOUT := 900s\n", "CONFORMANCE_BED_TIMEOUT")
     # The wrapped-target closure follows prerequisites and $(MAKE) recursion.
     toy = (
         "outer: inner\n\t@echo\n"

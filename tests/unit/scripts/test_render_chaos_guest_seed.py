@@ -93,7 +93,7 @@ def test_user_data_is_cloud_config_with_both_users_and_password_ssh():
     assert "sudo" not in by_login["test"]
     assert by_login["test"]["plain_text_passwd"] == "Password1"
     assert by_login["test"]["lock_passwd"] is False
-    assert "socat" in cfg["packages"]
+    assert cfg["packages"] == ["socat", "netcat-openbsd", "netcat-traditional", "ncat", "net-tools"]
 
 
 def test_user_data_writes_the_hold_unit_its_script_and_the_reboot_target_override():

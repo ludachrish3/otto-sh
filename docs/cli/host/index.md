@@ -237,6 +237,7 @@ login
 
 connections
 netcat
+netcat-compatibility
 embedded
 capabilities/index
 families

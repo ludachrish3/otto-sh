@@ -100,6 +100,10 @@ BED_LABS: list[str] = ["unix", "busybox", "embedded"]
 # `chaos` is a coverage-scope decision: its guest is the reboot lane's target,
 # reset and held mid-shutdown by design (tests/e2e/chaos/_bed.py), and its
 # Ubuntu 24.04 cells are not in the support matrix yet. Crossing it is #998.
+# The guest also carries three netcat implementations and offers `nc` (after
+# `scp`, the default). The netcat contract (tests/conformance/test_nc_rung_contract.py)
+# reaches it by its own cells, built by `netcat_bed_cell` from
+# `NETCAT_ONLY_ELEMENTS` below, not by crossing this lab.
 # `test_bed_labs_names_every_lab_the_bed_data_declares` holds every declared
 # lab to one list or the other, so a new lab still has to be placed by hand.
 LABS_NOT_CROSSED: frozenset[str] = frozenset({"chaos"})
@@ -118,6 +122,10 @@ BED_SUDO_ASKS_A_PASSWORD = False
 # may not run sudo at all, so `exec-options`' sudo-as-that-user arm has no
 # stimulus on the bed and is the hermetic stand-in's.
 BED_SWITCH_USER_MAY_SUDO = False
+
+# The hosts the netcat contract reaches outside `BED_LABS`, and only it: every
+# other contract runs over `bed_topology()`, which they are not in.
+NETCAT_ONLY_ELEMENTS: tuple[str, ...] = ("ubu2404",)
 
 BED_UNIX = "bed-unix"
 BED_BUSYBOX = "bed-busybox"
@@ -273,8 +281,9 @@ def build_bed_host(
     *options* overrides option blocks of the entry, merged per key: for
     ``{"nc_options": {"port_strategy": "ss"}}`` the entry's own
     ``nc_options`` keep every field but ``port_strategy``. ``None`` builds
-    the entry as the lab declares it. The netcat rung contract
-    (``tests/conformance/test_nc_rung_contract.py``) pins its rungs this way.
+    the entry as the lab declares it. The netcat contract
+    (``tests/conformance/test_nc_rung_contract.py``) pins its rungs and selects
+    its implementation this way.
     """
     _ensure_custom_frames()
     entry = dict(host_data(cell.element, BED_TECH))
@@ -581,6 +590,42 @@ def bed_topology() -> "list[BedCell]":
                 kinds[cell.element] = bed_kind(cell.element)
             cells.append(BedCell(cell=cell, kind=kinds[cell.element], open_host=_opener_for(cell)))
     return cells
+
+
+def netcat_bed_cell(element: str) -> "BedCell":
+    """*element*'s ``nc`` cell over its first non-console term, for a host outside ``BED_LABS``.
+
+    For the hosts of :data:`NETCAT_ONLY_ELEMENTS` only, which the netcat
+    contract reaches and :func:`bed_topology` does not. The cell is read off
+    the menus otto resolves for the host, as :func:`bed_topology`'s are, and
+    opened by the same opener, so a hop through a host of ``BED_LABS`` resolves
+    through the same lab context.
+    """
+    if element not in NETCAT_ONLY_ELEMENTS:
+        raise ValueError(
+            f"{element!r} is not a netcat-only bed host; its cells are in bed_topology()"
+        )
+    axes = axes_for(element, BED_TECH)
+    for term in axes.terms:
+        if term != "console" and "nc" in axes.transfers:
+            cell = Cell(element, term, "nc")
+            return BedCell(cell=cell, kind=bed_kind(element), open_host=_opener_for(cell))
+    raise RuntimeError(f"the bed lab data offers no non-console nc cell for {element!r}")
+
+
+def nc_bed_cell(element: str) -> "BedCell":
+    """*element*'s ``nc`` cell over its first declared non-console term.
+
+    The one choice of the cell a netcat contract item runs on, for the module
+    and for ``tests/conformance/conftest.py``'s shared-CPU lock.
+    """
+    if element in NETCAT_ONLY_ELEMENTS:
+        return netcat_bed_cell(element)
+    for bed_cell in bed_topology():
+        cell = bed_cell.cell
+        if cell.element == element and cell.transfer == "nc" and cell.term != "console":
+            return bed_cell
+    raise RuntimeError(f"the bed space offers no non-console nc cell for {element!r}")
 
 
 def bed_space() -> "list[ResolvedCell]":

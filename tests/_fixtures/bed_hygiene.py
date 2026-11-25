@@ -25,6 +25,7 @@ from otto.result import Result
 from otto.tunnel.check_probes import CHECK_PREFIX, PS_FAILED, SWEEP_COMMAND
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
 from tests._fixtures.docker_reap import E2E_IMAGE_LABEL, ORPHAN_FRAGMENTS, image_ids_command
+from tests._fixtures.netcat_names import NETCAT_EXEC_NAMES
 
 
 def argv_pattern(needle: str) -> str:
@@ -78,7 +79,62 @@ _IMPAIRER = NetEmImpairer()
 # keep matching it, nor to keep matching the ``-Nl`` orphans an older build may
 # still have left on the bed. ``tests/unit/test_bed_hygiene.py`` carries all
 # three eras as rows.
-_NC_LISTENER_PROBE = f'pgrep -af "{argv_pattern("nc")} -[A-Za-z]*l[A-Za-z]*( |$)" || true'
+#
+# Every netcat implementation's executable name (`NETCAT_EXEC_NAMES`, the one
+# list) is an alternative, each bracket-tricked and `re.escape`d (the dot in
+# `nc.openbsd` is literal). The name must start the argv or follow a space or
+# a slash, so `concat -l -p 9000` is not an `ncat` listener.
+#
+# TWO STAGES, because no single pgrep spelling works on every bed host
+# (measured, #1320). BusyBox 1.16.1 and 1.21.1 `pgrep` have no `-a` (they print
+# a usage text and exit 0, so a leak there was never reported), and 1.16.1's
+# pgrep reads its pattern as a BASIC regular expression: grouping, alternation
+# and `$` find nothing, even the old flag-cluster tail. `-f` exists everywhere
+# and every bed host is Linux, so:
+#   1. `pgrep -f` gets only a coarse prefilter, "a dash, letters, then `l`",
+#      the flag cluster every listener spelling has, which means the same
+#      thing as a basic and as an extended expression. `[-]` also keeps it from
+#      being read as an option. It may over-match (the next stage decides) and
+#      must never under-match; `_FLAG_LETTERS` is the one spelling of the
+#      cluster, used by both stages.
+#   2. Each candidate's command line is read from /proc/<pid>/cmdline and the
+#      exact pattern (`_NETCAT_EXEC_PATTERN`) is applied with `grep -E`.
+# Output stays one `<pid> <full command line>` line per listener. The only
+# tolerated pgrep outcome is "nothing matched" (exit 1, no output); a refusal
+# of its options (exit 2 on procps, usage text on BusyBox) or a non-pid word
+# exits 2, which the consumers already treat as a failed probe. A pid whose
+# command line cannot be read is skipped only when /proc/<pid> is gone (it
+# exited between the two reads): its stderr is sent to /dev/null BEFORE the
+# `<` is opened, so the shell's own "cannot open" never reaches the output.
+# A read that fails while the process is still there, and a `grep` that
+# errors (status above 1) rather than finding no match, exit 2.
+# The loop runs in a subshell so `exit` cannot end a session shell the probe is
+# typed into. The pgrep pattern starts with `[`, so the probe's own wrapper
+# shell cannot be mistaken for a listener by it; and if it ever were a
+# candidate, the exact pattern (bracket-tricked per name) rejects it.
+_FLAG_LETTERS = "[A-Za-z]*l"
+_NC_PREFILTER = f"[-]{_FLAG_LETTERS}"
+_NETCAT_EXEC_PATTERN = (
+    "(^|[ /])("
+    + "|".join(argv_pattern(re.escape(n)) for n in NETCAT_EXEC_NAMES)
+    + f") -{_FLAG_LETTERS}[A-Za-z]*( |$)"
+)
+_NC_LISTENER_PROBE = (
+    # Spelled out, not `_NC_PREFILTER`: the honesty scan (test_bed_oracle_honesty) needs a
+    # literal `[` right after the pgrep option; test_pgrep_is_given_only_a_coarse_prefilter
+    # pins the two spellings together.
+    f'(o=$(pgrep -f "[-]{_FLAG_LETTERS}" 2>&1); '
+    "r=$?; "
+    'if [ "$r" -gt 1 ] || { [ "$r" -eq 1 ] && [ -n "$o" ]; }; then echo "$o" >&2; exit 2; fi; '
+    "for p in $o; do "
+    'case "$p" in *[!0-9]*) echo "$o" >&2; exit 2;; esac; '
+    "c=$(tr '\\0' ' ' 2>/dev/null < /proc/$p/cmdline) || { [ -d /proc/$p ] && exit 2; continue; }; "
+    "c=${c% }; "
+    f'printf "%s\\n" "$c" | grep -qE "{_NETCAT_EXEC_PATTERN}"; '
+    "g=$?; "
+    'if [ "$g" -eq 0 ]; then echo "$p $c"; elif [ "$g" -gt 1 ]; then exit 2; fi; '
+    "done)"
+)
 _STAGING_PROBE = "ls -d /tmp/otto-* /tmp/otto_* /run/chaos/shutdown_hold 2>/dev/null || true"
 _HISTORY_PROBE = "cat ~/.bash_history 2>/dev/null | sha256sum || true"
 # Docker accumulation probes (Plan 5). `-a` deliberately: exited containers
@@ -107,7 +163,7 @@ def probe_lines(text: str) -> list[str]:
 
 
 def local_nc_listeners() -> list[str]:
-    """``nc`` listeners on THIS box, as ``pgrep -af`` lines.
+    """netcat listeners on THIS box, as ``<pid> <command line>`` lines.
 
     The local counterpart of running :data:`_NC_LISTENER_PROBE` on a bed host,
     and deliberately the same probe text rather than a second spelling: the
@@ -125,17 +181,18 @@ def local_nc_listeners() -> list[str]:
     """
     import subprocess
 
-    return (
-        subprocess.run(
-            ["sh", "-c", _NC_LISTENER_PROBE],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=_PROBE_TIMEOUT,
-        )
-        .stdout.strip()
-        .splitlines()
+    proc = subprocess.run(
+        ["sh", "-c", _NC_LISTENER_PROBE],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=_PROBE_TIMEOUT,
     )
+    if proc.returncode != 0:
+        raise ProbeFailedError(
+            f"local listener probe failed (exit {proc.returncode}): {proc.stderr.strip()!r}"
+        )
+    return proc.stdout.strip().splitlines()
 
 
 class ProbeFailedError(RuntimeError):

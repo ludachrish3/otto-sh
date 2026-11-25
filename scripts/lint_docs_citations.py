@@ -266,6 +266,7 @@ MAINTAINER_TARGETS = frozenset(
         "lint-ts",
         "lock-check",
         "monitor-fixtures",
+        "netcat-compatibility",
         "nox",
         "nox-embedded",
         "nox-full",

@@ -998,8 +998,9 @@ class NcOptions:
 
     exec_name: str = "nc"
     """Netcat executable on both sides (e.g. ``nc``, ``ncat``, ``netcat``).
-    Listener syntax is the universal ``-l -p PORT`` (accepted by OpenBSD,
-    BusyBox, traditional netcat and ncat)."""
+    The listener is started as ``<exec_name> -l -p PORT`` with no other flag.
+    Which netcat implementations the test bed runs, and which strategies work
+    with each, is on :doc:`/cli/host/netcat-compatibility`."""
 
     port: int = 9000
     """Base port for netcat transfers. The ss/netstat/proc port-finding

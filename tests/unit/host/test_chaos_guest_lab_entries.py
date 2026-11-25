@@ -70,6 +70,14 @@ def test_the_guest_entry_builds_an_ssh_unix_host_behind_test4():
     assert data["valid_terms"] == ["ssh"]  # Task 4's health routing keys on this
 
 
+def test_the_guest_offers_nc_after_scp_and_sftp_and_scp_stays_the_default():
+    """The guest's second job is the netcat contract; the reboot lane keeps resolving `scp`."""
+    data = next(h for h in flat_hosts("tech1") if h["element"] == CHAOS_GUEST.element)
+    assert data["valid_transfers"] == ["scp", "sftp", "nc"]
+    host = create_host_from_dict(entry_of(data), lab_name=CHAOS_GUEST.lab, element=element_of(data))
+    assert host.transfer == "scp"
+
+
 def test_the_guest_is_in_the_chaos_lab_and_no_other():
     labs = {h["element"]: h["labs"] for h in flat_hosts("tech1", with_labs=True)}
     assert labs[CHAOS_GUEST.element] == ["chaos"]

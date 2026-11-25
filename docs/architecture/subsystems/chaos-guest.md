@@ -62,10 +62,11 @@ consoles write to the journal. The footprint is the image (0.6 GB) plus the over
 
 First boot is configured by the seed: the two users, sshd password authentication, a
 `network-config` matching each NIC by the MAC the wrapper assigns and naming it `eth0`,
-`eth1` or `eth2` (no gateway on either TAP), `socat`, the hostname, the lab VMs'
-`reboot.target` override (`JobTimeoutSec=90`, `JobTimeoutAction=reboot-force`) and the
-shutdown hold below. cloud-init runs the seed on the first boot only, so every later
-chaos reboot finds the instance already configured.
+`eth1` or `eth2` (no gateway on either TAP), the packages (`socat`, `netcat-openbsd`,
+`netcat-traditional`, `ncat` and `net-tools`; see [A second job](#a-second-job-the-netcat-implementations)),
+the hostname, the lab VMs' `reboot.target` override (`JobTimeoutSec=90`,
+`JobTimeoutAction=reboot-force`) and the shutdown hold below. cloud-init runs the seed on
+the first boot only, so every later chaos reboot finds the instance already configured.
 
 ## The shutdown hold
 
@@ -153,6 +154,21 @@ connection records the new key.
 
 To restart the guest without re-provisioning use `make qemu-restart`; to read its
 supervisor's log use `journalctl -u chaos-qemu-ubu2404` on `test4`.
+
+## A second job: the netcat implementations
+
+The guest also carries the netcat implementations that otto's netcat transfer contract is
+run against: OpenBSD netcat (`netcat-openbsd`), traditional netcat (`netcat-traditional`)
+and Nmap's `ncat` (`ncat`), plus `net-tools`. The seed installs them with `socat`. The
+guest's lab entry lists `nc` after `scp` and `sftp`, so `scp` stays its default transfer
+and the reboot lane is unaffected. The packages go on this guest only; nothing is
+installed on `test1` to `test4`.
+
+The guest's packages come from the seed's package list, and only a rebuild installs them:
+a guest built before a package was added to the list lacks it until it is rebuilt (see the
+re-seed rule above), and a rebuild from a checkout whose list lacks a package leaves it out.
+The alarm for a guest that lacks one is the netcat contract: its availability and identity
+cells for `ubu2404` fail, naming the missing implementation.
 
 ## Why not a BusyBox guest, and why not a lab VM
 

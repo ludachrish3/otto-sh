@@ -132,7 +132,7 @@ CHAOS_GUEST = ChaosGuest(
     memory_mb=1024,
     cpus=2,
     disk_gb=4,
-    packages=("socat",),
+    packages=("socat", "netcat-openbsd", "netcat-traditional", "ncat", "net-tools"),
 )
 
 ARCHES = ("arm64", "amd64")
