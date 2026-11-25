@@ -261,7 +261,17 @@ new `why` and land the file through an approval pull request to `main`
 measuring, see [Contributing](contributing.md#the-import-budget)). Do not
 commit it on the release branch: `release-preflight` refuses a branch that is
 not `main`'s tip. Once it merges, cut a NEW release branch at the new `main`
-tip and run `make release` again. When `reports/budget/other/<minor>.json`
+tip and run `make release` again.
+
+**A stop that is not growth:** `the generated project does not run at <tag>`.
+The harness's generated project could not dispatch under the previous
+release, so no project surface was judged. No approval lifts it: an
+approvals file the `STOP:` block prints is for growth on other surfaces only. Make the project load on both sides
+(its lab is `tests/_fixtures/budget_project_lab.json`; see
+[Contributing](contributing.md#the-import-budget)), land that through a pull
+request, and release from the new `main` tip. A single surface the previous
+release cannot run for its own reason (a verb added since) is still a
+`not measurable` line, not a stop. When `reports/budget/other/<minor>.json`
 holds the other environment's records for that minor (CI's
 `budget-<minor>` artifact, placed by hand), each grown surface's stop line is
 followed by an `other environment:` line with that environment's numbers.

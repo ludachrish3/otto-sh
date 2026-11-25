@@ -1,0 +1,290 @@
+{
+    "labs": {
+        "unix": {
+            "resources": [
+                "test1",
+                "test2",
+                "test3"
+            ],
+            "metadata": {
+                "description": "unix regression bed"
+            }
+        }
+    },
+    "elements": [
+        {
+            "name": "test1",
+            "labs": [
+                "unix"
+            ],
+            "resources": [
+                "test1-chassis"
+            ],
+            "metadata": {
+                "role": "hub"
+            },
+            "hosts": [
+                {
+                    "ip": "10.10.200.11",
+                    "os_type": "unix",
+                    "valid_terms": [
+                        "ssh",
+                        "telnet"
+                    ],
+                    "valid_transfers": [
+                        "scp",
+                        "sftp",
+                        "ftp",
+                        "nc"
+                    ],
+                    "is_virtual": true,
+                    "site": "lab-a",
+                    "rack": 1,
+                    "shelf": 3,
+                    "docker_capable": true,
+                    "creds": [
+                        {
+                            "login": "vagrant",
+                            "password": "vagrant"
+                        },
+                        {
+                            "login": "test",
+                            "password": "Password1"
+                        }
+                    ],
+                    "interfaces": {
+                        "eth2": {
+                            "ip": "192.168.1.11",
+                            "subnet": "192.168.1.0/24"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "test2",
+            "labs": [
+                "unix"
+            ],
+            "hosts": [
+                {
+                    "ip": "10.10.200.12",
+                    "os_type": "unix",
+                    "valid_terms": [
+                        "telnet",
+                        "ssh",
+                        "console"
+                    ],
+                    "valid_transfers": [
+                        "nc",
+                        "scp",
+                        "sftp",
+                        "ftp"
+                    ],
+                    "console_options": {
+                        "server": "test1",
+                        "port": 4001
+                    },
+                    "is_virtual": true,
+                    "site": "lab-a",
+                    "rack": 1,
+                    "shelf": 3,
+                    "docker_capable": true,
+                    "resources": [
+                        "test2-console"
+                    ],
+                    "creds": [
+                        {
+                            "login": "vagrant",
+                            "password": "vagrant"
+                        },
+                        {
+                            "login": "test",
+                            "password": "Password1"
+                        }
+                    ],
+                    "interfaces": {
+                        "eth2": {
+                            "ip": "192.168.1.12",
+                            "subnet": "192.168.1.0/24"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "test3",
+            "labs": [
+                "unix"
+            ],
+            "hosts": [
+                {
+                    "ip": "10.10.200.13",
+                    "os_type": "unix",
+                    "valid_terms": [
+                        "ssh",
+                        "telnet"
+                    ],
+                    "valid_transfers": [
+                        "scp",
+                        "sftp",
+                        "ftp",
+                        "nc"
+                    ],
+                    "is_virtual": true,
+                    "site": "lab-a",
+                    "rack": 1,
+                    "shelf": 4,
+                    "docker_capable": true,
+                    "docker_priority": 10,
+                    "creds": [
+                        {
+                            "login": "vagrant",
+                            "password": "vagrant"
+                        },
+                        {
+                            "login": "test",
+                            "password": "Password1"
+                        }
+                    ],
+                    "interfaces": {
+                        "eth2": {
+                            "ip": "192.168.1.13",
+                            "subnet": "192.168.1.0/24"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "test4",
+            "labs": [
+                "unix"
+            ],
+            "hosts": [
+                {
+                    "ip": "10.10.200.14",
+                    "os_type": "unix",
+                    "valid_terms": [
+                        "ssh",
+                        "telnet"
+                    ],
+                    "valid_transfers": [
+                        "scp",
+                        "sftp",
+                        "ftp",
+                        "nc"
+                    ],
+                    "is_virtual": true,
+                    "creds": [
+                        {
+                            "login": "vagrant",
+                            "password": "vagrant"
+                        },
+                        {
+                            "login": "test",
+                            "password": "Password1"
+                        }
+                    ],
+                    "interfaces": {
+                        "eth2": {
+                            "ip": "192.168.1.14",
+                            "subnet": "192.168.1.0/24"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "bb1310",
+            "labs": [
+                "unix"
+            ],
+            "hosts": [
+                {
+                    "ip": "198.51.100.13",
+                    "os_type": "unix",
+                    "command_frame": "ash",
+                    "board": "qemu",
+                    "sw_version": "1.31.0",
+                    "valid_terms": [
+                        "telnet"
+                    ],
+                    "valid_transfers": [
+                        "shell",
+                        "nc"
+                    ],
+                    "is_virtual": true,
+                    "hop": "test1",
+                    "creds": [
+                        {
+                            "login": "root",
+                            "password": "otto"
+                        }
+                    ],
+                    "userland_options": {
+                        "applet_base64": "present",
+                        "applet_nc": "present",
+                        "applet_poweroff": "present",
+                        "applet_scp": "absent",
+                        "applet_shutdown": "absent",
+                        "applet_uudecode": "present",
+                        "applet_uuencode": "present",
+                        "base64_flag": "-d",
+                        "checksum": "md5sum",
+                        "elevation": "su",
+                        "stat_size": "stat",
+                        "timeout_style": "coreutils"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "zephyr37_fat",
+            "labs": [
+                "unix"
+            ],
+            "hosts": [
+                {
+                    "ip": "192.0.2.1",
+                    "os_type": "zephyr",
+                    "os_version": "3.7",
+                    "valid_transfers": [
+                        "console"
+                    ],
+                    "filesystem": "fat-ram",
+                    "max_filename_len": 32,
+                    "is_virtual": true,
+                    "hop": "test4",
+                    "snmp": {
+                        "address": "10.10.200.14",
+                        "port": 16101,
+                        "community": "public",
+                        "oids": [
+                            "1.3.6.1.2.1.1.3.0",
+                            "1.3.6.1.4.1.63245.1.1.0",
+                            "1.3.6.1.4.1.63245.1.2.0",
+                            "1.3.6.1.4.1.63245.1.3.0",
+                            "1.3.6.1.4.1.63245.1.4.0"
+                        ]
+                    }
+                }
+            ]
+        }
+    ],
+    "links": [
+        {
+            "endpoints": [
+                {
+                    "host": "test1",
+                    "interface": "eth2"
+                },
+                {
+                    "host": "test2",
+                    "interface": "eth2"
+                }
+            ],
+            "protocol": "udp"
+        }
+    ]
+}

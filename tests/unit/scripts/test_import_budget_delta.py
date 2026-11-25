@@ -668,17 +668,121 @@ def test_a_canary_the_base_cannot_run_lists_every_repo_surface(tmp_path: Path, c
     grown = dict.fromkeys(REPO_SURFACES, 900)
     tip = _side(tmp_path, "tip", ops=grown, buckets={k: {"otto:*": 900} for k in grown})
     v = judge_minor(base, tip, "3.10", NONE)
-    because = f"the generated repo does not run at base: {canary}: {BOOM}"
+    because = f"the generated project does not run at base: {canary}: {BOOM}"
     assert v.unmeasurable == {k: (BOOM if k == canary else because) for k in REPO_SURFACES}
-    assert (v.stop, v.grown) == ([], [])
+    # ... and that is a stop: a run that judged no repo surface is not accepted
+    v = delta.decide([(base, tip)], "3.10", NONE)
+    assert v.stop == [_fixture_stop_line("base", canary)]
+    assert (v.grown, v.growth_stops, v.warranted, v.reason) == ([], {}, [], None)
     assert (
         main(["judge", *_judge_args(tmp_path), "--pair", str(base), str(tip), "--minors", "3.10"])
-        == 0
+        == 1
     )
     out = capsys.readouterr().out
     assert f"not measurable at base:\n  {min(REPO_SURFACES)}: " in out
     assert f"  help_project: {because}" in out
+    assert f"STOP:\n  {_fixture_stop_line('base', canary)}" in out
+    assert "to approve, write" not in out, "no approvals file is offered: nothing grew"
     assert "| help_project |" not in out, "an unmeasurable surface is not tabled"
+
+
+def _fixture_stop_line(base_name: str, canary: str, minor: str = "3.10") -> str:
+    return (
+        f"{minor} the generated project does not run at {base_name}: {canary}: {BOOM}\n"
+        f"  make the fixture load on both sides ({delta.FIXTURE_FILES}); "
+        "no approval lifts this stop"
+    )
+
+
+def test_the_fixture_stop_names_files_that_exist():
+    for path in delta.FIXTURE_FILES.split(", "):
+        assert (CHECKOUT_ROOT / path).is_file(), path
+
+
+def test_a_repo_surface_that_is_no_canary_ending_wrong_at_the_base_is_still_a_note(
+    tmp_path: Path, capsys
+):
+    """A surface the base lacks for its own reason is listed; only the shared fixture stops."""
+    lone = next(k for k in REPO_SURFACES if k not in FIXTURE_CANARIES)
+    base = _side(tmp_path, "base", endings={lone: [BOOM]})
+    tip = _side(tmp_path, "tip")
+    v = judge_minor(base, tip, "3.10", NONE)
+    assert (v.unmeasurable, v.stop) == ({lone: BOOM}, [])
+    assert delta.fixture_stop(base, "3.10") is None
+    assert (
+        main(["judge", *_judge_args(tmp_path), "--pair", str(base), str(tip), "--minors", "3.10"])
+        == 0
+    )
+    assert "STOP" not in capsys.readouterr().out
+
+
+def _broken_fixture_pairs(tmp_path: Path, *tips: dict) -> "list[tuple[Path, Path]]":
+    """Pairs whose base canary failed; every base is named `base`, as a run's are one tag.
+
+    Only the first pair's reason is `BOOM`: a later one differs, as a reason
+    that quotes a per-run path does.
+    """
+    [canary] = FIXTURE_CANARIES
+    return [
+        (
+            _side(
+                tmp_path / f"p{i}", "base", endings={canary: [BOOM if i == 0 else f"{BOOM} {i}"]}
+            ),
+            _side(tmp_path / f"p{i}", "tip", **kw),
+        )
+        for i, kw in enumerate(tips)
+    ]
+
+
+@pytest.mark.parametrize("measured", [1, 2, 3])
+def test_the_fixture_stop_survives_the_confirming_pairs(tmp_path: Path, measured: int):
+    """Growth on another surface asks for more pairs; no verdict along the way drops the stop."""
+    [canary] = FIXTURE_CANARIES
+    line = _fixture_stop_line("base", canary)
+    # pair 1 and 2 disagree on the grown surface, pair 2 and 3 agree: every branch of decide
+    other = {"ops": {PLAIN: 509}, "buckets": {PLAIN: {"otto:*": 500, "stdlib": 9}}}
+    pairs = _broken_fixture_pairs(tmp_path, *[other, GROWN, GROWN][:measured])
+    v = delta.decide(pairs, "3.10", NONE)
+    assert [s for s in v.stop if "the generated project does not run" in s] == [line], v.stop
+    if measured < delta.MAX_PAIRS:
+        assert v.more, "pending: the pending text and the fixture stop are both there"
+        assert len(v.stop) == 2
+    else:
+        assert not v.more
+        # the growth stop is still found by its index after the fixture stop was added
+        assert [v.stop[i].startswith(f"3.10 {PLAIN} ") for i in v.growth_stops] == [True]
+
+
+def test_a_fixture_stop_in_the_first_pair_survives_healthy_later_pairs(tmp_path: Path):
+    """ANY pair: a later pair whose base ran, and which decides the verdict, does not clear it."""
+    [canary] = FIXTURE_CANARIES
+    [(base, tip)] = _broken_fixture_pairs(tmp_path, GROWN)
+    healthy = [
+        (_side(tmp_path / f"h{i}", "base"), _side(tmp_path / f"h{i}", "tip", **GROWN))
+        for i in (1, 2)
+    ]
+    v = delta.decide([(base, tip), *healthy], "3.10", NONE)
+    assert not v.more
+    assert v.stop[-1] == _fixture_stop_line("base", canary)
+
+
+def test_an_approval_for_an_unjudged_surface_is_not_reported_unused(tmp_path: Path, capsys):
+    """Nothing was measured for a repo surface on a stopped minor: "did not grow" would be false."""
+    [canary] = FIXTURE_CANARIES
+    lone = next(k for k in REPO_SURFACES if k not in FIXTURE_CANARIES)
+    base = _side(tmp_path, "base", endings={canary: [BOOM]})
+    tip = _side(tmp_path, "tip")
+    entries = [
+        _entry(PLAIN, {"stdlib": 4}),
+        _entry(lone, {"fd": 1}),
+        _entry(canary, {"fd": 1}, "3.10"),
+    ]
+    args = _judge_args(tmp_path, entries)
+    assert main(["judge", "--pair", str(base), str(tip), "--minors", "3.10", *args]) == 1
+    out = capsys.readouterr().out
+    assert f"{PLAIN}: approved but did not grow on any measured minor (unused)" in out
+    assert f"{lone}: approved but did not grow" not in out
+    assert f"{canary}@3.10: approved but did not grow" not in out
 
 
 def test_delta_reports_an_ending(tmp_path: Path, capsys):
@@ -1522,6 +1626,28 @@ def test_a_base_cache_that_is_not_the_base_or_not_this_instrument_is_measured_ag
     assert measure(_settings(repo, out), again) == 0
     assert _steps(again, "base") == ["sync", "version", "report"], break_it
     assert validate_side(base, "3.10", None) == []
+
+
+def test_a_cached_base_whose_generated_repo_did_not_run_is_measured_again(tmp_path: Path, capsys):
+    """One transient canary failure must not stop every later run that reuses the cache."""
+    repo, _b, _t = _repo(tmp_path)
+    out = tmp_path / "out"
+    assert measure(_settings(repo, out), FakeRunner()) == 0
+    base = out / "v1.0.0"
+    [canary] = FIXTURE_CANARIES
+
+    def fail_the_canary(table: list) -> None:
+        [row] = [r for r in table if r["surface"] == canary]
+        row["ending"] = [BOOM]
+
+    _edit(base / "3.10.json", fail_the_canary)
+    assert validate_side(base, "3.10", None) == [], "a wrong ending is still evidence"
+    capsys.readouterr()
+    again = FakeRunner()
+    assert measure(_settings(repo, out), again) == 0
+    assert _steps(again, "base") == ["sync", "version", "report"]
+    assert "not reusing v1.0.0 on 3.10: its generated repo did not run" in capsys.readouterr().out
+    assert delta.fixture_stop(base, "3.10") is None, "the fresh measurement replaced it"
 
 
 def test_an_interpreter_uv_cannot_find_says_the_cache_cannot_be_reused(
