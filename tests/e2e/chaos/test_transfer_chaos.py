@@ -120,8 +120,8 @@ def _reap_new_nc_listeners(element: str, before: list) -> None:
     `execve` -- they land only in the transient `bash -c` wrapper's cmdline,
     never in the `nc` process's own argv. Killing the wrapper doesn't touch
     its already-forked `nc` child, which reparents to init and keeps the
-    port bound. `_NC_LISTENER_PROBE` (`pgrep -af "nc -l"`) matches `nc`
-    itself (`-l` IS in its argv), so PIDs pulled from it are the real
+    port bound. `_NC_LISTENER_PROBE` matches the netcat listener
+    itself, whatever name in `NETCAT_EXEC_NAMES` it runs under, so PIDs pulled from it are the real
     listener processes; killing those actually frees the port. Diffed
     against *before* so a pre-existing listener (this bed's, or another
     test's) is never touched.

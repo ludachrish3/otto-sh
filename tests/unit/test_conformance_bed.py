@@ -89,8 +89,6 @@ from tests.conformance._console_safety import (
     FAMILY_RESOURCE_NAME,
     opens_a_single_client_console,
     serialized_console,
-    serialized_family,
-    shares_a_family_cpu_budget,
     unhonored_console_lock,
 )
 from tests.conformance._controls import discover_controls
@@ -1440,20 +1438,27 @@ def test_the_family_predicate_selects_exactly_the_busybox_cells():
     guests' console cells: a second one appearing is a lab-data change worth
     being told about.
     """
+    from tests.conformance._console_safety import BUSYBOX_FAMILY_LOCK, shared_cpu_lock
+
+    def in_family(r) -> bool:
+        return shared_cpu_lock(r.kind, r.cell.element) is BUSYBOX_FAMILY_LOCK
+
     both = []
     for r in bed_space():
-        assert shares_a_family_cpu_budget(r) == (r.kind == BED_BUSYBOX)
-        if shares_a_family_cpu_budget(r) and opens_a_single_client_console(r):
+        assert in_family(r) == (r.kind == BED_BUSYBOX)
+        if in_family(r) and opens_a_single_client_console(r):
             both.append(cell_label(r))
     assert both == [f"{BED_BUSYBOX}[bb1350:console:shell]"]
-    assert shares_a_family_cpu_budget(_resolved(("bb1281", "telnet", "nc")))
-    assert not shares_a_family_cpu_budget(_resolved(DEFAULT_CELL))
+    assert in_family(_resolved(("bb1281", "telnet", "nc")))
+    assert not in_family(_resolved(DEFAULT_CELL))
 
 
 def test_the_family_lock_excludes_a_second_holder_but_not_the_console(tmp_path):
     """Inside the block a probe on the family file is refused; the console lock
     is untouched (a Zephyr cell must still be able to run in parallel)."""
-    with serialized_family(tmp_path):
+    from tests.conformance._console_safety import BUSYBOX_FAMILY_LOCK, serialized_shared_cpu
+
+    with serialized_shared_cpu(BUSYBOX_FAMILY_LOCK, tmp_path):
         probe = os.open(str(tmp_path / FAMILY_RESOURCE_NAME), os.O_RDWR | os.O_CREAT, 0o644)
         try:
             with pytest.raises(BlockingIOError):
@@ -1485,11 +1490,11 @@ def test_the_family_fixture_locks_busybox_cells_and_only_those(monkeypatch):
     held: list[str] = []
 
     @contextlib.contextmanager
-    def _recording(lock_dir=None):
-        held.append("family")
+    def _recording(lock, lock_dir=None):
+        held.append("family" if lock.resource_name == FAMILY_RESOURCE_NAME else lock.name)
         yield
 
-    monkeypatch.setattr(_conftest, "serialized_family", _recording)
+    monkeypatch.setattr(_conftest, "serialized_shared_cpu", _recording)
     fixture_fn = _conftest._shared_cpu_family.__wrapped__
 
     class _Req:
@@ -3469,41 +3474,222 @@ def test_build_bed_host_merges_an_nc_options_override_and_none_changes_nothing()
     assert same.nc_options == plain.nc_options
 
 
-def test_the_nc_rung_cells_are_every_host_and_rung_of_both_ladders():
-    """63 cells, 9 hosts x 7 rungs, each named ``nc-rung[<element>:<ladder>:<rung>]``."""
+def test_the_netcat_cells_are_every_port_rung_per_host_and_listener_rung_per_implementation():
+    """Every port rung per host, every listener rung per implementation (absent tools included)."""
     from otto.host.transfer.nc_scripts import LISTENER_LADDER, PORT_LADDER
-    from tests.conformance._nc_rungs import BED_NC_RUNGS, NC_RUNG_CELLS, nc_rung_id
+    from tests.conformance._nc_rungs import (
+        BED_NETCAT,
+        NC_HOST_CELLS,
+        NC_IMPLEMENTATION_CELLS,
+        NC_LISTENER_CELLS,
+        NC_PORT_CELLS,
+        nc_listener_id,
+        nc_port_id,
+    )
 
-    assert len(NC_RUNG_CELLS) == 63
-    assert len(set(NC_RUNG_CELLS)) == 63
-    expected = {
-        (element, ladder, rung.name)
-        for element in BED_NC_RUNGS
-        for ladder, rungs in (("port", PORT_LADDER), ("listener", LISTENER_LADDER))
-        for rung in rungs
-    }
-    assert set(NC_RUNG_CELLS) == expected
-    assert nc_rung_id(("bb1161", "port", "proc")) == "nc-rung[bb1161:port:proc]"
+    assert list(BED_NETCAT) == NC_HOST_CELLS
+    assert len(NC_HOST_CELLS) == 10
+    assert [(e, r.name) for e in BED_NETCAT for r in PORT_LADDER] == NC_PORT_CELLS
+    assert len(set(NC_PORT_CELLS)) == 10 * len(PORT_LADDER)
+    implementations = [
+        (e, i.exec_name) for e, row in BED_NETCAT.items() for i in row.implementations
+    ]
+    assert implementations == NC_IMPLEMENTATION_CELLS
+    assert len(set(NC_IMPLEMENTATION_CELLS)) == 12
+    assert [
+        (e, x, r.name) for e, x in implementations for r in LISTENER_LADDER
+    ] == NC_LISTENER_CELLS
+    assert len(set(NC_LISTENER_CELLS)) == 12 * len(LISTENER_LADDER)
+    assert nc_port_id(("bb1161", "proc")) == "bb1161:proc"
+    assert nc_listener_id(("ubu2404", "ncat", "ss")) == "ubu2404:ncat:ss"
 
 
-def test_the_nc_rung_table_names_exactly_the_hosts_with_an_nc_cell():
-    """Every bed host with an ``nc`` cell has a row, no other does, and rows hold only rungs."""
+def test_the_netcat_table_names_exactly_the_netcat_hosts_of_the_bed_and_the_netcat_only_ones():
+    """The bed topology's nc hosts plus NETCAT_ONLY_ELEMENTS; rows hold only rungs, in order."""
     from otto.host.transfer.nc_scripts import LISTENER_LADDER, PORT_LADDER
-    from tests.conformance._nc_rungs import BED_NC_RUNGS
+    from tests._fixtures.netcat_names import NETCAT_EXEC_NAMES
+    from tests.conformance._bed import NETCAT_ONLY_ELEMENTS
+    from tests.conformance._nc_rungs import BED_NETCAT, TOOL_ABSENT, working_checks
 
-    with_nc = {r.cell.element for r in bed_space() if r.cell.transfer == "nc"}
-    assert set(BED_NC_RUNGS) == with_nc
+    with_nc = {b.cell.element for b in _bed.bed_topology() if b.cell.transfer == "nc"}
     assert len(with_nc) == 9
-    ladders = {
-        "port": tuple(r.name for r in PORT_LADDER),
-        "listener": tuple(r.name for r in LISTENER_LADDER),
-    }
-    for element, row in BED_NC_RUNGS.items():
-        assert set(row) == set(ladders), element
-        for ladder, rungs in row.items():
-            assert rungs, f"{element}: no {ladder} rung listed, so no companion can be pinned"
-            order = [r for r in ladders[ladder] if r in rungs]
-            assert list(rungs) == order, f"{element}: {ladder} row {rungs} is not in ladder order"
+    assert set(BED_NETCAT) == with_nc | set(NETCAT_ONLY_ELEMENTS)
+    port_order = [r.name for r in PORT_LADDER]
+    listener_rungs = {r.name for r in LISTENER_LADDER}
+    for element, row in BED_NETCAT.items():
+        assert row.port, f"{element}: no port rung listed, so no companion can be pinned"
+        assert list(row.port) == [r for r in port_order if r in row.port], element
+        assert row.implementations, element
+        absent = None
+        for impl in row.implementations:
+            assert impl.exec_name in NETCAT_EXEC_NAMES, (element, impl.exec_name)
+            assert set(impl.listener) == listener_rungs, (element, impl.exec_name)
+            assert working_checks(impl), f"{element}:{impl.exec_name}: no listener check works"
+            tools = {r for r, c in impl.listener.items() if c.state == TOOL_ABSENT}
+            # A tool is the host's: every implementation agrees on which are absent.
+            assert absent in (None, tools), element
+            absent = tools
+        names = [impl.exec_name for impl in row.implementations]
+        assert len(names) == len(set(names)), element
+
+
+def test_every_netcat_row_records_the_route_its_lab_entry_takes():
+    """``tunnelled`` exactly where the lab entry declares a hop."""
+    from tests._fixtures.labdata import host_data
+    from tests.conformance._nc_rungs import BED_NETCAT
+
+    for element, row in BED_NETCAT.items():
+        hopped = host_data(element, BED_TECH).get("hop") is not None
+        assert row.route == ("tunnelled" if hopped else "direct"), element
+
+
+def test_the_ubuntu_guest_has_three_implementations_through_a_tunnel():
+    """Three implementations by their own names; only bb1161 answers 1 for a missing program."""
+    from tests.conformance._nc_rungs import BED_NETCAT
+
+    row = BED_NETCAT["ubu2404"]
+    assert [i.exec_name for i in row.implementations] == ["nc.openbsd", "nc.traditional", "ncat"]
+    assert row.route == "tunnelled"
+    assert {e for e, r in BED_NETCAT.items() if r.missing_binary_status != 127} == {"bb1161"}
+    assert BED_NETCAT["bb1161"].missing_binary_status == 1
+
+
+def test_a_does_not_work_row_carries_its_reason_opening_and_issue():
+    """Every ``does-not-work`` check in the table explains itself; the rule is pinned too."""
+    from tests.conformance._nc_rungs import BED_NETCAT, DOES_NOT_WORK, ListenerCheck
+
+    def explained(check: ListenerCheck) -> bool:
+        return bool(check.reason and check.opens_with and check.issue.startswith("#"))
+
+    for element, row in BED_NETCAT.items():
+        for impl in row.implementations:
+            for rung, check in impl.listener.items():
+                if check.state == DOES_NOT_WORK:
+                    assert explained(check), (element, impl.exec_name, rung)
+    assert not explained(ListenerCheck(state=DOES_NOT_WORK, reason="x", opens_with="y"))
+    assert explained(ListenerCheck(state=DOES_NOT_WORK, reason="x", opens_with="y", issue="#1"))
+
+
+def test_the_bed_topology_is_unchanged_by_the_netcat_only_hosts():
+    """Still 55 cells, none of them a netcat-only host; ``chaos`` is still not crossed."""
+    from tests.conformance._bed import NETCAT_ONLY_ELEMENTS
+
+    cells = _bed.bed_topology()
+    assert len(cells) == 55
+    assert not {b.cell.element for b in cells} & set(NETCAT_ONLY_ELEMENTS)
+    assert "chaos" in LABS_NOT_CROSSED
+
+
+def test_the_netcat_only_cell_is_an_ssh_nc_cell_built_through_the_bed_opener():
+    """``ubu2404``'s cell is ssh/nc, builds hopped through test4, and keeps scp the default."""
+    bed_cell = _bed.netcat_bed_cell("ubu2404")
+    assert bed_cell.cell == Cell("ubu2404", "ssh", "nc")
+    assert bed_cell.kind == BED_UNIX
+    host = build_bed_host(bed_cell.cell, options={"nc_options": {"exec_name": "ncat"}})
+    assert (host.term, host.transfer, host.hop) == ("ssh", "nc", "test4")
+    assert host.nc_options.exec_name == "ncat"
+    assert host.valid_transfers[0] == "scp"
+    with pytest.raises(ValueError, match="bed_topology"):
+        _bed.netcat_bed_cell("test1")
+
+
+def test_the_shared_cpu_lock_selector_picks_busybox_test4_guests_or_none():
+    """BusyBox by kind; a guest hopping through test4 that is not a console guest; else none."""
+    from tests.conformance._console_safety import (
+        BUSYBOX_FAMILY_LOCK,
+        TEST4_GUESTS_LOCK,
+        shared_cpu_lock,
+    )
+
+    assert shared_cpu_lock(BED_BUSYBOX, "bb1281") is BUSYBOX_FAMILY_LOCK
+    assert bed_kind("ubu2404") == BED_UNIX
+    assert shared_cpu_lock(bed_kind("ubu2404"), "ubu2404") is TEST4_GUESTS_LOCK
+    assert shared_cpu_lock(BED_UNIX, "test1") is None
+    assert shared_cpu_lock(BED_UNIX, "test4") is None
+    assert shared_cpu_lock(BED_ZEPHYR, "zephyr37_fat") is None
+    for bed_cell in _bed.bed_topology():
+        lock = shared_cpu_lock(bed_cell.kind, bed_cell.cell.element)
+        expect = BUSYBOX_FAMILY_LOCK if bed_cell.kind == BED_BUSYBOX else None
+        assert lock is expect, bed_cell.cell
+    assert BUSYBOX_FAMILY_LOCK.resource_name != TEST4_GUESTS_LOCK.resource_name
+
+
+def _nc_contract_items() -> "list[tuple[str, dict[str, object]]]":
+    """``(test name, callspec params)`` for every parametrized item of the netcat contract.
+
+    Read off the module's own ``parametrize`` marks, so a new cell, or a cell
+    parameter the conftest does not read, is in the list without anyone
+    adding it here.
+    """
+    import tests.conformance.test_nc_rung_contract as nc_contract
+
+    items = []
+    for name, fn in vars(nc_contract).items():
+        if not name.startswith("test_"):
+            continue
+        for mark in getattr(fn, "pytestmark", []):
+            if mark.name != "parametrize":
+                continue
+            argname, values = mark.args
+            items.extend((name, {argname: value}) for value in values)
+    return items
+
+
+class _NcItem:
+    """What ``_shared_cpu_lock_of`` reads of a netcat contract item."""
+
+    def __init__(self, params: "dict[str, object]") -> None:
+        self.path = Path("tests/conformance/test_nc_rung_contract.py")
+        self.callspec = types.SimpleNamespace(params=params)
+
+
+def test_every_netcat_contract_item_takes_the_lock_the_selector_names():
+    """The conftest's fixture, not the test body, holds each netcat cell's shared-CPU lock.
+
+    Every parametrized item of the module resolves, through the conftest's
+    one resolution, to the lock :func:`shared_cpu_lock` names for its host,
+    and the lock-taking hosts (the BusyBox guests, the test4 guest) are among
+    them. A pure-function control has no cell parameter and takes none.
+    """
+    from tests.conformance._bed import nc_bed_cell
+    from tests.conformance._console_safety import (
+        BUSYBOX_FAMILY_LOCK,
+        TEST4_GUESTS_LOCK,
+        shared_cpu_lock,
+    )
+    from tests.conformance._nc_rungs import nc_cell_element
+
+    taken = set()
+    items = _nc_contract_items()
+    assert items, "the netcat contract has no parametrized item: this read has rotted"
+    for name, params in items:
+        element = nc_cell_element(params)
+        assert element is not None, f"{name}{params}: a cell parameter the conftest cannot read"
+        lock = _conformance_conftest._shared_cpu_lock_of(_NcItem(params))
+        assert lock is shared_cpu_lock(nc_bed_cell(element).kind, element), (name, params)
+        taken.add(lock)
+    assert {BUSYBOX_FAMILY_LOCK, TEST4_GUESTS_LOCK, None} <= taken
+    assert _conformance_conftest._shared_cpu_lock_of(_NcItem({})) is None
+    other = _NcItem({"element": "bb1161"})
+    other.path = Path("tests/conformance/test_exec_contract.py")
+    assert _conformance_conftest._shared_cpu_lock_of(other) is None
+
+
+def test_the_netcat_contract_takes_no_lock_in_its_body():
+    """No test body of the netcat contract waits for a lock: that wait would be timed."""
+    import inspect
+
+    import tests.conformance.test_nc_rung_contract as nc_contract
+
+    assert "serialized_shared_cpu" not in inspect.getsource(nc_contract)
+
+
+def test_the_console_fixture_takes_the_shared_cpu_lock_first():
+    """The console fixture depends on the shared-CPU one, so a cell taking both takes it first."""
+    import inspect
+
+    params = inspect.signature(_conformance_conftest._single_client_console.__wrapped__).parameters
+    assert "_shared_cpu_family" in params
 
 
 def test_no_nc_rung_cell_is_a_support_matrix_contract():

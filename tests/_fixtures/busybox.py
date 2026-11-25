@@ -432,6 +432,15 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+BUSYBOX_BANNER_COMMAND = "busybox 2>&1 | head -n 1"
+"""The command a BusyBox shell answers with its banner: ``busybox`` with no applet name."""
+
+
+def reports_busybox_version(banner: str, version: str) -> bool:
+    """Whether a BusyBox *banner* (``BusyBox v1.21.1 (...) multi-call binary.``) is *version*'s."""
+    return f"BusyBox v{version} " in banner
+
+
 def probe_banner(path: Path) -> str:
     """First line the binary prints — 'BusyBox v1.21.1 (...) multi-call binary.'"""
     try:

@@ -50,26 +50,17 @@ from otto.host.transfer import BaseFileTransfer
 from tests._fixtures.profiles import Cell
 from tests.conformance._controls import assert_bed_left_clean, remove_landed
 from tests.conformance._resolved import ResolvedCell
+from tests.conformance._roundtrip import MODE as _MODE
+from tests.conformance._roundtrip import PAYLOAD as _PAYLOAD
+from tests.conformance._roundtrip import assert_mode_landed, assert_roundtrip
 from tests.conformance._transfer import transfer_backend_of
 from tests.conftest import remote_name
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
 
 
-# Every tripwire a text-only payload misses, in one file:
-#   \r\n      a backend that normalises line endings drops the \r
-#   \x00      a backend that treats the payload as a C string stops here
-#   \xff\xfe  bytes that are not valid UTF-8 at all
-#   final \n  a backend that strips or adds a trailing newline is visible
-_PAYLOAD = (
-    b"otto-conformance\r\nnul->\x00<-nul\ttab\n\xff\xfe not utf-8\nand the file ends on a newline\n"
-)
-
-# Deliberately not 0o644, 0o664, 0o755 or 0o600: a backend that applies no mode
-# at all lands one of those from the runner's umask, and an assertion against
-# such a value would pass for the wrong reason. 0o615 keeps the owner read bit,
-# so `get` can still read the file back.
-_MODE = 0o615
+# The tripwire payload (`_PAYLOAD`) and the mode a put asks for (`_MODE`) are
+# `tests/conformance/_roundtrip.py`'s, shared with the netcat contract.
 
 # The SECOND mode, for the mode surface's positive control. Same three
 # constraints as `_MODE` (not a umask default, owner read kept) plus the one
@@ -260,39 +251,20 @@ async def test_put_get_roundtrip_preserves_content(
 ) -> None:
     """Byte-for-byte, including a trailing newline and a NUL.
 
-    Three directories, not two, and on a bed cell only two of them are on
-    this machine. A roundtrip into the source directory would have the
-    ``get`` overwrite the very file it is being compared against, so a
-    backend that transferred nothing at all would still "round-trip"
-    perfectly. ``remote_scratch`` is the third, and it is the venue's answer:
-    a directory under ``tmp_path`` where the far side is the runner, a
-    device path where it is not.
-
-    The aggregate results are asserted before the bytes because they answer a
-    different question: a transfer can land the right bytes and still report
-    failure (and a caller acting on the report would then delete or retry), and
-    it can report success having written nothing.
+    The sequence and why it has three directories are
+    :func:`tests.conformance._roundtrip.assert_roundtrip`'s, which the netcat
+    contract calls too.
     """
-    source_dir = tmp_path / "source"
-    retrieved_dir = tmp_path / "retrieved"
-    for directory in (source_dir, retrieved_dir):
-        directory.mkdir()
-    source = source_dir / remote_name(worker_id, _PAYLOAD_NAME)
-    source.write_bytes(_PAYLOAD)
-
     cell = resolved_cell.cell
     async with resolved_cell.open_host() as host:
-        put = await host.put(source, remote_scratch)
-        assert put.is_ok, f"{cell}: put reported {put.status!r} -- {put.msg!r}"
-        got = await host.get(remote_scratch / source.name, retrieved_dir)
-        assert got.is_ok, f"{cell}: get reported {got.status!r} -- {got.msg!r}"
-
-    retrieved = retrieved_dir / source.name
-    assert retrieved.exists(), f"{cell}: get reported success but wrote no file at {retrieved}"
-    assert retrieved.read_bytes() == _PAYLOAD, (
-        f"{cell}: the roundtripped file is not the payload -- "
-        f"sent {len(_PAYLOAD)} bytes, got back {len(retrieved.read_bytes())}"
-    )
+        await assert_roundtrip(
+            host,
+            remote_scratch,
+            tmp_path,
+            name=remote_name(worker_id, _PAYLOAD_NAME),
+            payload=_PAYLOAD,
+            label=f"{cell}",
+        )
 
 
 @pytest.mark.observable(
@@ -554,16 +526,7 @@ async def test_put_lands_the_documented_mode_on_the_host(
             )
             return
 
-        assert put.is_ok, f"{cell}: put(mode=0o{_MODE:o}) reported {put.status!r} -- {put.msg!r}"
-        observed = (await host.run(f"stat -c %a {landed}")).only
-
-    assert observed.is_ok, (
-        f"{cell}: could not read the landed file's mode back -- "
-        f"`stat -c %a` gave {observed.status!r} {observed.value!r}"
-    )
-    assert observed.value == f"{_MODE:o}", (
-        f"{cell}: put(mode=0o{_MODE:o}) left the file at mode {observed.value!r}"
-    )
+        await assert_mode_landed(host, put, landed, label=f"{cell}")
 
 
 # ==========================================================================

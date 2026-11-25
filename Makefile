@@ -707,6 +707,12 @@ clean-dist:
 	@$(SAY) "removing dist/"
 	@rm -rf dist
 
+# The netcat compatibility page is generated from tests/conformance/_nc_rungs.py and
+# committed; tests/unit/docs/test_netcat_compatibility_page.py fails when it is stale.
+.PHONY: netcat-compatibility
+netcat-compatibility: ## (Docs) Regenerate docs/cli/host/netcat-compatibility.md from the netcat bed table
+	@uv run python -m scripts.render_netcat_compatibility
+
 .PHONY: clean-web-assets
 clean-web-assets: ## (Build & Release) Remove the built web bundles (src/otto/_webassets/monitor, src/otto/_webassets/covapp) so the next consumer rebuilds them once through the dist rule; clean-dist leaves them alone
 	@$(SAY) "removing the built web bundles"
@@ -1436,8 +1442,16 @@ conformance: ## Run the host-contract conformance suite (`conformance`-marked; e
 # Re-measured 2026-11-24 with the netcat rung contract folded in
 # (`tests/conformance/test_nc_rung_contract.py`, 66 items): 1577 items, pytest
 # 991 s, the whole lane 1055 s.
+#
+# RAISED FROM 1500s TO 1650s when the netcat contract grew to every
+# implementation and strategy on every netcat host (1650 items, 24 of them on
+# the emulated Ubuntu 24.04 guest, where each session open costs 8 to 17 s).
+# Three clean runs of the whole lane took 1377 s, 1296 s and 1290 s: the
+# slowest was within about two minutes of the old cap. The step is 150 s over
+# 1500 s for each started 150 s the slowest run is past 1350 s;
+# tests/unit/test_declared_harness_bounds.py holds the floor.
 CONFORMANCE_CELLS ?= all
-CONFORMANCE_BED_TIMEOUT := 1500s
+CONFORMANCE_BED_TIMEOUT := 1650s
 MATRIX_CANDIDATE := reports/.support-matrix-candidate.json
 # A VERIFY LANE: it folds the run into $(MATRIX_CANDIDATE), judges that against
 # the committed matrix (a downgrade fails the lane) and leaves schemas/ alone;

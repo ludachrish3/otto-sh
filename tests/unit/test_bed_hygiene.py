@@ -421,7 +421,8 @@ def _probe_regex() -> re.Pattern[str]:
     probe from one that PARSES it. Writing the command text here to reach the
     pattern would trip a guard that is right to be blunt.
     """
-    _, _, rest = _NC_LISTENER_PROBE.partition('"')
+    _, sep, rest = _NC_LISTENER_PROBE.partition('grep -qE "')
+    assert sep, f"probe no longer applies an exact pattern with grep -E: {_NC_LISTENER_PROBE!r}"
     pattern, sep, _ = rest.partition('"')
     assert sep, f"probe no longer has a quoted pattern: {_NC_LISTENER_PROBE!r}"
     return re.compile(pattern)
@@ -448,6 +449,13 @@ _CURRENT_SPELLINGS = [
     # watchdog — a second hit per listener, which is the right way round for a
     # probe whose job is finding leftovers.
     "/usr/bin/busybox timeout 3600 nc -l -p 9001",
+    # Every other netcat implementation the bed carries wears its own
+    # executable name (`tests/_fixtures/netcat_names.py`).
+    "ncat -l -p 9000",
+    "nc.openbsd -l -p 9000",
+    "nc.traditional -l -p 9000",
+    "timeout 3600 ncat -l -p 9000",
+    "/usr/bin/nc.traditional -l -p 9001",
 ]
 
 # RETIRED on 2026-08-25 with the universal spelling, and STILL REQUIRED TO
@@ -520,12 +528,45 @@ def test_the_probe_is_falsifiable_on_the_current_spelling():
     "argv",
     [
         "nc 10.0.0.1 9000",  # a CLIENT, not a listener — must not match
-        "ncat -l 9000",  # different executable; `nc` is what otto spawns
+        "ncat 10.0.0.1 9000",  # a client of another implementation
+        "ncXopenbsd -l -p 9000",  # the dot in `nc.openbsd` is literal
+        "concat -l -p 9000",  # `ncat` inside another word
         "sleep 30",
     ],
 )
 def test_probe_ignores_non_listeners(argv):
     assert not _probe_regex().search(argv), f"probe would misreport {argv!r} as a listener"
+
+
+def test_probe_matches_an_ncat_listener_without_dash_p():
+    """A leaked `ncat -l PORT` is a leftover too.
+
+    Its own test rather than a `_FOREIGN_SPELLINGS` row: the mutation test
+    needs every foreign row to match an `nc`-only narrowed pattern.
+    """
+    assert _probe_regex().search("ncat -l 9000")
+
+
+def test_probe_and_orphan_finder_use_the_one_list_of_netcat_names():
+    from scripts import find_test_orphans
+    from tests._fixtures.netcat_names import NETCAT_EXEC_NAMES
+
+    for name in NETCAT_EXEC_NAMES:
+        assert _probe_regex().search(f"{name} -l -p 9000"), name
+        assert name in find_test_orphans._DAEMON_COMMS, name
+
+
+def test_the_orphan_finder_loads_its_names_without_touching_sys_path():
+    """A worker that imports the script must not inherit the fixtures directory on its path."""
+    import importlib
+    import sys
+
+    from scripts import find_test_orphans
+
+    before = list(sys.path)
+    importlib.reload(find_test_orphans)
+    assert sys.path == before
+    assert not any(p.endswith("_fixtures") for p in sys.path)
 
 
 def test_probe_cannot_match_its_own_wrapper_shell():
@@ -598,3 +639,169 @@ def test_an_echo_is_residual_dirt_and_a_new_one_is_a_leftover():
     assert diff_snapshots(_snap(), _snap(check_echoes=frozenset({line}))) == [
         f"new tunnel-check echo: {line}"
     ]
+
+
+def test_the_probe_does_not_ask_pgrep_for_dash_a():
+    """BusyBox 1.16.1 and 1.21.1 `pgrep` has no `-a` (#1320).
+
+    Its applet answers `-af` with a usage text and exit 0, which compared equal
+    before and after, so a leaked listener there was never reported. The probe
+    reads the command line from /proc instead, and only `-f` is asked of pgrep.
+    """
+    pgrep_options = re.findall(r"pgrep (-\w+)", _NC_LISTENER_PROBE)
+    assert pgrep_options == ["-f"], _NC_LISTENER_PROBE
+
+
+def test_pgrep_is_given_only_a_coarse_prefilter_without_ere_syntax():
+    """BusyBox 1.16.1 `pgrep` is BRE-only (#1320): `(`, `|` and `$` find nothing there.
+
+    So pgrep gets a dash-letters-`l` prefilter that reads the same as a basic
+    and an extended expression, and `grep -E` applies the exact pattern.
+    """
+    from tests._fixtures.bed_hygiene import _NC_PREFILTER
+
+    given = re.findall(r'pgrep -\w+ "([^"]*)"', _NC_LISTENER_PROBE)
+    assert given == [_NC_PREFILTER], given
+    assert not set("(|$)+?{") & set(_NC_PREFILTER), _NC_PREFILTER
+
+
+def test_the_prefilter_matches_every_spelling_the_exact_pattern_matches():
+    """No false negative: a row the exact pattern finds must reach it past pgrep."""
+    from tests._fixtures.bed_hygiene import _NC_PREFILTER
+
+    prefilter = re.compile(_NC_PREFILTER)
+    for argv in [*_CURRENT_SPELLINGS, *_RETIRED_SPELLINGS, *_FOREIGN_SPELLINGS, "ncat -l 9000"]:
+        assert _probe_regex().search(argv), argv
+        assert prefilter.search(argv), f"the prefilter would hide {argv!r} from the exact pattern"
+
+
+def _plant_listener(port: int):
+    """A live process whose argv carries ``nc -l -p <port>``, and that argv."""
+    import subprocess
+    import sys
+
+    argv = [sys.executable, "-c", "import time; time.sleep(60)", "nc", "-l", "-p", str(port)]
+    return subprocess.Popen(argv), argv
+
+
+def test_the_real_probe_reports_a_planted_listener_as_one_pid_and_argv_line():
+    from tests._fixtures.bed_hygiene import local_nc_listeners
+
+    # Keyed by the plant's own pid, never by its port: other runs of this test
+    # (the repeat lane, other sessions on the box) plant the same argv.
+    proc, argv = _plant_listener(39417)
+
+    def ours() -> list[str]:
+        return [line for line in local_nc_listeners() if line.split(" ", 1)[0] == str(proc.pid)]
+
+    try:
+        assert ours() == [f"{proc.pid} {' '.join(argv)}"]
+    finally:
+        proc.kill()
+        proc.wait()
+    assert ours() == []
+
+
+_BB_USAGE = "echo 'Usage: pgrep [-flnovx] [-s SID|-P PPID|PATTERN]'"
+
+
+@pytest.mark.parametrize(
+    ("stream", "status"),
+    [
+        pytest.param("echo 'pgrep: invalid option' >&2", 2, id="procps-bad-usage"),
+        pytest.param(_BB_USAGE, 1, id="busybox-usage"),
+        pytest.param(_BB_USAGE, 0, id="busybox-usage-ok"),
+    ],
+)
+def test_a_pgrep_that_refuses_its_options_is_a_failed_probe_not_no_listeners(
+    tmp_path, monkeypatch, stream, status
+):
+    from tests._fixtures.bed_hygiene import local_nc_listeners
+
+    fake = tmp_path / "pgrep"
+    fake.write_text(f"#!/bin/sh\n{stream}\nexit {status}\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+    with pytest.raises(ProbeFailedError):
+        local_nc_listeners()
+
+
+@pytest.mark.parametrize("argv", ["ls -l", "ps -el"])
+def test_a_flag_cluster_that_is_not_a_netcat_is_not_reported(argv):
+    """The prefilter passes these; the exact pattern must drop them."""
+    import subprocess
+    import sys
+
+    from tests._fixtures.bed_hygiene import _NC_PREFILTER, local_nc_listeners
+
+    port = 39418
+    code = "import time; time.sleep(60)"
+    proc = subprocess.Popen([sys.executable, "-c", code, *argv.split(), "-p", str(port)])
+    try:
+        # Positive control: the planted process IS a prefilter candidate, so it
+        # is the exact stage that drops it, not a probe that sees nothing.
+        candidates = subprocess.run(
+            ["pgrep", "-f", _NC_PREFILTER], capture_output=True, text=True, check=False
+        ).stdout.split()
+        assert str(proc.pid) in candidates
+        assert not [line for line in local_nc_listeners() if f"-p {port}" in line]
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def _run_probe_with(tmp_path, shell: str, **tools: str):
+    """Run the real probe under *shell* with *tools* (name -> script body) first on PATH."""
+    import subprocess
+
+    from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE
+
+    for name, body in tools.items():
+        fake = tmp_path / name
+        fake.write_text(f"#!/bin/sh\n{body}\n")
+        fake.chmod(0o755)
+    return subprocess.run(
+        [shell, "-c", _NC_LISTENER_PROBE],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+        env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
+    )
+
+
+_SHELLS = pytest.mark.parametrize("shell", ["dash", "bash"])
+
+
+@_SHELLS
+def test_a_candidate_pid_that_has_gone_is_skipped_silently(tmp_path, shell):
+    """The failed `<` of a gone pid must not leak a shell error into the output."""
+    gone = 2**22 + 1  # above every Linux pid_max, so never a live process
+    done = _run_probe_with(tmp_path, shell, pgrep=f"echo {gone}")
+    assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
+
+
+@_SHELLS
+def test_a_grep_that_errors_is_a_failed_probe_not_no_match(tmp_path, shell):
+    import os
+
+    done = _run_probe_with(tmp_path, shell, pgrep=f"echo {os.getpid()}", grep="exit 2")
+    assert done.returncode == 2, done
+
+
+@_SHELLS
+def test_a_command_line_that_cannot_be_read_on_a_live_pid_is_a_failed_probe(tmp_path, shell):
+    import os
+
+    done = _run_probe_with(tmp_path, shell, pgrep=f"echo {os.getpid()}", tr="exit 1")
+    assert done.returncode == 2, done
+
+
+def test_a_pgrep_that_matches_nothing_is_an_empty_answer(tmp_path, monkeypatch):
+    from tests._fixtures.bed_hygiene import local_nc_listeners
+
+    fake = tmp_path / "pgrep"
+    fake.write_text("#!/bin/sh\nexit 1\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+    assert local_nc_listeners() == []

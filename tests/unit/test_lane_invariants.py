@@ -2602,6 +2602,8 @@ HOSTLESS_TARGETS = [
     "docs-lint",
     "docs-inventories",
     "docs-media",
+    # renders the committed netcat compatibility page from the bed table; opens no host
+    "netcat-compatibility",
     "doctest",
     "doctest-src",
     # the always-run prerequisite that refreshes the docs build's release-tag stamp

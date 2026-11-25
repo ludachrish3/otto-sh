@@ -303,7 +303,7 @@ local test4 = ubuntuVm(4, {
           os_name: 'ubuntu',
           os_version: '24.04',
           valid_terms: ['ssh'],
-          valid_transfers: ['scp', 'sftp'],
+          valid_transfers: ['scp', 'sftp', 'nc'],
           is_virtual: true,
           hop: 'test4',
           creds: creds,

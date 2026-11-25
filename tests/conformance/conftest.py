@@ -51,10 +51,11 @@ import pytest
 from tests.conformance import _entry
 from tests.conformance._cells import resolve_space
 from tests.conformance._console_safety import (
+    SharedCpuLock,
     opens_a_single_client_console,
     serialized_console,
-    serialized_family,
-    shares_a_family_cpu_budget,
+    serialized_shared_cpu,
+    shared_cpu_lock,
     unhonored_console_lock,
 )
 from tests.conformance._observable import note_observable as _note_observable
@@ -375,7 +376,7 @@ def _cell_under_test(node) -> "ResolvedCell | None":
 
 
 @pytest.fixture(autouse=True)
-def _single_client_console(request: pytest.FixtureRequest):
+def _single_client_console(request: pytest.FixtureRequest, _shared_cpu_family: None):
     """Hold the console EXCLUSIVELY for any item whose cell opens a single-client one.
 
     Autouse and function-scoped, and depending on neither ``resolved_cell`` nor
@@ -393,6 +394,9 @@ def _single_client_console(request: pytest.FixtureRequest):
     Why an EXCLUSIVE hold rather than the SHARED one the integration tree's
     per-device tests take, and what it does not cover, are in
     ``tests/conformance/_console_safety.py``.
+
+    It depends on ``_shared_cpu_family``, so a cell that takes both locks
+    takes the shared-CPU one first, in every item alike.
     """
     resolved = _cell_under_test(request.node)
     if resolved is None or not opens_a_single_client_console(resolved):
@@ -400,6 +404,31 @@ def _single_client_console(request: pytest.FixtureRequest):
         return
     with serialized_console():
         yield
+
+
+def _shared_cpu_lock_of(node) -> "SharedCpuLock | None":
+    """The shared-CPU lock the item *node* takes, by :func:`shared_cpu_lock`; None when none.
+
+    The cell under test is a ``resolved_cell`` item's cell, or a netcat
+    contract item's (``test_nc_rung_contract.py`` parametrizes its own
+    arguments, read by :func:`~tests.conformance._nc_rungs.nc_cell_element`).
+    Imported here, not at module scope: the netcat cell reads the bed lab
+    data, which no import of this tree may do.
+    """
+    resolved = _cell_under_test(node)
+    if resolved is not None:
+        return shared_cpu_lock(resolved.kind, resolved.cell.element)
+    from tests.conformance._nc_rungs import NC_CONTRACT_MODULE, nc_cell_element
+
+    callspec = getattr(node, "callspec", None)
+    if callspec is None or node.path.name != NC_CONTRACT_MODULE:
+        return None
+    element = nc_cell_element(callspec.params)
+    if element is None:
+        return None
+    from tests.conformance._bed import nc_bed_cell
+
+    return shared_cpu_lock(nc_bed_cell(element).kind, element)
 
 
 @pytest.fixture(autouse=True)
@@ -420,13 +449,17 @@ def _shared_cpu_family(request: pytest.FixtureRequest):
     (autouse, function-scoped, spanning the whole window the body can have the
     host open): family members serialize against each other only, and still
     run in parallel with the Zephyr and unix cells they share nothing with.
-    A no-op for every non-family cell.
+    A no-op for every non-family cell. Which lock a cell takes is
+    :func:`~tests.conformance._console_safety.shared_cpu_lock`'s decision,
+    for a ``resolved_cell`` item and a netcat contract item alike
+    (:func:`_shared_cpu_lock_of`). Held here, by a fixture, so the wait for
+    it is outside the item's timed body (``timeout_func_only``).
     """
-    resolved = _cell_under_test(request.node)
-    if resolved is None or not shares_a_family_cpu_budget(resolved):
+    lock = _shared_cpu_lock_of(request.node)
+    if lock is None:
         yield
         return
-    with serialized_family():
+    with serialized_shared_cpu(lock):
         yield
 
 

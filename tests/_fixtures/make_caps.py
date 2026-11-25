@@ -3,8 +3,11 @@
 import re
 
 
-def makefile_session_cap(text: str) -> int:
-    """The declared ``LANE_TIMEOUT`` in seconds; loud on absence or duplication.
+def makefile_session_cap(text: str, name: str = "LANE_TIMEOUT") -> int:
+    """The declared cap *name* in seconds; loud on absence or duplication.
+
+    ``LANE_TIMEOUT`` unless another is named: a lane with its own cap
+    (``CONFORMANCE_BED_TIMEOUT``) is read by the same rules.
 
     Accepts ``:=`` or ``?=`` (the environment may override the cap, never
     replace its declared default). Refuses a second declaration rather than
@@ -14,11 +17,11 @@ def makefile_session_cap(text: str) -> int:
     for), and a reader that picked either silently would green the gate on the
     wrong number.
     """
-    matches = re.findall(r"^LANE_TIMEOUT\s*[:?]=\s*(\d+)s\s*$", text, re.MULTILINE)
+    matches = re.findall(rf"^{re.escape(name)}\s*[:?]=\s*(\d+)s\s*$", text, re.MULTILINE)
     assert matches, (
-        "the Makefile no longer declares LANE_TIMEOUT — the coverage legs would run "
-        "unbounded and a hung integration test would stall the pipeline until the CI "
-        "job limit killed it with no per-leg attribution"
+        f"the Makefile no longer declares {name} — the legs it caps would run "
+        "unbounded and a hung test would stall the pipeline until something outside "
+        "the lane killed it with no per-leg attribution"
     )
-    assert len(matches) == 1, f"the Makefile declares LANE_TIMEOUT {len(matches)} times: {matches}"
+    assert len(matches) == 1, f"the Makefile declares {name} {len(matches)} times: {matches}"
     return int(matches[0])

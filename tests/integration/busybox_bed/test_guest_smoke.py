@@ -38,6 +38,7 @@ backends in the generic suites are debugging otto instead of the bed.
 import pytest
 
 from scripts.build_busybox_guest_images import GUEST_TABLE
+from tests._fixtures.busybox import BUSYBOX_BANNER_COMMAND, reports_busybox_version
 
 pytestmark = [pytest.mark.asyncio]
 
@@ -47,9 +48,9 @@ SSHD_GUESTS = {g.element for g in GUEST_TABLE if g.sshd == "dropbear"}
 async def test_telnet_login_reaches_this_versions_own_ash(guest):
     """The shell behind the login prompt is the BusyBox milestone this row names."""
     host, version = guest
-    result = (await host.run("busybox 2>&1 | head -n 1")).only
+    result = (await host.run(BUSYBOX_BANNER_COMMAND)).only
     assert result.retcode == 0, f"`busybox` failed on {host.element.name}: {result.value!r}"
-    assert f"BusyBox v{version} " in result.value, (
+    assert reports_busybox_version(result.value, version), (
         f"{host.element.name} answered {result.value!r}, which is not the "
         f"BusyBox v{version} this lab entry claims"
     )
