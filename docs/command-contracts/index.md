@@ -55,10 +55,10 @@ returns):
 >>> from otto.result import CommandResult
 >>> from otto.utils import Status
 >>> result = CommandResult(
-...     status=Status.Success, retcode=0, value="hello", route="ssh-channel"
+...     status=Status.Success, retcode=0, value="hello", route="pooled-shell"
 ... )
 >>> result.route, result.timed_out, result.value
-('ssh-channel', False, 'hello')
+('pooled-shell', False, 'hello')
 ```
 
 ## The commands covered
@@ -112,9 +112,9 @@ historical; it does not mean the `exec` command.
 otto picks the route for each call. A command takes one of these:
 
 - `default-session`: the host's one persistent shell session, the one `run` uses.
-- `pooled-shell`: a shell session otto keeps for `exec` beside the one `run` uses.
-- `ssh-channel`: a bare SSH channel of the command's own, with no terminal.
-- `local-subprocess`: a fresh process on the local machine.
+- `pooled-shell`: a shell session `exec` borrows from a pool beside the one `run` uses, with or without a terminal.
+- `ssh-channel`: a bare SSH channel of the command's own, with no terminal; no `exec` takes it.
+- `local-subprocess`: a fresh process on the local machine; no `exec` takes it.
 - `container`: a docker container's command, run as `docker exec` through its parent host; its result reports `container/` and the route the parent took.
 
 Each command's page says when it takes each. From Python, read the result's
@@ -132,7 +132,7 @@ otherwise. Anything else is not promised, in one of three ways:
 1. **Not checked.** The promise exists, but no test covers this kind of host
    or this entry, so it is not promised there. A command's page says where,
    beside each promise, with a numbered note saying why. For example,
-   `exec-exit-code` is checked through `exec-shell` (an `exec` an `ssh` host sends through a shell session) only on a GNU/Linux machine over `ssh`, a BusyBox device over `ssh` and the local machine logged in to over SSH.
+   `exec-exit-code` is not checked through `exec` on BusyBox's applets run on the local machine.
 2. **A declared exception.** The device, or a library otto is built on (such
    as telnetlib3), makes the promise impossible, and otto says so in its
    code. Each is listed [below](#declared-exceptions) with its measurements.
@@ -373,9 +373,11 @@ By promise id:
 - `exec-log`: `tests/conformance/test_log_contract.py::test_the_log_receives_the_lines_of_value`
 - `exec-dry-run`: `tests/conformance/test_dry_run_contract.py::test_a_dry_run_reaches_no_device_and_returns_one_shape`
 - `exec-options`: `tests/conformance/test_options_contract.py::test_an_option_has_the_same_effect_everywhere_or_is_refused_by_name`
+- `typed-input`: `tests/conformance/test_input_contract.py::test_a_typed_command_reaches_the_shell_byte_for_byte`
 - `timeout`: `tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way`
 
-The suite checks shell-routed `exec` (the `exec-shell` entry) on an SSH host
-whose `exec` would otherwise get a channel of its own, by declaring a
-session-setup hook that does nothing: declaring any hook sends `exec` to a
-shell session.
+The suite also checks `exec` on an SSH host whose `exec` would otherwise get
+a session without a terminal, by declaring a session-setup hook that marks
+each session it sets up: declaring any hook sends `exec` to a session with a
+terminal, and the mark shows the hook ran as the user the session is for.
+Those cells' labels name their kind with `-hooked`.
