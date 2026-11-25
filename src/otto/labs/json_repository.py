@@ -32,6 +32,7 @@ from .protocol import (
     HostSummary,
     LabContribution,
     LabStatus,
+    SkippedHostRecord,
     logins_of_host_data,
 )
 from .sources import JSON_FILE_RULE, LabSourceFacts
@@ -882,9 +883,20 @@ def _identified_entries(
                 )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _RecordsRead:
+    """What one pass over a source's host records gives its declared links."""
+
+    addressing: "dict[str, HostAddressing]"
+    """The addressing of every record that could be read, by host id."""
+
+    skipped: "list[SkippedHostRecord]"
+    """Every record that could not, with why."""
+
+
 def _addressing(
     docs: "list[LabDocument]", *, view: "InventoryView", profiles: ProfileContext
-) -> "dict[str, HostAddressing]":
+) -> _RecordsRead:
     """Return the addressing of every host record of *docs*, by host id, without building a host.
 
     The map declared links resolve their endpoints against, so it spans every
@@ -893,22 +905,25 @@ def _addressing(
     comes from :func:`~otto.link.derive.addressing_from_dict` under
     *profiles* (the source's). A record that cannot produce an id is skipped
     (logged at debug): it may belong to an unrelated lab, whose typo must not
-    break this one. Of two records with one id the first is kept; a warning
-    says so when their addressing differs.
+    break this one. It is returned with its reason, so a link that names it
+    can say the record was skipped rather than call the host unknown. Of two
+    records with one id the first is kept; a warning says so when their
+    addressing differs.
     """
     from ..inventory.resolve import resolve_view_entry  # lazy: see the note above
     from ..link.derive import addressing_from_dict
 
     addressing: dict[str, HostAddressing] = {}
+    skipped: list[SkippedHostRecord] = []
     # ``to_element()`` once per ELEMENT, not once per host: one runtime
     # element is shared by its hosts everywhere else, and rebuilding it per
     # entry here would be the only place that is not true.
-    all_entries: list[tuple[Element, dict[str, Any]]] = []
+    all_entries: list[tuple[Path, Element, dict[str, Any]]] = []
     for doc in docs:
         for el in doc.elements:
             runtime = el.to_element()
-            all_entries.extend((runtime, h) for h in el.hosts)
-    for runtime, h in all_entries:
+            all_entries.extend((doc.path, runtime, h) for h in el.hosts)
+    for origin, runtime, h in all_entries:
         try:
             # Resolved inside the per-item try: a referenced entry has no
             # address of its own, so a link naming one is only derivable
@@ -927,6 +942,8 @@ def _addressing(
             # this process never loaded, and the downstream symptom is a
             # confusing "unknown host" for a host that is right there.
             logger.debug(f"Skipping unresolvable host record {h!r}: {e}")
+            reason = compact_validation_error(e) if isinstance(e, ValidationError) else str(e)
+            skipped.append(SkippedHostRecord(element=runtime.name, origin=origin, reason=reason))
             continue
         held = addressing.get(host_id)
         if held is not None:
@@ -938,7 +955,7 @@ def _addressing(
                 )
             continue
         addressing[host_id] = host_addressing
-    return addressing
+    return _RecordsRead(addressing=addressing, skipped=skipped)
 
 
 def declared_link_entries(read: "SourceRead") -> "list[DeclaredLinkEntry]":
@@ -961,17 +978,21 @@ def declared_link_entries(read: "SourceRead") -> "list[DeclaredLinkEntry]":
 def link_inputs_of(
     read: "SourceRead", *, view: "InventoryView", profiles: ProfileContext
 ) -> DeclaredLinkInputs:
-    """Return *read*'s declared links, with a thunk that computes their addressing.
+    """Return *read*'s declared links, with thunks for their addressing and the skipped records.
 
-    The entries are :func:`declared_link_entries`; the thunk is
-    ``_addressing`` over the same documents through *view*, each id under
-    *profiles* (the source's), so a dangling endpoint gets the id host
-    construction gives its record. A load that never resolves a link never
-    calls it.
+    The entries are :func:`declared_link_entries`; both thunks read one
+    ``_addressing`` pass over the same documents through *view*, made at most
+    once, each id under *profiles* (the source's), so a dangling endpoint gets
+    the id host construction gives its record. A load that never resolves a
+    link never makes the pass.
     """
+    records = functools.cache(
+        functools.partial(_addressing, read.documents, view=view, profiles=profiles)
+    )
     return DeclaredLinkInputs(
         entries=declared_link_entries(read),
-        addressing=functools.partial(_addressing, read.documents, view=view, profiles=profiles),
+        addressing=lambda: records().addressing,
+        skipped=lambda: records().skipped,
     )
 
 

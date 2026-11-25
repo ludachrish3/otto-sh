@@ -106,17 +106,23 @@ def test_a_refused_entry_drops_out_of_summaries_with_a_recorded_drop(tmp_path, r
     assert any("element 'bad' hosts[0]" in d.where and reason in d.reason for d in drops)
 
 
-@pytest.mark.parametrize("refused", [r for r, _ in _REFUSED.values()], ids=_REFUSED.keys())
-def test_a_refused_entry_is_not_addressable_by_a_declared_link(tmp_path, refused):
-    """The addressing walk runs host_identity per record; a refused record has no address."""
+@pytest.mark.parametrize(("refused", "reason"), _REFUSED.values(), ids=_REFUSED.keys())
+def test_a_refused_entry_is_not_addressable_by_a_declared_link(tmp_path, refused, reason):
+    """The addressing walk runs host_identity per record; a refused record has no address.
+
+    The link's error says the record was skipped and why (#1305), not that the host is unknown.
+    """
     hosts = [
         {"ip": "10.0.0.2", "creds": _SSH_CREDS, "element": "good", "labs": ["l"]},
         {**refused, "element": "bad", "labs": ["m"]},
     ]
     links = [{"endpoints": [{"host": "good"}, {"host": "bad"}], "protocol": "udp"}]
     write_lab_json(tmp_path / "lab.json", hosts, links=links)
-    with pytest.raises(LabRepositoryError, match=r"unknown host 'bad'"):
+    with pytest.raises(LabRepositoryError, match=r"host 'bad' was not loaded") as caught:
         _JsonFileLabRepository(search_paths=[tmp_path]).load_lab("l")
+    assert "the record of element 'bad' in " in str(caught.value)
+    assert reason in str(caught.value)
+    assert "unknown host" not in str(caught.value)
 
 
 def test_an_entry_that_loads_under_its_real_preferences_stays_in_summaries(tmp_path):

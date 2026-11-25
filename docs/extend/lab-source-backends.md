@@ -226,7 +226,12 @@ endpoint.
   host id, every lab's hosts included, so a link to a host of another lab
   still resolves. Otto calls it at most once per load, and only when an
   attached link needs an endpoint that neither its own source nor the merged
-  lab addresses: one of your links, or another source's. A source that does not hold the lab returns
+  lab addresses: one of your links, or another source's. Its optional `skipped`
+  is a function returning a [`SkippedHostRecord`](../api/labs.rst) (`element`,
+  `origin`, `reason`) for each host record you found and could not read. Otto
+  calls it only when a link names a host nothing addresses, and then reports
+  that the host's record was skipped and why, instead of "unknown host";
+  leave it out and such a link gets the plain error. A source that does not hold the lab returns
   `lab=None` with the reason in `not_found`, and may still carry links. Otto
   reaches it through [`load_contribution_through`](../api/labs.rst), and the
   built-in `json` backend implements it.
@@ -241,7 +246,12 @@ endpoint.
 Every name a contribution is built from is public:
 
 ```python
-from otto.labs import DeclaredLinkInputs, LabContribution, SupportsLabContribution
+from otto.labs import (
+    DeclaredLinkInputs,
+    LabContribution,
+    SkippedHostRecord,
+    SupportsLabContribution,
+)
 from otto.link import DeclaredLinkEntry, HostAddressing
 ```
 

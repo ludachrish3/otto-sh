@@ -1,6 +1,6 @@
 """``LabRepository`` protocol — the DB-agnostic interface all lab-repository backends satisfy."""
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
@@ -380,6 +380,38 @@ class SupportsOverridePolicy(Protocol):
 
 @final
 @dataclass(frozen=True, kw_only=True)
+class SkippedHostRecord:
+    """A host record a source found and could not read, so no link can resolve against it.
+
+    A source skips such a record rather than fail the load: it may belong to
+    another lab. When a link names a host nothing addresses, otto reports the
+    skipped records that could be that host instead of calling it unknown.
+    """
+
+    element: str
+    """The name of the element the record belongs to.
+
+    Host ids are ``<element>-<board>[-<slot>]``, and a record that cannot be
+    read has no id, so a skipped record is matched to an endpoint by this name.
+    """
+
+    origin: Path
+    """The document the record is in."""
+
+    reason: str
+    """Why the record could not be read.
+
+    Shown to the user in the link's error, so it must not carry a secret from
+    the record (a password, a token): describe the problem, not the value.
+    """
+
+
+def _no_skipped_records() -> "Sequence[SkippedHostRecord]":
+    return ()
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
 class DeclaredLinkInputs:
     """A source's declared links, unresolved, and the addressing they resolve against.
 
@@ -398,6 +430,14 @@ class DeclaredLinkInputs:
     an endpoint: a link of this source, or a link of another source whose
     endpoint neither that source nor the merged lab addresses. A load whose
     links all resolve without it, or that has no links, never calls it.
+    """
+
+    skipped: "Callable[[], Sequence[SkippedHostRecord]]" = _no_skipped_records
+    """Return the host records the source found and could not read. Optional.
+
+    Otto calls it only when an attached link names an endpoint nothing
+    addresses, to say that the host's record was skipped and why. A source
+    that reports none gets the plain "unknown host" error.
     """
 
 

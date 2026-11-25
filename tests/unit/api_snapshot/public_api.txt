@@ -3913,11 +3913,12 @@ member	otto.labs:CompositeLabRepository.load_lab_reported	method	sync	PK:name:- 
 abstract	otto.labs:CompositeLabRepository	@final @manifest:subclass=false
 name	otto.labs:DeclaredLinkInputs	class
 mro	otto.labs:DeclaredLinkInputs	-
-call	otto.labs:DeclaredLinkInputs	sync	KO:entries:- KO:addressing:-
+call	otto.labs:DeclaredLinkInputs	sync	KO:entries:- KO:addressing:- KO:skipped:O
 member	otto.labs:DeclaredLinkInputs.__eq__	method	sync	PK:other:-
 member	otto.labs:DeclaredLinkInputs.__hash__	method	sync	-
 member	otto.labs:DeclaredLinkInputs.addressing	field
 member	otto.labs:DeclaredLinkInputs.entries	field
+member	otto.labs:DeclaredLinkInputs.skipped	field
 abstract	otto.labs:DeclaredLinkInputs	@final @manifest:subclass=false
 name	otto.labs:Diagnostic	class
 mro	otto.labs:Diagnostic	-
@@ -4056,6 +4057,15 @@ member	otto.labs:LoginSummary.login	field
 member	otto.labs:LoginSummary.protocols	field
 member	otto.labs:LoginSummary.proxy	field
 abstract	otto.labs:LoginSummary	@final @manifest:subclass=false
+name	otto.labs:SkippedHostRecord	class
+mro	otto.labs:SkippedHostRecord	-
+call	otto.labs:SkippedHostRecord	sync	KO:element:- KO:origin:- KO:reason:-
+member	otto.labs:SkippedHostRecord.__eq__	method	sync	PK:other:-
+member	otto.labs:SkippedHostRecord.__hash__	method	sync	-
+member	otto.labs:SkippedHostRecord.element	field
+member	otto.labs:SkippedHostRecord.origin	field
+member	otto.labs:SkippedHostRecord.reason	field
+abstract	otto.labs:SkippedHostRecord	@final @manifest:subclass=false
 name	otto.labs:SourceLinks	class
 mro	otto.labs:SourceLinks	-
 call	otto.labs:SourceLinks	sync	@manifest:construct=false

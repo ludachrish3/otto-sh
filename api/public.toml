@@ -2860,6 +2860,9 @@ subclass = false
 [symbols."otto.labs:LabContribution"]
 subclass = false
 
+[symbols."otto.labs:SkippedHostRecord"]
+subclass = false
+
 [symbols."otto.labs:LabFileRule"]
 subclass = false
 
