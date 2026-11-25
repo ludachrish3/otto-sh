@@ -235,6 +235,7 @@ mro	otto.context:ProjectContextView	-
 call	otto.context:ProjectContextView	sync	@manifest:construct=false
 member	otto.context:ProjectContextView.all_hosts	method	sync	VP:args:- VK:kwargs:-
 member	otto.context:ProjectContextView.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:with_owner:B:true VK:kwargs:-
+member	otto.context:ProjectContextView.options	method	sync	PK:cls:-
 member	otto.context:ProjectContextView.run_on_all_hosts	method	coroutine	VP:args:- VK:kwargs:-
 abstract	otto.context:ProjectContextView	@final @manifest:subclass=false
 name	otto.context:RunPolicy	class
@@ -5166,12 +5167,16 @@ name	otto.params:OptionsValidationError	class
 mro	otto.params:OptionsValidationError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.params:OptionsValidationError	sync	@builtin:builtins.ValueError
 abstract	otto.params:OptionsValidationError	-
+name	otto.params:get_options	function
+call	otto.params:get_options	sync	PK:cls:-
 name	otto.params:options	function
 call	otto.params:options	sync	PO:cls:N KO:verbs:N KO:overwrite:B:false VK:dataclass_kwargs:-
 name	otto.params:options_key	function
 call	otto.params:options_key	sync	PK:cls_or_path:-
 name	otto.params:register_options	function
 call	otto.params:register_options	sync	PK:cls_or_path:- KO:verbs:- KO:overwrite:B:false
+name	otto.params:use_options	function
+call	otto.params:use_options	sync	VP:instances:-
 name	otto.params:verbs_for	function
 call	otto.params:verbs_for	sync	PK:cls:-
 name	otto.project:Cleanliness	enum
@@ -6360,6 +6365,8 @@ name	otto:get_host	function
 call	otto:get_host	sync	PK:host_id:- VK:overrides:-
 name	otto:get_lab	function
 call	otto:get_lab	sync	-
+name	otto:get_options	function
+call	otto:get_options	sync	PK:cls:-
 name	otto:load_lab	function
 call	otto:load_lab	sync	PK:labnames:- KO:search_paths:N KO:preferences:N KO:repository:N KO:inventory:N KO:view:N
 name	otto:open_context	function
@@ -6382,6 +6389,8 @@ name	otto:run_tests	function
 call	otto:run_tests	sync	KO:names:N KO:run_options:O KO:options:N KO:output_dir:N
 name	otto:try_get_context	function
 call	otto:try_get_context	sync	-
+name	otto:use_options	function
+call	otto:use_options	sync	VP:instances:-
 format	check-echo-sentinel	S:"v1"	S:"v1"
 format	check-report	-	S:"otto-check/1"
 format	coverage-capture	I:4	I:4

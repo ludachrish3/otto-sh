@@ -252,6 +252,15 @@ class ActiveRun(Protocol):
         """Return the host ids the run's fleet walks may reach (``OttoContext.admissible_ids``)."""
         ...
 
+    def _recorded_options(self) -> Any:
+        """Return the record the run's option reads start from (an ``otto.params.RecordedOptions``).
+
+        Typed ``Any``: this module names no type of ``otto.params``. Private,
+        so it stays out of the public API; ``otto.params.recorded_in_force``
+        is its one reader.
+        """
+        ...
+
 
 _ACTIVE: ContextVar["ActiveRun | None"] = ContextVar("otto_context", default=None)
 """The active-run slot: the run :func:`otto.context.set_context` installed, or ``None``."""

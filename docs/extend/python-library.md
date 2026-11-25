@@ -430,12 +430,12 @@ for junit in result.junit_paths:
   when `random_order=False`.
 - **A name or a marker expression is required.** Called with neither names
   nor `run_options.markers`, `run_tests` raises `ValueError`.
-- **`options=`** takes instances of options classes registered for the `test`
-  verb ({doc}`../setup/options-classes`); tests read them with
-  `ctx.options(Cls)`. A registered class you don't pass is built from its
-  defaults, as the command line would, and a required field raises. An
-  instance of a class that isn't registered for `test` raises
-  {class}`~otto.params.OptionsRegistrationError`.
+- **`options=`** takes an instance of any options class
+  ({doc}`../setup/options-classes`); tests read it with `ctx.options(Cls)` or
+  `otto.get_options(Cls)`, and every other class with a field of the same
+  name reads that field's value. A class you don't pass keeps the values of
+  the command `run_tests` is called from, or its own defaults outside one
+  ([The name is the key](../setup/options-advanced.md#the-name-is-the-key)).
 - **Registrations happen in `bootstrap()`.** It imports each project's init
   modules, which is where options classes are registered, so call it (or
   `open_context()`, which calls it for you) before `run_tests`.

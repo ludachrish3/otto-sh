@@ -644,24 +644,18 @@ Per field name, across the bodies of one instruction:
 - **Different declaring classes** — a bootstrap error naming the instruction,
   the field and the projects on each side, with the fix: *share one base class, in
   a required dependency or a library package, or rename the field.* Two projects
-  that each wrote `lab_env: str` collide even when the type and default
-  match.
+  that each wrote `lab_env: str` collide on this one command even when the type
+  and default match: a command has one flag per name, as an invocation has one
+  value per name.
 - **One project, two instructions, the same field** — no conflict at all. They are
   separate commands.
 
 The failure is the whole invocation, not the project.
 
-**On the command line the flag NAME is the key.** A parsed flag set is flat —
-one value per name — and `--ensure` reuses `install`'s parsed flags for the two
-instructions it delegates to: the `status` probe it starts with, and the
-`uninstall` it runs to recover a partial install. So a project that spells the
-same field name on two of its OWN instructions' options classes — legal, since
-they are separate commands — will see the value it passed for `install`
-delivered to that `uninstall` or `status` body as well. Give a field the same
-name on two of your own instructions only when it means the same thing. An
-`ensure` marker under `otto test` keys by name the same way, from `otto test`'s
-own flags; see [Which flags reach an install body under `otto
-test`](../../setup/options-classes.md#which-flags-reach-an-install-body-under-otto-test).
+**The field name is the key**, on this path as on every other: a value someone
+gave reaches every class with a field of that name, including the `status` and
+`uninstall` bodies that `--ensure` runs; see [The name is the
+key](../../setup/options-advanced.md#the-name-is-the-key).
 
 **Where a shared base lives.** In a project the sharing projects **require**, or in a
 library package — never in an optional project. Bootstrap imports every configured

@@ -15,7 +15,6 @@ from ..instruction_catalog import instruction as instruction  # noqa: PLC0414 â€
 from .invoke import make_registry_group, prepare_command_target
 
 if TYPE_CHECKING:
-    from _typeshed import DataclassInstance
     from rich.panel import Panel
 
 
@@ -23,23 +22,27 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
     """Build the leaf that dispatches project instruction *project* through the orchestrator.
 
     The flags are every body's options fields followed by those of every
-    class registered for ``run``, merged by declaring class. The leaf binds
-    the parsed values on the active context before the orchestrator runs, so
-    a body reads a verb-wide class through ``ctx.options(Cls)``, while each
-    body's own class is still built from the same flat values.
+    class registered for ``run``, merged by declaring class. The leaf
+    prepares them through :func:`otto.cli.invoke.prepare_leaf_options` (one
+    :class:`~otto.cli.invoke.LeafOptionSpec`: the ``run`` classes built, the
+    body classes offered and built by the walk), which records what the
+    command was given. It then builds every applicable body's own class once,
+    from that record, before any body runs -- so a bad value fails the same
+    way with or without ``--dry-run`` -- and keeps each instance in the
+    record, so the run's walk hands the same objects back to the bodies and
+    a hook reads them with ``otto.get_options``. A flag nobody typed reaches
+    only the classes the command offers.
 
-    Marked ``DRY_RUN_SELF_FINISHING_ATTR``: this leaf, like every leaf
-    ``prepare_command_target`` builds, validates its own options under
-    ``--dry-run`` and finishes the dry run itself (see the body below) --
-    project instructions have their own dispatch path (this function, not
-    ``otto.cli.invoke._wrap_with_options``) and so need the marker stamped on
-    by hand. No hidden ``typer.Context`` parameter: the leaf reads the
-    current one the same way the wrapper does (see the body below), so its
-    public signature is exactly the merged options fields.
+    Stamped by :func:`~otto.cli.invoke.stamp_options_leaf`: this leaf, like
+    every leaf ``prepare_command_target`` builds, validates its own options
+    under ``--dry-run`` and finishes the dry run itself (see the body
+    below). No hidden ``typer.Context`` parameter: the leaf reads the
+    current one the same way the wrapper does, so its public signature is
+    exactly the merged options fields.
     """
-    from ..params import merge_option_params, sensitive_field_names, verb_option_classes
+    from ..params import merge_option_params, verb_option_classes
     from ..project.commands import body_origins
-    from .invoke import DRY_RUN_SELF_FINISHING_ATTR, SENSITIVE_FIELDS_ATTR
+    from .invoke import LeafOptionSpec, stamp_options_leaf
 
     name = project.spec.name
     own_origins = body_origins(project)
@@ -48,13 +51,15 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
         own_origins + verb_origins,
         what=f"project instruction {name!r}",
     )
-    sensitive_names: set[str] = set()
-    for origin in own_origins + verb_origins:
-        sensitive_names |= sensitive_field_names(cast("type[DataclassInstance]", origin.cls))
+    spec = LeafOptionSpec(
+        group="run",
+        build=tuple(origin.cls for origin in verb_origins),
+        walk=tuple(origin.cls for origin in own_origins),
+    )
 
     async def _leaf(**kw: Any) -> Any:
         # Function-scope: the orchestrator is heavy and the CLI must stay light.
-        from ..params import OptionsValidationError
+        from ..params import OptionsValidationError, options_snapshot
         from ..project import orchestrator
         from ..run_context import get_context
         from .invoke import (
@@ -62,6 +67,7 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
             command_spec,
             dry_run_requested,
             finish_dry_run,
+            prepare_leaf_options,
             usage_error_from,
         )
 
@@ -76,46 +82,54 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
         # runtime.
         click_ctx = cast("typer.Context | None", get_current_context(silent=True))
         dry = click_ctx is not None and dry_run_requested(click_ctx)
-        ctx = get_context()
-        try:
-            ctx.bind_verb_options(verb="run", kwargs=kw)
-            # Validates every applicable body's own options class up front --
-            # the SAME per-project walk the real path's `_run_bodies` performs --
-            # so a bad value in a body's own class fails identically whether
-            # or not `--dry-run` was requested, before any body runs. Under a
-            # real run the result is otherwise unused and the run's own walk
-            # announces the skips, so this one stays quiet; under a dry run it
-            # is the only walk, so it announces, and the branch below prints it.
-            own = orchestrator.project_instruction_body_options(name, ctx, kw, announce=dry)
-        except OptionsValidationError as e:
-            raise usage_error_from(e) from e
-        if click_ctx is not None and dry:
-            # Own classes first (one per distinct body, walk order, deduplicated
-            # by class) then the verb's OTHER registered classes -- same rule
-            # `otto.cli.invoke._wrap_with_options` follows for a standalone
-            # instruction. Built from the SAME flat `kw` `bind_verb_options`
-            # just used, never `ctx.params` (pre-conversion values).
-            own_types = {type(instance) for instance in own}
-            verb_instances = [
-                ctx.options(origin.cls) for origin in verb_origins if origin.cls not in own_types
-            ]
-            if project.spec.dry_run_preview:
-                from ..console import print_literal
-                from ..project.plan import plan_instruction, plan_lab_tail
-                from ..project.render import render_plan
-
-                # Verbatim: a plan line is a host command, so a `[` must not be read
-                # as markup, a `:name:` as an emoji, or a long line hard-wrapped.
-                text = render_plan(
-                    name,
-                    plan_instruction(name=name, ctx=ctx, kwargs=kw),
-                    plan_lab_tail(name=name, ctx=ctx, kwargs=kw),
+        prepared = prepare_leaf_options(kw, spec, leaf=_leaf)
+        with prepared.scope():
+            ctx = get_context()
+            try:
+                # Every applicable body's own class, built once from the record
+                # -- the SAME per-project walk the run performs -- so a bad value
+                # fails before any body runs. Under a real run the run's own
+                # walk announces the skips, so this one stays quiet; under a dry
+                # run it is the only walk, so it announces.
+                walk = orchestrator.prepare_project_instruction(
+                    name, ctx, kw, announce=dry, source=options_snapshot(prepared.recorded)
                 )
-                if text:  # nothing applies: print nothing, not a blank line
-                    print_literal(text)
-            preview = command_spec(click_ctx).dry_run_preview or _leaf_declares_preview(click_ctx)
-            await finish_dry_run(click_ctx, own + verb_instances, preview=preview)
-        return await orchestrator.run_project_instruction(name, kw)
+                own = walk.own
+            except OptionsValidationError as e:
+                raise usage_error_from(e) from e
+            # A class the command offers is prepared once and travels with the
+            # recorded flags: the run's walk is handed these very objects.
+            for instance in own:
+                prepared.recorded.instances[type(instance)] = instance
+            if click_ctx is not None and dry:
+                # Own classes first (one per distinct body, walk order) then the
+                # verb's OTHER registered classes -- same rule
+                # `otto.cli.invoke._wrap_with_options` follows for a standalone
+                # instruction.
+                own_types = {type(instance) for instance in own}
+                verb_instances = [
+                    instance for cls, instance in prepared.instances.items() if cls not in own_types
+                ]
+                if project.spec.dry_run_preview:
+                    from ..console import print_literal
+                    from ..project.plan import plan_instruction, plan_lab_tail
+                    from ..project.render import render_plan
+
+                    # Verbatim: a plan line is a host command, so a `[` must not be
+                    # read as markup, a `:name:` as an emoji, or a long line
+                    # hard-wrapped.
+                    text = render_plan(
+                        name,
+                        plan_instruction(name=name, ctx=ctx, kwargs=kw),
+                        plan_lab_tail(name=name, ctx=ctx, kwargs=kw),
+                    )
+                    if text:  # nothing applies: print nothing, not a blank line
+                        print_literal(text)
+                preview = command_spec(click_ctx).dry_run_preview or _leaf_declares_preview(
+                    click_ctx
+                )
+                await finish_dry_run(click_ctx, own + verb_instances, preview=preview)
+            return await orchestrator.run_project_instruction(name, kw, source=walk.source)
 
     _leaf.__name__ = name.replace("-", "_")
     _leaf.__qualname__ = _leaf.__name__
@@ -125,8 +139,7 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
     # parameter's `typer.Option` metadata.
     _leaf.__signature__ = inspect.Signature(params)  # ty: ignore[missing-attribute]
     _leaf.__annotations__ = {p.name: p.annotation for p in params}
-    setattr(_leaf, DRY_RUN_SELF_FINISHING_ATTR, True)
-    setattr(_leaf, SENSITIVE_FIELDS_ATTR, frozenset(sensitive_names))
+    stamp_options_leaf(_leaf, spec)
     return _leaf
 
 

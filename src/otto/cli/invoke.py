@@ -24,17 +24,21 @@ from typing_extensions import assert_never, override
 from ..config._typer import get_current_context
 from ..errors import OttoError
 from ..params import (
+    OPTION_VERBS,
+    OptionsNotAvailableError,
     OptionsOrigin,
     OptionsValidationError,
-    build_options,
+    command_options,
     merge_option_params,
     options_params,
+    recorded_in_force,
     sensitive_field_names,
     verb_option_classes,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from contextlib import AbstractContextManager
 
     from _typeshed import DataclassInstance
     from typer.core import TyperGroup
@@ -42,6 +46,7 @@ if TYPE_CHECKING:
     from ..coverage.config import DestinationError
     from ..errors import FieldError
     from ..inventory.view import InventoryView
+    from ..params import RecordedOptions
     from ..reservations.check import ReservationBackendError
     from ..result import Result
     from ..run_context import OttoContext
@@ -175,35 +180,200 @@ def usage_error_from(
     return typer.BadParameter(message, param_hint=hint)
 
 
-def _bind_and_build_own(
-    kw: "dict[str, Any]",
-    *,
-    opts_cls: "type[DataclassInstance] | None",
-    own_field_names: "set[str]",
-) -> Any:
-    """Build a verb-less command's own options instance from *kw* alone.
+RECORDS_OPTIONS_ATTR = "__otto_records_options__"
+"""Per-leaf marker that a leaf records its own option values (:func:`prepare_leaf_options`).
 
-    The verb-less binding: a command prepared without a verb (``@cli_command``
-    and ``resolve_spec_command``'s function loaders) has only its own class,
-    so there is nothing to bind on the context and no registered class to
-    inject. The ``run`` verb goes through
-    :func:`otto.instructions.bind_handler_kwargs` instead (see
-    :func:`_bind_run_leaf`). The leaf wrapper's real dispatch and its own
-    dry-run branch (``finish_dry_run``, called from the SAME wrapper once this
-    returns) both use the instance built here, so a bad value fails a dry run
-    exactly as it fails a real run: the same
-    :class:`~otto.params.OptionsValidationError` from :func:`build_options`,
-    which the caller translates to a usage error via :func:`usage_error_from`
-    at the CLI boundary.
+Stamped ``True`` by :func:`stamp_options_leaf`, with the two dry-run markers.
+"""
 
-    *kw* may hold more keys than the own class needs (the command's other
-    parameters); anything outside *own_field_names* is ignored. Returns
-    ``None`` when *opts_cls* is ``None``.
+# Temporary: stage 2 replaces this set with the registration's own
+# declaration (design §5.4, ``accepts_options``). Nothing but
+# ``option_group`` may read it.
+OPTION_GROUPS: frozenset[str] = frozenset(OPTION_VERBS) | {"host"}
+"""The top-level commands whose leaves mark option reads pending until they read their flags."""
+
+
+def option_group(ctx: typer.Context) -> str | None:
+    """Return the top-level command *ctx* sits under when it is one of :data:`OPTION_GROUPS`.
+
+    The top-level command is the node just below the root of *ctx*'s chain;
+    the root itself sits under none.
     """
-    if opts_cls is None:
+    node: Any = ctx
+    if node.parent is None:
         return None
-    opts_kw = {k: v for k, v in kw.items() if k in own_field_names}
-    return build_options(opts_cls, opts_kw)
+    while node.parent.parent is not None:
+        node = node.parent
+    name = getattr(node.command, "name", None)
+    return name if name in OPTION_GROUPS else None
+
+
+def _records_options(ctx: typer.Context) -> bool:
+    return bool(getattr(getattr(ctx.command, "callback", None), RECORDS_OPTIONS_ATTR, False))
+
+
+def pending_options(ctx: typer.Context) -> "RecordedOptions | None":
+    """Return the pending record a command holds before it reads its flags, else ``None``.
+
+    The one place that decides whether a command marks: it does when it sits
+    under one of :data:`OPTION_GROUPS` (:func:`option_group`) or its callback
+    carries :data:`RECORDS_OPTIONS_ATTR`. While the record is in force, a read
+    of any options class raises ``OptionsNotAvailableError``.
+    """
+    from ..params import RecordedOptions
+
+    group = option_group(ctx)
+    if group is None and not _records_options(ctx):
+        return None
+    return RecordedOptions(group=group, pending=True)
+
+
+def settle_options(ctx: typer.Context) -> None:
+    """Clear the pending mark for a leaf that records nothing, so its body reads defaults.
+
+    When the record in force (``recorded_in_force``) is pending and *ctx*'s
+    callback has no :data:`RECORDS_OPTIONS_ATTR`, that record's ``pending`` is
+    set ``False``; it keeps its group and is not replaced. A leaf that
+    records clears the mark by recording (:func:`prepare_leaf_options`).
+    """
+    recorded = recorded_in_force()
+    if recorded is not None and recorded.pending and not _records_options(ctx):
+        recorded.pending = False
+
+
+_LEAF_PREPARED = "otto.leaf_options_prepared"
+"""``click.Context.meta`` key: a preparation has read this parser context's record."""
+
+
+@dataclasses.dataclass(frozen=True)
+class LeafOptionSpec:
+    """What a command leaf offers: built once per command, read on every call.
+
+    *group* is the verb the leaf records under (``"run"``, ``"test"``, or
+    ``None`` for a project's own command). *build* holds the classes built
+    and validated before the body, in display order: the own class, then
+    the covering classes. *walk* holds classes also offered but built by
+    the caller's own walk (a project instruction's body classes).
+    """
+
+    group: str | None
+    build: "tuple[type, ...]"
+    walk: "tuple[type, ...]" = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class LeafOptions:
+    """What :func:`prepare_leaf_options` prepared for one call of a leaf.
+
+    *recorded* is the call's record, *instances* the built instance of each
+    class of the spec's *build*, in order, and *rest* the leaf's keyword
+    arguments that are not option fields.
+    """
+
+    recorded: "RecordedOptions"
+    instances: "dict[type, Any]"
+    rest: "dict[str, Any]"
+    _hold: "Callable[[], AbstractContextManager[None]]" = dataclasses.field(
+        default=contextlib.nullcontext, repr=False, compare=False
+    )
+
+    def scope(self) -> "AbstractContextManager[None]":
+        """Hold the record for the leaf's body.
+
+        A contextless command's record is held for the block (``command_options``);
+        a direct call of a verb-less leaf records on the context for the block
+        and hands the context's binding back after; otherwise a no-op, the
+        context already holds it.
+        """
+        return self._hold()
+
+
+def stamp_options_leaf(leaf: Callable[..., Any], spec: LeafOptionSpec) -> None:
+    """Stamp *leaf* with the markers of a leaf that prepares its own options.
+
+    :data:`RECORDS_OPTIONS_ATTR`, :data:`DRY_RUN_SELF_FINISHING_ATTR`, and
+    :data:`SENSITIVE_FIELDS_ATTR` over every class *spec* offers.
+    """
+    from ..params import sensitive_names
+
+    setattr(leaf, RECORDS_OPTIONS_ATTR, True)
+    setattr(leaf, DRY_RUN_SELF_FINISHING_ATTR, True)
+    setattr(leaf, SENSITIVE_FIELDS_ATTR, sensitive_names(spec.build + spec.walk))
+
+
+def _parsed_by(leaf: Callable[..., Any]) -> "typer.Context | None":
+    """Return the parser context whose record *leaf*'s first preparation reads, else ``None``.
+
+    The current parser context, when its command is *leaf* (compared through
+    :func:`inspect.unwrap`) and no preparation has read it yet; this marks it,
+    so a leaf that awaits its own prepared target is a direct call the
+    second time. ``None`` means a direct call from other code.
+    """
+    parser_ctx = cast("typer.Context | None", get_current_context(silent=True))
+    if parser_ctx is None or parser_ctx.meta.get(_LEAF_PREPARED):
+        return None
+    callback = getattr(parser_ctx.command, "callback", None)
+    if callback is None or inspect.unwrap(callback) is not inspect.unwrap(leaf):
+        return None
+    parser_ctx.meta[_LEAF_PREPARED] = True
+    return parser_ctx
+
+
+@contextlib.contextmanager
+def _recorded_for_block(ctx: "OttoContext", recorded: "RecordedOptions") -> "Generator[None]":
+    """Record *recorded* on *ctx* for the block, handing *ctx*'s binding back after."""
+    from ..run_context import record_options
+
+    with ctx.verb_binding_preserved():
+        record_options(ctx, recorded)
+        yield
+
+
+def prepare_leaf_options(
+    kw: "dict[str, Any]", spec: LeafOptionSpec, *, leaf: Callable[..., Any]
+) -> LeafOptions:
+    """Split, record and build a leaf's option values: the one preparation.
+
+    Synchronous, in this order: *kw* is projected onto the fields of every
+    class *spec* offers (the rest is :attr:`LeafOptions.rest`); the names
+    given are the parser's when the current parser context's command is
+    *leaf* and no preparation has read it yet, else every name (a direct
+    call from other code); each class of ``spec.build`` is built from
+    everything parsed; and the record is made. With a context installed it
+    is recorded on it (for a direct call of a verb-less leaf, only for
+    :meth:`LeafOptions.scope`'s block, the context's binding handed back
+    after); with none, :meth:`LeafOptions.scope` holds it. Callers enter
+    :meth:`LeafOptions.scope` before anything reads the context's option
+    values.
+
+    A value that fails a class's validation raises ``typer.BadParameter``.
+    """
+    from ..config._typer import given_names
+    from ..params import RecordedOptions, build_offered, command_options, init_field_names
+    from ..run_context import record_options, try_get_context
+
+    offered = spec.build + spec.walk
+    names: set[str] = set()
+    for cls in offered:
+        names.update(init_field_names(cls))
+    parsed = {k: v for k, v in kw.items() if k in names}
+    rest = {k: v for k, v in kw.items() if k not in names}
+    parser_ctx = _parsed_by(leaf)
+    given = given_names(parser_ctx, parsed)
+    try:
+        instances = build_offered(RecordedOptions(parsed=parsed, given=given, offered=spec.build))
+    except OptionsValidationError as e:
+        raise usage_error_from(e) from e
+    recorded = RecordedOptions(
+        group=spec.group, parsed=parsed, given=given, offered=offered, instances=dict(instances)
+    )
+    ctx = try_get_context()
+    if ctx is None:
+        return LeafOptions(recorded, instances, rest, lambda: command_options(recorded))
+    if parser_ctx is None and spec.group is None:
+        return LeafOptions(recorded, instances, rest, lambda: _recorded_for_block(ctx, recorded))
+    record_options(ctx, recorded)
+    return LeafOptions(recorded, instances, rest)
 
 
 def _bind_run_leaf(
@@ -213,8 +383,11 @@ def _bind_run_leaf(
 
     Through :func:`otto.instructions.bind_handler_kwargs`, the rule
     :func:`otto.instructions.run_instruction` uses too, so ``otto run <name>``
-    and a library call cannot bind an instruction's arguments differently. A
-    bad value becomes a usage error.
+    and a library call cannot bind an instruction's arguments differently.
+    The values were validated by the leaf's preparation
+    (:func:`prepare_leaf_options`); this only binds them, and turns a
+    rejection on the first read of a class that preparation did not build
+    into a usage error.
     """
     from ..instruction_catalog import InstructionEntry
     from ..instructions import bind_handler_kwargs
@@ -251,16 +424,14 @@ def _wrap_with_options(
     field the own class inherits from a registered base is one flag, and the
     same name introduced by two unrelated classes raises
     ``OptionsCollisionError`` here, when the command is built. At call time
-    the ``run`` verb delegates to
-    :func:`otto.instructions.bind_handler_kwargs` through
-    :func:`_bind_run_leaf`, which binds the parsed values on the active
-    context and injects ``ctx.options(cls)`` into every parameter annotated
-    with a registered class; a verb-less command builds its own class alone
-    through :func:`_bind_and_build_own`. *project* owns the own class, and is
-    who a collision message names for it.
+    the wrapper prepares its values through :func:`prepare_leaf_options`
+    (one :class:`LeafOptionSpec`, built here: the own class, then every
+    other class the verb covers), which records what the command was given;
+    the ``run`` verb then injects through
+    :func:`otto.instructions.bind_handler_kwargs` (:func:`_bind_run_leaf`),
+    and a verb-less command receives its own built instance. *project* owns
+    the own class, and is who a collision message names for it.
     """
-    from ..run_context import get_context
-
     func_name = getattr(func, "__name__", repr(func))
     sig = inspect.signature(func)
     hints = get_type_hints(func, include_extras=True)
@@ -284,11 +455,10 @@ def _wrap_with_options(
     verb_params: list[inspect.Parameter] = []
     injected: dict[str, type] = {}
     registered: set[type] = set()
-    sensitive_names: set[str] = sensitive_field_names(opts_cls) if opts_cls is not None else set()
+    registered_order: list[type] = []
     if verb is not None:
         verb_origins = verb_option_classes(verb)
-        for origin in verb_origins:
-            sensitive_names |= sensitive_field_names(cast("type[DataclassInstance]", origin.cls))
+        registered_order = [origin.cls for origin in verb_origins]
         # Matched by identity, as `_ctx_param_name` matches OttoContext: an
         # annotation IS a registered class, or it is an ordinary parameter.
         registered = {origin.cls for origin in verb_origins}
@@ -333,57 +503,49 @@ def _wrap_with_options(
             new_params.append(kw_only_p)
     new_params.extend(verb_params)
 
+    # The own class first, then every other class the verb covers: one
+    # spec, built once, so the preparation, the dry-run display and the
+    # masked names all read the same classes in the same order.
+    build: tuple[type, ...] = (opts_cls,) if opts_cls is not None else ()
+    build += tuple(cls for cls in registered_order if cls is not opts_cls)
+    spec = LeafOptionSpec(group=verb, build=build)
+
     @functools.wraps(func)
     async def wrapper(**kw: Any) -> Any:
-        ctx = get_context() if verb is not None else None
-        if verb == "run":
-            kw = _bind_run_leaf(func, opts_cls, kw)
-            own_instance = kw.get(opts_param_name) if opts_param_name else None
-        else:
-            try:
-                own_instance = _bind_and_build_own(
-                    kw, opts_cls=opts_cls, own_field_names=own_field_names
+        prepared = prepare_leaf_options(kw, spec, leaf=wrapper)
+        with prepared.scope():
+            if verb == "run":
+                call_kw = _bind_run_leaf(func, opts_cls, prepared.rest)
+            else:
+                call_kw = dict(prepared.rest)
+                if opts_cls is not None and opts_param_name is not None:
+                    call_kw[opts_param_name] = prepared.instances[opts_cls]
+            # Validation is already DONE by this point, exactly as it is on a
+            # real run -- so a dry run's `finish_dry_run` never has to
+            # re-validate anything, only report what was just built.
+            # `click_ctx` is `None` for a call that never went through the CLI
+            # at all (a test, or a library caller reaching this callable
+            # directly) -- and never having gone through the CLI seam is
+            # exactly the case a dry run cannot apply to, so that IS the "not a
+            # dry run" answer here. `typer.Context` (used everywhere else in
+            # this module) is a thin subclass typer's OWN commands never
+            # actually instantiate -- `TyperCommand.context_class` is the
+            # vendored click base (`typer._click.core.Context`) that
+            # `get_current_context` returns -- so the cast just makes that
+            # existing fact visible to the type checker.
+            click_ctx = cast("typer.Context | None", get_current_context(silent=True))
+            if click_ctx is not None and dry_run_requested(click_ctx):
+                # `finish_dry_run` decides itself, from *preview*, whether to
+                # print+exit or just return -- a previewing leaf still gets
+                # `--probe`'s announcement/dial/report, then runs its real body.
+                preview = command_spec(click_ctx).dry_run_preview or _leaf_declares_preview(
+                    click_ctx
                 )
-            except OptionsValidationError as e:
-                raise usage_error_from(e) from e
-            for name in own_field_names:
-                kw.pop(name, None)
-            if opts_cls is not None and opts_param_name is not None:
-                kw[opts_param_name] = own_instance
-        # Validation is already DONE by this point (either branch above),
-        # exactly as it is on a real run -- so a dry run's `finish_dry_run`
-        # never has to re-validate anything, only report what was just built.
-        # `click_ctx` is `None` for a call that never went through the CLI at
-        # all (a test, or a library caller reaching this callable directly)
-        # -- and never having gone through the CLI seam is exactly the case a
-        # dry run cannot apply to, so that IS the "not a dry run" answer here.
-        # `typer.Context` (used everywhere else in this module) is a thin
-        # subclass typer's OWN commands never actually instantiate --
-        # `TyperCommand.context_class` is the vendored click base
-        # (`typer._click.core.Context`) that `get_current_context` returns --
-        # so every real dispatch already hands this module that base class
-        # under the `typer.Context` alias; the cast just makes that existing
-        # fact visible to the type checker instead of leaving it untyped.
-        click_ctx = cast("typer.Context | None", get_current_context(silent=True))
-        if click_ctx is not None and dry_run_requested(click_ctx):
-            instances: list[Any] = [own_instance] if own_instance is not None else []
-            if verb is not None and ctx is not None:
-                for origin in verb_option_classes(verb):
-                    if origin.cls is opts_cls:
-                        continue
-                    instances.append(ctx.options(origin.cls))
-            # `finish_dry_run` decides itself, from *preview*, whether to
-            # print+exit or just return -- the SAME distinction
-            # `stop_at_dry_run_seam` always made for an options-free leaf,
-            # made here now too: a previewing leaf still gets `--probe`'s
-            # announcement/dial/report, then runs its real body regardless.
-            preview = command_spec(click_ctx).dry_run_preview or _leaf_declares_preview(click_ctx)
-            await finish_dry_run(click_ctx, instances, preview=preview)
-        return await func(**kw)
+                await finish_dry_run(click_ctx, list(prepared.instances.values()), preview=preview)
+            return await func(**call_kw)
 
     wrapper.__signature__ = inspect.Signature(new_params)  # ty: ignore[missing-attribute]
-    setattr(wrapper, DRY_RUN_SELF_FINISHING_ATTR, True)
-    setattr(wrapper, SENSITIVE_FIELDS_ATTR, frozenset(sensitive_names))
+    stamp_options_leaf(wrapper, spec)
     return wrapper
 
 
@@ -936,7 +1098,30 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     the call in :func:`lab_context_refusals`, which renders through
     :func:`report_lab_context_error`; the soft ``HostGroup`` probe
     (:func:`try_ensure_lab`) swallows them.
+
+    The whole call runs inside the command's pending mark
+    (:func:`pending_options`), so the lab build and every constructor it runs
+    are refused an option read (``OptionsNotAvailableError``) rather than
+    answered with defaults; the installed context carries that mark until
+    the leaf records its flags or :func:`settle_options` clears it. A command
+    that has already read its flags (a lab-free leaf whose body opens the
+    lab) is past that window: the record in force is carried onto the
+    context instead, so its body and hooks keep reading its values.
     """
+    # The flag first: a read of the record in force may create an empty one
+    # on an installed context, which a command that has not read its flags
+    # must not do.
+    in_force = recorded_in_force() if ctx.meta.get(_LEAF_PREPARED) else None
+    if in_force is not None and not in_force.pending:
+        recorded: "RecordedOptions | None" = in_force
+    else:
+        recorded = pending_options(ctx)
+    with command_options(recorded):
+        return _ensure_lab_context(ctx, recorded)
+
+
+def _ensure_lab_context(ctx: typer.Context, recorded: "RecordedOptions | None") -> "OttoContext":
+    """:func:`ensure_lab_context`'s body, run inside the pending mark *recorded*."""
     from ..run_context import fill_teardown_deadline, get_context
 
     meta = ctx.meta
@@ -1003,18 +1188,21 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     # never outlives the invocation. Installed here, outside the command's
     # event loop: the leaf's coroutine runs later under run_command, in a copy
     # of this execution context.
-    from ..run_context import OttoContext, reset_context, set_context
+    from ..run_context import OttoContext, record_options, reset_context, set_context
 
-    token = set_context(
-        OttoContext(
-            lab=lab,
-            include_projects=opts.include_projects,
-            exclude_projects=opts.exclude_projects,
-            policy=policy,
-            bootstrap=result,
-        )
+    context = OttoContext(
+        lab=lab,
+        include_projects=opts.include_projects,
+        exclude_projects=opts.exclude_projects,
+        policy=policy,
+        bootstrap=result,
     )
+    token = set_context(context)
     ctx.find_root().call_on_close(lambda: reset_context(token))
+    if recorded is not None:
+        # The mark outlives the block on the context, until the leaf records
+        # or ``settle_options`` clears it.
+        record_options(context, recorded)
     meta["_otto_lab_ready"] = True
     return get_context()
 
@@ -1045,10 +1233,14 @@ def try_ensure_lab(ctx: typer.Context) -> "OttoContext | None":
 
     Used by ``HostGroup`` class-scoping — a soft probe where any failure (no
     ``--lab``, unknown lab, broken backend) simply means "no class scoping
-    available", falling back to the full unscoped verb menu.
+    available", falling back to the full unscoped verb menu. The one failure
+    it does not swallow is ``OptionsNotAvailableError``: a constructor that
+    read an option before the command read its flags is a defect to report.
     """
     try:
         return ensure_lab_context(ctx)
+    except OptionsNotAvailableError:
+        raise
     except Exception:  # noqa: BLE001 — soft scoping probe: ANY failure (incl. typer.Exit, an Exception subclass) → no scoping
         return None
 
@@ -1520,7 +1712,8 @@ def command_preamble(ctx: typer.Context) -> None:
     errors fail loud → lab-free commands skip the lab slice → CLI session
     (logging) → lab context → per-command output dir → an inactive project's
     instruction is refused → an active project's unsatisfied Python dependencies
-    are refused → reservation gate → the dry-run seam. ``--help`` paths never
+    are refused → reservation gate → a leaf that records no options has its
+    pending mark cleared (:func:`settle_options`) → the dry-run seam. ``--help`` paths never
     reach this function: click's help option exits during leaf parse, before
     ``Command.invoke``.
 
@@ -1551,6 +1744,9 @@ def command_preamble(ctx: typer.Context) -> None:
     if not leaf_is_lab_free(spec, callback):
         open_live_lab(ctx, spec, gate=leaf_is_gated(spec, callback))
 
+    # A leaf that records nothing reads defaults from here on, the dry-run
+    # seam included.
+    settle_options(ctx)
     stop_at_dry_run_seam(ctx, spec)
 
 
@@ -1582,8 +1778,8 @@ so there is one authority rather than a mirrored copy that can drift.
 SENSITIVE_FIELDS_ATTR = "__otto_sensitive_fields__"
 """Per-leaf set of option field names whose VALUE the ``would run:`` line must mask.
 
-A ``frozenset[str]``, stamped by ``_wrap_with_options`` (and by
-``otto.cli.run._project_leaf``) from ``otto.params.sensitive_field_names`` over every
+A ``frozenset[str]``, stamped by :func:`stamp_options_leaf` (and by
+``otto.cli.run._project_leaf``) from ``otto.params.sensitive_names`` over every
 options class contributing flags to the command. Read by ``_param_words``
 so the generic argv echo -- which knows nothing about options classes, only
 raw click parameters -- can still print ``<hidden>`` for a
@@ -1594,8 +1790,9 @@ two conditions ``_options_line`` already masks in the ``options:`` block.
 DRY_RUN_SELF_FINISHING_ATTR = "__otto_dry_run_self_finishing__"
 """Per-leaf marker that a leaf validates its own options and finishes its own dry run.
 
-Stamped ``True`` by ``_wrap_with_options`` on every leaf its ``options=``/verb
-machinery builds (:func:`prepare_command_target`), and by the
+Stamped ``True`` by :func:`stamp_options_leaf` on every leaf that prepares
+its options through :func:`prepare_leaf_options` (every leaf
+:func:`prepare_command_target`'s ``options=``/verb machinery builds), and by the
 project-instruction leaf ``otto.cli.run._project_leaf`` builds. Read by
 :func:`stop_at_dry_run_seam`, which returns immediately for such a leaf --
 no probe, no reference resolution, no print -- because the leaf's own body
@@ -2334,7 +2531,11 @@ def _require_async_leaf(cmd: Any, spec: "CommandSpec") -> None:
 
 
 def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
-    """Wrap a single leaf command's ``invoke``: preamble + async-leaf bridge (idempotent)."""
+    """Wrap a single leaf command's ``invoke``: preamble + async-leaf bridge (idempotent).
+
+    A lab-free leaf is invoked inside its pending mark (:func:`pending_options`),
+    which :func:`settle_options` clears for a leaf that records nothing.
+    """
     if getattr(cmd, "_otto_preambled", False):
         return cmd
     cmd._otto_preambled = True  # noqa: SLF001 — own marker attribute on the command object
@@ -2349,23 +2550,29 @@ def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
         # down the click context chain, but the spec must reflect THIS leaf.
         inner_ctx.meta["_otto_command_spec"] = spec
         command_preamble(inner_ctx)
-        result = original_invoke(inner_ctx)
-        # The lifecycle bridge (wave 2 of the command-lifecycle-uniformity
-        # spec): a plain ``async def`` leaf — typer never awaits callbacks, so
-        # its invoke returns the coroutine object — runs under the full
-        # command policy (a cleanup boundary, two-stage interrupts, teardown
-        # deadline) with REGISTRATION as the only opt-in. Detection is on the
-        # invoke RESULT, not the callback: typer wraps every callback in its
-        # own sync shim, so ``iscoroutinefunction(cmd.callback)`` is always
-        # False, while the coroutine itself passes through untouched.
-        # Naturally idempotent: a leaf that self-bridges (``run_command``
-        # inside a sync wrapper — the retired ``@async_typer_command``
-        # migration pattern) returns a plain value and is skipped — no double
-        # ``asyncio.run`` is reachable.
-        if inspect.iscoroutine(result):
-            from ..lifecycle import run_command
+        # No lab context holds the pending mark for a lab-free leaf: hold it
+        # here, over the body and its bridge, settled for a leaf that records
+        # nothing; a leaf that records holds its own record inside this one.
+        lab_free = leaf_is_lab_free(spec, getattr(inner_ctx.command, "callback", None))
+        with command_options(pending_options(inner_ctx) if lab_free else None):
+            settle_options(inner_ctx)
+            result = original_invoke(inner_ctx)
+            # The lifecycle bridge (wave 2 of the command-lifecycle-uniformity
+            # spec): a plain ``async def`` leaf — typer never awaits callbacks, so
+            # its invoke returns the coroutine object — runs under the full
+            # command policy (a cleanup boundary, two-stage interrupts, teardown
+            # deadline) with REGISTRATION as the only opt-in. Detection is on the
+            # invoke RESULT, not the callback: typer wraps every callback in its
+            # own sync shim, so ``iscoroutinefunction(cmd.callback)`` is always
+            # False, while the coroutine itself passes through untouched.
+            # Naturally idempotent: a leaf that self-bridges (``run_command``
+            # inside a sync wrapper — the retired ``@async_typer_command``
+            # migration pattern) returns a plain value and is skipped — no double
+            # ``asyncio.run`` is reachable.
+            if inspect.iscoroutine(result):
+                from ..lifecycle import run_command
 
-            result = run_command(result)
+                result = run_command(result)
         # Rendering happens AFTER the bridge (on the awaited value), never on
         # --help paths (help exits during parse, before ``Command.invoke``),
         # and a leaf that raises (typer.Exit, SystemExit(128+n) from the

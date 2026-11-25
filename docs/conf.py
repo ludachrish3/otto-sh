@@ -226,6 +226,9 @@ _SHORT_TYPE_ALIASES = {
     # the Host protocol names it as the return type of ``as_user``/``app_shell``,
     # and the stdlib inventory carries it only fully qualified.
     "AbstractAsyncContextManager": "contextlib.AbstractAsyncContextManager",
+    # Its synchronous twin: the return type of ``otto.params.use_options`` and of
+    # ``LeafOptions.scope``.
+    "AbstractContextManager": "contextlib.AbstractContextManager",
     # Autodoc qualifies a bare ``Annotated`` with the module of its FIRST
     # argument, so ``Annotated[Path, ...]`` (models/settings.py's ProjectPath)
     # renders as ``pathlib.Annotated`` — a target that does not exist. Same

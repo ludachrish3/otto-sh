@@ -46,7 +46,7 @@ from ..instruction_catalog import (
     declare_first_party_actions,
     instruction,
 )
-from ..params import OptionsSource, shared_field_values
+from ..params import OptionsSource, own_options, shared_field_values
 from ..registry import get_registering_project, registration_boundary
 from ..result import CommandNotRunError, CommandResult, Result, Results
 from ..utils import Status
@@ -262,7 +262,7 @@ def _options_for(actions: "ProjectActions", name: str, base: Any, caller: str) -
 
     The rebuild is :class:`~otto.params.OptionsSource`'s instance path, the
     same one a suite's ``ensure`` marker converges through: fields shared with
-    *base* BY DECLARING CLASS flow (``product_logs`` reaches a
+    *base* BY NAME flow (``product_logs`` reaches a
     ``CleanupOpts``-driven teardown), the override's own take their defaults.
     A field with no default cannot take one, so it is refused HERE, up front,
     naming the class, the field and the fix. Letting the construction fail
@@ -619,12 +619,16 @@ class ProjectActions:
         cannot be built that way and is refused, naming the field: such a project
         overrides ``cleanup`` itself and calls its own ``uninstall`` from
         there.
+
+        The call runs with both instances laid (``otto.params.own_options``),
+        so a hook that reads either class gets the object the body got, and
+        ``product_logs`` reaches every other options class a hook reads.
         """
-        uninstalled = await self.uninstall(
-            _options_for(
-                self, "uninstall", UninstallOptions(product_logs=opts.product_logs), "cleanup"
-            )
-        )
+        base = UninstallOptions(product_logs=opts.product_logs)
+        inst = _options_for(self, "uninstall", base, "cleanup")
+        laid = (base,) if inst is base else (base, inst)
+        with own_options(*laid, gives=("product_logs",)):
+            uninstalled = await self.uninstall(inst)
         from ..host.cov_sweep import warn_if_counters_discarded  # lazy: import-light
 
         swept = await self.ctx.do_for_all_hosts(_dispatch_remove_coverage_dirs)
@@ -844,10 +848,13 @@ class ProjectActions:
         class, rebuilt by ``_options_for`` -- see :meth:`cleanup`, which
         reaches its ``uninstall`` the same way and for the same reason. An
         override whose class has a field with no default is refused naming the
-        field; such a project overrides ``is_uninstalled`` itself.
+        field; such a project overrides ``is_uninstalled`` itself. The call
+        runs with both instances laid, as :meth:`cleanup`'s does.
         """
-        probe = _options_for(self, "status", StatusOptions(), "is_uninstalled")
-        return await self.status(probe) is InstallState.UNINSTALLED
+        base = StatusOptions()
+        probe = _options_for(self, "status", base, "is_uninstalled")
+        with own_options(*((base,) if probe is base else (base, probe))):
+            return await self.status(probe) is InstallState.UNINSTALLED
 
     async def is_clean(self) -> bool:
         """Whether nothing :meth:`cleanup` removes is left, products through docker staging.

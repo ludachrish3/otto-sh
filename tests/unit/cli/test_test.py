@@ -226,7 +226,10 @@ class TestTypeEnforcement:
         captured: dict = {}
 
         def fake_run_tests(names, **kw):
-            captured["options"] = kw["options"]
+            from otto.params import get_options
+
+            del names, kw
+            captured["options"] = [get_options(RetryOpts)]
             return _lib_ok_result()
 
         monkeypatch.setattr("otto.suite.run.run_tests", fake_run_tests)

@@ -40,13 +40,17 @@ def captured_run(monkeypatch):
     asserting on its side effect (e.g. ``--overwrite-cov-dir`` actually
     clearing a directory) needs it to run even with ``run_tests`` faked.
     """
+    from otto.params import get_options, verb_option_classes
+
     calls: list[dict] = []
 
     def fake(names, **kw):
         from otto.suite.run import prepare_run
 
         prepare_run(kw["run_options"])
-        calls.append({"names": list(names), **kw})
+        # What a test of the run reads for each `test` class.
+        read = {origin.cls: get_options(origin.cls) for origin in verb_option_classes("test")}
+        calls.append({"names": list(names), "read": read, **kw})
         return _ok()
 
     monkeypatch.setattr("otto.suite.run.run_tests", fake)
@@ -252,16 +256,27 @@ def test_a_verb_option_is_a_flag_and_reaches_ctx_options(otto_test_cli, one_proj
     assert result.exit_code == 0, result.output
 
 
-def test_verb_option_instances_are_passed_to_run_tests(otto_test_cli, captured_run):
+def test_the_prepared_instances_are_what_run_tests_reads(otto_test_cli, monkeypatch):
+    """The ``run_tests`` double reads the class and gets the prepared instance; no ``options=``."""
+    import otto
+
     @options
     class FirmwareOpts:
         firmware: str = "latest"
 
     register_options(FirmwareOpts, verbs=["test"])
+    calls: list[dict] = []
+
+    def fake(names, **kw):
+        calls.append({"names": list(names), "read": otto.get_options(FirmwareOpts), **kw})
+        return _ok()
+
+    monkeypatch.setattr("otto.suite.run.run_tests", fake)
     assert otto_test_cli(["test", "test_x", "--firmware", "2.1"]).exit_code == 0
-    (instance,) = captured_run[0]["options"]
-    assert isinstance(instance, FirmwareOpts)
-    assert instance.firmware == "2.1"
+    (call,) = calls
+    assert "options" not in call
+    assert isinstance(call["read"], FirmwareOpts)
+    assert call["read"].firmware == "2.1"
 
 
 def test_a_bad_verb_option_value_is_a_usage_error(otto_test_cli, captured_run):
@@ -516,14 +531,12 @@ def test_a_secret_default_reaches_the_test_as_its_value(otto_test_cli, one_proje
     result = otto_test_cli(["test", "test_d"])
     assert result.exit_code == 0, result.output
     [call] = captured_run
-    [inst] = [o for o in call["options"] if isinstance(o, vault)]
-    assert inst.token.get_secret_value() == "dflt"
+    assert call["read"][vault].token.get_secret_value() == "dflt"
 
     captured_run.clear()
     result = otto_test_cli(["test", "test_d", "--token", "typed"])
     assert result.exit_code == 0, result.output
-    [inst] = [o for o in captured_run[0]["options"] if isinstance(o, vault)]
-    assert inst.token.get_secret_value() == "typed"
+    assert captured_run[0]["read"][vault].token.get_secret_value() == "typed"
 
 
 def test_an_untyped_secret_flag_is_not_echoed(otto_test_cli, one_project):
@@ -713,3 +726,74 @@ def test_a_secret_flag_keeps_every_other_flag_cached():
     assert set(cached) == {"firmware", "token", "note", "plain"}
     assert cached["token"]["kind"] == "str"
     assert cached["firmware"]["default"] == "latest"
+
+
+def test_a_rewriting_validator_runs_once_under_otto_test(otto_test_cli, one_project):
+    """The class is built once per command: a validator that rewrites its value is not reapplied."""
+
+    @options
+    class Scaled:
+        level: int = 1
+
+        def __post_init__(self) -> None:
+            type(self).built.append(self.level)
+            self.level = self.level * 10
+
+    Scaled.built = []  # ty: ignore[unresolved-attribute]
+    register_options(Scaled, verbs=["test"])
+    one_project(
+        files={
+            "tests/test_s.py": (
+                "import otto\n"
+                "from otto.params import verb_option_classes\n"
+                "def test_s():\n"
+                "    (o,) = verb_option_classes('test')\n"
+                "    assert otto.get_options(o.cls).level == 20\n"
+            )
+        }
+    )
+    result = otto_test_cli(["test", "--level", "2", "test_s"])
+    assert result.exit_code == 0, result.output
+    assert Scaled.built == [2]  # ty: ignore[unresolved-attribute]
+
+
+def test_otto_tests_own_flags_never_enter_the_values(otto_test_cli, monkeypatch):
+    """``--iterations`` is a run flag: an unregistered class with that field keeps its default."""
+    import otto
+
+    @options
+    class Iter:
+        iterations: int = 1
+
+    reads: list[int] = []
+
+    def fake(names, **kw):
+        del names, kw
+        reads.append(otto.get_options(Iter).iterations)
+        return _ok()
+
+    monkeypatch.setattr("otto.suite.run.run_tests", fake)
+    assert otto_test_cli(["test", "test_x", "--iterations", "3"]).exit_code == 0
+    assert reads == [1]
+
+
+def test_completion_prepares_nothing(monkeypatch):
+    """Under resilient parsing (TAB) the leaf returns before any class is built."""
+    import typer.main
+
+    from otto.cli import test as cli_test
+
+    @options
+    class Counted:
+        level: int = 1
+
+        def __post_init__(self) -> None:
+            type(self).built.append(self.level)
+
+    Counted.built = []  # ty: ignore[unresolved-attribute]
+    register_options(Counted, verbs=["test"])
+    command = typer.main.get_command(cli_test._build_test_app())
+    ctx = command.make_context("test", ["test_x", "--level", "2"], resilient_parsing=True)
+    with ctx:
+        command.invoke(ctx)
+    assert Counted.built == []  # ty: ignore[unresolved-attribute]

@@ -1,11 +1,22 @@
 """ctx.options(Cls) hands out the dispatched verb's bound options."""
 
+import asyncio
 import contextlib
 
 import pytest
 
 from otto import options
-from otto.params import OptionsNotAvailableError, OptionsValidationError, register_options
+from otto.context import reset_context, set_context
+from otto.params import (
+    OptionsNotAvailableError,
+    OptionsValidationError,
+    RecordedOptions,
+    command_options,
+    get_options,
+    register_options,
+    use_options,
+)
+from otto.run_context import record_options
 
 
 @options
@@ -54,13 +65,12 @@ def test_validation_fails_before_anything_runs(ctx):
         ctx.bind_verb_options(verb="test", kwargs={"level": 0})
 
 
-def test_other_verbs_classes_are_not_built_and_say_so(ctx):
+def test_a_class_for_another_verb_reads_its_defaults(ctx):
     ctx.bind_verb_options(verb="test", kwargs={})
-    with pytest.raises(OptionsNotAvailableError, match="RunOnly is registered for run, not test"):
-        ctx.options(RunOnly)
+    assert ctx.options(RunOnly).debug is False
 
 
-def test_a_class_registered_after_binding_says_so(ctx):
+def test_a_class_registered_after_binding_is_built_on_first_read(ctx):
     ctx.bind_verb_options(verb="test", kwargs={})
 
     @options
@@ -68,23 +78,16 @@ def test_a_class_registered_after_binding_says_so(ctx):
         x: int = 0
 
     register_options(Late, verbs=["test"])
-    with pytest.raises(
-        OptionsNotAvailableError, match="Late was registered after otto test bound its options"
-    ):
-        ctx.options(Late)
+    assert ctx.options(Late).x == 0
 
 
-def test_an_unregistered_class_names_itself(ctx):
+def test_an_unregistered_class_is_read_like_any_other(ctx):
     ctx.bind_verb_options(verb="test", kwargs={})
-    with pytest.raises(OptionsNotAvailableError, match="Unregistered is not registered") as err:
-        ctx.options(Unregistered)
-    # The remedy is the form the docs lead with, in the place it must live.
-    assert "@otto.options(verbs=[...]) in an init module" in str(err.value)
+    assert ctx.options(Unregistered).x == 0
 
 
-def test_nothing_bound_says_no_verb_is_bound(ctx):
-    with pytest.raises(OptionsNotAvailableError, match="no verb's options are bound"):
-        ctx.options(FirmwareOpts)
+def test_nothing_bound_reads_defaults(ctx):
+    assert ctx.options(FirmwareOpts).firmware == "latest"
 
 
 def test_the_source_replays_the_parsed_flags(ctx):
@@ -124,5 +127,141 @@ def test_a_preserved_binding_comes_back_whole(ctx, raises):
 def test_preserving_an_unbound_context_leaves_it_unbound(ctx):
     with ctx.verb_binding_preserved():
         ctx.bind_verb_options(verb="test", kwargs={})
-    with pytest.raises(OptionsNotAvailableError, match="no verb's options are bound"):
+    assert ctx.verb is None
+    assert ctx.options(FirmwareOpts).firmware == "latest"
+
+
+@options
+class Other:
+    firmware: str = "x"
+
+
+@contextlib.contextmanager
+def _installed(ctx):
+    binding = set_context(ctx)
+    try:
+        yield ctx
+    finally:
+        reset_context(binding)
+
+
+def test_a_given_value_reaches_another_class_by_name(ctx):
+    ctx.bind_verb_options(verb="test", kwargs={"firmware": "2.1"})
+    assert ctx.options(Other).firmware == "2.1"
+
+
+def test_two_reads_return_one_object(ctx):
+    ctx.bind_verb_options(verb="test", kwargs={"firmware": "2.1"})
+    assert ctx.options(FirmwareOpts) is ctx.options(FirmwareOpts)
+
+
+def test_two_reads_on_a_context_nothing_bound_return_one_object(ctx):
+    assert ctx.options(FirmwareOpts) is ctx.options(FirmwareOpts)
+    assert ctx.verb is None
+
+
+def test_the_public_source_is_the_recorded_flags_without_a_block(ctx):
+    ctx.bind_verb_options(verb="test", kwargs={"firmware": "2.1"})
+    with use_options(FirmwareOpts(firmware="9")):
+        assert ctx.verb_option_source().build(FirmwareOpts).firmware == "2.1"
+        assert ctx.options(FirmwareOpts).firmware == "9"
+
+
+def test_a_context_built_inside_another_reads_its_flags_until_bound(ctx, make_otto_context):
+    ctx.bind_verb_options(verb="test", kwargs={"firmware": "2.1"})
+    with _installed(ctx):
+        inner = make_otto_context()
+    assert inner.options(FirmwareOpts).firmware == "2.1"
+    inner.bind_verb_options(verb="test", kwargs={})
+    assert inner.options(FirmwareOpts).firmware == "latest"
+    assert ctx.options(FirmwareOpts).firmware == "2.1"
+
+
+def test_two_independent_contexts_keep_their_own_flags(make_otto_context):
+    register_options(FirmwareOpts, verbs=["test"])
+    one, two = make_otto_context(), make_otto_context()
+    one.bind_verb_options(verb="test", kwargs={"firmware": "1"})
+    two.bind_verb_options(verb="test", kwargs={"firmware": "2"})
+    assert one.options(FirmwareOpts).firmware == "1"
+    assert two.options(FirmwareOpts).firmware == "2"
+
+
+@pytest.mark.asyncio
+async def test_flags_bound_in_a_helper_task_are_visible_after_it(ctx):
+    async def helper():
+        ctx.bind_verb_options(verb="test", kwargs={"firmware": "5"})
+
+    await asyncio.create_task(helper())
+    assert ctx.options(FirmwareOpts).firmware == "5"
+
+
+def test_a_block_applies_over_whichever_context_is_read(ctx, make_otto_context):
+    other = make_otto_context()
+    ctx.bind_verb_options(verb="test", kwargs={"firmware": "1"})
+    other.bind_verb_options(verb="test", kwargs={"firmware": "2"})
+    with use_options(Other(firmware="9")):
+        assert ctx.options(FirmwareOpts).firmware == "9"
+        assert other.options(FirmwareOpts).firmware == "9"
+
+
+def test_a_pending_context_refuses_a_read(ctx):
+    record_options(ctx, RecordedOptions(group="run", pending=True))
+    with pytest.raises(OptionsNotAvailableError, match="has not read its flags yet"):
         ctx.options(FirmwareOpts)
+
+
+def test_a_pending_context_refuses_its_source(ctx):
+    record_options(ctx, RecordedOptions(group="run", pending=True))
+    with pytest.raises(OptionsNotAvailableError, match="has not read its flags yet"):
+        ctx.verb_option_source()
+
+
+def test_get_options_reads_the_active_context(ctx):
+    ctx.bind_verb_options(verb="test", kwargs={"firmware": "2.1"})
+    with _installed(ctx):
+        assert get_options(FirmwareOpts) is ctx.options(FirmwareOpts)
+
+
+def test_a_context_opened_inside_a_contextless_command_reads_its_record(make_otto_context):
+    with command_options(
+        RecordedOptions(parsed={"firmware": "2.1"}, given=frozenset({"firmware"}))
+    ):
+        assert make_otto_context().options(FirmwareOpts).firmware == "2.1"
+
+
+def test_a_bad_binding_inside_a_block_is_refused_and_keeps_the_earlier_record(ctx):
+    """A block's instance of a class does not stand in for validating the binding's value."""
+    ctx.bind_verb_options(verb="test", kwargs={"firmware": "2.1"})
+    before = ctx._recorded
+    with use_options(Strict(level=7)), pytest.raises(OptionsValidationError, match="level"):
+        ctx.bind_verb_options(verb="test", kwargs={"level": "bad"})
+    assert ctx._recorded is before
+    assert ctx.options(FirmwareOpts).firmware == "2.1"
+
+
+@pytest.mark.parametrize("entry", ["command leaf", "bind_verb_options"])
+def test_a_bad_value_names_the_field_and_not_the_class_on_both_paths(entry, ctx):
+    """The same bad value reads as on main: ``level: ...``, with no ``Strict:`` prefix.
+
+    The command leaf's text is ``usage_error_from`` over the same
+    ``OptionsValidationError``; both start from ``build_options``' message.
+    """
+    import typer
+
+    from otto.cli.invoke import LeafOptionSpec, prepare_leaf_options
+
+    def leaf(**kw):
+        del kw
+
+    if entry == "command leaf":
+        with pytest.raises(typer.BadParameter) as caught:
+            prepare_leaf_options(
+                {"level": "bad"}, LeafOptionSpec(group="test", build=(Strict,)), leaf=leaf
+            )
+        text = caught.value.format_message().removeprefix("Invalid value: ")
+    else:
+        with pytest.raises(OptionsValidationError, match="level") as caught:
+            ctx.bind_verb_options(verb="test", kwargs={"level": "bad"})
+        text = str(caught.value)
+    assert text.startswith("level: "), text
+    assert "Strict" not in text, text

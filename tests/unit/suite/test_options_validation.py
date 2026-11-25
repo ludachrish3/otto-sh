@@ -144,11 +144,14 @@ def _stub_cli_bootstrap(monkeypatch):
 
 
 def _capture_options(monkeypatch) -> dict:
-    """Fake ``run_tests``; return the dict its ``options`` instances land in."""
+    """Fake ``run_tests``; return the dict what a test reads of each ``test`` class lands in."""
+    from otto.params import get_options, verb_option_classes
+
     seen: dict = {}
 
     def fake(names, **kw):
-        seen["options"] = kw["options"]
+        del names, kw
+        seen["options"] = [get_options(o.cls) for o in verb_option_classes("test")]
         return _ok_result()
 
     monkeypatch.setattr("otto.suite.run.run_tests", fake)

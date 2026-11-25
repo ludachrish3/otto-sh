@@ -40,10 +40,11 @@ rather than offering a comforting near-miss:
   ``RetryAttemptTimeoutError``, ``SessionSetupError``, ``UvNotFoundError``,
   ``WaitTimeoutError``), and
   two sit under ``LookupError``
-  (``OptionsNotAvailableError``, for ``ctx.options(Cls)`` asked of a class
-  with no bound value, and ``UnknownSessionError``, for a monitor write
-  naming a session its source does not hold) — 80 + 42 + 19 + 2 = 143, so the split accounts for
-  every named class.
+  (``OptionsNotAvailableError``, for a read of option values that is not an
+  options class or comes before the command read its flags, and
+  ``UnknownSessionError``, for a monitor write naming a session its
+  source does not hold) — 80 + 42 + 19 + 2 = 143, so the split accounts
+  for every named class.
 
 The class counts are measured, not maintained by arithmetic, and gated
 (``tests/unit/test_error_base.py``). A *raise site* is a ``raise`` of a name

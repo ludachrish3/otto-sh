@@ -1,6 +1,7 @@
 """OttoFixturesPlugin: the ``ctx`` fixture, the ``ensure`` marker, and plain tests under it."""
 
 import asyncio
+import dataclasses
 import sys
 import tempfile
 from collections.abc import Callable
@@ -226,13 +227,25 @@ def _stub(calls: list[tuple], name: str, outcome: Any) -> Callable[..., Any]:
 
 
 def _called(*function_names: str, flags: dict[str, Any] | None = None) -> list[tuple]:
-    """The expected ``calls`` record: each converge function, in order, with the SAME source.
+    """The expected ``calls`` record: each converge function, in order, with the SAME flags.
 
     *flags* are the ``test`` verb's parsed flags bound on the context (none by
-    default); the expectation is built the way the context builds it —
-    ``OptionsSource.from_kwargs`` — so a test only has to name the flags.
+    default). The source each function receives is compared by the flags it
+    forwards (its ``kwargs``), not by the snapshot's bookkeeping fields.
     """
-    return [(name, OptionsSource.from_kwargs(flags or {})) for name in function_names]
+    return [(name, _ForwardsFlags(flags or {})) for name in function_names]
+
+
+@dataclasses.dataclass(frozen=True)
+class _ForwardsFlags:
+    """Equal to an ``OptionsSource`` whose ``kwargs`` are exactly *flags*."""
+
+    flags: dict[str, Any]
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, OptionsSource) and other.kwargs == self.flags
+
+    __hash__ = None  # type: ignore[assignment]
 
 
 def _stub_ensures(monkeypatch: pytest.MonkeyPatch, calls: list[tuple], outcome: Any) -> list[tuple]:

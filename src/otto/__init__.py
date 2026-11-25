@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from otto.host.app_shell import AppShell, Parsed
     from otto.host.login_proxy import Cred, register_login_proxy
     from otto.host.session_setup import SetupContext, register_session_setup
-    from otto.params import options, register_options
+    from otto.params import get_options, options, register_options, use_options
     from otto.project.actions import ProjectActions, register_project_actions
     from otto.project.state import InstallState
     from otto.result import CommandResult, Result, Results, ShellResult
@@ -61,6 +61,7 @@ __all__ = [
     "get_context",
     "get_host",
     "get_lab",
+    "get_options",
     "load_lab",
     "open_context",
     "options",
@@ -72,12 +73,15 @@ __all__ = [
     "run_on_all_hosts",
     "run_tests",
     "try_get_context",
+    "use_options",
 ]
 
 # name -> (source module, attribute) resolved on first access by __getattr__.
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "options": ("otto.params", "options"),
     "register_options": ("otto.params", "register_options"),
+    "get_options": ("otto.params", "get_options"),
+    "use_options": ("otto.params", "use_options"),
     "app": ("otto.cli", "app"),
     "all_hosts": ("otto.fleet", "all_hosts"),
     "get_host": ("otto.fleet", "get_host"),

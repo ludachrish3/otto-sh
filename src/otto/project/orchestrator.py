@@ -8,7 +8,8 @@ Module-level async functions over the ambient context (the
 ``otto.lab.all_hosts`` idiom), so an instruction, a suite, or a pytest
 fixture calls them with no arguments at all -- or with the one options
 instance (or :class:`~otto.params.OptionsSource`) its flags arrived on, which
-``_source`` normalises so every body downstream sees the same thing.
+``_call_options`` lays for the call and turns into the one source every body
+downstream builds from.
 
 THREE RULES DECIDE EVERY WALK BELOW, AND THE FIRST TWO ARE THE INSTRUCTION
 TABLE'S -- :data:`otto.instruction_catalog.PROJECT_INSTRUCTIONS` holds one spec per
@@ -45,6 +46,8 @@ The orchestrator itself is not overrideable in v1 (recorded decision): a project
 customizes by registering its own :class:`~otto.project.actions.ProjectActions`.
 """
 
+import contextlib
+import dataclasses
 import inspect
 import logging
 from typing import TYPE_CHECKING, Any
@@ -82,7 +85,7 @@ from .state import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable
+    from collections.abc import Awaitable, Callable, Generator, Iterable
 
     from ..config.dependencies import ResolvedDependency
     from ..config.project import Project
@@ -466,22 +469,73 @@ def _scope_row(scope: "ProjectScope", *, skipped: bool) -> ProjectScopeSummary:
     )
 
 
-def _source(opts: Any, default_cls: type) -> OptionsSource:
-    """Normalise a public function's argument: an instance, a source, or None (defaults).
+@contextlib.contextmanager
+def _call_options(opts: Any, default_cls: type) -> "Generator[OptionsSource]":
+    """Lay a public function's *opts* for the call and yield the source its bodies build from.
 
-    THREE SHAPES REACH EVERY PUBLIC VERB and all three have to arrive at the
-    bodies as one thing. ``None`` is the zero-argument library call every
-    fixture and converge makes; an options INSTANCE is the caller who built
-    one (a suite's own options, a test's); an :class:`~otto.params.OptionsSource`
-    is this module handing a source it already has straight through, which is
-    what keeps ``install --ensure`` from rebuilding -- and so reshaping -- the
-    flags on its way to the delegate.
+    FOUR SHAPES REACH EVERY PUBLIC FUNCTION, and each arrives at the bodies as
+    one source over the values in force (:func:`~otto.params.recorded_in_force`
+    and the task's layers, :func:`~otto.params.options_snapshot`):
+
+    * ``None``, the zero-argument call every fixture and converge makes: a
+      default *default_cls* instance is the call's own instance, laid with
+      :func:`~otto.params.own_options` and read back by *default_cls* alone;
+      it gives no other class anything, not even a field of the same name, so
+      every other class keeps the invocation's values or its own defaults.
+    * An options instance, a caller who built one: laid with
+      :func:`~otto.params.use_options`, so every class with a field of the
+      same name takes its value, and the source's own instance.
+    * An :class:`~otto.params.OptionsSource`, this module handing on a source
+      it already has: yielded as it is, nothing laid, which is what keeps
+      ``install --ensure`` from rebuilding the flags on the way to the delegate.
+    * Anything else (not a dataclass instance): nothing laid and no own
+      instance; the bodies build from the values in force alone.
     """
-    if opts is None:
-        return OptionsSource.from_instance(default_cls())
+    from ..params import options_snapshot, own_options, recorded_in_force, use_options
+
     if isinstance(opts, OptionsSource):
-        return opts
-    return OptionsSource.from_instance(opts)
+        yield opts
+        return
+    if opts is None:
+        inst = default_cls()
+        with own_options(inst):
+            # Not the source's own instance: that one gives its fields by name
+            # (``OptionsSource.build``). The layer alone makes it what
+            # *default_cls* reads, through the snapshot's instances.
+            yield options_snapshot(recorded_in_force())
+        return
+    if isinstance(opts, type) or not dataclasses.is_dataclass(opts):
+        yield options_snapshot(recorded_in_force())
+        return
+    with use_options(opts):
+        yield options_snapshot(recorded_in_force(), own=opts)
+
+
+def _body_options(
+    bodies: "Iterable[ProjectInstructionBody]", source: OptionsSource
+) -> "dict[type, Any]":
+    """Build one options instance per distinct body class from *source*: the walk validation.
+
+    Every instance is built before this returns, so a value a later project's
+    class rejects raises before the first body runs. A body with no options
+    class contributes nothing; two bodies on one class share its instance.
+    """
+    built: "dict[type, Any]" = {}
+    for body in bodies:
+        if body.options_cls is not None and body.options_cls not in built:
+            built[body.options_cls] = source.build(body.options_cls)
+    return built
+
+
+async def _call_body(method: "Callable[..., Awaitable[Any]]", opts_cls: Any, built: Any) -> Any:
+    """Await one body: with its own instance laid (it gives nothing), or bare with no class."""
+    from ..params import own_options
+
+    if opts_cls is None:
+        return await method()
+    instance = built[opts_cls]
+    with own_options(instance):
+        return await method(instance)
 
 
 def _walk_order(
@@ -532,20 +586,19 @@ async def _run_bodies(
 ) -> "dict[str, Any]":
     """Run every applicable project's body for *name* in the spec's walk order.
 
-    Each body is built ITS OWN options class from *source* -- the subset of
-    the CLI's kwargs it declares, or the fields it shares with a suite's
-    options by declaring class -- so a project never sees a neighbour's flags.
-    ``continue_on_failure`` False stops after the first failing Result; True
+    Each body is built ITS OWN options class from *source* (:func:`_body_options`),
+    every one before the first body runs, so a value a later project's class
+    rejects stops the walk before it touches anything; each body then runs
+    with its own instance laid, so ``otto.get_options(type(opts)) is opts``
+    inside it. ``continue_on_failure`` False stops after the first failing Result; True
     attempts every project. The dict preserves walk order for the combiner.
     """
     spec = PROJECT_INSTRUCTIONS.get(name).spec
+    walk = _walk_order(name, ctx, projects)
+    built = _body_options((body for _project, _actions, body in walk), source)
     results: "dict[str, Any]" = {}
-    for project, actions, body in _walk_order(name, ctx, projects):
-        method = getattr(actions, body.method_name)
-        if body.options_cls is None:
-            result = await method()
-        else:
-            result = await method(source.build(body.options_cls))
+    for project, actions, body in walk:
+        result = await _call_body(getattr(actions, body.method_name), body.options_cls, built)
         results[project.name] = result
         if isinstance(result, Result) and not result.is_ok and not spec.continue_on_failure:
             break
@@ -603,8 +656,20 @@ async def _walk(
     return _combine(name, await _run_bodies(name, ctx, projects, source))
 
 
+def _handed_source(kwargs: "dict[str, Any]") -> OptionsSource:
+    """Return the values in force with *kwargs* handed over them: a dispatch given no source."""
+    from ..params import options_snapshot, recorded_in_force
+
+    return options_snapshot(recorded_in_force(), handed=kwargs)
+
+
 def project_instruction_body_options(
-    name: str, ctx: "OttoContext", kwargs: "dict[str, Any]", *, announce: bool = True
+    name: str,
+    ctx: "OttoContext",
+    kwargs: "dict[str, Any]",
+    *,
+    announce: bool = True,
+    source: "OptionsSource | None" = None,
 ) -> "list[Any]":
     """Build every applicable project's own options instance for *name*, in walk order.
 
@@ -617,9 +682,9 @@ def project_instruction_body_options(
     own-class-once rule for a standalone instruction.
 
     Called on EVERY dispatch of a project instruction, before
-    :func:`run_project_instruction` -- from the ``otto run <name>`` leaf
-    (``otto.cli.run._project_leaf``) and from
-    :func:`otto.instructions.run_instruction` -- so a bad value in a body's
+    :func:`run_project_instruction`, through :func:`prepare_project_instruction`
+    (the ``otto run <name>`` leaf and :func:`otto.instructions.run_instruction`)
+    -- so a bad value in a body's
     own options fails the same way whether or not a dry run was requested.
     Under ``--dry-run`` the leaf also prints what this returns. The seven
     first-party entry points (``install``, ...) build their own base options
@@ -630,20 +695,53 @@ def project_instruction_body_options(
     and dependency note is logged once, by the walk that acts; a dry run's
     walk is the only one and announces.
 
-    A body with no options class contributes nothing. Raises whatever
+    The instances are built from *source*; with none, from the values in
+    force with *kwargs* handed over them (as :func:`run_project_instruction`
+    builds). A body with no options class contributes nothing. Raises whatever
     ``_applicable`` raises for a build-shaped walk with an unmet, required,
     lab-inactive dependency (:class:`InactiveRequiredDependencyError`) --
     exactly as a real run's walk would, before either builds anything.
     """
-    source = OptionsSource.from_kwargs(kwargs)
-    seen: set[type] = set()
-    instances: list[Any] = []
-    for _project, _actions, body in _walk_order(name, ctx, ctx.ordered_projects, announce=announce):
-        if body.options_cls is None or body.options_cls in seen:
-            continue
-        seen.add(body.options_cls)
-        instances.append(source.build(body.options_cls))
-    return instances
+    if source is None:
+        source = _handed_source(kwargs)
+    walk = _walk_order(name, ctx, ctx.ordered_projects, announce=announce)
+    return list(_body_options((body for _project, _actions, body in walk), source).values())
+
+
+@dataclasses.dataclass(frozen=True)
+class PreparedInstruction:
+    """What :func:`prepare_project_instruction` prepared for one dispatch.
+
+    *own* holds each applicable body class's instance, one per distinct
+    class, in walk order; *source* is what the run walks with, holding those
+    very instances.
+    """
+
+    own: "list[Any]"
+    source: OptionsSource
+
+
+def prepare_project_instruction(
+    name: str,
+    ctx: "OttoContext",
+    kwargs: "dict[str, Any]",
+    *,
+    announce: bool,
+    source: "OptionsSource | None" = None,
+) -> PreparedInstruction:
+    """Build *name*'s body instances once, and the source its run walks with: the one preparation.
+
+    Returns :func:`project_instruction_body_options`' instances and *source*
+    (with none, the values in force with *kwargs* handed over them) holding
+    those very instances, so :func:`run_project_instruction` hands each body
+    the object that was validated and builds none again. The ``otto run
+    <name>`` leaf and :func:`otto.instructions.run_instruction` both call it.
+    """
+    if source is None:
+        source = _handed_source(kwargs)
+    own = project_instruction_body_options(name, ctx, kwargs, announce=announce, source=source)
+    instances = {**source.instances, **{type(instance): instance for instance in own}}
+    return PreparedInstruction(own=own, source=dataclasses.replace(source, instances=instances))
 
 
 ####################
@@ -864,10 +962,10 @@ async def install(*, opts: "InstallOptions | OptionsSource | None" = None) -> Re
     there and means nothing without it -- a plain install has no state to
     recover from, it just installs.
     """
-    source = _source(opts, InstallOptions)
-    if source.build(InstallOptions).ensure:
-        return await ensure_installed(opts=source)
-    return await _install(source)
+    with _call_options(opts, InstallOptions) as source:
+        if source.build(InstallOptions).ensure:
+            return await ensure_installed(opts=source)
+        return await _install(source)
 
 
 async def _install(source: OptionsSource) -> Result:
@@ -891,13 +989,13 @@ async def uninstall(*, opts: "UninstallOptions | OptionsSource | None" = None) -
     what they exist to capture, and N projects each sweeping the same host would
     mean N transfers with each overwriting the last.
     """
-    source = _source(opts, UninstallOptions)
-    base = source.build(UninstallOptions)
-    ctx, projects = _lab()
-    torn = await _walk("uninstall", ctx, projects, source)
-    if not base.debug_logs:
-        return torn
-    return _reported(torn, await _sweep_debug_logs(ctx))
+    with _call_options(opts, UninstallOptions) as source:
+        base = source.build(UninstallOptions)
+        ctx, projects = _lab()
+        torn = await _walk("uninstall", ctx, projects, source)
+        if not base.debug_logs:
+            return torn
+        return _reported(torn, await _sweep_debug_logs(ctx))
 
 
 async def cleanup(*, opts: "CleanupOptions | OptionsSource | None" = None) -> Result:
@@ -931,17 +1029,21 @@ async def cleanup(*, opts: "CleanupOptions | OptionsSource | None" = None) -> Re
     dirtier for having hop edges and reporting them would leave ``cleanup``
     unable to answer Success on any real lab.
     """
-    source = _source(opts, CleanupOptions)
-    base = source.build(CleanupOptions)
-    ctx, projects = _lab()
-    cleaned = await _walk("cleanup", ctx, projects, source)
-    swept = await _sweep_debug_logs(ctx) if base.debug_logs else Result(status=Status.Success)
-    removed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
-    repaired = (
-        await _reset_impairments(ctx) if base.reset_impairments else Result(status=Status.Success)
-    )
-    reaped = await _remove_tunnels(ctx) if base.remove_tunnels else Result(status=Status.Success)
-    return _reported(cleaned, swept, removed, repaired, reaped)
+    with _call_options(opts, CleanupOptions) as source:
+        base = source.build(CleanupOptions)
+        ctx, projects = _lab()
+        cleaned = await _walk("cleanup", ctx, projects, source)
+        swept = await _sweep_debug_logs(ctx) if base.debug_logs else Result(status=Status.Success)
+        removed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
+        repaired = (
+            await _reset_impairments(ctx)
+            if base.reset_impairments
+            else Result(status=Status.Success)
+        )
+        reaped = (
+            await _remove_tunnels(ctx) if base.remove_tunnels else Result(status=Status.Success)
+        )
+        return _reported(cleaned, swept, removed, repaired, reaped)
 
 
 ####################
@@ -962,15 +1064,15 @@ async def get_logs(*, opts: "GetLogsOptions | OptionsSource | None" = None) -> R
     unenforceable would report success having promised logs nobody went looking
     for.
     """
-    source = _source(opts, GetLogsOptions)
-    base = source.build(GetLogsOptions)
-    if base.require_product_logs and not base.product_logs:
-        return Result(status=Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
-    ctx, projects = _lab()
-    hauled = await _walk("get-logs", ctx, projects, source)
-    if not base.debug_logs:
-        return hauled
-    return _reported(hauled, await _sweep_debug_logs(ctx))
+    with _call_options(opts, GetLogsOptions) as source:
+        base = source.build(GetLogsOptions)
+        if base.require_product_logs and not base.product_logs:
+            return Result(status=Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
+        ctx, projects = _lab()
+        hauled = await _walk("get-logs", ctx, projects, source)
+        if not base.debug_logs:
+            return hauled
+        return _reported(hauled, await _sweep_debug_logs(ctx))
 
 
 ####################
@@ -991,14 +1093,14 @@ async def install_tools(*, opts: "InstallToolsOptions | OptionsSource | None" = 
     leaves ``opts.toolchain`` to this sweep; if this sweep were dropped,
     asking for a toolchain would be a silent no-op end to end.
     """
-    source = _source(opts, InstallToolsOptions)
-    base = source.build(InstallToolsOptions)
-    ctx, projects = _lab()
-    installed = await _walk("install-tools", ctx, projects, source)
-    if not installed.is_ok or not base.toolchain:
-        return installed
-    placed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_install_toolchain_tools))
-    return _reported(installed, placed)
+    with _call_options(opts, InstallToolsOptions) as source:
+        base = source.build(InstallToolsOptions)
+        ctx, projects = _lab()
+        installed = await _walk("install-tools", ctx, projects, source)
+        if not installed.is_ok or not base.toolchain:
+            return installed
+        placed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_install_toolchain_tools))
+        return _reported(installed, placed)
 
 
 async def uninstall_tools(*, opts: "UninstallToolsOptions | OptionsSource | None" = None) -> Result:
@@ -1013,14 +1115,14 @@ async def uninstall_tools(*, opts: "UninstallToolsOptions | OptionsSource | None
     The toolchain half is only here, for the reason :func:`install_tools`
     gives.
     """
-    source = _source(opts, UninstallToolsOptions)
-    base = source.build(UninstallToolsOptions)
-    ctx, projects = _lab()
-    removed = await _walk("uninstall-tools", ctx, projects, source)
-    if not base.toolchain:
-        return removed
-    swept = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
-    return _reported(removed, swept)
+    with _call_options(opts, UninstallToolsOptions) as source:
+        base = source.build(UninstallToolsOptions)
+        ctx, projects = _lab()
+        removed = await _walk("uninstall-tools", ctx, projects, source)
+        if not base.toolchain:
+            return removed
+        swept = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
+        return _reported(removed, swept)
 
 
 ####################
@@ -1075,7 +1177,6 @@ async def status(*, opts: "StatusOptions | OptionsSource | None" = None) -> Proj
     from ..config.scope import active, scopes_of, switched_off
     from ..models.dependencies import normalize_name
 
-    source = _source(opts, StatusOptions)
     # THE TABLE'S OWN BODY AND COMBINER, exactly as :func:`_run_bodies` and
     # :func:`_combine` use them. This walk is hand-written rather than theirs --
     # the counted-project rule and the scoping rows are status' alone -- but a
@@ -1094,7 +1195,7 @@ async def status(*, opts: "StatusOptions | OptionsSource | None" = None) -> Proj
         scope = scopes_of(ctx).get(project.name)
         if scope is not None:
             scoping[project.name] = _scope_row(scope, skipped=project.name not in walked)
-    states: "dict[str, InstallState]" = {}
+    counted: "list[tuple[Project, ProjectActions, ProjectInstructionBody]]" = []
     for project in projects:
         # The walks' own predicate, not a copy of its condition: a project they
         # leave out has no state to fold, and asking it for one reaches a fleet
@@ -1114,8 +1215,14 @@ async def status(*, opts: "StatusOptions | OptionsSource | None" = None) -> Proj
             # status body is in the table, and it declares an options class.
             if body is None or body.options_cls is None:  # pragma: no cover
                 continue
+            counted.append((project, actions, body))
+    with _call_options(opts, StatusOptions) as source:
+        # Every counted body's options are built before the first is asked.
+        built = _body_options((body for _project, _actions, body in counted), source)
+        states: "dict[str, InstallState]" = {}
+        for project, actions, body in counted:
             method = getattr(actions, body.method_name)
-            states[project.name] = await method(source.build(body.options_cls))
+            states[project.name] = await _call_body(method, body.options_cls, built)
     return ProjectStatus(overall=_combine("status", states), projects=states, scoping=scoping)
 
 
@@ -1539,16 +1646,16 @@ async def ensure_installed(*, opts: "InstallOptions | OptionsSource | None" = No
     options class IT needs from the one set of flags the operator typed, so a
     project that declared a field on its own install options still sees it here.
     """
-    source = _source(opts, InstallOptions)
-    state = (await status(opts=source)).overall
-    if state is InstallState.INSTALLED:
-        return Result(status=Status.Skipped, msg="already installed")
-    if state is InstallState.PARTIAL and source.build(InstallOptions).recover_partial:
-        torn = await uninstall(opts=source)
-        if not torn.is_ok:
-            refusal = "partial-install recovery: teardown failed, not installing over it"
-            return Result(status=torn.status, msg=f"{refusal}: {torn.msg}")
-    return await _install(source)
+    with _call_options(opts, InstallOptions) as source:
+        state = (await status(opts=source)).overall
+        if state is InstallState.INSTALLED:
+            return Result(status=Status.Skipped, msg="already installed")
+        if state is InstallState.PARTIAL and source.build(InstallOptions).recover_partial:
+            torn = await uninstall(opts=source)
+            if not torn.is_ok:
+                refusal = "partial-install recovery: teardown failed, not installing over it"
+                return Result(status=torn.status, msg=f"{refusal}: {torn.msg}")
+        return await _install(source)
 
 
 async def ensure_uninstalled(*, opts: "UninstallOptions | OptionsSource | None" = None) -> Result:
@@ -1557,10 +1664,10 @@ async def ensure_uninstalled(*, opts: "UninstallOptions | OptionsSource | None" 
     PARTIAL runs the uninstall -- that is the case a boolean ``is_installed``
     could not see, and leaving half a lab installed is what it would do.
     """
-    source = _source(opts, UninstallOptions)
-    if await is_uninstalled():
-        return Result(status=Status.Skipped, msg="already uninstalled")
-    return await uninstall(opts=source)
+    with _call_options(opts, UninstallOptions) as source:
+        if await is_uninstalled():
+            return Result(status=Status.Skipped, msg="already uninstalled")
+        return await uninstall(opts=source)
 
 
 async def ensure_clean(*, opts: "CleanupOptions | OptionsSource | None" = None) -> Result:
@@ -1570,10 +1677,10 @@ async def ensure_clean(*, opts: "CleanupOptions | OptionsSource | None" = None) 
     condition than uninstalled (dev tools and toolchain tools are not
     products), so an uninstalled-but-tooled lab still gets cleaned.
     """
-    source = _source(opts, CleanupOptions)
-    if await is_clean():
-        return Result(status=Status.Skipped, msg="already clean")
-    return await cleanup(opts=source)
+    with _call_options(opts, CleanupOptions) as source:
+        if await is_clean():
+            return Result(status=Status.Skipped, msg="already clean")
+        return await cleanup(opts=source)
 
 
 ####################
@@ -1603,7 +1710,9 @@ dispatches through.
 """
 
 
-async def run_project_instruction(name: str, kwargs: "dict[str, Any]") -> Any:
+async def run_project_instruction(
+    name: str, kwargs: "dict[str, Any]", *, source: "OptionsSource | None" = None
+) -> Any:
     """Dispatch ``otto run <name>``: the parsed flags in, the rendered value out.
 
     The seven first-party names route through their public function, which
@@ -1611,8 +1720,14 @@ async def run_project_instruction(name: str, kwargs: "dict[str, Any]") -> Any:
     no project body may perform; every other project instruction is a plain
     walk. ``render``, when the spec sets one, turns the combined value into
     what the leaf prints and exits on.
+
+    The bodies build from *source*; with none, from the values in force
+    (the recorded flags and the task's layers) with *kwargs* handed over
+    them. The ``otto run <name>`` leaf passes the source of its own record,
+    so a flag nobody typed reaches only the classes the command offers.
     """
-    source = OptionsSource.from_kwargs(kwargs)
+    if source is None:
+        source = _handed_source(kwargs)
     fn_name = _ENTRIES.get(name)
     if fn_name is not None:
         entry_fn: "Callable[..., Awaitable[Any]]" = globals()[fn_name]

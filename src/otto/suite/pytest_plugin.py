@@ -104,14 +104,14 @@ async def _converge(step: str, source: "OptionsSource") -> None:
     """Run one ``ensure`` step through the same ``otto.project`` function.
 
     This is the function ``otto run <name> --ensure`` calls, so a marker and
-    the command cannot diverge. *source* is the dispatched verb's parsed
-    flags (:meth:`otto.context.OttoContext.verb_option_source`), which each
-    project's install body builds its own options class from by field name, as
-    ``otto run`` does: a flag registered only for ``run`` takes its default
-    here. The function is looked up on the package at call time (not
-    imported at module scope): ``otto.project`` is the seam every other
-    caller uses, and resolving late is what lets a test double stand in for
-    it.
+    the command cannot diverge. *source* is the option values in force
+    (``_otto_ensure`` builds it), which each project's install body builds its
+    own options class from by field name, as ``otto run`` does: a flag
+    registered only for ``run`` takes its default here, and every body's
+    options are validated before the first body runs. The function is looked
+    up on the package at call time (not imported at module scope):
+    ``otto.project`` is the seam every other caller uses, and resolving late
+    is what lets a test double stand in for it.
     """
     from .. import project
 
@@ -320,17 +320,19 @@ class OttoFixturesPlugin:
         what makes the closest node win outright (test, then class, then
         module); nothing merges.
 
-        The converge builds each install body's options from the ``test``
-        verb's parsed flags, as bound on the run's context
-        (:meth:`~otto.context.OttoContext.verb_option_source`); with nothing
-        bound, every body takes its defaults.
+        The converge builds each install body's options from the option
+        values in force (:func:`~otto.params.options_snapshot` over
+        :func:`~otto.params.recorded_in_force`): the ``test`` command's
+        recorded flags, where only a typed flag reaches a class the command
+        did not offer, with every ``use_options`` block around the fixture
+        laid over them; with nothing recorded, every body takes its defaults.
         """
-        from ..run_context import get_context
+        from ..params import options_snapshot, recorded_in_force
 
         marker = request.node.get_closest_marker("ensure")
         if marker is None:
             return
-        source = get_context().verb_option_source()
+        source = options_snapshot(recorded_in_force())
         runner = runner_for(request)
         for step in ensure_path(marker.args):
             runner.run(_converge(step, source), context=contextvars.copy_context())

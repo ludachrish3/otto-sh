@@ -1,14 +1,18 @@
 """The ``ensure`` marker converges from the dispatched verb's options (spec §4.5).
 
-An install body can only see flags registered for ``test``: the marker's
-converge builds each body's options from the ``test`` verb's parsed flags, as
-bound on the context, so a flag registered only for ``run`` takes its default.
+The marker's converge builds each install body's options from the option
+values in force: the ``test`` command's recorded flags, where only a typed
+flag reaches a class the command did not offer, with every ``use_options``
+block around the fixture laid over them. A flag registered only for ``run``
+is not among them, so it takes its default.
 """
+
+import pytest
 
 from otto import options
 from otto.context import get_context
 from otto.params import register_options
-from otto.project import InstallOptions, orchestrator
+from otto.project import InstallOptions, InstallState, orchestrator
 from otto.project import actions as actions_module
 from otto.result import Result
 from otto.utils import Status
@@ -109,3 +113,142 @@ def test_the_getting_started_variant_reaches_the_ensured_install(
     run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(passed=1)
     [opts] = built
     assert (opts.variant, opts.ensure) == ("lab", False)
+
+
+@options
+class GuardedInstall(InstallOptions):
+    """The second project's install class: it rejects the ``test`` flag's value."""
+
+    lab_env: str = "staging"
+
+    def __post_init__(self) -> None:
+        if self.lab_env == "bad":
+            raise ValueError("lab_env must not be bad")
+
+
+def test_a_later_projects_bad_value_is_a_setup_error_before_any_body(
+    pytester, otto_plugins, monkeypatch
+) -> None:
+    """Both projects' install classes are built before the first install body runs."""
+    from types import SimpleNamespace
+
+    from otto.project.state import ProjectStatus
+
+    register_options(LabEnvOptions, verbs=["test"])
+    get_context().bind_verb_options(verb="test", kwargs={"lab_env": "bad"})
+    ran: list[str] = []
+
+    async def first_install(opts):
+        del opts
+        ran.append("a")
+        return Result(status=Status.Success)
+
+    async def second_install(opts):
+        del opts
+        ran.append("b")
+        return Result(status=Status.Success)
+
+    def body(cls):
+        return SimpleNamespace(method_name="install", options_cls=cls)
+
+    walk = [
+        (SimpleNamespace(name="a"), SimpleNamespace(install=first_install), body(InstallOptions)),
+        (SimpleNamespace(name="b"), SimpleNamespace(install=second_install), body(GuardedInstall)),
+    ]
+
+    async def uninstalled(*, opts):
+        del opts
+        return ProjectStatus(overall=InstallState.UNINSTALLED, projects={}, scoping={})
+
+    monkeypatch.setattr(orchestrator, "status", uninstalled)
+    monkeypatch.setattr(orchestrator, "_lab", lambda: (get_context(), []))
+    monkeypatch.setattr(orchestrator, "_walk_order", lambda *_a, **_k: walk)
+    run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(errors=1)
+    assert ran == []
+
+
+@options
+class DebugInstall(InstallOptions):
+    """Registered for ``test``: ``otto test --debug-level 3`` sets it, and it is install's class."""
+
+    debug_level: int = 0
+
+
+def test_an_ensured_install_hook_reads_the_test_flag_and_the_bodys_own_instance(
+    pytester, otto_plugins, monkeypatch
+) -> None:
+    """The real converge hands ``--debug-level 3`` to the install body and its hook.
+
+    The options guide promises it: a test marked ``ensure("installed")`` run
+    with ``--debug-level 3`` installs the product with that value. The hook
+    reads it with ``otto.get_options``, and gets the body's own ``opts``.
+    """
+    from types import SimpleNamespace
+
+    import otto
+    from otto.project.state import ProjectStatus
+
+    register_options(DebugInstall, verbs=["test"])
+    get_context().bind_verb_options(verb="test", kwargs={"debug_level": 3})
+    seen: list[tuple[int, bool]] = []
+
+    def hook(opts) -> None:
+        read = otto.get_options(DebugInstall)
+        seen.append((read.debug_level, read is opts))
+
+    async def install(opts):
+        hook(opts)
+        return Result(status=Status.Success)
+
+    walk = [
+        (
+            SimpleNamespace(name="a"),
+            SimpleNamespace(install=install),
+            SimpleNamespace(method_name="install", options_cls=DebugInstall),
+        )
+    ]
+
+    async def uninstalled(*, opts):
+        del opts
+        return ProjectStatus(overall=InstallState.UNINSTALLED, projects={}, scoping={})
+
+    monkeypatch.setattr(orchestrator, "status", uninstalled)
+    monkeypatch.setattr(orchestrator, "_lab", lambda: (get_context(), []))
+    monkeypatch.setattr(orchestrator, "_walk_order", lambda *_a, **_k: walk)
+    run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(passed=1)
+    assert seen == [(3, True)]
+
+
+@options
+class LabEnv2:
+    """Offered by the recorded ``test`` command: its parsed value is ``lab-default``."""
+
+    lab_env: str = "lab-default"
+
+
+@pytest.mark.parametrize(("given", "expected"), [((), "staging"), (("lab_env",), "lab-default")])
+def test_an_unset_test_flag_does_not_reach_an_install_bodys_field_and_a_typed_one_does(
+    pytester, otto_plugins, monkeypatch, given, expected
+) -> None:
+    """``WidgetInstall`` is not offered: it takes a recorded value only when it was typed."""
+    from otto.params import RecordedOptions
+    from otto.run_context import record_options
+
+    record_options(
+        get_context(),
+        RecordedOptions(
+            group="test",
+            parsed={"lab_env": "lab-default"},
+            given=frozenset(given),
+            offered=(LabEnv2,),
+        ),
+    )
+    built: list[WidgetInstall] = []
+
+    async def fake_ensure_installed(*, opts):
+        built.append(opts.build(WidgetInstall))
+        return Result(status=Status.Success)
+
+    monkeypatch.setattr(orchestrator, "ensure_installed", fake_ensure_installed)
+    run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(passed=1)
+    assert [o.lab_env for o in built] == [expected]

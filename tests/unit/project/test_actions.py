@@ -638,11 +638,10 @@ async def test_cleanup_hands_a_project_override_an_instance_of_its_own_class():
     ``ensure("clean")`` marker. The instance is rebuilt as the registered
     body's class now.
 
-    Two claims, and the second is the one a name-matching rebuild would get
-    wrong: the project's own ``soft`` takes its DEFAULT, and ``product_logs``
-    ARRIVES -- ``cleanup``'s caller asked to skip the log haul and the
-    override has to hear it, which it does because the field is shared by
-    declaring class.
+    Two claims: the project's own ``soft`` takes its DEFAULT, and
+    ``product_logs`` ARRIVES -- ``cleanup``'s caller asked to skip the log
+    haul and the override has to hear it, which it does because both classes
+    carry a field of that name.
 
     Kills: handing over the base instance (``AttributeError`` on ``soft``),
     and building the project's class from defaults only (``product_logs`` comes
@@ -681,6 +680,54 @@ async def test_cleanup_hands_a_project_override_an_instance_of_its_own_class():
         ("uninstall_dev_tools", {"owner": "acme"}),
         ("remove_staged_files", {"owner": "acme"}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_hands_uninstall_what_it_built_and_hooks_read_the_same():
+    """The override's instance and otto's base are laid for the call; only ``product_logs`` gives.
+
+    A hook inside the override reads either class back as the object the
+    body got (or the base ``cleanup`` built), and an unrelated class with a
+    ``product_logs`` field hears the caller's choice.
+    """
+    from typing import Annotated
+
+    import typer
+
+    from otto import get_options, options
+    from otto.cli.run import instruction
+
+    @options
+    class SoftUninstall(UninstallOptions):
+        soft: Annotated[bool, typer.Option(help="Quiesce before teardown.")] = True
+
+    @options
+    class Logs:
+        product_logs: bool = True
+
+    seen = {}
+
+    with registering_project("softy"):
+
+        @register_project_actions
+        class Softy(ProjectActions):
+            @instruction(options=SoftUninstall)
+            async def uninstall(self, opts: SoftUninstall):
+                seen["opts"] = opts
+                seen["own"] = get_options(type(opts))
+                seen["base"] = get_options(UninstallOptions)
+                seen["logs"] = get_options(Logs)
+                return Result(status=Status.Success)
+
+    ctx, _hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
+    await _actions(ctx, cls=Softy).cleanup(CleanupOptions(product_logs=False, debug_logs=False))
+
+    opts = seen["opts"]
+    assert opts.product_logs is False
+    assert opts.debug_logs is True
+    assert seen["own"] is opts
+    assert seen["base"].debug_logs is True
+    assert seen["logs"].product_logs is False
 
 
 @pytest.mark.asyncio

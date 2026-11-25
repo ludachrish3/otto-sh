@@ -181,9 +181,9 @@ values with `ctx.options(DeviceTestOptions)`, as the test module above does.
 **The one rule:** the class must be defined in an init module, or in a
 module an init module imports; a test module or `conftest.py` cannot register
 one (why:
-[Registering a class for a verb](options-classes.md#registering-a-class-for-a-verb)).
-Validating fields, the lazy `register_options` form, sharing fields and
-the rest are in {doc}`options-classes`.
+[Registering a class for a verb](options-advanced.md#registering-a-class-for-a-verb)).
+Validating fields is in {doc}`options-classes`; the lazy `register_options`
+form, sharing fields and the rest are in {doc}`options-advanced`.
 
 ## What every test gets
 
@@ -197,7 +197,7 @@ in its signature. They work the same in a test class and in a test function.
 | per test | the `ensure` marker's converge; a start banner in the log; monitor start/end events under `--monitor`; `expect` failures failing the test | `test_dir`, `expect`, `monitor` |
 
 - `ctx`: the active {class}`~otto.context.OttoContext`.
-  - `ctx.options(Cls)` is this run's instance of a registered options class
+  - `ctx.options(Cls)` is this run's instance of any options class
     ({doc}`options-classes`).
   - `ctx.cov` is whether this run collects coverage. Branch on it when a
     teardown would otherwise erase the counters; the example is in
@@ -297,7 +297,7 @@ named**, never a skip ({class}`~otto.errors.EnsureStateError`). A misspelled
 step stops the run at collection. What each project instruction does, and how
 a project customizes it, is {doc}`../cli/run/defaults`; which of `otto test`'s
 flags reach an install body is in
-[Which flags reach an install body under `otto test`](options-classes.md#which-flags-reach-an-install-body-under-otto-test).
+[Which flags reach an install body under `otto test`](options-advanced.md#which-flags-reach-an-install-body-under-otto-test).
 
 ## Setup and teardown as fixtures
 

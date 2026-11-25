@@ -56,6 +56,7 @@ ignore = [
 "scripts/**" = ["TID251", "INP001", "T201"]  # scripts are CLI tools: namespace packages + print() are by design; TID251: the banned-api list guards src/otto only
 "docs/conf.py" = ["INP001", "ANN", "D"]  # Sphinx build config — not autodoc'd; annotations and pydocstyle add nothing here
 "docs/examples/*/tests/**" = ["S101"]  # an example project's pytest tests assert like any pytest test
+"docs/examples/options/acme_options.py" = ["S101"]  # the options guide shows a test in the same file as the class it reads
 "docs/examples/**" = ["INP001", "T201"]  # an example project is not a package; its scripts print
 "**/__init__.py" = ["F401"]
 "src/otto/_shim.py" = ["PTH"]  # the console-script shim: os.path by design — pathlib costs file syscalls on every command

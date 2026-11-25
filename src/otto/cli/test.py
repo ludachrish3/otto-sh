@@ -183,6 +183,7 @@ if TYPE_CHECKING:
     from ..config.project import Project
     from ..suite.plugin import SelectedTest
     from ..suite.run import Listing
+    from .invoke import LeafOptions
 
 
 TEST_HELP = "Run tests by name or marker expression."
@@ -710,31 +711,28 @@ class _OttoTestCommand(TyperCommand):
         return rest
 
 
-def _run(ctx: typer.Context, names: "list[str]", verb_kwargs: "dict[str, Any]") -> None:
-    """Run (or dry-run) ``otto test``: bind the verb's options, preflight or run.
+def _run(ctx: typer.Context, names: "list[str]", prepared: "LeafOptions") -> None:
+    """Run (or dry-run) ``otto test`` with the options its leaf prepared.
 
     The run options were constructed and checked at parse time
     (:func:`_check_selection`); every rule between them is the library's.
+    *prepared* holds the ``test`` classes, built once and recorded on the
+    context by :func:`otto.cli.invoke.prepare_leaf_options`: a dry run shows
+    them, and :func:`otto.suite.run.run_tests` reads them from the record, so
+    a test reads the same objects.
     ``CoverageNotInstrumentedError`` is deliberately NOT caught here: its
     per-product verdict table is rendered once, on the top-level boundary in
     :mod:`otto.cli.main` (:func:`~otto.cli.invoke.render_instrumentation_refusal`).
     """
-    if ctx.resilient_parsing:
-        return
-
     from ..coverage.config import DestinationError
-    from ..params import OptionsValidationError, verb_option_classes
+    from ..params import OptionsValidationError
     from ..run_context import get_context
     from ..suite.run import RUN_OPTIONS_KEY
     from .invoke import dry_run_requested, usage_error_from
 
     run_options = ctx.meta[RUN_OPTIONS_KEY]
     otto_ctx = get_context()
-    try:
-        otto_ctx.bind_verb_options(verb="test", kwargs=verb_kwargs)
-        instances = [otto_ctx.options(origin.cls) for origin in verb_option_classes("test")]
-    except OptionsValidationError as e:
-        raise usage_error_from(e) from e
+    instances = list(prepared.instances.values())
 
     if dry_run_requested(ctx):
         from ..suite.run import prepare_run
@@ -759,9 +757,7 @@ def _run(ctx: typer.Context, names: "list[str]", verb_kwargs: "dict[str, Any]") 
     from ..suite.selection import UnknownSelectionError
 
     try:
-        result = run_tests(
-            names=names, run_options=run_options, options=instances, output_dir=otto_ctx.output_dir
-        )
+        result = run_tests(names=names, run_options=run_options, output_dir=otto_ctx.output_dir)
     except (OptionsValidationError, DestinationError) as e:
         raise usage_error_from(e, flags=RUN_FLAGS) from e
     except UnknownSelectionError as e:
@@ -863,17 +859,29 @@ def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typ
     A verb field whose name is a run flag's, or ``names``, raises
     ``OptionsCollisionError`` here, before any test runs. *verb_params*
     replaces the registry's (the completion fast path's cached stubs).
+
+    The leaf prepares its values once through
+    :func:`otto.cli.invoke.prepare_leaf_options` (one
+    :class:`~otto.cli.invoke.LeafOptionSpec`: every class registered for
+    ``test``, none on the fast path), which records what the command was
+    given on the context, and is stamped by
+    :func:`~otto.cli.invoke.stamp_options_leaf`. Under resilient parsing (a
+    completion) it returns before the preparation, so it builds and
+    validates nothing.
     """
-    from ..params import sensitive_field_names, verb_option_classes
-    from .invoke import DRY_RUN_PREVIEW_ATTR, DRY_RUN_SELF_FINISHING_ATTR, SENSITIVE_FIELDS_ATTR
+    from ..params import verb_option_classes
+    from .invoke import DRY_RUN_PREVIEW_ATTR, LeafOptionSpec, stamp_options_leaf
 
     run_params = _run_params()
-    sensitive: set[str] = set()
     if verb_params is None:
         verb_params = test_verb_params()
-        for origin in verb_option_classes("test"):
-            sensitive |= sensitive_field_names(origin.cls)  # ty: ignore[invalid-argument-type]
-    verb_names = [p.name for p in verb_params]
+        spec = LeafOptionSpec(
+            group="test", build=tuple(origin.cls for origin in verb_option_classes("test"))
+        )
+    else:
+        # The completion fast path: the registry is not populated, and a
+        # completion builds and validates nothing.
+        spec = LeafOptionSpec(group="test", build=())
 
     names_param = inspect.Parameter(
         "names",
@@ -896,9 +904,14 @@ def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typ
         # The cast: typer's own commands hand out the vendored click base
         # class under the `typer.Context` alias (see `otto.cli.invoke`).
         ctx = cast("typer.Context", get_current_context())
+        if ctx.resilient_parsing:  # completion: build and validate nothing
+            return
+        from .invoke import prepare_leaf_options
+
         names = list(kw.pop("names", None) or [])
-        verb_kwargs = {name: kw.pop(name) for name in verb_names}
-        _run(ctx, names, verb_kwargs)
+        prepared = prepare_leaf_options(kw, spec, leaf=test)
+        with prepared.scope():
+            _run(ctx, names, prepared)
 
     params = [names_param, *run_params, *verb_params]
     # Both, not just the signature: the completion cache serialises a command
@@ -906,12 +919,11 @@ def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typ
     # parameter's `typer.Option` metadata.
     test.__signature__ = inspect.Signature(params)  # ty: ignore[missing-attribute]
     test.__annotations__ = {p.name: p.annotation for p in params}
-    # Previews its own body under --dry-run (the collected test tree) and
-    # finishes its own dry run after building the verb's options, so the
-    # seam in the preamble leaves it alone.
+    # Previews its own body under --dry-run (the collected test tree) and,
+    # through the stamp, finishes its own dry run after building the verb's
+    # options, so the seam in the preamble leaves it alone.
     setattr(test, DRY_RUN_PREVIEW_ATTR, True)
-    setattr(test, DRY_RUN_SELF_FINISHING_ATTR, True)
-    setattr(test, SENSITIVE_FIELDS_ATTR, frozenset(sensitive))
+    stamp_options_leaf(test, spec)
 
     app = typer.Typer(
         add_completion=False, context_settings={"help_option_names": ["-h", "--help"]}

@@ -1,5 +1,6 @@
 """The per-verb options registry: register_options, the verbs it accepts, and what it refuses."""
 
+import dataclasses
 import inspect
 import sys
 from typing import Annotated
@@ -180,16 +181,37 @@ def test_a_field_named_like_an_otto_flag_collides():
         )
 
 
-def test_flattening_instances_merges_fields_and_refuses_unregistered_or_conflicting():
+def test_flattening_instances_merges_fields_and_refuses_conflicting():
     register_options(ForTestOnly, verbs=["test"])
     register_options(RunOnly, verbs=["run", "test"])
-    flat = flatten_option_instances([ForTestOnly(firmware="2.1")], verb="test")
+    flat = flatten_option_instances([ForTestOnly(firmware="2.1")])
     assert flat == {"lab_env": "staging", "firmware": "2.1"}
-    with pytest.raises(OptionsRegistrationError, match="Rival is not registered") as err:
-        flatten_option_instances([Rival()], verb="test")
-    assert "@otto.options(verbs=['test', ...]) in an init module" in str(err.value)
+    rival = Rival()
+    assert flatten_option_instances([rival]) == {
+        f.name: getattr(rival, f.name) for f in dataclasses.fields(rival)
+    }
     with pytest.raises(ValueError, match="lab_env"):
-        flatten_option_instances([ForTestOnly(lab_env="a"), RunOnly(lab_env="b")], verb="test")
+        flatten_option_instances([ForTestOnly(lab_env="a"), RunOnly(lab_env="b")])
+
+
+def test_flattening_skips_a_computed_field():
+    @dataclasses.dataclass
+    class Computed:
+        lab_env: str = "a"
+        derived: str = dataclasses.field(init=False, default="")
+
+        def __post_init__(self) -> None:
+            self.derived = self.lab_env * 2
+
+    @dataclasses.dataclass
+    class AlsoDerived:
+        derived: str = "other"
+
+    assert flatten_option_instances([Computed()]) == {"lab_env": "a"}
+    assert flatten_option_instances([Computed(), AlsoDerived()]) == {
+        "lab_env": "a",
+        "derived": "other",
+    }
 
 
 def test_registration_while_test_files_load_is_refused():

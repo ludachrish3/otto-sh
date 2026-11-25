@@ -2195,3 +2195,125 @@ def test_run_tests_restores_prior_cov_on_an_active_context(tmp_path, monkeypatch
         reset_context(token)
     assert seen == [True]
     assert ctx.cov_decision is None  # back to undecided: detection applies again
+
+
+# ── Option values: run_tests lays a layer over the caller's ──────────────────
+
+
+def _context_with(tmp_path):
+    """An active context whose bootstrap holds one stub project."""
+    from otto.context import OttoContext
+    from otto.labs.loader import Lab
+
+    return OttoContext(
+        lab=Lab(name="test"), bootstrap=fake_bootstrap_result([_stub_project(tmp_path)])
+    )
+
+
+@pytest.mark.asyncio
+async def test_nested_calls_keep_what_they_did_not_set_and_restore_on_the_way_out(
+    tmp_path, monkeypatch
+):
+    """run_instruction -> run_tests -> a block in a test body: each keeps what it does not set."""
+    from otto import get_options, options, use_options
+    from otto.instruction_catalog import STANDALONE_INSTRUCTIONS
+    from otto.instructions import instruction, run_instruction
+
+    @options
+    class Acme:
+        debug_level: int = 0
+        other: int = 0
+
+    @options
+    class Install:
+        variant: str = "field"
+
+    reads: dict = {}
+
+    def fake_main(_args, plugins=(), **_kwargs):
+        collected(plugins)
+        with use_options(Acme(other=7)):
+            reads["block"] = (get_options(Acme).other, get_options(Install).variant)
+        reads["after_block"] = get_options(Acme).debug_level
+        return pytest.ExitCode.OK
+
+    monkeypatch.setattr("pytest.main", fake_main)
+    # The post-run coverage step runs its own event loop, and this run is
+    # called from inside an instruction's: nothing is collected here anyway.
+    monkeypatch.setattr("otto.suite.run._post_run_coverage_beside", lambda *_a, **_k: None)
+
+    @instruction()
+    async def nested_tests() -> None:
+        run_tests(names=[_ALPHA], options=[Install(variant="debug")], output_dir=tmp_path)
+        reads["after_run_tests"] = (get_options(Install).variant, get_options(Acme).debug_level)
+
+    ctx = _context_with(tmp_path)
+    try:
+        await run_instruction(ctx, name="nested-tests", opts=[Acme(debug_level=1)])
+    finally:
+        STANDALONE_INSTRUCTIONS.unregister(name="nested-tests")
+    assert reads["block"] == (7, "debug")
+    assert reads["after_block"] == 1
+    assert reads["after_run_tests"] == ("field", 1)
+    assert get_options(Acme).debug_level == 0
+
+
+@pytest.mark.parametrize("bad", [object(), RunOptions], ids=["non-dataclass", "class"])
+def test_a_non_dataclass_in_options_is_still_a_registration_error(tmp_path, monkeypatch, bad):
+    from otto.params import OptionsRegistrationError
+
+    _use_project(monkeypatch, _stub_project(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    with pytest.raises(OptionsRegistrationError, match="expected an options instance"):
+        run_tests(names=[_ALPHA], options=[bad], output_dir=tmp_path)
+
+
+def test_run_tests_keeps_the_callers_values_and_its_verb(tmp_path, monkeypatch):
+    """A context bound for ``run``: inside the session the run's values and verb still hold."""
+    from otto import options
+    from otto.context import get_context, reset_context, set_context
+    from otto.params import register_options
+
+    @options
+    class RunOpts:
+        lab_env: str = "staging"
+
+    register_options(RunOpts, verbs=["run"])
+    seen: list = []
+
+    def fake_main(_args, plugins=(), **_kwargs):
+        collected(plugins)
+        seen.append((get_context().options(RunOpts).lab_env, get_context().verb))
+        return pytest.ExitCode.OK
+
+    monkeypatch.setattr("pytest.main", fake_main)
+    ctx = _context_with(tmp_path)
+    ctx.bind_verb_options(verb="run", kwargs={"lab_env": "prod"})
+    token = set_context(ctx)
+    try:
+        run_tests(names=[_ALPHA], output_dir=tmp_path)
+    finally:
+        reset_context(token)
+    assert seen == [("prod", "run")]
+
+
+def test_a_handed_instance_is_the_object_a_test_reads(tmp_path, monkeypatch):
+    from otto import get_options, options
+
+    @options
+    class Firmware:
+        fw: str = "latest"
+
+    handed = Firmware(fw="2.1")
+    seen: list = []
+
+    def fake_main(_args, plugins=(), **_kwargs):
+        collected(plugins)
+        seen.append(get_options(Firmware))
+        return pytest.ExitCode.OK
+
+    _use_project(monkeypatch, _stub_project(tmp_path))
+    monkeypatch.setattr("pytest.main", fake_main)
+    run_tests(names=[_ALPHA], options=[handed], output_dir=tmp_path)
+    assert len(seen) == 1
+    assert seen[0] is handed
