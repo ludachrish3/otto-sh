@@ -41,10 +41,14 @@ where its **Not checked** column says otherwise; the numbered notes below say wh
 | read the host log and find the lines of each command's `value`, one record per line, blank lines and a program's own `\r` kept, under `log=NORMAL` and `log=QUIET`, and nothing under `log=NEVER` | -- | `exec-log` |
 | run a command under a dry run and have it reach no device, getting back a `NotRun` result with `retcode == -1`, no route, `command` the line a live call would type, and a `value` that raises `CommandNotRunError` | not on a Zephyr board (note 3) | `exec-dry-run` |
 | pass `expects=`, `sudo=` or `user=` to `run` or `exec`, alone or together, on a `ShellCommand` or inside `as_user()`, and get the same effect on every entry; where the device cannot honour an option, the call raises `UnsupportedOptionError` naming it, and nothing is typed | `expects=` on a Zephyr board (note 4); `sudo=` with `user=` on a device (note 5); `user=` and `as_user()` without a second user (note 6) | `exec-options` |
-| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on a Zephyr board (note 7) | `timeout` |
+| type a command holding punctuation, a TAB or UTF-8 text and have the shell receive it byte for byte; one holding a control character a terminal would act on reaches a session without a terminal intact, and on a session with one is refused with `UntypableCommandError` before anything is typed | not on a Zephyr board (note 7) | `typed-input` |
+| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on a Zephyr board (note 8) | `timeout` |
 
 On some devices a promise above is narrower: see
 {ref}`Where a device gets a narrower promise <command-contracts-narrower>`.
+
+On some devices a promise above has a known gap: see
+{ref}`Known gaps <command-contract-run-known-gaps>`.
 
 ## Where a promise is not checked
 
@@ -54,7 +58,8 @@ On some devices a promise above is narrower: see
 4. On a Zephyr board `expects=` is honoured, but its shell has no command that prompts and reads a line, so unit tests check it, not a device.
 5. `sudo=` together with `user=` runs on no device: no login on the test bed may do it, so only a stand-in `sudo` on the local machine checks it.
 6. `user=` and `as_user()` are checked only on hosts whose login has a second user to switch to.
-7. Not checked on a Zephyr board, so not promised there: otto does not test what happens when a Zephyr command runs longer than its timeout, so it promises nothing about it. The Zephyr shell runs one command at a time, on its own thread, so a command made to outlive its budget would block the very shell the test then has to find still answering; and the bed firmware has no command that blocks for a chosen time (issue #1066).
+7. Not checked on a Zephyr board, so not promised there: no command of the Zephyr shell reads its own argument back as data, and its line editor takes a TAB as completion.
+8. Not checked on a Zephyr board, so not promised there: otto does not test what happens when a Zephyr command runs longer than its timeout, so it promises nothing about it. The Zephyr shell runs one command at a time, on its own thread, so a command made to outlive its budget would block the very shell the test then has to find still answering; and the bed firmware has no command that blocks for a chosen time (issue #1066).
 
 ## Declared exceptions and undefined behaviour
 
@@ -72,4 +77,5 @@ What is never measured, so not promised, for `run` as for every command:
 (command-contract-run-known-gaps)=
 ### Known gaps (not device limitations)
 
-- On the local machine, a timed-out `run` of a command inside a subshell, or of a list or loop whose remainder runs long, can end the session: it is marked unusable, and its working directory and variables are lost; a lone command or pipeline is stopped and the session kept. Closing that session sends TERM to its process group: a process that ignores TERM can outlive a shell that exits promptly, and a process that left the group is not signalled. When a given-up session is closed is on {ref}`Closing a session <closing-a-session>` (issue #1101).
+- On the local machine, a timed-out `run` of a command inside a subshell, or of a list or loop whose remainder runs long, can end the session: it is marked unusable, and its working directory and variables are lost; a lone command or pipeline is stopped and the session kept. What closing that session stops is on {ref}`What the stop reaches <exec-stop-reach>`, and when a given-up session is closed is on {ref}`Closing a session <closing-a-session>` (issue #1101).
+- `typed-input`: On a BusyBox serial console, a literal TAB in a command sent with `run()` or `exec()` reaches the shell with an extra 0x16 byte (Ctrl-V) before it ([`typed-tab-literal-next`](../architecture/subsystems/busybox-support.md#typed-tab-literal-next)).
