@@ -2527,9 +2527,16 @@ make import-snapshot ONLY=help_project_warm   # rewrite only these surfaces' ent
   or filesystem error); the status is the
   worst over the minors. Surfaces the tag cannot run
   (a verb added since, or a run that did not end as the surface expects at
-  the tag — its reason is printed) are listed, not judged; when the
-  generated project's dispatch surface cannot run at the tag, every project-based
-  surface is listed with it. Each step's elapsed seconds are in
+  the tag — its reason is printed) are listed, not judged. The one exception
+  is the generated project itself: when its dispatch surface cannot run at the
+  tag, every project-based surface is listed with it and the run **stops**
+  (exit 1), because no project surface was judged at all. No approval lifts
+  that stop; the fix is to make the project load on both sides. Its lab is
+  `tests/_fixtures/budget_project_lab.json`, a file of its own that holds only
+  fields the previous release also reads (never the bed's lab, which gains
+  fields that release cannot read): a deliberate breaking change to lab fields
+  edits it in the same pull request. A base whose project did not run is
+  never reused from the cache. Each step's elapsed seconds are in
   `reports/budget/run.log`. Each side and minor is measured in
   `$TMPDIR/otto-budget-delta/<side>-<minor>/` (two worktrees and a venv,
   about half a gigabyte, removed before and after every measurement); the

@@ -22,7 +22,7 @@
         "otto:declared.cpython-315.pyc": 1,
         "otto:errors": 2,
         "otto:errors.cpython-315.pyc": 1,
-        "otto:host": 61,
+        "otto:host": 65,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
@@ -63,9 +63,9 @@
         "workspace": 12
       },
       "by_process": {
-        "python": 2247
+        "python": 2251
       },
-      "file_ops": 2247,
+      "file_ops": 2251,
       "workspace": 12
     },
     "completion_docker_observed_warm": {
@@ -132,7 +132,7 @@
     "completion_hosts_past_sep_handover": {
       "by_bucket": {
         "fd": 102,
-        "other": 248,
+        "other": 244,
         "otto:*": 31,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -160,7 +160,7 @@
         "otto:errors.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 233,
+        "otto:host": 237,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
@@ -244,7 +244,7 @@
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
         "otto:instructions.cpython-315.pyc": 1,
-        "otto:inventory": 32,
+        "otto:inventory": 36,
         "otto:labs": 16,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
@@ -283,9 +283,9 @@
         "workspace": 35
       },
       "by_process": {
-        "python": 2432
+        "python": 2436
       },
-      "file_ops": 2432,
+      "file_ops": 2436,
       "workspace": 35
     },
     "completion_project_warm": {
@@ -321,7 +321,7 @@
     "completion_remote_path_hit": {
       "by_bucket": {
         "fd": 102,
-        "other": 230,
+        "other": 228,
         "otto:*": 35,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -352,7 +352,7 @@
         "otto:fleet.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 265,
+        "otto:host": 281,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
@@ -401,15 +401,15 @@
         "workspace": 51
       },
       "by_process": {
-        "python": 2797
+        "python": 2811
       },
-      "file_ops": 2797,
+      "file_ops": 2811,
       "workspace": 51
     },
     "completion_remote_path_hit_reserved": {
       "by_bucket": {
         "fd": 102,
-        "other": 258,
+        "other": 254,
         "otto:*": 35,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -440,7 +440,7 @@
         "otto:fleet.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 265,
+        "otto:host": 281,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
@@ -489,9 +489,9 @@
         "workspace": 65
       },
       "by_process": {
-        "python": 2847
+        "python": 2859
       },
-      "file_ops": 2847,
+      "file_ops": 2859,
       "workspace": 65
     },
     "completion_test_warm": {
@@ -570,7 +570,7 @@
     "dispatch_local_warm": {
       "by_bucket": {
         "fd": 113,
-        "other": 356,
+        "other": 358,
         "otto:*": 35,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
@@ -598,15 +598,15 @@
         "otto:errors.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 265,
+        "otto:host": 281,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
         "otto:instructions.cpython-315.pyc": 1,
-        "otto:inventory": 36,
+        "otto:inventory": 40,
         "otto:invocation": 2,
         "otto:invocation.cpython-315.pyc": 1,
-        "otto:labs": 40,
+        "otto:labs": 56,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
         "otto:lifecycle": 2,
@@ -645,15 +645,15 @@
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
-        "stdlib": 794,
+        "stdlib": 790,
         "workspace": 35
       },
       "by_process": {
         "bash": 44,
-        "python": 2792,
+        "python": 2826,
         "stty": 90
       },
-      "file_ops": 2926,
+      "file_ops": 2960,
       "workspace": 35
     },
     "dispatch_project_warm": {
@@ -687,15 +687,15 @@
         "otto:errors.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 265,
+        "otto:host": 281,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
         "otto:instructions.cpython-315.pyc": 1,
-        "otto:inventory": 36,
+        "otto:inventory": 40,
         "otto:invocation": 2,
         "otto:invocation.cpython-315.pyc": 1,
-        "otto:labs": 40,
+        "otto:labs": 56,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
         "otto:lifecycle": 2,
@@ -734,13 +734,13 @@
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
-        "stdlib": 794,
+        "stdlib": 790,
         "workspace": 35
       },
       "by_process": {
-        "python": 2789
+        "python": 2821
       },
-      "file_ops": 2789,
+      "file_ops": 2821,
       "workspace": 35
     },
     "docker": {
@@ -832,8 +832,8 @@
     "help_project": {
       "by_bucket": {
         "fd": 130,
-        "other": 325,
-        "otto:*": 33,
+        "other": 306,
+        "otto:*": 34,
         "otto:__init__": 2,
         "otto:__init__.abi3-aarch64-linux-gnu.so": 1,
         "otto:__init__.abi3.so": 1,
@@ -848,7 +848,7 @@
         "otto:_terminal.cpython-315.pyc": 1,
         "otto:bootstrap": 2,
         "otto:bootstrap.cpython-315.pyc": 1,
-        "otto:cli": 104,
+        "otto:cli": 108,
         "otto:config": 64,
         "otto:console": 2,
         "otto:console.cpython-315.pyc": 1,
@@ -858,20 +858,20 @@
         "otto:errors.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 233,
+        "otto:host": 237,
         "otto:init": 16,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
         "otto:instructions.cpython-315.pyc": 1,
-        "otto:inventory": 36,
+        "otto:inventory": 40,
         "otto:invocation": 2,
         "otto:invocation.cpython-315.pyc": 1,
-        "otto:labs": 44,
+        "otto:labs": 56,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
         "otto:link": 40,
-        "otto:logger": 24,
+        "otto:logger": 28,
         "otto:models": 44,
         "otto:monitor": 20,
         "otto:params": 2,
@@ -884,15 +884,15 @@
         "otto:result.cpython-315.pyc": 1,
         "otto:run_context": 2,
         "otto:run_context.cpython-315.pyc": 1,
+        "otto:templating": 20,
         "otto:tunnel": 36,
         "otto:utils": 2,
         "otto:utils.cpython-315.pyc": 1,
         "otto:version": 2,
         "otto:version.cpython-315.pyc": 1,
-        "site:*": 39,
+        "site:*": 38,
         "site:annotated_doc": 16,
         "site:annotated_types": 9,
-        "site:attr": 60,
         "site:c787785866c7b801238d__mypyc": 2,
         "site:dotenv": 24,
         "site:markdown_it": 310,
@@ -904,20 +904,18 @@
         "site:pygments": 88,
         "site:rich": 281,
         "site:shellingham": 16,
-        "site:sphinxcontrib": 9,
-        "site:sphinxcontrib_jsmath-1": 2,
         "site:tomli": 2,
         "site:typer": 129,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
-        "stdlib": 827,
-        "workspace": 36
+        "stdlib": 823,
+        "workspace": 37
       },
       "by_process": {
-        "python": 3532
+        "python": 3487
       },
-      "file_ops": 3532,
-      "workspace": 36
+      "file_ops": 3487,
+      "workspace": 37
     },
     "help_project_warm": {
       "by_bucket": {
@@ -947,7 +945,7 @@
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
         "otto:host": 157,
-        "otto:inventory": 32,
+        "otto:inventory": 36,
         "otto:labs": 16,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
@@ -972,7 +970,7 @@
         "site:markdown_it": 310,
         "site:mdurl": 32,
         "site:otto_sh": 2,
-        "site:pydantic": 210,
+        "site:pydantic": 214,
         "site:pydantic_core": 28,
         "site:pydantic_settings": 114,
         "site:pygments": 88,
@@ -986,9 +984,9 @@
         "workspace": 14
       },
       "by_process": {
-        "python": 2909
+        "python": 2917
       },
-      "file_ops": 2909,
+      "file_ops": 2917,
       "workspace": 14
     },
     "host": {
@@ -1067,15 +1065,15 @@
         "otto:fleet.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 265,
+        "otto:host": 281,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
         "otto:instructions.cpython-315.pyc": 1,
-        "otto:inventory": 36,
+        "otto:inventory": 40,
         "otto:invocation": 2,
         "otto:invocation.cpython-315.pyc": 1,
-        "otto:labs": 40,
+        "otto:labs": 56,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
         "otto:lifecycle": 2,
@@ -1114,14 +1112,14 @@
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
-        "stdlib": 794,
+        "stdlib": 790,
         "workspace": 35
       },
       "by_process": {
-        "python": 2816,
+        "python": 2848,
         "sh": 7
       },
-      "file_ops": 2823,
+      "file_ops": 2855,
       "workspace": 35
     },
     "host_local_get": {
@@ -1157,15 +1155,15 @@
         "otto:fleet.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 265,
+        "otto:host": 281,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
         "otto:instructions.cpython-315.pyc": 1,
-        "otto:inventory": 36,
+        "otto:inventory": 40,
         "otto:invocation": 2,
         "otto:invocation.cpython-315.pyc": 1,
-        "otto:labs": 40,
+        "otto:labs": 56,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
         "otto:lifecycle": 2,
@@ -1204,13 +1202,13 @@
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
-        "stdlib": 798,
+        "stdlib": 794,
         "workspace": 53
       },
       "by_process": {
-        "python": 2839
+        "python": 2871
       },
-      "file_ops": 2839,
+      "file_ops": 2871,
       "workspace": 53
     },
     "host_local_put": {
@@ -1246,15 +1244,15 @@
         "otto:fleet.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 265,
+        "otto:host": 281,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
         "otto:instructions.cpython-315.pyc": 1,
-        "otto:inventory": 36,
+        "otto:inventory": 40,
         "otto:invocation": 2,
         "otto:invocation.cpython-315.pyc": 1,
-        "otto:labs": 40,
+        "otto:labs": 56,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
         "otto:lifecycle": 2,
@@ -1293,13 +1291,13 @@
         "site:typer": 125,
         "site:typing_extensions": 3,
         "site:typing_inspection": 20,
-        "stdlib": 798,
+        "stdlib": 794,
         "workspace": 54
       },
       "by_process": {
-        "python": 2840
+        "python": 2872
       },
-      "file_ops": 2840,
+      "file_ops": 2872,
       "workspace": 54
     },
     "host_ssh_exec": {
@@ -1335,15 +1333,15 @@
         "otto:fleet.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 277,
+        "otto:host": 293,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
         "otto:instructions.cpython-315.pyc": 1,
-        "otto:inventory": 36,
+        "otto:inventory": 40,
         "otto:invocation": 2,
         "otto:invocation.cpython-315.pyc": 1,
-        "otto:labs": 40,
+        "otto:labs": 56,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
         "otto:lifecycle": 2,
@@ -1391,9 +1389,9 @@
       "by_process": {
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3675
+        "python": 3711
       },
-      "file_ops": 3699,
+      "file_ops": 3735,
       "workspace": 56
     },
     "host_ssh_login": {
@@ -1429,15 +1427,15 @@
         "otto:fleet.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 277,
+        "otto:host": 293,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
         "otto:instructions.cpython-315.pyc": 1,
-        "otto:inventory": 36,
+        "otto:inventory": 40,
         "otto:invocation": 2,
         "otto:invocation.cpython-315.pyc": 1,
-        "otto:labs": 40,
+        "otto:labs": 56,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
         "otto:lifecycle": 2,
@@ -1485,9 +1483,9 @@
       "by_process": {
         "ldconfig": 18,
         "ldconfig.real": 6,
-        "python": 3675
+        "python": 3711
       },
-      "file_ops": 3699,
+      "file_ops": 3735,
       "workspace": 56
     },
     "import_otto": {
@@ -1828,15 +1826,15 @@
         "otto:fleet.cpython-315.pyc": 1,
         "otto:home_root": 2,
         "otto:home_root.cpython-315.pyc": 1,
-        "otto:host": 269,
+        "otto:host": 285,
         "otto:instruction_catalog": 2,
         "otto:instruction_catalog.cpython-315.pyc": 1,
         "otto:instructions": 2,
         "otto:instructions.cpython-315.pyc": 1,
-        "otto:inventory": 36,
+        "otto:inventory": 40,
         "otto:invocation": 2,
         "otto:invocation.cpython-315.pyc": 1,
-        "otto:labs": 40,
+        "otto:labs": 56,
         "otto:layout": 2,
         "otto:layout.cpython-315.pyc": 1,
         "otto:lifecycle": 2,
@@ -1919,13 +1917,13 @@
         "site:uv": 6,
         "site:uvicorn": 6,
         "site:wcwidth": 6,
-        "stdlib": 1163,
+        "stdlib": 1159,
         "workspace": 1122
       },
       "by_process": {
-        "python": 5796
+        "python": 5828
       },
-      "file_ops": 5796,
+      "file_ops": 5828,
       "workspace": 1122
     },
     "version_project": {

@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-from tests._fixtures.paths import TECH1_GOLDEN
+from tests._fixtures.paths import BUDGET_PROJECT_LAB
 from tests._fixtures.project_scaffold import make_project
 
 GENERATED_LIB_DIRS = ["pylib"]
@@ -203,8 +203,8 @@ def generate_project(
 
     *realistic* shapes the project like a real one: top-level test-class files
     that import pytest, an init module that registers an instruction and imports a
-    monitor parser, and a JSON lab source reading the bed's cell, as its frozen
-    JSON file (:data:`~tests._fixtures.paths.TECH1_GOLDEN`), so budget surfaces
+    monitor parser, and a JSON lab source reading a small lab of every host kind
+    (:data:`~tests._fixtures.paths.BUDGET_PROJECT_LAB`), so budget surfaces
     see what real projects cost. ``realistic=False`` behaves exactly as before: a bare init
     module and plain top-level test functions, no lab.
 
@@ -227,13 +227,14 @@ def generate_project(
     extra = _EXTRA.format(name=name)
     init_body = ""
     if realistic:
-        # The cell's frozen JSON, read in place: no render and no copy. The
-        # release's import-budget delta generates this project with the TIP's
-        # harness under the PREVIOUS release's otto (scripts/import_budget_delta.py),
-        # which may have no `jsonnet` backend; and a file outside the fixture
-        # root keeps the lab's reads out of the `workspace` counter, as the
-        # checkout's `lab_data/tech1` directory did.
-        extra += _LAB_SOURCE.format(lab=TECH1_GOLDEN)
+        # The budget project's own JSON lab, read in place: no render and no
+        # copy. The release's import-budget delta generates this project with
+        # the TIP's harness under the PREVIOUS release's otto
+        # (scripts/import_budget_delta.py), which may have no `jsonnet`
+        # backend and cannot read a field added since; so the file is not the
+        # bed's lab (BUDGET_PROJECT_LAB says what it may hold). A file outside
+        # the fixture root keeps the lab's reads out of the `workspace` counter.
+        extra += _LAB_SOURCE.format(lab=BUDGET_PROJECT_LAB)
         init_body = _REALISTIC_INIT
     project_files = {f"pylib/{name}_instructions.py": init_body}
     if ssh_lab_port is not None:

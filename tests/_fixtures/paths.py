@@ -33,13 +33,31 @@ TECH1_GOLDEN = GOLDENS / "tech1_lab.json"
 ``tech1/lab.jsonnet`` renders exactly this document
 (``tests/unit/labs/test_testbed_templates.py`` holds the two equal, section
 for section), so an edit to the bed (a new VM, a renamed interface) edits the
-entry AND this file, in one commit. It is three things at once: the template's
-oracle, the legacy JSON fixture that ``test_unchanged_loading`` loads, and the
-JSON lab the import budget's realistic project reads in place
-(:func:`tests._fixtures.generated_project.generate_project`), which must not
-render: the release delta generates that project under the previous release's
-otto. Updating it moves ``test_unchanged_loading``'s captured outputs too, so
-re-capture them in the same commit.
+entry AND this file, in one commit. It is two things at once: the template's
+oracle and the legacy JSON fixture that ``test_unchanged_loading`` loads.
+Updating it moves ``test_unchanged_loading``'s captured outputs too, so
+re-capture them in the same commit. The import budget's project does not read
+it: see :data:`BUDGET_PROJECT_LAB`.
+"""
+BUDGET_PROJECT_LAB = TESTS_ROOT / "_fixtures" / "budget_project_lab.json"
+"""The JSON lab the import budget's realistic project reads in place.
+
+(:func:`tests._fixtures.generated_project.generate_project`.) It is its own
+file, not the bed's golden, because the release delta generates that project
+with the tip's harness under the PREVIOUS release's otto
+(``scripts/import_budget_delta.py``), and the bed's lab gains fields that
+release cannot read.
+
+The rule for this file: it holds only fields the previous release also reads.
+It is not rendered from the bed's Jsonnet and no test ties it to the golden.
+A deliberate breaking change to lab fields edits it in the same pull request,
+so both sides still load it; a field or host both sides cannot read is removed.
+
+It has one lab, ``unix``, and every element is a member. The previous release
+validates the members of the selected lab strictly and skips a record it
+cannot read anywhere else, so with every record in the lab the delta's canary
+selects, a record the base rejects fails the canary instead of being skipped
+(``tests/unit/import_budget/test_budget_project_lab.py``).
 """
 GETTING_STARTED_GOLDEN = GOLDENS / "getting_started_lab.json"
 """``docs/examples/getting-started``'s hand-written lab file, before its Jsonnet entry.

@@ -70,8 +70,10 @@ shared by every checkout of the repository: never run two at once.
 Exit statuses, the worst over the minors. `measure` and `judge`: 0 accepted
 (nothing grew, or every growth is approved by an in-force entry; declines,
 unreproduced shuffles, surfaces the base cannot run and spent or unused
-entries are reported); 1 a policy STOP (a line per reason; the stops print
-the complete approvals file to write); 2 invalid evidence or an operational
+entries are reported); 1 a policy STOP (a line per reason: a growth nothing
+approved, for which the stops print the complete approvals file to write, or
+a generated repo that does not run at the base, which no approval lifts);
+2 invalid evidence or an operational
 failure (a step, git or the filesystem failed, a record is not evidence, the
 approvals file is malformed, more than three
 pairs); `measure` still judges the other minors after one failed. `validate`:
@@ -139,8 +141,13 @@ FIXTURE_CANARIES = ["dispatch_project_warm"]
 
 When one of them did not end as expected at the base, the generated repo does
 not run there, and every surface of REPO_SURFACES is listed as not measurable
-on that minor with the canary's reason. Pinned to import_budget.SURFACES.
+on that minor with the canary's reason. That is also a STOP (:func:`fixture_stop`):
+the delta would otherwise accept a run that judged no repo surface at all.
+Pinned to import_budget.SURFACES.
 """
+
+FIXTURE_FILES = "tests/_fixtures/budget_project_lab.json, tests/_fixtures/generated_project.py"
+"""Where the generated repo is defined: what a fixture stop tells its reader to make load."""
 
 STEPS = ["sync", "version", "report"]
 """The steps `measure` records per side and minor, in the order they run."""
@@ -589,22 +596,50 @@ def _ended_wrong(record: Record, expected: "int | None") -> "str | None":
     return None
 
 
+def _broken_fixture(
+    records: "dict[str, Record]", expected: "dict[str, int | None]", base_name: str
+) -> "str | None":
+    """Return why the generated project does not run at the base, or None when it does.
+
+    It does not when a surface of FIXTURE_CANARIES did not end as expected;
+    the first such canary and the harness's reason are named. The one place
+    that decides it: the notes and the stop both read this.
+    """
+    for canary in FIXTURE_CANARIES:
+        if canary in records and (why := _ended_wrong(records[canary], expected[canary])):
+            return f"the generated project does not run at {base_name}: {canary}: {why}"
+    return None
+
+
 def _unmeasurable(
     records: "dict[str, Record]", expected: "dict[str, int | None]", base_name: str
 ) -> "dict[str, str]":
     """Return the base's surfaces that are not evidence, by name, with why.
 
     A surface whose run did not end as expected is listed with the harness's
-    reason. When a fixture canary is among them, the generated repo does not
-    run at the base, so every other repo surface is listed with its reason.
+    reason. When the generated project does not run at the base
+    (:func:`_broken_fixture`), every other repo surface is listed with that.
     """
     out = {k: why for k, r in records.items() if (why := _ended_wrong(r, expected[k])) is not None}
-    broken = [c for c in FIXTURE_CANARIES if c in out]
-    if broken:
-        canary = broken[0]
-        because = f"the generated repo does not run at {base_name}: {canary}: {out[canary]}"
-        out.update({k: because for k in REPO_SURFACES if k in records and k not in broken})
+    because = _broken_fixture(records, expected, base_name)
+    if because is not None:
+        out.update({k: because for k in REPO_SURFACES if k in records and k not in out})
     return dict(sorted(out.items()))
+
+
+def fixture_stop(base: Path, minor: str) -> "str | None":
+    """Return the STOP line when the generated repo did not run in *base*'s records for *minor*.
+
+    No repo surface was judged then. A surface the base lacks for its own
+    reason is a note; the fixture every repo surface shares is a stop.
+    """
+    because = _broken_fixture(rows(base, minor), expected_exits(), base.name)
+    if because is None:
+        return None
+    return (
+        f"{minor} {because}\n"
+        f"  make the fixture load on both sides ({FIXTURE_FILES}); no approval lifts this stop"
+    )
 
 
 WARRANTED_WHY = "<why: say what this growth buys>"
@@ -753,6 +788,24 @@ def _pending(minor: str, text: str, reason: "str | None") -> Verdict:
 def decide(pairs: "list[tuple[Path, Path]]", minor: str, approvals: "list[Approval]") -> Verdict:
     """Return the verdict for *minor* over one to three measured (base, tip) pairs.
 
+    Whichever pair decides, and while a verdict is still pending, a generated
+    repo that did not run at the base in ANY pair is a stop
+    (:func:`fixture_stop`). This is the one place that adds it: one line per
+    minor, the first failing pair's, since a later pair's reason may differ
+    only by a per-run path.
+    """
+    verdict = _decide(pairs, minor, approvals)
+    broken = (fixture_stop(base, minor) for base, _tip in pairs)
+    broken_fixture = next((line for line in broken if line is not None), None)
+    if broken_fixture is not None:
+        # appended, never inserted: `growth_stops` holds indices into `stop`
+        verdict.stop.append(broken_fixture)
+    return verdict
+
+
+def _decide(pairs: "list[tuple[Path, Path]]", minor: str, approvals: "list[Approval]") -> Verdict:
+    """Return :func:`decide`'s verdict before the fixture stop, if any, is added.
+
     A quiet single pair decides. Otherwise two consecutive agreeing pairs
     decide, and the verdict is the earlier one's; a pending verdict (`more`)
     says which measurement would decide; three pairs that never agree are
@@ -796,8 +849,13 @@ def stale_approvals(
     grown: "list[tuple[str, str]]",
     unresolved: "list[str] | None" = None,
     measured: "list[str] | None" = None,
+    unjudged: "set[tuple[str, str]] | None" = None,
 ) -> "list[str]":
     """Return a NOTE line per entry whose surface grew on no minor in its scope, over the span.
+
+    *unjudged* holds each (surface, minor) the base could not run: an entry
+    whose scope touches one is not judged, because nothing was measured there
+    and "did not grow" would be a false note.
 
     *unresolved* names the minors with no verdict yet (pending or inconclusive):
     an entry whose scope touches one is not judged, because growth there is
@@ -805,9 +863,12 @@ def stale_approvals(
     run measured: a per-minor entry for another one is not judged either.
     """
     pending = set(unresolved or [])
+    blind = unjudged or set()
     out = []
     for a in approvals:
         if (a.minor is None and pending) or a.minor in pending:
+            continue
+        if any(s == a.surface and (a.minor is None or m == a.minor) for s, m in blind):
             continue
         if a.minor is not None and measured is not None and a.minor not in measured:
             continue
@@ -957,7 +1018,8 @@ def conclude(
     unresolved = [m for m, v in results if v is None or v.evidence is None]
     grown = [g for v in verdicts for g in v.grown]
     measured = [m for m, _v in results]
-    stale = stale_approvals(approvals.in_force, grown, unresolved, measured)
+    unjudged = {(k, v.minor) for v in verdicts for k in v.unmeasurable}
+    stale = stale_approvals(approvals.in_force, grown, unresolved, measured, unjudged)
     print_notes(approvals.spent + stale)
     print_warranted(base_tag, verdicts, approvals.in_force)
     return max((2 if v is None else int(bool(v.stop)) for _minor, v in results), default=0)
@@ -1343,13 +1405,22 @@ def _cached_or_measured(run: _Run, name: str, minor: str, dest: Path, python: "s
 
     *name* is `base` or `tip`; the cache key is the side's measured tree, the
     interpreter's full version and the instrument. Without an interpreter
-    version (uv found none) nothing can be reused.
+    version (uv found none) nothing can be reused. A base whose generated repo
+    did not run (:func:`fixture_stop`) is never reused: it is measured again,
+    on every run and pair, for as long as the tag cannot run the fixture.
     """
     s = run.settings
     label = s.base if name == "base" else s.tip
     tree = run.base_tree if name == "base" else run.tip_tree
     expect = None if python is None else Provenance(tree, python, run.instrument)
-    if expect is not None and not validate_side(dest, minor, expect):
+    reusable = expect is not None and not validate_side(dest, minor, expect)
+    if reusable and name == "base" and fixture_stop(dest, minor) is not None:
+        # A wrong ending is evidence the judge can list (validate_side), but
+        # this one stops every run that reuses it, and one transient failure
+        # would then stop them all until the instrument changes.
+        print(f"not reusing {label} on {minor}: its generated repo did not run")
+        reusable = False
+    if reusable:
         print(f"reusing {label} on {minor} from {dest}")
     else:
         print(f"measuring {label} on {minor}")

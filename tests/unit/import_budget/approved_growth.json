@@ -815,6 +815,1680 @@
         "stdlib": 67
       },
       "why": "typer 0.29 validates parameters through pydantic: the first coercion of a non-bool option (the root --xdir, --log-days, --log-level) builds a TypeAdapter and imports pydantic. These surfaces skip bootstrap, so they never loaded pydantic before; a real invocation already does, through otto.config.env.load_otto_env (real-entry `otto --help` measured +1%). otto:config: the root otto group is built on otto.config._typer's QuietCompletionGroup (#1118), so every invocation imports the Typer adapter module, approved by the maintainer. other: the larger of the two machines' growth, CI's x86_64 runner and the aarch64 dev VM (#1161). Its machine-dependent paths (the interpreter install, the loader's shared libraries, locale and OpenSSL configuration) are laid out differently on each, so the same tree grows it by one or two more operations on the VM; no otto change moves that gap."
+    },
+    {
+      "surface": "bootstrap_project",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_hosts_past_sep_handover",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 2,
+        "other": 20,
+        "otto:*": 1,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 12,
+        "otto:link": 8,
+        "otto:logger": 4,
+        "otto:models": 4,
+        "otto:templating": 17,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Completing hosts past the separator also imports otto.templating (#1176, with the lookups for its extension module) and modules v0.20.0 had that this path now loads: otto.link derive and model, otto.models.link, otto.logger.formatters, otto.host.builtin_hosts. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_project_handover",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 12,
+        "otto:inventory": 4,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). This path also imports otto.inventory.view (#1176) and one more otto.host module. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_remote_path_hit",
+      "minor": "3.10",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "otto:logger": 4,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_remote_path_hit_reserved",
+      "minor": "3.10",
+      "buckets": {
+        "other": 6,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "otto:logger": 4,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "dispatch_local_warm",
+      "minor": "3.10",
+      "buckets": {
+        "other": 66,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "dispatch_project_warm",
+      "minor": "3.10",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "help_project",
+      "minor": "3.10",
+      "buckets": {
+        "fd": 2,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:config": 4,
+        "otto:host": 20,
+        "otto:inventory": 4,
+        "otto:labs": 12,
+        "otto:logger": 4,
+        "otto:templating": 17,
+        "site:typer": 4
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Project help also imports part of the lab modules (otto.host, otto.labs, otto.inventory.view; #935, #1176, #1296), otto.templating (#1176), otto.logger.formatters and the new otto.cli.lab. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "help_project_warm",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 12,
+        "otto:inventory": 4,
+        "site:pydantic": 4,
+        "site:typer": 4
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). This path also imports otto.inventory.view (#1176), one more otto.host module and one more pydantic module. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_exec",
+      "minor": "3.10",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_get",
+      "minor": "3.10",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_put",
+      "minor": "3.10",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "test_project",
+      "minor": "3.10",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:gojsonnet": 6,
+        "site:jsonnet": 6,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_cache",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_cov",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_docker",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_env",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_host_power",
+      "minor": "3.10",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_host_probe",
+      "minor": "3.10",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_init",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_inventory",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_link",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_monitor",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_reservation",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_schema",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_tunnel",
+      "minor": "3.10",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "bootstrap_project",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_hosts_past_sep_handover",
+      "minor": "3.11",
+      "buckets": {
+        "other": 19,
+        "otto:*": 1,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 12,
+        "otto:link": 8,
+        "otto:logger": 4,
+        "otto:models": 4,
+        "otto:templating": 17,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Completing hosts past the separator also imports otto.templating (#1176, with the lookups for its extension module) and modules v0.20.0 had that this path now loads: otto.link derive and model, otto.models.link, otto.logger.formatters, otto.host.builtin_hosts. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_project_handover",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 12,
+        "otto:inventory": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). This path also imports otto.inventory.view (#1176) and one more otto.host module. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_remote_path_hit",
+      "minor": "3.11",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "otto:logger": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_remote_path_hit_reserved",
+      "minor": "3.11",
+      "buckets": {
+        "other": 5,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "otto:logger": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "dispatch_local_warm",
+      "minor": "3.11",
+      "buckets": {
+        "other": 65,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "dispatch_project_warm",
+      "minor": "3.11",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "help_project",
+      "minor": "3.11",
+      "buckets": {
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:config": 4,
+        "otto:host": 20,
+        "otto:inventory": 4,
+        "otto:labs": 12,
+        "otto:logger": 4,
+        "otto:templating": 17,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 4
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Project help also imports part of the lab modules (otto.host, otto.labs, otto.inventory.view; #935, #1176, #1296), otto.templating (#1176), otto.logger.formatters and the new otto.cli.lab. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "help_project_warm",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 12,
+        "otto:inventory": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:pydantic": 4,
+        "site:typer": 4
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). This path also imports otto.inventory.view (#1176), one more otto.host module and one more pydantic module. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_exec",
+      "minor": "3.11",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_get",
+      "minor": "3.11",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_put",
+      "minor": "3.11",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "test_project",
+      "minor": "3.11",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:gojsonnet": 6,
+        "site:jsonnet": 6,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_cache",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_cov",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_docker",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_env",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_host_power",
+      "minor": "3.11",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_host_probe",
+      "minor": "3.11",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_init",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_inventory",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_link",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_monitor",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_reservation",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_schema",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_tunnel",
+      "minor": "3.11",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "bootstrap_project",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_hosts_past_sep_handover",
+      "minor": "3.12",
+      "buckets": {
+        "other": 19,
+        "otto:*": 1,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 12,
+        "otto:link": 8,
+        "otto:logger": 4,
+        "otto:models": 4,
+        "otto:templating": 17,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Completing hosts past the separator also imports otto.templating (#1176, with the lookups for its extension module) and modules v0.20.0 had that this path now loads: otto.link derive and model, otto.models.link, otto.logger.formatters, otto.host.builtin_hosts. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_project_handover",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 12,
+        "otto:inventory": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). This path also imports otto.inventory.view (#1176) and one more otto.host module. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_remote_path_hit",
+      "minor": "3.12",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "otto:logger": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_remote_path_hit_reserved",
+      "minor": "3.12",
+      "buckets": {
+        "other": 5,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "otto:logger": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "dispatch_local_warm",
+      "minor": "3.12",
+      "buckets": {
+        "other": 65,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "dispatch_project_warm",
+      "minor": "3.12",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "help_project",
+      "minor": "3.12",
+      "buckets": {
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:config": 4,
+        "otto:host": 20,
+        "otto:inventory": 4,
+        "otto:labs": 12,
+        "otto:logger": 4,
+        "otto:templating": 17,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 4
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Project help also imports part of the lab modules (otto.host, otto.labs, otto.inventory.view; #935, #1176, #1296), otto.templating (#1176), otto.logger.formatters and the new otto.cli.lab. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "help_project_warm",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 12,
+        "otto:inventory": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:pydantic": 4,
+        "site:typer": 4
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). This path also imports otto.inventory.view (#1176), one more otto.host module and one more pydantic module. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_exec",
+      "minor": "3.12",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_get",
+      "minor": "3.12",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_put",
+      "minor": "3.12",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "test_project",
+      "minor": "3.12",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:gojsonnet": 6,
+        "site:jsonnet": 6,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_cache",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_cov",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_docker",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_env",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_host_power",
+      "minor": "3.12",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_host_probe",
+      "minor": "3.12",
+      "buckets": {
+        "other": 3,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_init",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_inventory",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_link",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_monitor",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_reservation",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_schema",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_tunnel",
+      "minor": "3.12",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "bootstrap_project",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_hosts_past_sep_handover",
+      "minor": "3.13",
+      "buckets": {
+        "other": 18,
+        "otto:*": 1,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 12,
+        "otto:link": 8,
+        "otto:logger": 4,
+        "otto:models": 4,
+        "otto:templating": 17,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Completing hosts past the separator also imports otto.templating (#1176, with the lookups for its extension module) and modules v0.20.0 had that this path now loads: otto.link derive and model, otto.models.link, otto.logger.formatters, otto.host.builtin_hosts. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_project_handover",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 12,
+        "otto:inventory": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). This path also imports otto.inventory.view (#1176) and one more otto.host module. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_remote_path_hit",
+      "minor": "3.13",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "otto:logger": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_remote_path_hit_reserved",
+      "minor": "3.13",
+      "buckets": {
+        "other": 6,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "otto:logger": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "dispatch_local_warm",
+      "minor": "3.13",
+      "buckets": {
+        "other": 66,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "dispatch_project_warm",
+      "minor": "3.13",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "help_project",
+      "minor": "3.13",
+      "buckets": {
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:config": 4,
+        "otto:host": 20,
+        "otto:inventory": 4,
+        "otto:labs": 12,
+        "otto:logger": 4,
+        "otto:templating": 17,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 4
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Project help also imports part of the lab modules (otto.host, otto.labs, otto.inventory.view; #935, #1176, #1296), otto.templating (#1176), otto.logger.formatters and the new otto.cli.lab. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "help_project_warm",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 12,
+        "otto:inventory": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:pydantic": 4,
+        "site:typer": 4
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). This path also imports otto.inventory.view (#1176), one more otto.host module and one more pydantic module. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_exec",
+      "minor": "3.13",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_get",
+      "minor": "3.13",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_put",
+      "minor": "3.13",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "test_project",
+      "minor": "3.13",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:gojsonnet": 6,
+        "site:jsonnet": 6,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_cache",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_cov",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_docker",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_env",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_host_power",
+      "minor": "3.13",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_host_probe",
+      "minor": "3.13",
+      "buckets": {
+        "other": 4,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_init",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_inventory",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_link",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_monitor",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_reservation",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_schema",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_tunnel",
+      "minor": "3.13",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "bootstrap_project",
+      "minor": "3.14",
+      "buckets": {
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_hosts_past_sep_handover",
+      "minor": "3.14",
+      "buckets": {
+        "other": 19,
+        "otto:*": 1,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 12,
+        "otto:link": 8,
+        "otto:logger": 4,
+        "otto:models": 4,
+        "otto:templating": 17,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Completing hosts past the separator also imports otto.templating (#1176, with the lookups for its extension module) and modules v0.20.0 had that this path now loads: otto.link derive and model, otto.models.link, otto.logger.formatters, otto.host.builtin_hosts. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_project_handover",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 12,
+        "otto:inventory": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). This path also imports otto.inventory.view (#1176) and one more otto.host module. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_remote_path_hit",
+      "minor": "3.14",
+      "buckets": {
+        "other": 5,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "otto:logger": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "completion_remote_path_hit_reserved",
+      "minor": "3.14",
+      "buckets": {
+        "other": 7,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "otto:logger": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "dispatch_local_warm",
+      "minor": "3.14",
+      "buckets": {
+        "other": 67,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "dispatch_project_warm",
+      "minor": "3.14",
+      "buckets": {
+        "other": 5,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "help_project",
+      "minor": "3.14",
+      "buckets": {
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:config": 4,
+        "otto:host": 20,
+        "otto:inventory": 4,
+        "otto:labs": 12,
+        "otto:logger": 4,
+        "otto:templating": 17,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 4
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Project help also imports part of the lab modules (otto.host, otto.labs, otto.inventory.view; #935, #1176, #1296), otto.templating (#1176), otto.logger.formatters and the new otto.cli.lab. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "help_project_warm",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 12,
+        "otto:inventory": 4,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:pydantic": 4,
+        "site:typer": 4
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). This path also imports otto.inventory.view (#1176), one more otto.host module and one more pydantic module. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_exec",
+      "minor": "3.14",
+      "buckets": {
+        "other": 5,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_get",
+      "minor": "3.14",
+      "buckets": {
+        "other": 5,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "host_local_put",
+      "minor": "3.14",
+      "buckets": {
+        "other": 5,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "test_project",
+      "minor": "3.14",
+      "buckets": {
+        "other": 5,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:gojsonnet": 6,
+        "site:jsonnet": 6,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_cache",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_cov",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_docker",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_env",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_host_power",
+      "minor": "3.14",
+      "buckets": {
+        "other": 5,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_host_probe",
+      "minor": "3.14",
+      "buckets": {
+        "other": 5,
+        "otto:config": 4,
+        "otto:host": 24,
+        "otto:inventory": 4,
+        "otto:labs": 16,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exec_route, exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_init",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_inventory",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_link",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_monitor",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_reservation",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_schema",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
+    },
+    {
+      "surface": "tracked_tunnel",
+      "minor": "3.14",
+      "buckets": {
+        "other": 1,
+        "otto:config": 4,
+        "otto:host": 8,
+        "site:c787785866c7b801238d__mypyc": 2,
+        "site:typer": 8
+      },
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer."
     }
   ]
 }
