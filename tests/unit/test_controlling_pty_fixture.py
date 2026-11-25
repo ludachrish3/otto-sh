@@ -10,6 +10,7 @@ the test instead of killing the run it is part of.
 
 import contextlib
 import os
+import re
 import subprocess
 from collections.abc import Callable
 
@@ -18,7 +19,7 @@ import pytest
 from otto.utils import wait_for
 from tests._fixtures import controlling_pty
 from tests._fixtures.controlling_pty import spawn_on_controlling_pty
-from tests._fixtures.interactive_shell import interactive_shell
+from tests._fixtures.interactive_shell import READY_TIMEOUT, SHELLS, interactive_shell
 
 
 @pytest.fixture
@@ -99,3 +100,19 @@ def _fail_inside(terminal: "controlling_pty.ControllingPty") -> None:
     """Fail the way a test does, inside a context manager whose exit closes *terminal*."""
     with contextlib.closing(terminal):
         raise AssertionError("the test's own failure")
+
+
+@pytest.mark.parametrize("name", [name for name, _ in SHELLS])
+def test_a_typed_line_is_over_only_when_the_shell_prompts_again(name: str):
+    """A line's answer and the prompt after it are two writes; a caller goes on after both (#1343).
+
+    The line prints its answer and then takes a moment more, as a handshake's
+    last statements do on a loaded machine. Were the line taken as over at its
+    answer, the prompt would arrive later and lead what the next command
+    printed: with echo off, on the same line as that command's output.
+    """
+    with interactive_shell(name, setup="stty -echo") as shell:
+        shell.type_line('echo ANSWER_"1"; sleep 0.3\n', re.compile(r"ANSWER_1\r*\n"), READY_TIMEOUT)
+        printed = shell.run("echo next")
+    assert not printed.startswith("$ "), f"{name}: the prompt leads the next output: {printed!r}"
+    assert "\nnext\r" in printed or printed.startswith("next"), f"{name}: {printed!r}"
