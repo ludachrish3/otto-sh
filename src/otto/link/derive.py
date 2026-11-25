@@ -6,7 +6,7 @@ every rule here unit-testable without a lab.
 """
 
 import logging
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 from pathlib import Path
@@ -23,7 +23,7 @@ from .model import Link, LinkEndpoint, Provenance
 
 if TYPE_CHECKING:
     from ..host.os_profile import ProfileContext
-    from ..labs.protocol import LabScope
+    from ..labs.protocol import LabScope, SkippedHostRecord
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +102,50 @@ def addressing_of_host(host: object) -> HostAddressing:
     return HostAddressing(ip=getattr(host, "ip", "") or "", interfaces=interfaces)
 
 
+def _is_host_of(host_id: str, element: str) -> bool:
+    """Return whether *host_id* is an id an element named *element* composes.
+
+    Ids are ``<element>-<board>[-<slot>]``: the element's slug is the id, or a
+    prefix of it up to a ``-``. The one statement of that rule for a name that
+    is not a known id: the near-miss hint and the skipped-record match read it.
+    """
+    stem = slug(element)
+    return host_id == stem or host_id.startswith(f"{stem}-")
+
+
+def _skipped_as(host_id: str, skipped: "Sequence[SkippedHostRecord]") -> "str | None":
+    """Return why *host_id* was not loaded, when records of *skipped* could be that host.
+
+    A skipped record has no id (it could not be read), so it is matched by its
+    element (:func:`_is_host_of`). That is a match on the name alone: a
+    skipped record of element ``bb`` is also reported for an endpoint
+    ``bb-1310-qemu`` that belongs to an element ``bb-1310`` no file holds.
+    The endpoint is missing either way; the message then names a record that
+    is not its own.
+    """
+    causes = [
+        f"the record of element {record.element!r} in {record.origin} was skipped: {record.reason}"
+        for record in skipped
+        if _is_host_of(host_id, record.element)
+    ]
+    if not causes:
+        return None
+    return f"host {host_id!r} was not loaded: {'; '.join(causes)}"
+
+
 def _resolve_endpoint(
-    host_id: str, interface: str | None, hosts: Mapping[str, HostAddressing]
+    host_id: str,
+    interface: str | None,
+    hosts: Mapping[str, HostAddressing],
+    skipped: "Callable[[], Sequence[SkippedHostRecord]]",
 ) -> LinkEndpoint:
     addressing = hosts.get(host_id)
     if addressing is None:
+        # A record that was found and skipped is not an unknown host: say what
+        # happened to it, which the skip itself only logs at debug.
+        not_loaded = _skipped_as(host_id, skipped())
+        if not_loaded is not None:
+            raise ValueError(not_loaded)
         # Name the near-miss: a link endpoint written by hand is easy to get
         # subtly wrong (an id whose board/slot come from an os_profile, or a
         # name whose slug the author spelled as they typed it), and "no such
@@ -116,8 +155,7 @@ def _resolve_endpoint(
         # belongs; ids are ``<element>-<board>[-<slot>]``, so a prefix match
         # finds it however short the element name is (a plain similarity
         # ratio drops under its cutoff once the id grows a board and slot).
-        stem = slug(host_id)
-        close = [h for h in sorted(hosts) if h == stem or h.startswith(f"{stem}-")][:3]
+        close = [h for h in sorted(hosts) if _is_host_of(h, host_id)][:3]
         if not close:
             close = get_close_matches(host_id, sorted(hosts), n=3)
         hint = f" — did you mean {', '.join(repr(c) for c in close)}?" if close else ""
@@ -210,8 +248,14 @@ def resolve_declared_links(
     loaded_ids: Collection[str],
     selection: frozenset[str] | None,
     scope: "LabScope | None" = None,
+    skipped: "Callable[[], Sequence[SkippedHostRecord]]" = tuple,
 ) -> list[Link]:
     """Validate + resolve raw ``links`` entries into DECLARED ``Link`` objects.
+
+    *skipped* returns the host records the sources found and could not read;
+    it is called only when an attached link names an endpoint *hosts* does not
+    address, and such an endpoint is then reported as not loaded, with the
+    record's reason, rather than as unknown.
 
     *loaded_ids* is the id set of the requested lab's hosts and *selection*
     the selected lab names (``None``: none, as :func:`link_attaches` reads
@@ -242,8 +286,9 @@ def resolve_declared_links(
             continue
         try:
             spec = LinkSpec.model_validate(entry)
-            a = _resolve_endpoint(spec.endpoints[0].host, spec.endpoints[0].interface, hosts)
-            b = _resolve_endpoint(spec.endpoints[1].host, spec.endpoints[1].interface, hosts)
+            first, second = spec.endpoints
+            a = _resolve_endpoint(first.host, first.interface, hosts, skipped)
+            b = _resolve_endpoint(second.host, second.interface, hosts, skipped)
             _validate_impair(spec.impair, a, b, hosts)
         except ValueError as e:
             raise ValueError(

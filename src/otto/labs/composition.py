@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from ..link.derive import HostAddressing
     from ..link.model import Link
     from .loader import Lab
-    from .protocol import DeclaredLinkInputs, LabContribution
+    from .protocol import DeclaredLinkInputs, LabContribution, SkippedHostRecord
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,19 @@ def compose_links(
         if c.inputs is not None
     }
     others = functools.cache(functools.partial(_last_addressing_wins, list(own.values())))
+    # Every capable source's skipped records: a link of one source may name a
+    # host another source could not read. Read only when an endpoint misses
+    # every layer, by which point each source's addressing has been computed.
+    skipped = functools.cache(
+        functools.partial(
+            _all_skipped,
+            [
+                functools.partial(run, c, c.inputs.skipped)
+                for c in contributions
+                if c.inputs is not None
+            ],
+        )
+    )
     merged: list[Link] | None = None
     owner: dict[str, str] = {}
     for contribution in contributions:
@@ -152,6 +165,7 @@ def compose_links(
                 contribution,
                 lab=lab,
                 layers=[own[id(contribution)], composed, others] if id(contribution) in own else [],
+                skipped=skipped,
             ),
         )
         if not contribution.holds_lab and not links:
@@ -174,10 +188,13 @@ def _links_of(
     *,
     lab: "Lab",
     layers: "Sequence[Callable[[], Mapping[str, HostAddressing]]]",
+    skipped: "Callable[[], Sequence[SkippedHostRecord]]",
 ) -> "list[Link]":
     """Return *contribution*'s links: a legacy source's as it resolved them, else resolved now.
 
-    *layers* are the endpoint addressing in resolution order, its own first.
+    *layers* are the endpoint addressing in resolution order, its own first;
+    *skipped* returns the records no source could read, for an endpoint none
+    of the layers addresses.
     """
     inputs = contribution.inputs
     if inputs is None:
@@ -192,9 +209,17 @@ def _links_of(
             _LayeredAddressing(layers=layers),
             loaded_ids=set(lab.hosts) | contribution.host_ids,
             selection=frozenset({lab.name}),
+            skipped=skipped,
         )
     except ValueError as e:
         raise LabRepositoryError(str(e)) from e
+
+
+def _all_skipped(
+    sources: "Sequence[Callable[[], Sequence[SkippedHostRecord]]]",
+) -> "list[SkippedHostRecord]":
+    """Return every capable source's skipped host records, in source order."""
+    return [record for skipped in sources for record in skipped()]
 
 
 def merge_links_by_id(merged: "list[Link]", links: "list[Link]") -> "list[Link]":

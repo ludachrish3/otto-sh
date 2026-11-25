@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .protocol import LabScope as LabScope
     from .protocol import LabStatus as LabStatus
     from .protocol import LoginSummary as LoginSummary
+    from .protocol import SkippedHostRecord as SkippedHostRecord
     from .protocol import SourceRef as SourceRef
     from .protocol import SupportsDeclaredLinks as SupportsDeclaredLinks
     from .protocol import SupportsHostSummaries as SupportsHostSummaries
@@ -73,6 +74,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "LabSourceEnv": "otto.labs.sources",
     "LabSourceFacts": "otto.labs.sources",
     "DeclaredLinkInputs": "otto.labs.protocol",
+    "SkippedHostRecord": "otto.labs.protocol",
     "HostSummary": "otto.labs.protocol",
     "LabContribution": "otto.labs.protocol",
     "LabRepository": "otto.labs.protocol",
@@ -138,6 +140,7 @@ __all__ = [
     "LabStatusReport",
     "LabUnavailableError",
     "LoginSummary",
+    "SkippedHostRecord",
     "SourceLinks",
     "SourceRef",
     "SourceUnavailable",

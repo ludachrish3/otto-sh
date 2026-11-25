@@ -54,7 +54,7 @@ def _one_id_twice(tmp_path: Path, *, second_ip: str) -> dict[str, HostAddressing
         ],
     )
     docs = repository._load_documents(best_effort=False, view=_view())
-    return _addressing(docs, view=_view(), profiles=ProfileContext.empty())
+    return _addressing(docs, view=_view(), profiles=ProfileContext.empty()).addressing
 
 
 def test_one_id_at_equal_addressing_keeps_the_first_record_quietly(tmp_path: Path, caplog) -> None:

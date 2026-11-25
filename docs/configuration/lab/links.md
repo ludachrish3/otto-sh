@@ -43,6 +43,17 @@ path of the file that declares it and the link's position in that file's
 LabRepositoryError: Invalid link in /home/me/bench/lab/dut.json at index 1: unknown host 'consrv1' (no such host in any lab file)
 ```
 
+When the lab files do hold the host and its record could not be read (an
+unknown field, an `os_type` no loaded project registers), the error says the
+record was skipped and why, naming the element and its file:
+
+```text
+LabRepositoryError: Invalid link in /home/me/bench/lab/dut.json at index 1: host 'consrv1' was not loaded: the record of element 'consrv1' in /home/me/bench/lab/shared.json was skipped: baud: Extra inputs are not permitted [type=extra_forbidden]
+```
+
+A record of another lab that no link names is skipped without a message, so
+one lab's mistake does not stop another lab from loading.
+
 (lab-links-across-sources)=
 
 ## Links across sources
