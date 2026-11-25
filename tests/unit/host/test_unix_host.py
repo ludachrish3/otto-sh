@@ -25,7 +25,6 @@ from otto.host.capability_grid import UserSupport
 from otto.host.command_frame import ExecInput
 from otto.host.connections import _UserConnections
 from otto.host.element import Element
-from otto.host.exec_route import ExecRoute
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT, _ProbeAnswer
 from otto.host.login_proxy import Cred
 from otto.host.options import NcOptions, SftpOptions, SshOptions, UserlandOptions
@@ -38,7 +37,6 @@ from otto.utils import Status
 from tests._fixtures.chaos import ChaosPoints, Surface, sweep_cancellation
 from tests._fixtures.ftp_server import served_ftp
 from tests.conftest import active_context
-from tests.unit.host._fake_channel import FakeChannelProcess, FakeConn, channel_manager
 from tests.unit.host._sessions import host_session, session_manager
 from tests.unit.host.test_session import idle_exec_sessions
 from tests.unit.host.test_terminal_switch import _EitherConnection
@@ -50,15 +48,14 @@ def _cs(
     output: str = "",
     status: Status = Status.Success,
     retcode: int = 0,
-    route: str = "",
 ) -> CommandResult:
     """Build a :class:`~otto.result.CommandResult` for the netcat-transfer fakes.
 
     The nc backend reads command output from ``.value``; this keeps the old
     ``command=/output=/status=/retcode=`` keyword call shape, mapping ``output``
-    onto ``value``. *route* is what the faked primitive would record.
+    onto ``value``.
     """
-    return CommandResult(command=command, value=output, status=status, retcode=retcode, route=route)
+    return CommandResult(command=command, value=output, status=status, retcode=retcode)
 
 
 def _sm(result) -> tuple[Status, str]:
@@ -728,17 +725,14 @@ class TestExec:
             term="telnet",
             log=LogMode.QUIET,
         )
-        h._session_mgr.exec_on_route = AsyncMock(
-            return_value=CommandResult(
-                status=Status.Success, value="root", command="id", retcode=0, route="pooled-shell"
-            )
+        h._session_mgr.exec_pooled = AsyncMock(
+            return_value=CommandResult(status=Status.Success, value="root", command="id", retcode=0)
         )
         h._connections.ssh_as = AsyncMock()
         result = await h.exec("id", user="root")
         assert result.value == "root"
-        h._session_mgr.exec_on_route.assert_awaited_once()
-        assert h._session_mgr.exec_on_route.await_args.kwargs["route"] is ExecRoute.POOLED_SHELL
-        assert h._session_mgr.exec_on_route.await_args.kwargs["user"] == "root"
+        h._session_mgr.exec_pooled.assert_awaited_once()
+        assert h._session_mgr.exec_pooled.await_args.kwargs["user"] == "root"
         h._connections.ssh_as.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -752,9 +746,6 @@ class TestExec:
         )
         conn = _EitherConnection(tmp_path)
         h._connections.ssh_as = AsyncMock(return_value=conn)  # ty: ignore[invalid-assignment]
-        h._session_mgr.exec_on = AsyncMock(  # ty: ignore[invalid-assignment]
-            side_effect=AssertionError("the bare channel was taken")
-        )
         try:
             await h.exec("id", user="root")
         finally:
@@ -762,7 +753,6 @@ class TestExec:
             await conn.reap()
         h._connections.ssh_as.assert_awaited_once_with(user="root")
         assert [asked.get("request_pty") for asked in conn.asked] == [False]
-        h._session_mgr.exec_on.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_exec_user_behind_a_hop_on_ssh_switches_instead_of_refusing(self):
@@ -774,19 +764,16 @@ class TestExec:
             log=LogMode.QUIET,
         )
         h._connections.ssh_as = AsyncMock()
-        h._session_mgr.exec_on_route = AsyncMock(
-            return_value=CommandResult(
-                status=Status.Success, value="root", command="id", retcode=0, route="pooled-shell"
-            )
+        h._session_mgr.exec_pooled = AsyncMock(
+            return_value=CommandResult(status=Status.Success, value="root", command="id", retcode=0)
         )
         await h.exec("id", user="root")
         h._connections.ssh_as.assert_not_awaited()
-        assert h._session_mgr.exec_on_route.await_args.kwargs["route"] is ExecRoute.POOLED_SHELL
-        assert h._session_mgr.exec_on_route.await_args.kwargs["user"] == "root"
+        assert h._session_mgr.exec_pooled.await_args.kwargs["user"] == "root"
 
     @pytest.mark.asyncio
     async def test_exec_user_with_a_direct_cred_but_a_prompt_takes_the_shell(self):
-        """A direct cred can authenticate on a raw channel — but not answer a prompt."""
+        """A direct cred logs the user in, but a prompt still needs a session with a terminal."""
         h = UnixHost(
             ip="10.0.0.1",
             element=Element(name="box"),
@@ -795,15 +782,12 @@ class TestExec:
             log=LogMode.QUIET,
         )
         h._connections.ssh_as = AsyncMock()
-        h._session_mgr.exec_on_route = AsyncMock(
-            return_value=CommandResult(
-                status=Status.Success, value="", command="cat", retcode=0, route="pooled-shell"
-            )
+        h._session_mgr.exec_pooled = AsyncMock(
+            return_value=CommandResult(status=Status.Success, value="", command="cat", retcode=0)
         )
         await h.exec("cat", user="root", expects=[("more", " ")])
         h._connections.ssh_as.assert_not_awaited()
-        kwargs = h._session_mgr.exec_on_route.await_args.kwargs
-        assert kwargs["route"] is ExecRoute.POOLED_SHELL
+        kwargs = h._session_mgr.exec_pooled.await_args.kwargs
         assert kwargs["user"] == "root"
         assert kwargs["expects"] == [("more", " ")]
 
@@ -947,16 +931,16 @@ class TestExec:
 
     @pytest.mark.asyncio
     async def test_exec_timeout_forwarded(self, host: UnixHost):
-        host._session_mgr.exec_on_route = AsyncMock(  # ty: ignore[invalid-assignment]
+        host._session_mgr.exec_pooled = AsyncMock(  # ty: ignore[invalid-assignment]
             return_value=CommandResult(
-                status=Status.Success, value="", command="sleep 5", retcode=0, route="pooled-shell"
+                status=Status.Success, value="", command="sleep 5", retcode=0
             )
         )
 
         await host.exec("sleep 5", timeout=30.0)
 
-        host._session_mgr.exec_on_route.assert_awaited_once()
-        assert host._session_mgr.exec_on_route.await_args.kwargs["timeout"] == 30.0
+        host._session_mgr.exec_pooled.assert_awaited_once()
+        assert host._session_mgr.exec_pooled.await_args.kwargs["timeout"] == 30.0
 
     @pytest.mark.asyncio
     async def test_exec_forwards_log_false(self):
@@ -966,19 +950,17 @@ class TestExec:
             creds=[Cred(login="user", password="pass")],
             log=LogMode.QUIET,
         )
-        h._session_mgr.exec_on_route = AsyncMock(  # ty: ignore[invalid-assignment]
+        h._session_mgr.exec_pooled = AsyncMock(  # ty: ignore[invalid-assignment]
             return_value=CommandResult(
                 command="c",
                 value="",
                 status=Status.Success,
                 retcode=0,
-                route="pooled-shell",
             )
         )
         # QUIET command composes with the host's standing mode (also QUIET) → QUIET.
         await h.exec("base64 /bin/ls", log=LogMode.QUIET)
-        h._session_mgr.exec_on_route.assert_awaited_once_with(
-            route=ExecRoute.POOLED_SHELL,
+        h._session_mgr.exec_pooled.assert_awaited_once_with(
             cmd="base64 /bin/ls",
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
@@ -1200,14 +1182,11 @@ class TestPutGetUser:
             transfer="nc",
             log=LogMode.QUIET,
         )
-        h._session_mgr.exec_on_route = AsyncMock(
-            return_value=CommandResult(
-                status=Status.Success, value="", command="true", retcode=0, route="pooled-shell"
-            )
+        h._session_mgr.exec_pooled = AsyncMock(
+            return_value=CommandResult(status=Status.Success, value="", command="true", retcode=0)
         )
         result = await h._transfer_for("root")._exec_cmd("true")
-        assert h._session_mgr.exec_on_route.await_args.kwargs["route"] is ExecRoute.POOLED_SHELL
-        assert h._session_mgr.exec_on_route.await_args.kwargs["user"] == "root"
+        assert h._session_mgr.exec_pooled.await_args.kwargs["user"] == "root"
         assert result.status == Status.Success
 
 
@@ -1239,7 +1218,7 @@ class TestConsoleTermTransfers:
             cmd, expects=None, timeout=0.0, log=None, write_progress=None, exec_input=None
         ):
             calls.append((cmd, timeout))
-            return _cs(command=cmd, output="ok", route=ExecRoute.DEFAULT_SESSION.value)
+            return _cs(command=cmd, output="ok")
 
         async def no_second_session(name):
             raise AssertionError(f"a console has one session; {name!r} would be a second")
@@ -1309,8 +1288,8 @@ class TestConsoleTermRefusesNc:
 class TestConsoleExec:
     """``exec`` on a console term is one command on the host's single default session.
 
-    A console serves one client, so there is no raw channel and no pooled
-    session to run it on; it runs where ``run`` does, one call at a time.
+    A console serves one client, so there is no pooled session to run it
+    on; it runs where ``run`` does, one call at a time.
     otto's own commands (probes, file ops, transfer steps) call ``exec`` too,
     so they land in the same place.
     """
@@ -1389,7 +1368,7 @@ class TestConsoleExec:
             events.append(f"run {cmd} as {who['user']}")
             if cmd == "boom":
                 raise ConnectionError("line dropped mid-command")
-            return _cs(command=cmd, output=who["user"], route="default-session")
+            return _cs(command=cmd, output=who["user"])
 
         monkeypatch.setattr(host, "as_user", fake_as_user)
         monkeypatch.setattr(mgr, "run_cmd", run_cmd)
@@ -1422,8 +1401,7 @@ class TestConsoleExec:
             events.append(f"start {cmd}")
             await asyncio.sleep(0.05)
             events.append(f"end {cmd}")
-            route = _kw.get("route", ExecRoute.DEFAULT_SESSION)
-            return _cs(command=cmd, output="", route=route.value)
+            return _cs(command=cmd, output="")
 
         monkeypatch.setattr(host._session_mgr, "run_cmd", slow)
         await asyncio.gather(host.exec("a"), host.exec("b"))
@@ -1438,10 +1416,13 @@ class TestConsoleExec:
             events.append(f"start {cmd}")
             await asyncio.sleep(0.05)
             events.append(f"end {cmd}")
-            route = _kw.get("route", ExecRoute.DEFAULT_SESSION)
-            return _cs(command=cmd, output="", route=route.value)
+            return _cs(command=cmd, output="")
 
-        monkeypatch.setattr(host._session_mgr, "exec_on_route", slow)
+        monkeypatch.setattr(
+            host._session_mgr,
+            "exec_pooled",
+            slow,
+        )
         await asyncio.gather(host.exec("a"), host.exec("b"))
         assert events[:2] == ["start a", "start b"]
         assert host._line_lock is None
@@ -1456,8 +1437,7 @@ class TestConsoleExec:
             events.append(f"start {cmd}")
             await asyncio.sleep(0.05)
             events.append(f"end {cmd}")
-            route = _kw.get("route", ExecRoute.DEFAULT_SESSION)
-            return _cs(command=cmd, output="", route=route.value)
+            return _cs(command=cmd, output="")
 
         monkeypatch.setattr(host._session_mgr, "run_cmd", slow)
         await asyncio.gather(host.run("a"), host.exec("b"), host.run("c"))
@@ -1472,11 +1452,14 @@ class TestConsoleExec:
             events.append(f"start {cmd}")
             await asyncio.sleep(0.05)
             events.append(f"end {cmd}")
-            route = _kw.get("route", ExecRoute.DEFAULT_SESSION)
-            return _cs(command=cmd, output="", route=route.value)
+            return _cs(command=cmd, output="")
 
         monkeypatch.setattr(host._session_mgr, "run_cmd", slow)
-        monkeypatch.setattr(host._session_mgr, "exec_on_route", slow)
+        monkeypatch.setattr(
+            host._session_mgr,
+            "exec_pooled",
+            slow,
+        )
         await asyncio.gather(host.run("a"), host.exec("b"))
         assert events[:2] == ["start a", "start b"]
         assert host._line_lock is None
@@ -1501,7 +1484,7 @@ class TestConsoleExec:
 
         async def run_cmd(cmd, *_a, **_kw):
             events.append(f"run {cmd}")
-            return _cs(command=cmd, output="", route="default-session")
+            return _cs(command=cmd, output="")
 
         monkeypatch.setattr(host, "as_user", fake_as_user)
         monkeypatch.setattr(host._session_mgr, "run_cmd", run_cmd)
@@ -1560,7 +1543,7 @@ class TestConsoleExec:
 
         async def fake_run_cmd(cmd, *_a, **_kw):
             calls.append(cmd)
-            return _cs(command=cmd, output="/home/test", route="default-session")
+            return _cs(command=cmd, output="/home/test")
 
         monkeypatch.setattr(host._session_mgr, "run_cmd", fake_run_cmd)
 
@@ -3231,165 +3214,6 @@ async def test_unload_dry_run_issues_rmmod_without_idempotency_check():
     assert "rmmod foo" in str(exc.value)
 
 
-def _exec_on_channel(process: FakeChannelProcess, *, element: str, cmd: str, timeout: float):
-    """Run *cmd* on the bare ssh exec channel (``SessionManager.exec_on``) that is *process*."""
-    conn = FakeConn(process)
-    mgr = channel_manager(conn, element=element)
-    return mgr.exec_on(conn=conn, cmd=cmd, timeout=timeout)  # ty: ignore[invalid-argument-type]
-
-
-class TestSshExecTimeout:
-    """Regression: the bare ssh exec channel must honour its timeout.
-
-    Before the fix the read loop was never wrapped in asyncio.wait_for, so the
-    `except asyncio.TimeoutError` below it was dead code and this test hung.
-    """
-
-    @pytest.mark.asyncio
-    async def test_ssh_exec_stalling_command_times_out(self):
-        process = FakeChannelProcess([], eof=False)  # never yields, never returns
-
-        result = await asyncio.wait_for(
-            _exec_on_channel(process, element="stalled", cmd="sleep 3600", timeout=0.1),
-            timeout=10.0,
-        )
-
-        assert result.status == Status.Error
-        assert result.timed_out is True
-        assert "timed out" in result.value
-        assert process.signals == ["TERM"]
-
-
-class TestSshExecKillEscalation:
-    """Regression: when a remote command ignores terminate(), SSH exec must
-    escalate to kill() rather than hang on the post-terminate reap.
-
-    The fake process's ``wait()`` returns only once ``kill()`` is sent;
-    ``terminate()`` is recorded and ignored, mirroring a remote command that
-    ignores its termination signal. If the escalation branch in
-    ``otto.host.process_stop.stop_process`` were missing or broken, ``wait()`` would never
-    unblock and the outer ``asyncio.wait_for(..., timeout=5.0)`` below would
-    fail the test rather than let it hang the suite.
-    """
-
-    @pytest.mark.serial_timing
-    @pytest.mark.asyncio
-    async def test_ssh_exec_escalates_to_kill_when_terminate_is_ignored(self, monkeypatch):
-        # Patched where the name is *used* -- process_stop.py binds its own
-        # module-local `_EXEC_REAP_TIMEOUT` via `from .host import
-        # _EXEC_REAP_TIMEOUT`, so patching otto.host.host's copy would not
-        # bite here.
-        monkeypatch.setattr("otto.host.process_stop._EXEC_REAP_TIMEOUT", 0.2)
-        process = FakeChannelProcess([], eof=False, obeys=frozenset({"KILL"}))
-
-        start = asyncio.get_running_loop().time()
-        result = await asyncio.wait_for(
-            _exec_on_channel(process, element="stalled", cmd="sleep 3600", timeout=0.1),
-            timeout=5.0,
-        )
-        elapsed = asyncio.get_running_loop().time() - start
-
-        assert result.status == Status.Error
-        assert result.timed_out is True
-        assert process.signals == ["TERM", "KILL"]
-        # Sanity check that the _EXEC_REAP_TIMEOUT monkeypatch actually took
-        # effect: with the real 5.0s default this would take >5s per bounded
-        # reap attempt and blow the outer 5.0s wait_for above instead of
-        # completing. At the patched 0.2s it finishes in well under a second.
-        assert elapsed < 1.0
-
-
-class _DeadChannelProcess(FakeChannelProcess):
-    """A channel already gone when the reap signals it: asyncssh raises ``OSError`` there."""
-
-    def send_signal(self, name: str) -> None:
-        self.signals.append(name)
-        raise OSError("channel closed")
-
-
-class TestSshExecCancelReap:
-    """Regression: an INTERRUPTED exec ends its remote command too — by HANGUP.
-
-    A CLI one-shot has a concrete end. The timeout arm escalates
-    ``terminate()`` → ``kill()``; the graceful-teardown arm (a signal cancels
-    the running task, so ``CancelledError`` unwinds the drain) used to walk
-    away and leave the remote command running, because closing a pty-less
-    exec channel does not signal it. It now hangs up first — the same end a
-    command meets on the shell route when its pty closes — and escalates to
-    ``kill()`` only if the command itself outlives the hangup. The fake
-    processes below mirror ``TestSshExecKillEscalation``: ``stdout`` never
-    yields, and every signal is recorded in order.
-    """
-
-    @pytest.mark.serial_timing
-    @pytest.mark.asyncio
-    async def test_ssh_exec_hangs_up_then_kills_when_the_hangup_is_ignored(self, monkeypatch):
-        """The signal ORDER is the contract: HUP first, KILL only as escalation."""
-        # Patched where the name is *used* -- see TestSshExecKillEscalation.
-        monkeypatch.setattr("otto.host.process_stop._EXEC_REAP_TIMEOUT", 0.2)
-        # A command that ignores the hangup: recorded, but wait() stays
-        # blocked until kill() is called.
-        process = FakeChannelProcess([], eof=False, obeys=frozenset({"KILL"}))
-
-        # A long timeout: the ONLY thing that ends this call is the cancel.
-        task = asyncio.create_task(
-            _exec_on_channel(process, element="cancelled", cmd="sleep 3600", timeout=3600)
-        )
-        await asyncio.sleep(0.2)  # the drain is running on the channel
-        task.cancel()
-
-        _done, pending = await asyncio.wait({task}, timeout=5.0)
-        assert not pending, "cancelled exec never finished — the reap is unbounded"
-        assert task.cancelled(), "CancelledError must still propagate out of exec"
-        assert process.signals == ["HUP", "KILL"], (
-            "an interrupted exec must hang up first and escalate to kill() only after"
-        )
-
-    @pytest.mark.serial_timing
-    @pytest.mark.asyncio
-    async def test_ssh_exec_does_not_escalate_when_the_hangup_is_obeyed(self, monkeypatch):
-        """A command that dies on HUP is never killed — that is what keeps a
-        deliberately nohup'd child (which ignores HUP) alive, since the signal
-        reaches the command's whole process group."""
-        monkeypatch.setattr("otto.host.process_stop._EXEC_REAP_TIMEOUT", 0.2)
-        process = FakeChannelProcess([], eof=False)  # the command dies on the hangup
-
-        task = asyncio.create_task(
-            _exec_on_channel(process, element="hangs-up", cmd="sleep 3600", timeout=3600)
-        )
-        await asyncio.sleep(0.2)
-        task.cancel()
-
-        _done, pending = await asyncio.wait({task}, timeout=5.0)
-        assert not pending
-        assert task.cancelled()
-        assert process.signals == ["HUP"], (
-            "a command that obeys the hangup must never be killed — its nohup'd "
-            "children would go with it"
-        )
-
-    @pytest.mark.serial_timing
-    @pytest.mark.asyncio
-    async def test_a_reap_that_fails_on_a_dead_channel_never_swallows_the_cancel(self):
-        """The channel can be GONE by the time the reap signals it — asyncssh
-        raises ``OSError`` there. That failure is a footnote (debug-logged);
-        the CANCEL is the story, and it must still propagate, or an
-        interrupted otto would exit 0 because its teardown broke.
-        """
-        process = _DeadChannelProcess([], eof=False)
-
-        task = asyncio.create_task(
-            _exec_on_channel(process, element="reap-explodes", cmd="sleep 3600", timeout=3600)
-        )
-        await asyncio.sleep(0.2)
-        task.cancel()
-
-        _done, pending = await asyncio.wait({task}, timeout=5.0)
-        assert not pending
-        assert task.cancelled(), "a failed reap swallowed the CancelledError"
-        assert process.signals == ["HUP"]
-
-
 # ---------------------------------------------------------------------------
 # interactive() telnet teardown (G15: no awaited close in a bare finally)
 # ---------------------------------------------------------------------------
@@ -3875,7 +3699,7 @@ async def test_a_declared_stage_dir_is_used_as_given_and_never_re_resolved(tmp_p
 
 def _real_session_mgr(*, creds=None):
     """A real ``SessionManager`` over the stub shell session the pooled-exec
-    tests use — telnet term, so every route lands on the pooled shell."""
+    tests use — telnet term, so every exec lands on a pooled shell."""
     from tests.unit.host.test_session import _proxy_connections, _StubExecSession
 
     conn = _proxy_connections([], login_target="admin", credentials=("admin", SecretStr("pw")))
@@ -3908,7 +3732,7 @@ async def test_exec_runs_as_the_ambient_user_of_the_switched_default_session(mon
     `async with host.as_user("root")` mean what it says.
 
     Asserted on the identity the pooled session actually ran the command as,
-    not on the argument `_session_mgr.exec_on_route` was handed: a host that read the
+    not on the argument `_session_mgr.exec_pooled` was handed: a host that read the
     ambient user and then dropped it on the floor would satisfy the latter.
     """
     monkeypatch.setattr("otto.host.login_proxy._RESYNC_SETTLE", 0.0)

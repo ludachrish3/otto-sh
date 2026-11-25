@@ -528,11 +528,10 @@ session on it:
 
 - `run()` works, on that session. So does `exec()` (and
   `otto host <id> exec`): on a console it is a special case of `run()`, one
-  command on the same session with the same exit-code handling. It runs in a
-  clean login shell that session's shell starts for it, so it starts in the
-  login's home directory with the login's environment, not from the state
-  `run()` left there, and what it changes (a `cd`, a variable, an `exit`)
-  does not stay ({ref}`shell state, by route <exec-frame-shell-state>`).
+  command on the same session with the same exit-code handling. It starts
+  from what `run()` left there (its directory, variables and shell options),
+  and what it changes (a `cd`, a variable, an `exit`) does not stay
+  ({ref}`shell state <exec-frame-shell-state>`).
   Concurrent `run()`, `exec()`
   and `shell`-transfer commands take turns on the one line
   ({ref}`the line turn <host-line-turn>`). `run(user=...)` and
@@ -540,7 +539,8 @@ session on it:
   turn. A scoped `as_user` block is outside it: keep what runs in one
   sequential rather than gathering it with other commands.
 - The `shell` transfer works (its commands run on that session, as the
-  logged-in user), and so do `scp`, `sftp` and `ftp`, which reach the device
+  logged-in user, so a relative remote path resolves against the directory
+  `run()` left), and so do `scp`, `sftp` and `ftp`, which reach the device
   over its network rather than the console.
 - Named sessions are refused on a Unix host, with `console is single-client
   (<server>:<port>, dial=<mode>); named sessions are not available on this

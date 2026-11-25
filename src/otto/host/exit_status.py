@@ -1,25 +1,19 @@
-"""One exit-status rule for the routes that run a command as a process.
+"""One exit-status rule for a command run as a process, and one reader of "no status".
 
-A process route -- the ssh exec channel and local subprocess primitives
-(which no ``exec`` reaches) and the interactive ssh bridge --
-learns how a command ended from a return code in asyncio's convention: the
-exit status, or ``-N`` when signal ``N`` ended the process, or
-``None`` when neither was reported. A shell reports the same death as
-``128 + N``, so a caller would otherwise see the same command end two ways
-depending on the route. :func:`exit_status_of` is that translation, in one
-place, and :func:`no_return_code_result` is the one result a process route
-gives when there is no status to translate. :func:`gave_no_exit_status` is
-the one reader of that outcome, on any route.
+The interactive ssh bridge learns how a command ended from a return code in
+asyncio's convention: the exit status, or ``-N`` when signal ``N`` ended the
+process, or ``None`` when neither was reported. A shell reports the same
+death as ``128 + N``, so a caller would otherwise see the same command end
+two ways. :func:`exit_status_of` is that translation, in one place, and
+:func:`subshell_status_of` gives a ksh93 subshell's signal death the same
+shape.
+:func:`gave_no_exit_status` is the one reader of a result that carries no
+exit status, on any host.
 """
 
 import signal
 
 from ..result import CommandResult
-from ..utils import Status
-from .exec_route import ExecRoute
-
-NO_RETURN_CODE = "Process did not provide a return code"
-"""The ``value`` and ``msg`` of :func:`no_return_code_result`."""
 
 
 def _signalled(n: int) -> int:
@@ -41,7 +35,7 @@ def subshell_status_of(reported: int) -> int:
 
 
 def exit_status_of(returncode: "int | None") -> "int | None":
-    """Return a process route's return code as the exit status a shell would report.
+    """Return a process's return code as the exit status a shell would report.
 
     ``-N`` for any signal number this platform has (``1 <= N < NSIG``,
     real-time signals included: most have no :class:`signal.Signals` member,
@@ -63,21 +57,8 @@ def gave_no_exit_status(result: CommandResult) -> bool:
     Either its timeout killed it, or it never ran. "Never ran" is
     ``retcode == -1``, the field's documented meaning
     (:attr:`~otto.result.CommandResult.retcode`; a shell cannot exit -1),
-    which otto's own results for a dead transport carry:
-    :func:`no_return_code_result` and a session that died mid-command. The
+    which otto's own result for a session that died mid-command carries. The
     ``value`` of such a result is otto's text, never the command's answer,
     so a caller that parses an answer asks this first.
     """
     return result.timed_out or result.retcode == -1
-
-
-def no_return_code_result(*, cmd: str, route: ExecRoute) -> CommandResult:
-    """Build the one result of a process that ended with neither an exit status nor a signal."""
-    return CommandResult(
-        status=Status.Error,
-        value=NO_RETURN_CODE,
-        msg=NO_RETURN_CODE,
-        command=cmd,
-        retcode=-1,
-        route=route.value,
-    )

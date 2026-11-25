@@ -688,7 +688,7 @@ def bed_space() -> "list[ResolvedCell]":
             words[cell.element] = bed_vocabulary(cell.element)
             # The family and the login's proxy chain are facts of the lab
             # entry, read off the host built from it unpinned -- never the
-            # session manager's own exec route.
+            # session manager's own answer.
             unpinned[cell.element] = _unpinned_bed_host(cell.element)
         host = unpinned[cell.element]
         entry = dict(host_data(cell.element, BED_TECH))

@@ -156,7 +156,6 @@ from otto.host.command_frame import AshFrame, BashFrame, ExecInput
 from otto.host.connections import ConnectionManager
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
-from otto.host.exec_route import ExecRoute
 from otto.host.factory import create_host_from_dict
 from otto.host.options import UserlandOptions
 from otto.host.session import (
@@ -194,10 +193,8 @@ from tests._fixtures.progress import ProgressEvent, assert_progress_invariants
 
 
 def _pooled_exec_input() -> ExecInput:
-    """What a pooled shell exec types: the exec frame, with that route's restore."""
-    return ExecInput(
-        stdin_eof=True, restore=SessionManager._exec_restore_for(ExecRoute.POOLED_SHELL)
-    )
+    """What a pooled shell exec types: the exec frame, with a pooled session's restore."""
+    return ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(False))
 
 
 def _ok(output: str = "") -> CommandResult:
@@ -407,11 +404,11 @@ def _make_ft(
 
     ``line_budget=None`` is the default because it is what an ``ssh`` host --
     and every test written before the budget existed -- gets from
-    :meth:`~otto.host.session.SessionManager.line_budget` for the host's exec plan: no line
+    :meth:`~otto.host.session.SessionManager.line_budget`: no line
     discipline in the way, full ``_SHELL_CHUNK_BYTES`` chunks. Passed as a
     plain number here rather than as a real manager because what these tests
     are about is how the backend SPENDS a budget; where the number comes from
-    is ``TestTheBudgetIsTheHostsExecRouteSpeaking``'s subject, and
+    is ``TestTheBudgetIsTheHostsSessionManagerSpeaking``'s subject, and
     ``tests/unit/host/test_run_line_length.py``'s.
     """
     mock_connections = MagicMock(spec=ConnectionManager)
@@ -913,7 +910,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
     THE BUDGET IS PASSED IN, NOT MEASURED HERE. These tests hand ``_make_ft``
     a number and assert what the backend does with it; that the number is the
     right one for a given host is two other suites' subject
-    (``TestTheBudgetIsTheHostsExecRouteSpeaking`` below for the wiring,
+    (``TestTheBudgetIsTheHostsSessionManagerSpeaking`` below for the wiring,
     ``tests/unit/host/test_run_line_length.py`` for the measurement itself).
     Splitting it that way is what keeps these assertions about the CODEC:
     a test that built a real session manager would redden here for a change to
@@ -1168,7 +1165,7 @@ class TestChunkLinesFitTheTransportsLineBudget:
         assert [int(m.group("bs")) for m in reads] == [_SHELL_CHUNK_BYTES] * 2
 
 
-class TestTheBudgetIsTheHostsExecRouteSpeaking:
+class TestTheBudgetIsTheHostsSessionManagerSpeaking:
     """Where the number comes from: the host's session manager, asked not predicted.
 
     The tempting shortcut is one line inside the backend --
@@ -1176,7 +1173,7 @@ class TestTheBudgetIsTheHostsExecRouteSpeaking:
     login routes ``exec`` through the same pooled shell on an ``ssh`` host, and
     the framing the budget is net of belongs to the host's command frame, which
     a transfer backend cannot see. So the backend asks
-    :meth:`~otto.host.session.SessionManager.line_room` for the host's exec plan through the
+    :meth:`~otto.host.session.SessionManager.line_room` through the
     context it was built with, and these two tests are the wiring's guard: a
     build that stops passing the callable, or a backend that starts computing
     its own, reds here rather than on the bed.
@@ -1229,7 +1226,7 @@ class TestTheBudgetIsTheHostsExecRouteSpeaking:
         assert budget == ceiling - framed_line_overhead(
             host.command_frame, exec_input=_pooled_exec_input()
         )
-        assert budget == host._session_mgr.line_budget(route=host._session_mgr.exec_route())
+        assert budget == host._session_mgr.line_budget(shared=False)
 
     def test_an_ssh_host_is_handed_no_budget_at_all(self) -> None:
         """The path that was never broken must not move, and this is where that starts."""

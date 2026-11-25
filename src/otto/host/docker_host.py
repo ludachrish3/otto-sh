@@ -51,7 +51,6 @@ from .errors import (
     MountNotFoundError,
     StagingRefusedError,
 )
-from .exec_route import ExecRoute, container_route
 from .file_ops import PosixFileOps
 from .host import (
     _TERMINAL_HELP,
@@ -70,7 +69,6 @@ from .identity import ROOT_LOGIN
 from .mount import Mount, mount_for, mount_for_parent, translate
 from .privilege import PosixPrivilege
 from .session import (
-    ExecPlan,
     Expect,
     SessionManager,
     ShellSession,
@@ -1121,14 +1119,20 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         return "is not available for a container's run() and open_session(); its exec() has none"
 
     @override
-    def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
-        """Every ``exec`` here is a ``docker exec`` dispatched through the parent."""
-        return ExecPlan(route=ExecRoute.CONTAINER)
+    def _refuse_exec_on_a_terminal(
+        self, *, user: str | None, needs_shell: bool, sudo: bool, expects: bool
+    ) -> None:
+        """Refuse nothing: a container's ``exec`` is ``docker exec -i``, with no terminal.
+
+        Its own session manager's terminal never runs an ``exec``: the
+        command goes through the parent (:meth:`_run_exec`). The mode a
+        container's ``exec`` refuses is ``terminal=True``
+        (:meth:`_terminal_limitation`).
+        """
 
     @override
-    async def _run_plan(
+    async def _run_exec(
         self,
-        plan: ExecPlan,
         *,
         cmd: str,
         timeout: float,
@@ -1136,12 +1140,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         user: str | None,
         expects: "list[Expect | CredentialExpect] | None",
         exec_input: "ExecInput | None",
+        plain: bool,
     ) -> CommandResult:
         """Run a single command in the container via the parent.
 
-        Stateless and concurrent-safe — each call spawns a fresh
+        Stateless and concurrent-safe: each call spawns a fresh
         ``docker exec``. ``run()`` is the stateful counterpart that
-        preserves shell state across calls. The parent's own ``exec`` plans
+        preserves shell state across calls. The parent's own ``exec`` decides
         whether it needs a shell to honour *expects*. ``docker exec -i`` keeps stdin
         open, so the parent's pooled shell can answer a prompt across it.
         """
@@ -1189,7 +1194,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         stdin open across that hop so a response written there reaches the
         container. They are the caller's own pairs only: a container elevates
         with ``docker exec -u root`` (see :meth:`exec`), so no elevation
-        password answer exists on this route to forward.
+        password answer exists for this host to forward.
 
         When the parent is an otto host whose public ``exec`` is otto's own,
         it runs the wrapper through its private delegated entry with a log
@@ -1222,7 +1227,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         # Replace the wrapped command in the result so callers see what they
         # asked for, not the docker-exec wrapper. `replace` rather than a field
         # list so new CommandResult fields are carried through automatically.
-        return replace(result, command=cmd, route=container_route(result.route))
+        return replace(result, command=cmd)
 
     @override
     @contextmanager

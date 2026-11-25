@@ -60,15 +60,12 @@ from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .binary_loader import BinaryLoader
 from .capability import menu_capability, settle_selections
 from .capability_grid import HostCapabilities, OptionSupport, SessionIdentity, UserSupport
-from .command_frame import CommandFrame, ExecInput, ZephyrFrame
+from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager, TermContext, build_term_backend
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
-from .exec_route import ExecRoute
 from .host import (
     CONCURRENT_HELP,
     DEFAULT_COMMAND_TIMEOUT,
-    CredentialExpect,
-    Expect,
     Host,
     SuppressCommandOutput,
     is_dry_run,
@@ -78,7 +75,6 @@ from .limitation import Limitation
 from .power import power_control_from_spec
 from .remote_host import OsType, RemoteHost
 from .session import (
-    ExecPlan,
     SessionManager,
 )
 from .transfer import TransferContext, build_transfer_backend
@@ -469,44 +465,6 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             None
             if terminal
             else "is not available on an embedded host, whose console is a terminal"
-        )
-
-    @override
-    def _plan_exec(self, *, user: str | None, needs_shell: bool) -> ExecPlan:
-        """Plan the default session: one console, and no second session beside it."""
-        return ExecPlan(route=ExecRoute.DEFAULT_SESSION)
-
-    @override
-    async def _run_plan(
-        self,
-        plan: ExecPlan,
-        *,
-        cmd: str,
-        timeout: float,
-        log: LogMode,
-        user: str | None,
-        expects: "list[Expect | CredentialExpect] | None",
-        exec_input: "ExecInput | None",
-    ) -> CommandResult:
-        """Run a single command on the embedded host.
-
-        An embedded target exposes a single console and no second session,
-        so ``exec`` runs on the same persistent session as
-        ``run``, and concurrent calls take turns on it (the line turn
-        ``exec`` holds). It exists for API parity; use ``run`` for stateful
-        workflows.
-
-        The *user* and *sudo* refusals are
-        :meth:`~otto.host.host.BaseHost._refuse_option`'s, not this method's,
-        so they land above ``exec``'s dry-run arm. This family always runs on
-        the shared shell, so the plan has nothing to choose.
-        """
-        return await self._live_session_mgr().run_cmd(
-            cmd=cmd,
-            expects=expects,
-            timeout=timeout,
-            log=self._effective_log(log),
-            exec_input=exec_input,
         )
 
     def _require_loader(self) -> BinaryLoader:

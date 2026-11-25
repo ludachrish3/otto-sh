@@ -32,15 +32,7 @@ The rules, one per function:
   then the tail (flag ``N``; ``B`` and the terminal restore only when the
   restore variable is set; the errexit restore always) and the flagged end
   record ``<end_prefix><flag><status>__``.
-* :func:`shape_console` -- a console's exec frame: the terminal snapshot,
-  then the same tail around a subshell that becomes a clean login shell
-  (``exec env -i`` keeping ``HOME``, ``TERM``, ``USER``, ``LOGNAME`` and
-  ``PATH`` and setting ``SHELL`` to the program it starts, then
-  ``"${SHELL:-/bin/sh}" -l -c``), which changes to ``$HOME``,
-  prints BEGIN and runs the body, all one quoted word.
 """
-
-import shlex
 
 from otto.host.command_frame import (
     RECOVER_SUFFIX,
@@ -140,7 +132,7 @@ def shape_c(
 
     *start_var* ``None`` is a pooled exec, restoring :data:`BASELINE_VAR`;
     a name (the console's :data:`START_VAR`) snapshots the terminal into it
-    first and restores that. *credential* keeps the caller's terminal on
+    first and restores that, around the same body. *credential* keeps the caller's terminal on
     :data:`CREDENTIAL_FD` (``3<&0``), for a body that reads a password there.
     """
     start = "" if start_var is None else f"{saved_into(start_var)}; "
@@ -151,22 +143,4 @@ def shape_c(
         f'{start}echo "{m.begin}"; case $- in *e*) {ERREXIT_VAR}=e;; *) {ERREXIT_VAR}=;; esac; '
         f"set +e; ( {errexit_restore()}; {frame_body(body)}\n"
         f"){keep}{stdin}; {STATUS_VAR}=$?; {exec_tail(var)}; {end_record(m)}\n"
-    )
-
-
-def shape_console(
-    body: str, *, m: SessionMarkers, stdin_eof: bool, credential: bool = False
-) -> str:
-    """A console's exec frame around *body*: the login shell prints BEGIN, not the parent."""
-    stdin = " </dev/null" if stdin_eof else ""
-    keep = f" {CREDENTIAL_FD}<&0" if credential else ""
-    keeps = (
-        'HOME="${HOME-}" TERM="${TERM-}" USER="${USER-}" LOGNAME="${LOGNAME-}" PATH="${PATH-}" '
-        'SHELL="${SHELL:-/bin/sh}"'
-    )
-    word = shlex.quote(f'cd "${{HOME:-/}}" || exit; echo "{m.begin}"; {frame_body(body)}\n')
-    return (
-        f"{saved_into(START_VAR)}; case $- in *e*) {ERREXIT_VAR}=e;; *) {ERREXIT_VAR}=;; esac; "
-        f'set +e; ( exec env -i {keeps} "${{SHELL:-/bin/sh}}" -l -c {word}\n'
-        f"){keep}{stdin}; {STATUS_VAR}=$?; {exec_tail(START_VAR)}; {end_record(m)}\n"
     )

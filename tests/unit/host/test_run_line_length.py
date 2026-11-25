@@ -50,7 +50,6 @@ from otto.host.command_frame import (
 )
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
-from otto.host.exec_route import ExecRoute
 from otto.host.session import (
     _SESSION_ID_LEN,
     SessionManager,
@@ -200,9 +199,9 @@ def _framing_overhead(frame) -> int:
     return len(next(line for line in lines if "CMD" in line)) - len("CMD")
 
 
-def _exec_overhead(frame, route: ExecRoute) -> int:
-    """Characters the exec frame *route* types adds to the command's line."""
-    typed = ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(route))
+def _exec_overhead(frame, shared: bool) -> int:
+    """Characters the exec frame adds to the command's line in the session *shared* names."""
+    typed = ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(shared))
     return framed_line_overhead(frame, exec_input=typed)
 
 
@@ -259,14 +258,13 @@ class TestAnAshHostRefusesInsteadOfTruncating:
         """A console's exec types into this same session, so advising it would be false."""
         mgr, sessions = _manager(AshFrame(), term="console", name="bb1350")
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await mgr.exec_on_route(
-                route=ExecRoute.DEFAULT_SESSION,
+            await mgr.exec_on_default_session(
                 cmd="echo " + "x" * 5000,
                 timeout=10.0,
                 log=LogMode.NORMAL,
             )
         message = str(excinfo.value)
-        assert "Send it through `exec()`" not in message
+        assert "Over ssh, an `exec()` without a terminal" not in message
         assert "split it" in message
         assert sessions == []
         assert str(5005) in message, "the refusal must state the command's own length"
@@ -485,16 +483,15 @@ class TestTheRefusalIsScoped:
     async def test_a_pooled_exec_over_the_line_is_refused_before_anything_is_typed(self) -> None:
         """A pooled shell session is line-edited like ``run``'s, so it is refused like it.
 
-        ``SessionManager.exec_route`` has no stateless primitive on telnet (and
-        none on a proxied login), so ``exec`` types into a pooled SHELL session.
+        Every telnet ``exec`` (and every one on a proxied login) types into a
+        pooled SHELL session.
         The line is measured in the exec frame it is typed in, against the
         acquired session's echo fact, and refused before the session sees it.
         The advice names no ``exec()`` escape: there is none on this route.
         """
         mgr, sessions = _manager(AshFrame(), term="telnet", echoes=True)
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await mgr.exec_on_route(
-                route=ExecRoute.POOLED_SHELL,
+            await mgr.exec_pooled(
                 cmd="a" * 5000,
                 timeout=5,
                 log=LogMode.QUIET,
@@ -502,18 +499,19 @@ class TestTheRefusalIsScoped:
             )
         assert all(s.ran == [] for s in sessions)
         message = str(excinfo.value)
-        assert "Send it through `exec()`" not in message
-        assert "`exec()` types into a shell session on this route too, so split it" in message
+        assert "Over ssh, an `exec()` without a terminal" not in message
+        assert (
+            "`exec()` types into a session with a terminal on this host too, so split it" in message
+        )
 
     @pytest.mark.asyncio
     async def test_a_pooled_exec_within_the_line_is_typed(self) -> None:
         """The control: a pooled exec under its budget reaches the session unchanged."""
         mgr, sessions = _manager(AshFrame(), term="telnet", echoes=True)
-        budget = mgr.line_budget(route=ExecRoute.POOLED_SHELL)
+        budget = mgr.line_budget(shared=False)
         assert budget is not None
         cmd = "a" * budget
-        result = await mgr.exec_on_route(
-            route=ExecRoute.POOLED_SHELL,
+        result = await mgr.exec_pooled(
             cmd=cmd,
             timeout=5,
             log=LogMode.QUIET,
@@ -585,7 +583,6 @@ class TestRunAndExecShareOneFramedStep:
         mgr, sessions = _manager(AshFrame())
         result = await mgr.run_cmd(cmd="true")
         assert result.is_ok
-        assert result.route == ExecRoute.DEFAULT_SESSION.value
         assert calls == ["true"]
         assert sessions[0].ran == ["true"]
 
@@ -593,15 +590,13 @@ class TestRunAndExecShareOneFramedStep:
     async def test_a_pooled_exec_passes_through_it_once(self, monkeypatch) -> None:
         calls = self._spy(monkeypatch)
         mgr, sessions = _manager(AshFrame(), term="telnet")
-        result = await mgr.exec_on_route(
-            route=ExecRoute.POOLED_SHELL,
+        result = await mgr.exec_pooled(
             cmd="true",
             timeout=5,
             log=LogMode.QUIET,
             exec_input=ExecInput(stdin_eof=True),
         )
         assert result.is_ok
-        assert result.route == ExecRoute.POOLED_SHELL.value
         assert calls == ["true"]
         assert [s.ran for s in sessions] == [["true"]]
 
@@ -620,8 +615,7 @@ class TestRunAndExecShareOneFramedStep:
     async def test_a_pooled_exec_the_echo_cuts_is_refused_in_it(self) -> None:
         mgr, sessions = _manager(AshFrame(), term="telnet", echoes=True)
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
-            await mgr.exec_on_route(
-                route=ExecRoute.POOLED_SHELL,
+            await mgr.exec_pooled(
                 cmd="a" * 2000,
                 timeout=5,
                 log=LogMode.QUIET,
@@ -643,13 +637,14 @@ class TestRunAndExecShareOneFramedStep:
 
 
 def _planned_budget(host: UnixHost) -> int | None:
-    """The line budget of the plan an unset ``exec()`` on *host* takes."""
-    plan = host._exec_plan(user=None, needs_shell=False)
-    return host._session_mgr.line_budget(route=plan.route, plain=plan.plain)
+    """The line budget of the session an unset ``exec()`` on *host* takes."""
+    return host._session_mgr.line_budget(
+        shared=host._shares_one_line(), plain=host._exec_plain(user=None, needs_shell=False)
+    )
 
 
 class TestTheExecLineBudget:
-    """``line_budget`` on the plain exec route answers what the refusal above declines to.
+    """``line_budget`` for an ``exec`` answers what the refusal above declines to.
 
     THE TWO ARE THE SAME MEASUREMENT WITH DIFFERENT VERBS, and the difference
     is who wrote the command. ``run()``'s caller wrote it and can shorten it,
@@ -657,17 +652,17 @@ class TestTheExecLineBudget:
     GENERATES its command lines -- one per chunk -- so a refusal would stop
     every transfer to the devices the backend exists for. Handed a number
     instead, it emits a shorter line and the transfer works. The budget is
-    measured in the exec frame the route types, so a chunk at the budget also
+    measured in the exec frame the session types, so a chunk at the budget also
     passes the pooled exec's refusal.
 
     Nothing here talks to a device either: the budget is a function of the
-    route and the frame, both of which are known before anything is connected.
+    session and the frame, both of which are known before anything is connected.
     """
 
     def test_a_telnet_host_is_budgeted_by_the_ptys_ceiling(self) -> None:
         mgr, _ = _manager(BashFrame(), term="telnet")
-        assert mgr.line_budget(route=mgr.exec_route()) == PTY_TYPED_LINE_MAX - _exec_overhead(
-            BashFrame(), mgr.exec_route()
+        assert mgr.line_budget(shared=False) == PTY_TYPED_LINE_MAX - _exec_overhead(
+            BashFrame(), False
         )
 
     def test_an_ssh_host_has_no_budget_at_all(self) -> None:
@@ -697,17 +692,9 @@ class TestTheExecLineBudget:
             name="bb1",
             command_frame=BashFrame(),
         )
-        assert mgr.line_budget(route=mgr.exec_route()) == PTY_TYPED_LINE_MAX - _exec_overhead(
-            BashFrame(), mgr.exec_route()
+        assert mgr.line_budget(shared=False) == PTY_TYPED_LINE_MAX - _exec_overhead(
+            BashFrame(), False
         )
-
-    def test_a_subprocess_or_a_container_route_has_no_budget(self) -> None:
-        """A local subprocess or a ``docker exec`` types into no shell of otto's."""
-        mgr, _ = _manager(BashFrame(), term="telnet")
-        assert mgr.line_budget(route=ExecRoute.LOCAL_SUBPROCESS) is None
-        assert mgr.line_budget(route=ExecRoute.CONTAINER) is None
-        # The control: the same manager budgets the route it types into.
-        assert mgr.line_budget(route=ExecRoute.POOLED_SHELL) is not None
 
     def test_an_ash_host_with_no_session_yet_gets_the_echoing_ceiling(self) -> None:
         """Before any session measured echo off, an ash host plans on 1022.
@@ -717,8 +704,8 @@ class TestTheExecLineBudget:
         only sends shorter chunks.
         """
         ash, _ = _manager(AshFrame(), term="telnet")
-        assert ash.line_budget(route=ash.exec_route()) == ASH_ECHOING_LINE_MAX - _exec_overhead(
-            AshFrame(), ash.exec_route()
+        assert ash.line_budget(shared=False) == ASH_ECHOING_LINE_MAX - _exec_overhead(
+            AshFrame(), False
         )
 
     @pytest.mark.asyncio
@@ -729,9 +716,7 @@ class TestTheExecLineBudget:
         """Once a session measured echo off, the kernel's 4095; still echoing, the editor's 1022."""
         ash, _ = _manager(AshFrame(), term="telnet", echoes=echoes)
         await ash.run_cmd(cmd="true")
-        assert ash.line_budget(route=ash.exec_route()) == ceiling - _exec_overhead(
-            AshFrame(), ash.exec_route()
-        )
+        assert ash.line_budget(shared=False) == ceiling - _exec_overhead(AshFrame(), False)
 
     def test_the_budget_is_exactly_what_frames_inside_the_ceiling(self) -> None:
         """The RELATIONSHIP, in both directions, so an off-by-one cannot pass.
@@ -744,12 +729,11 @@ class TestTheExecLineBudget:
         """
         frame = BashFrame()
         mgr, _ = _manager(frame, term="telnet")
-        budget = mgr.line_budget(route=mgr.exec_route())
+        budget = mgr.line_budget(shared=False)
         assert budget is not None
         markers = SessionMarkers.for_session(session_id="0" * _SESSION_ID_LEN)
 
-        route = mgr.exec_route()
-        typed = ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(route))
+        typed = ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(False))
 
         def longest_typed_line(cmd: str) -> int:
             payload = render_payload(frame, cmd, m=markers, exec_input=typed, terminal=True)
@@ -771,14 +755,31 @@ class TestTheExecLineBudget:
         host._session_mgr._command_frame = BashFrame()
         assert _planned_budget(host) is None
         connections.term = "telnet"
-        assert _planned_budget(host) == PTY_TYPED_LINE_MAX - _exec_overhead(
-            BashFrame(), ExecRoute.POOLED_SHELL
-        )
+        assert _planned_budget(host) == PTY_TYPED_LINE_MAX - _exec_overhead(BashFrame(), False)
 
-    def test_a_term_exec_cannot_run_on_is_not_handed_a_budget(self) -> None:
-        """``exec`` raises for it before typing anything, so there is no line to budget."""
-        mgr, _ = _manager(BashFrame(), term="serial")
-        assert mgr.line_budget(route=mgr.exec_route()) is None
+    def test_line_room_is_none_without_a_terminal_and_budgeted_with_one(self) -> None:
+        """No line discipline answers ``None``; a terminal answers the room of its session's frame.
+
+        The default session's exec restores the terminal as it found it
+        (``START``), which types more than a pooled session's ``BASELINE``,
+        so the two rooms differ by exactly that.
+        """
+        mgr, _ = _manager(BashFrame(), term="telnet")
+        assert mgr.line_room(cmd="x", shared=False, plain=True) is None
+        assert mgr.line_room(cmd="x", shared=True, plain=True) is None
+        piped, _ = _manager(BashFrame(), term="telnet", manager_terminal=False)
+        assert piped.line_room(cmd="x", shared=False) is None
+        assert piped.line_room(cmd="x", shared=True) is None
+
+        def room(restore: ExecRestore) -> int:
+            typed = ExecInput(stdin_eof=True, restore=restore)
+            return typed_line_room(BashFrame(), "x", echoes=True, exec_input=typed)
+
+        pooled = mgr.line_room(cmd="x", shared=False)
+        shared = mgr.line_room(cmd="x", shared=True)
+        assert pooled == room(ExecRestore.BASELINE)
+        assert shared == room(ExecRestore.START)
+        assert shared != pooled
 
 
 # ===========================================================================
@@ -1034,9 +1035,7 @@ class TestEachEntryIsMeasuredAsTheLineItTypes:
         ceiling = typed_line_ceiling(frame, echoes=_BEFORE_ANY_SESSION_ECHOES)
         run_budget = ceiling - framed_line_overhead(frame)
         # The exec_input the default session types: with that route's restore.
-        typed = SessionManager._with_restore_for(
-            ExecRoute.DEFAULT_SESSION, ExecInput(stdin_eof=True)
-        )
+        typed = SessionManager._with_restore_for(True, ExecInput(stdin_eof=True))
         exec_budget = ceiling - framed_line_overhead(frame, exec_input=typed)
         assert exec_budget < run_budget, "the exec frame's typed line is the longer one"
         return [run_budget, exec_budget]
@@ -1044,8 +1043,7 @@ class TestEachEntryIsMeasuredAsTheLineItTypes:
     async def _drive(self, cmd: str, *, as_exec: bool):
         mgr, sessions = _manager(AshFrame(), term="console", name="bb1350")
         if as_exec:
-            await mgr.exec_on_route(
-                route=ExecRoute.DEFAULT_SESSION,
+            await mgr.exec_on_default_session(
                 cmd=cmd,
                 timeout=10.0,
                 log=LogMode.NORMAL,
@@ -1142,7 +1140,7 @@ def test_a_multiline_command_is_measured_per_physical_line():
 
 
 _EXEC_LINES = [ExecInput(stdin_eof=True), ExecInput(stdin_eof=True, restore=ExecRestore.START)]
-"""A pooled exec's frame, which types a command as written, and a console's, which quotes it."""
+"""A pooled exec's frame and a console's; both type a command as written."""
 
 
 @pytest.mark.parametrize("exec_input", _EXEC_LINES)
@@ -1185,13 +1183,18 @@ def test_the_budget_is_the_room_of_an_empty_command(echoes, exec_input):
     )
 
 
-def test_a_console_exec_s_quotes_cost_what_its_quoting_types():
-    """shlex quoting types a single quote as five characters: ``'"'"'``."""
+def test_a_console_exec_types_a_command_as_a_pooled_exec_does():
+    """A command's own quotes cost a console exec what they cost a pooled one: nothing more.
+
+    The two frames differ only by the console's start snapshot and the restore
+    variable it names, so the difference in room is one constant for every command.
+    """
     start = ExecInput(stdin_eof=True, restore=ExecRestore.START)
-    plain = typed_line_room(AshFrame(), "aaa", echoes=False, exec_input=start)
-    quoted = typed_line_room(AshFrame(), "a'a", echoes=False, exec_input=start)
-    assert plain - quoted == 4
     pooled = ExecInput(stdin_eof=True)
-    assert typed_line_room(AshFrame(), "aaa", echoes=False, exec_input=pooled) == typed_line_room(
-        AshFrame(), "a'a", echoes=False, exec_input=pooled
-    )
+
+    def room(cmd, exec_input):
+        return typed_line_room(AshFrame(), cmd, echoes=False, exec_input=exec_input)
+
+    commands = ("aaa", "a'a", "'''\"'\"'''")
+    assert len({room(cmd, pooled) - room(cmd, start) for cmd in commands}) == 1
+    assert room("aaa", start) == room("a'a", start)

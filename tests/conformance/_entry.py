@@ -1,23 +1,18 @@
-"""How a contract's command reaches a cell's host: the ENTRY, and the route it must take.
+"""How a contract's command reaches a cell's host: the ENTRY.
 
 A command contract asserts one property of ``host.run`` and ``host.exec``
 alike -- two entry points that must agree on the same input (``AGENTS.md``,
 "ONE DECISION, ONE PLACE"). So the entry is part of the CELL a contract is
 parametrised over, and every command a contract or control issues goes
-through :func:`issue`, which also asserts the route the call took
-(:func:`check_route`).
+through :func:`issue`.
 
-THE EXPECTED ROUTE IS READ OFF THE LAB ENTRY'S FACTS, never off the host's own
-resolver (``SessionManager.exec_route``). A prediction computed by the code
-under test agrees with that code by construction, so it could never go red;
-the cell's ``family`` and ``term`` are facts the venue read from the entry it
-built the host from, and the table in :func:`expected_route` is this suite's
-independent statement of what otto should do with them. So is
-:func:`has_terminal`: whether the session a command is typed into reads a
-terminal is NOT derivable from the route (an ``exec`` over ``ssh`` takes a
-``pooled-shell`` session with or without one), so it is read off the cell's
-other facts -- its term, whether it is hooked, whether its login is proxied
--- and the call's (whether it needs a shell, whether its user is switched to).
+WHAT A CONTRACT EXPECTS IS READ OFF THE LAB ENTRY'S FACTS, never off the
+host's own resolver. A prediction computed by the code under test agrees with
+that code by construction, so it could never go red. :func:`has_terminal`
+says whether the session a command is typed into reads a terminal from the
+cell's facts -- its family and term, whether it is hooked, whether its login
+is proxied -- and the call's (whether it needs a shell, whether its user is
+switched to).
 
 THE HOOKED-SSH CELL KIND. An ``ssh`` cell whose login is not proxied has two
 pooled ``exec`` sessions to check: the one without a terminal its plain host
@@ -50,7 +45,6 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from otto.host.embedded_host import EmbeddedHost
-from otto.host.exec_route import ExecRoute
 from otto.host.host import BaseHost, ShellCommand
 from otto.host.identity import ROOT_LOGIN
 from otto.host.local_host import LocalHost
@@ -82,7 +76,7 @@ HOOK_MARK = "export OTTO_CF_HOOK=ran"
 """What the marking hook runs on each session: the vocabulary's state read prints it."""
 
 _BUSYBOX_ARTIFACT = "busybox-artifact"
-_SSH, _TELNET, _CONSOLE = "ssh", "telnet", "console"
+_SSH, _CONSOLE = "ssh", "console"
 
 
 def on_console(resolved: ResolvedCell) -> bool:
@@ -149,38 +143,13 @@ def entries_of(resolved: ResolvedCell) -> "list[str]":
     return [RUN, EXEC]
 
 
-def expected_route(resolved: ResolvedCell) -> str:
-    """The route a command issued through *resolved*'s entry must report.
-
-    From the cell's facts alone; see the module docstring for why never from
-    the host's own resolver. ``run`` always takes the host's one session.
-    ``exec`` takes it too where the line has one session only (a unix
-    console, an embedded host); everywhere else -- ``ssh``, ``telnet``, the
-    local host -- a pooled session of its own (``pooled-shell``), whatever
-    the call asks for: whether that session has a terminal is
-    :func:`has_terminal`'s question, not the route's.
-    """
-    entry = resolved.entry
-    if entry == RUN:
-        return ExecRoute.DEFAULT_SESSION.value
-    if entry not in entries_of(resolved):
-        raise ValueError(f"{cell_label(resolved)} has no {entry!r} entry")
-    if resolved.family == EMBEDDED or on_console(resolved):
-        return ExecRoute.DEFAULT_SESSION.value
-    if resolved.family == LOCAL_FAMILY or resolved.cell.term in {_SSH, _TELNET}:
-        return ExecRoute.POOLED_SHELL.value
-    raise ValueError(
-        f"no expected exec route for family {resolved.family!r} on term {resolved.cell.term!r}"
-    )
-
-
 def has_terminal(
     resolved: ResolvedCell, *, needs_shell: bool = False, switched_user: bool = False
 ) -> bool:
     """Whether the session *resolved*'s entry types a command into reads a terminal.
 
-    From the cell's facts and the call's, never from the route (the module
-    docstring says why):
+    From the cell's facts and the call's, never from the host's own resolver
+    (the module docstring says why):
 
     * the local host: never; every session it opens reads a pipe;
     * ``run``, a console, an embedded host: always; the host's one session;
@@ -267,30 +236,14 @@ async def issue(
     host: BaseHost,
     resolved: ResolvedCell,
     cmd: "str | ShellCommand",
-    *,
-    route_checked: bool = True,
     **kwargs: Any,
 ) -> CommandResult:
-    """Issue *cmd* through *resolved*'s entry, then assert the route it took.
-
-    *route_checked* False skips the route assertion, for a call that takes no
-    route at all: a dry run declines before any route is chosen.
-    """
+    """Issue *cmd* through *resolved*'s entry."""
     if resolved.entry == EXEC:
         result = await host.exec(cmd, **kwargs)
     else:
         result = (await host.run(cmd, **kwargs)).only
-    if route_checked:
-        check_route(resolved, result)
     return result
-
-
-def check_route(resolved: ResolvedCell, result: CommandResult) -> None:
-    """Assert *result* ran on the route *resolved*'s entry must take (:func:`expected_route`)."""
-    expected = expected_route(resolved)
-    assert result.route == expected, (
-        f"{cell_label(resolved)}: the command ran on route {result.route!r}, expected {expected!r}"
-    )
 
 
 async def _mark(session: Any, _ctx: Any) -> None:
@@ -407,8 +360,8 @@ def proxied_on(entry: "dict[str, Any]", term: str, *, family: str) -> bool:
     """Whether *entry*'s creds make a login over *term* a proxied one.
 
     Read off the LAB ENTRY itself, never through otto's own cred resolver,
-    so the route a venue expects is independent of the code that picks the
-    route: the login over *term* is the first cred that applies to it (no
+    so what a venue expects is independent of the code that picks the
+    login: the login over *term* is the first cred that applies to it (no
     ``protocols``, or ``protocols`` naming *term*;
     docs/configuration/host-sources.md, "Scoping a cred to a protocol"), and
     it is proxied when that cred names a ``proxy``.

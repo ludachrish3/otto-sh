@@ -497,7 +497,6 @@ class TestDelegation:
             value="3.7.0",
             command="kernel version",
             retcode=0,
-            route="default-session",
         )
         result = await host.run("kernel version")
         assert result.only.value == "3.7.0"
@@ -505,36 +504,34 @@ class TestDelegation:
 
     @pytest.mark.asyncio
     async def test_exec_runs_on_persistent_session(self, host: EmbeddedHost):
-        """exec shares the single console — it goes through run_cmd, not a pool."""
+        """exec shares the single console: the default session, not a pool."""
         host._session_mgr = AsyncMock()
         host._session_mgr.ambient_user = None
-        host._session_mgr.run_cmd.return_value = CommandResult(
+        host._session_mgr.exec_on_default_session.return_value = CommandResult(
             status=Status.Success,
             value="42",
             command="kernel uptime",
             retcode=0,
-            route="default-session",
         )
         result = await host.exec("kernel uptime")
         assert result.value == "42"
-        host._session_mgr.run_cmd.assert_awaited_once()
+        host._session_mgr.exec_on_default_session.assert_awaited_once()
+        host._session_mgr.exec_pooled.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_exec_forwards_expects_to_run_cmd(self, host: EmbeddedHost):
-        """`exec(expects=...)` already reaches the shared shell's `run_cmd` —
-        the embedded family has no bare exec primitive to answer a prompt on
-        of its own, so it always runs on the persistent console."""
+        """`exec(expects=...)` reaches the shared shell's default session: the
+        embedded family always runs on the persistent console."""
         host._session_mgr = AsyncMock()
         host._session_mgr.ambient_user = None
-        host._session_mgr.run_cmd.return_value = CommandResult(
+        host._session_mgr.exec_on_default_session.return_value = CommandResult(
             status=Status.Success,
             value="ok",
             command="kernel uptime",
             retcode=0,
-            route="default-session",
         )
         await host.exec("kernel uptime", expects=[("more", " ")])
-        _, kwargs = host._session_mgr.run_cmd.await_args
+        _, kwargs = host._session_mgr.exec_on_default_session.await_args
         assert kwargs["expects"] == [("more", " ")]
 
     @pytest.mark.asyncio
@@ -575,20 +572,20 @@ class TestDelegation:
 
         host._session_mgr = AsyncMock()
         host._session_mgr.ambient_user = None
-        host._session_mgr.run_cmd.return_value = CommandResult(
+        host._session_mgr.exec_on_default_session.return_value = CommandResult(
             status=Status.Success,
             value="",
             command="c",
             retcode=0,
-            route="default-session",
         )
         # The QUIET command is composed with the host's standing mode into LogMode.QUIET.
         await host.exec("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
-        host._session_mgr.run_cmd.assert_awaited_once_with(
+        host._session_mgr.exec_on_default_session.assert_awaited_once_with(
             cmd="llext load_hex foo DEADBEEF",
             expects=None,
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.QUIET,
+            user=None,
             exec_input=ExecInput(stdin_eof=True),
         )
 
@@ -601,7 +598,6 @@ class TestDelegation:
             value="",
             command="c",
             retcode=0,
-            route="default-session",
         )
         await host.run("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
         _, kwargs = host._session_mgr.run_cmd.await_args
@@ -832,7 +828,7 @@ async def test_exec_refuses_an_ambient_user_on_an_embedded_host(host: EmbeddedHo
 async def test_an_embedded_exec_gets_the_console_default_session_s_restore(frame_type: str):
     """An embedded host's exec types into its one session, as a console's does.
 
-    So it takes that route's restore from the one predicate
+    So it takes the default session's restore from the one predicate
     (``SessionManager._exec_restore_for``), not a choice of its own: the same
     command reaches the session with the same :class:`ExecInput` both ways.
     """
@@ -840,7 +836,6 @@ async def test_an_embedded_exec_gets_the_console_default_session_s_restore(frame
     from typing import cast
 
     from otto.host.command_frame import build_command_frame
-    from otto.host.exec_route import ExecRoute
     from otto.host.session import SessionManager, ShellSession
 
     seen: list[ExecInput | None] = []
@@ -880,8 +875,7 @@ async def test_an_embedded_exec_gets_the_console_default_session_s_restore(frame
     try:
         host._session_mgr = manager(frame)
         await host.exec("echo hi")
-        await manager(frame).exec_on_route(
-            route=ExecRoute.DEFAULT_SESSION,
+        await manager(frame).exec_on_default_session(
             cmd="echo hi",
             timeout=10.0,
             log=LogMode.QUIET,
@@ -892,4 +886,4 @@ async def test_an_embedded_exec_gets_the_console_default_session_s_restore(frame
     assert len(seen) == 2
     assert seen[0] == seen[1]
     assert seen[0] is not None
-    assert seen[0].restore is SessionManager._exec_restore_for(ExecRoute.DEFAULT_SESSION)
+    assert seen[0].restore is SessionManager._exec_restore_for(True)

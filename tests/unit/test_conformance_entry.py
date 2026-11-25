@@ -1,4 +1,4 @@
-"""The entry a command reaches a conformance cell's host by, and the route it must take.
+"""The entry a command reaches a conformance cell's host by.
 
 No host is opened here: every cell is picked from ``bed_space()`` or
 ``hermetic_space()`` by its fields, and the conftest hook is driven through a
@@ -12,7 +12,6 @@ from types import SimpleNamespace
 import pytest
 
 from otto.host.factory import create_host_from_dict
-from otto.result import CommandResult, Status
 from tests._fixtures.labdata import element_for, host_data
 from tests.conformance import _entry
 from tests.conformance import conftest as _conformance_conftest
@@ -24,11 +23,9 @@ from tests.conformance._entry import (
     LOCAL_FAMILY,
     RUN,
     UNIX,
-    check_route,
     entries_declared,
     entries_of,
     entries_of_node,
-    expected_route,
     has_terminal,
     hooked_leg,
     password_sudo_on,
@@ -66,35 +63,22 @@ def test_a_busybox_artifact_cell_has_no_exec_entry():
     )
     assert entries_of(busybox) == [RUN]
     assert entries_of(local) == [RUN, EXEC]
-    assert expected_route(with_entry(local, EXEC)) == "pooled-shell"
     assert hooked_leg(busybox) is None
 
 
-def test_a_network_hop_does_not_change_the_expected_route():
+def test_a_network_hop_keeps_the_hooked_leg():
     hopped = next(r for r in bed_space() if r.cell.term == "ssh" and lab_entry(r).get("hop"))
-    assert expected_route(with_entry(hopped, EXEC)) == "pooled-shell"
     assert hopped.open_shell_host is not None
     leg = hooked_leg(hopped)
     assert leg is not None
-    assert (leg.entry, leg.hooked, expected_route(leg)) == (EXEC, True, "pooled-shell")
+    assert (leg.entry, leg.hooked) == (EXEC, True)
 
 
-def test_a_proxied_login_expects_the_pooled_shell_with_a_terminal():
+def test_a_proxied_login_expects_an_exec_session_with_a_terminal():
     plain = next(r for r in bed_space() if r.cell.term == "ssh")
     proxied = dataclasses.replace(plain, proxied_login=True)
-    assert expected_route(with_entry(proxied, EXEC)) == "pooled-shell"
     assert has_terminal(with_entry(proxied, EXEC)) is True
     assert has_terminal(with_entry(plain, EXEC)) is False
-
-
-def test_the_exec_route_never_names_a_retired_mechanism():
-    """No cell's ``exec`` expects ``ssh-channel`` or ``local-subprocess``, whatever its kind."""
-    routes = {
-        expected_route(leg)
-        for resolved in bed_space() + hermetic_space()
-        for leg in space_for_all(resolved)
-    }
-    assert routes <= {"pooled-shell", "default-session"}, routes
 
 
 def space_for_all(resolved: ResolvedCell) -> "list[ResolvedCell]":
@@ -118,7 +102,7 @@ def space_for_all(resolved: ResolvedCell) -> "list[ResolvedCell]":
     ],
 )
 def test_has_terminal_is_read_off_the_cells_facts_and_the_calls(facts, call, terminal):
-    """Each fact moves the answer alone, so none of them is the route in disguise."""
+    """Each fact moves the answer alone, so none of them stands in for another."""
     plain = with_entry(next(r for r in bed_space() if r.cell.term == "ssh"), EXEC)
     assert has_terminal(dataclasses.replace(plain, **facts), **call) is terminal
 
@@ -194,26 +178,17 @@ def test_password_sudo_on_reads_the_login_s_password_and_identity():
         password_sudo_on({"name": "x"}, "ssh", family=UNIX)
 
 
-def test_an_embedded_telnet_cell_expects_the_default_session():
+def test_an_embedded_telnet_cell_has_both_entries():
     embedded = next(r for r in bed_space() if r.family == "embedded" and r.cell.term == "telnet")
     assert entries_of(embedded) == [RUN, EXEC]
-    assert expected_route(with_entry(embedded, EXEC)) == "default-session"
 
 
-@pytest.mark.parametrize(
-    ("term", "route"), [("telnet", "pooled-shell"), ("console", "default-session")]
-)
-def test_a_unix_non_ssh_cell_has_no_hooked_leg(term, route):
+@pytest.mark.parametrize("term", ["telnet", "console"])
+def test_a_unix_non_ssh_cell_has_no_hooked_leg(term):
     resolved = next(r for r in bed_space() if r.family == "unix" and r.cell.term == term)
     assert entries_of(resolved) == [RUN, EXEC]
-    assert expected_route(with_entry(resolved, EXEC)) == route
     assert resolved.open_shell_host is None
     assert hooked_leg(resolved) is None
-
-
-def test_run_is_always_the_default_session():
-    for resolved in bed_space() + hermetic_space():
-        assert expected_route(with_entry(resolved, RUN)) == "default-session"
 
 
 def test_the_label_names_the_entry():
@@ -232,18 +207,6 @@ def test_two_entries_of_one_cell_rank_independently():
     assert len(orders) == 6, orders
     # And a draw of one keeps a single leg, not a cell's every entry.
     assert {len({r.entry for r in draw(legs, 1, seed)}) for seed in range(20)} == {1}
-
-
-def test_check_route_fails_on_a_wrong_route():
-    an_ssh_cell = next(r for r in bed_space() if r.cell.term == "ssh")
-    with pytest.raises(AssertionError, match="pooled-shell"):
-        check_route(
-            with_entry(an_ssh_cell, EXEC),
-            CommandResult(status=Status.Success, route="ssh-channel"),
-        )
-    check_route(
-        with_entry(an_ssh_cell, EXEC), CommandResult(status=Status.Success, route="pooled-shell")
-    )
 
 
 def test_the_entries_marker_is_read_by_ast():

@@ -677,7 +677,7 @@ async def unix_host_over_scripted(
     ``scripted_shell_unopened(replies=replies, refuses_fd0_dup=refuses_fd0_dup)``
     sessions and appends each to
     the returned list, so an ``exec`` goes through the real ``BaseHost.exec``,
-    ``_exec_one``, ``UnixHost._run_plan``, ``SessionManager.exec_on_route``,
+    ``_exec_one``, ``UnixHost._run_exec``, ``SessionManager.exec_pooled``,
     the pooled session and ``ShellSession.run_cmd``.
     """
     from tests.unit.host._session_feed import scripted_shell_unopened
@@ -734,13 +734,12 @@ def console_unix_host(monkeypatch: pytest.MonkeyPatch) -> UnixHost:
 
 
 class InFlight:
-    """A stand-in for the session manager's ``run_cmd`` and ``exec_on_route`` that counts overlap.
+    """A stand-in for the session manager's ``run_cmd`` and exec entries that counts overlap.
 
     Each call records ``cmd:<cmd>`` in *seq* (when given), counts the calls
     inside it at once into :attr:`max_in_flight`, yields one loop turn (or,
     with *hold*, sets :attr:`started` and waits for :meth:`release`), and
-    returns a success on the route it was asked for (``run_cmd``: the
-    default session).
+    returns a success.
     """
 
     def __init__(self, seq: "list[str] | None" = None, *, hold: bool = False) -> None:
@@ -754,7 +753,7 @@ class InFlight:
     def release(self) -> None:
         self._released.set()
 
-    async def _call(self, cmd: str, route: str = "default-session") -> CommandResult:
+    async def _call(self, cmd: str) -> CommandResult:
         self.seq.append(f"cmd:{cmd}")
         self.in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self.in_flight)
@@ -766,13 +765,16 @@ class InFlight:
                 await asyncio.sleep(0)
         finally:
             self.in_flight -= 1
-        return CommandResult(command=cmd, value="", status=Status.Success, retcode=0, route=route)
+        return CommandResult(command=cmd, value="", status=Status.Success, retcode=0)
 
     async def run_cmd(self, **kw: Any) -> CommandResult:
         return await self._call(kw["cmd"])
 
-    async def exec_on_route(self, **kw: Any) -> CommandResult:
-        return await self._call(kw["cmd"], kw["route"].value)
+    async def exec_pooled(self, *, cmd: str, **_kw: Any) -> CommandResult:
+        return await self._call(cmd)
+
+    async def exec_on_default_session(self, *, cmd: str, **_kw: Any) -> CommandResult:
+        return await self._call(cmd)
 
 
 def recording_as_user(seq: "list[str]") -> Callable[..., Any]:

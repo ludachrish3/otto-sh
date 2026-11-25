@@ -77,11 +77,8 @@ async def test_a_live_run_prepares_then_runs_inside_the_binding(kind, monkeypatc
         def __exit__(self, *exc):
             order.append("unbind")
 
-    # The route is the manager's primitive's record (`SessionManager.run_cmd`),
-    # which this fake stands in for; `run` passes it through unchanged.
-    ran = CommandResult(
-        status=Status.Success, value="ran", command="x", retcode=0, route="default-session"
-    )
+    # `run` passes the manager's primitive's result (`SessionManager.run_cmd`) through unchanged.
+    ran = CommandResult(status=Status.Success, value="ran", command="x", retcode=0)
     manager = MagicMock()
     manager.run_cmd = AsyncMock(side_effect=lambda *a, **k: order.append("run") or ran)
     monkeypatch.setattr(host, "_prepare_live_session", prepare)
@@ -90,7 +87,6 @@ async def test_a_live_run_prepares_then_runs_inside_the_binding(kind, monkeypatc
 
     result = await host._run_one("x", timeout=3.0, log=LogMode.QUIET)
     assert result == ran
-    assert result.route == "default-session"
     assert order == ["prepare", "bind", "run", "unbind"]
     manager.run_cmd.assert_awaited_once_with(cmd="x", expects=None, timeout=3.0, log=LogMode.QUIET)
 

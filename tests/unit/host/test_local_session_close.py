@@ -2,7 +2,7 @@
 
 The shell leads its own session and process group (``start_new_session``), so
 close reaches what it started; what survives is the shared stop's survivor
-rule (:func:`otto.host.process_stop.stop_timed_out` with
+rule (:func:`otto.host.process_stop.stop_local_session_group` with
 :class:`~otto.host.process_stop.LocalStoppable`): a member that ignores
 ``TERM`` when the shell exits promptly, a process that left the group, and
 everything once the shell's own exit is already recorded.
@@ -14,9 +14,11 @@ observer and cleanup (:mod:`tests._fixtures.witness_shell`).
 
 import asyncio
 import contextlib
+import os
 import signal
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -196,10 +198,8 @@ async def test_a_cancel_landing_during_close_is_held_and_the_pipes_are_released(
     termed = asyncio.Event()
     send = process_stop.LocalStoppable.send
 
-    def send_and_note(
-        self: process_stop.LocalStoppable, sig: "process_stop.StopSignal | str"
-    ) -> None:
-        send(self, sig)  # ty: ignore[invalid-argument-type]
+    def send_and_note(self: process_stop.LocalStoppable, sig: Literal["TERM", "KILL"]) -> None:
+        send(self, sig)
         termed.set()
 
     monkeypatch.setattr(process_stop.LocalStoppable, "send", send_and_note)
@@ -265,3 +265,58 @@ async def test_a_shell_that_already_exited_closes_quietly(monkeypatch: pytest.Mo
     await s.close()
     assert signalled == []
     assert s._process is None
+
+
+def _group_gone(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+async def test_a_cancel_during_the_local_session_s_spawn_leaves_no_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The spawn is held after the shell started and before asyncio has
+    # connected its pipes (its stdin pipe's connect waits on a gate); the
+    # opener is cancelled there. The shell leads its own group, so the group
+    # id is its pid.
+    from asyncio import unix_events
+
+    loop = asyncio.get_running_loop()
+    spawned: list[int] = []
+    connecting, gate = asyncio.Event(), asyncio.Event()
+    start = unix_events._UnixSubprocessTransport._start
+    connect_write_pipe = loop.connect_write_pipe
+
+    def recording_start(self, *args, **kwargs) -> None:
+        start(self, *args, **kwargs)
+        spawned.append(self._proc.pid)
+
+    async def gated_connect_write_pipe(*args, **kwargs):
+        connecting.set()
+        await gate.wait()
+        return await connect_write_pipe(*args, **kwargs)
+
+    monkeypatch.setattr(unix_events._UnixSubprocessTransport, "_start", recording_start)
+    monkeypatch.setattr(loop, "connect_write_pipe", gated_connect_write_pipe)
+    s = LocalSession()
+    opener = asyncio.ensure_future(s.open_transport())
+    try:
+        await connecting.wait()
+        assert len(spawned) == 1
+        opener.cancel()
+        gate.set()
+        with pytest.raises(asyncio.CancelledError):
+            await opener
+        await wait_for_async(
+            lambda: _group_gone(spawned[0]),
+            2.0,
+            interval=0.01,
+            on_timeout="the cancelled spawn's process group is still alive",
+        )
+    finally:
+        gate.set()
+        for pgid in spawned:
+            signal_group(pgid)

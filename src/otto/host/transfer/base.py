@@ -103,12 +103,11 @@ class TransferContext:
     # How much of a single line of a command this host's `exec_cmd` can carry
     # a payload inserted into a given command may fill, or None when nothing
     # bounds it -- asked of the host's SessionManager (see
-    # `otto.host.session.SessionManager.line_room`, for the route the host's
-    # exec plan names) rather than derived
-    # here, because the answer depends on which primitive `exec` routes
-    # through and on the host's shell dialect, neither of which a transfer
+    # `otto.host.session.SessionManager.line_room`) rather than derived
+    # here, because the answer depends on whether `exec`'s session reads a
+    # terminal and on the host's shell dialect, neither of which a transfer
     # backend can see. A CALLABLE, not a number: `term` has a setter and a
-    # proxied login can be re-targeted, so the route is read when bytes are
+    # proxied login can be re-targeted, so the answer is read when bytes are
     # about to move rather than when the backend was built. Read today only by
     # `ShellFileTransfer`, whose commands carry their payload IN the command
     # line; a backend that moves bytes some other way ignores it, and the

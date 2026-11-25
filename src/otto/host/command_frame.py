@@ -40,7 +40,6 @@ from a ``.otto`` init module — the same extension hook
 
 import enum
 import re
-import shlex
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -86,8 +85,8 @@ def command_value(output: str, *, line_ending: str = "\n") -> str:
 
     The one statement of the rule in :ref:`command-output-contract`. Nothing
     else is stripped or added: earlier newlines, trailing spaces and tabs and
-    the program's own ``\r`` are all kept. Every route that builds a
-    ``value`` from output it read calls this, so no two routes can disagree.
+    the program's own ``\r`` are all kept. Every session that builds a
+    ``value`` from output it read calls this, so no two sessions can disagree.
 
     >>> from otto.host.command_frame import command_value
     >>> command_value("a\n\n"), command_value("a \r\n"), command_value("abc")
@@ -133,9 +132,9 @@ It follows the head's ``_`` separator, as :data:`READY_SUFFIX` does."""
 SESSION_SHELL = '"${SHELL:-/bin/sh}"'
 """The session's own shell program, as a word the session's shell expands.
 
-What a console exec starts its clean login shell with, and what an exec
-under sudo's ``shell`` form runs its command in: the login's shell, so the
-command is written in the language of the session it was typed into."""
+What an exec under sudo's ``shell`` form runs its command in: the session's
+shell, so the command is written in the language of the session it was
+typed into."""
 
 EXEC_CREDENTIAL_FD = 3
 """The file descriptor an isolated ``exec`` keeps the caller's stdin on, for a password.
@@ -205,7 +204,7 @@ class ExecInput:
     """A delegating host's log context, or ``None`` for a call logged by the host it runs on.
 
     Set only by ``BaseHost._exec_delegated`` and read only through
-    ``delegated_exec_log``: by every route's log resolver and by the host that
+    ``delegated_exec_log``: by every session's log resolver and by the host that
     logs the line it really runs at DEBUG."""
 
     on_typed: Callable[[], None] | None = None
@@ -783,15 +782,6 @@ def _continues(cmd: str) -> bool:
     return trailing % 2 == 1
 
 
-_CLEAN_LOGIN_ENV = ["HOME", "TERM", "USER", "LOGNAME", "PATH"]
-"""What a console exec's clean login shell keeps of the console shell's environment, as it is.
-
-``SHELL`` is passed too, but resolved (:data:`SESSION_SHELL`), not as it is:
-it names the program the clean login shell is, also where the console's
-shell had it unset.
-"""
-
-
 class BashFrame(CommandFrame):
     """POSIX bash dialect: ``echo`` brackets and ``$?`` baked into the END marker.
 
@@ -876,35 +866,6 @@ class BashFrame(CommandFrame):
             body += "\n"
         return body
 
-    @classmethod
-    def _clean_login_body(cls, cmd: str, *, m: SessionMarkers) -> str:
-        """Return the subshell body that runs *cmd* in a clean login shell: a console's exec.
-
-        ``exec env -i`` replaces the subshell with the console's login shell
-        (``${SHELL:-/bin/sh} -l``), its environment emptied but for
-        :data:`_CLEAN_LOGIN_ENV`, read from the console's shell as it is, and
-        ``SHELL`` set to the program it starts (:data:`SESSION_SHELL`), so the
-        sudo ``shell`` form and its probe inside it name that same shell. The
-        login shell reads its profile, changes to ``$HOME`` (``/`` when it is
-        unset or empty; a shell started
-        with ``-l`` keeps the directory it inherits; login(1) is what changes
-        it), THEN prints BEGIN and runs the command, so nothing a profile prints
-        reaches the value. *cmd* arrives as one quoted word, byte-exact, on its
-        own line: the newline before the closing quote ends a here-doc, a
-        comment or a continuation however *cmd* ends. File descriptors survive
-        ``exec`` and ``env -i``, so the credential descriptor and the caller's
-        terminal reach the command. A child that never reaches the command (no
-        ``env``, no such shell, a profile that exits) prints no BEGIN, and the
-        session reads that as a command that never ran
-        (:data:`otto.host.session.NEVER_RAN`).
-        """
-        # `${V-}`: a console shell under `set -u` may lack USER or LOGNAME.
-        keep = " ".join(f'{name}="${{{name}-}}"' for name in _CLEAN_LOGIN_ENV)
-        keep += f" SHELL={SESSION_SHELL}"
-        # `${HOME:-/}`: a login with no home starts in `/`, as login(1) does.
-        word = shlex.quote(f'cd "${{HOME:-/}}" || exit; echo "{m.begin}"; {cls._frame_body(cmd)}\n')
-        return f"exec env -i {keep} {SESSION_SHELL} -l -c {word}\n"
-
     @override
     def typed(self, *, cmd: str) -> str:
         # A line editor (bash, zsh, mksh) takes TAB as its completion key: it
@@ -958,18 +919,13 @@ class BashFrame(CommandFrame):
         # errexit_restore), and the end record carries a flag: `B` when the
         # restore record was there, `N` when it was lost (end_pattern).
         #
-        # A console's exec (*restore* START, the one predicate that names a
-        # console's default session) does not run the command in the
-        # subshell itself: the subshell becomes a clean login shell
-        # (_clean_login_body), which prints BEGIN once its profile has run.
-        console = restore is ExecRestore.START
-        start = f"{saved_into(START_VAR)}; " if console else ""
-        begin = "" if console else f'echo "{m.begin}"; '
-        body = (
-            self._clean_login_body(cmd, m=m)
-            if console
-            else f"{self.errexit_restore()}; {self._frame_body(cmd)}\n"
-        )
+        # A console's exec (*restore* START) runs on the shell ``run`` uses,
+        # so it first snapshots the terminal as it found it and puts that
+        # back at its end; the command itself starts from that shell's
+        # directory, variables and options.
+        start = f"{saved_into(START_VAR)}; " if restore is ExecRestore.START else ""
+        begin = f'echo "{m.begin}"; '
+        body = f"{self.errexit_restore()}; {self._frame_body(cmd)}\n"
         stdin = " </dev/null" if stdin_eof else ""
         keep = f" {EXEC_CREDENTIAL_FD}<&0" if credential else ""
         var = _restore_var(restore)

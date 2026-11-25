@@ -58,18 +58,6 @@ _EXEC_FRAME_RE = re.compile(
     re.DOTALL,
 )
 
-# A console's exec frame: the subshell becomes a clean login shell, whose one
-# quoted word changes to $HOME, prints BEGIN and holds the command.
-_CONSOLE_EXEC_FRAME_RE = re.compile(
-    r"case \$- in .*?; set \+e; \( exec env -i .*? -l -c ('.*')\n"
-    r"\)( 3<&0)?( </dev/null)?; __otto_rc=\$\?; .*"
-    r'echo "(__OTTO_\w+_END__)\$\{__otto_f\}\$\{__otto_rc\}__"\n',
-    re.DOTALL,
-)
-_CONSOLE_WORD_RE = re.compile(
-    r'cd "\$\{HOME:-/\}" \|\| exit; echo "(__OTTO_\w+_BEGIN__)"; (.*)\n\Z', re.DOTALL
-)
-
 
 class BashFramed(NamedTuple):
     """What :func:`parse_bash_frame` reads off a typed bash-family frame."""
@@ -104,17 +92,6 @@ def parse_bash_frame(text: str) -> "BashFramed | None":
             exec_.group(4) is not None,
             exec_.group(3) is not None,
         )
-    if (console := _CONSOLE_EXEC_FRAME_RE.search(text)) is not None:
-        word = _CONSOLE_WORD_RE.match(shlex.split(console.group(1))[0])
-        if word is not None:
-            return BashFramed(
-                word.group(1),
-                word.group(2),
-                console.group(4),
-                True,
-                console.group(3) is not None,
-                console.group(2) is not None,
-            )
     return None
 
 

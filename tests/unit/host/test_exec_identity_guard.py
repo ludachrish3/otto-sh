@@ -229,11 +229,9 @@ def pool():
 
 
 async def _exec(mgr, cmd: str):
-    from otto.host.exec_route import ExecRoute
     from otto.logger.mode import LogMode
 
-    return await mgr.exec_on_route(
-        route=ExecRoute.POOLED_SHELL,
+    return await mgr.exec_pooled(
         cmd=cmd,
         timeout=10.0,
         log=LogMode.NORMAL,

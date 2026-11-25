@@ -17,12 +17,11 @@ The rules every command shares -- what a contract is, what its promises
 mean, and how to read what is not promised -- are on
 {ref}`Command contracts <command-contracts>`.
 
-## Which route `run` takes
+## Which session `run` takes
 
-`run` always uses the host's one persistent shell session, the
-`default-session` route, whatever the host's term. On an embedded host,
-such as a Zephyr board, that session is the board's one console session.
-So `result.route` is `default-session` for every `run`.
+`run` always uses the host's one persistent shell session, whatever the
+host's term. On an embedded host, such as a Zephyr board, that session is
+the board's one console session.
 
 ## What `run` promises
 
@@ -39,10 +38,10 @@ where its **Not checked** column says otherwise; the numbered notes below say wh
 | read `retcode` 128+N for a command killed by signal N, as a shell reports it, and keep using the host afterwards | not on a Zephyr board (note 1) | `exec-signal-exit` |
 | `cd`, `export` or `set` in one `run` and have the next `run` on that host start there | not on a Zephyr board (note 2) | `run-keeps-state` |
 | read the host log and find the lines of each command's `value`, one record per line, blank lines and a program's own `\r` kept, under `log=NORMAL` and `log=QUIET`, and nothing under `log=NEVER` | -- | `exec-log` |
-| run a command under a dry run and have it reach no device, getting back a `NotRun` result with `retcode == -1`, no route, `command` the line a live call would type, and a `value` that raises `CommandNotRunError` | not on a Zephyr board (note 3) | `exec-dry-run` |
+| run a command under a dry run and have it reach no device, getting back a `NotRun` result with `retcode == -1`, `command` the line a live call would type, and a `value` that raises `CommandNotRunError` | not on a Zephyr board (note 3) | `exec-dry-run` |
 | pass `expects=`, `sudo=` or `user=` to `run` or `exec`, alone or together, on a `ShellCommand` or inside `as_user()`, and get the same effect on every entry; where the device cannot honour an option, the call raises `UnsupportedOptionError` naming it, and nothing is typed | `expects=` on a Zephyr board (note 4); `sudo=` with `user=` on a device (note 5); `user=` and `as_user()` without a second user (note 6) | `exec-options` |
 | type a command holding punctuation, a TAB or UTF-8 text and have the shell receive it byte for byte; one holding a control character a terminal would act on reaches a session without a terminal intact, and on a session with one is refused with `UntypableCommandError` before anything is typed | not on a Zephyr board (note 7) | `typed-input` |
-| give a command a time budget and have a breach reported the same way on every route, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on a Zephyr board (note 8) | `timeout` |
+| give a command a time budget and have a breach reported the same way on every host, with the process otto started stopped, the call returned once the budget and otto's bounded cleanup have passed, even when the command closed its output, and the session usable afterwards | not on a Zephyr board (note 8) | `timeout` |
 
 On some devices a promise above is narrower: see
 {ref}`Where a device gets a narrower promise <command-contracts-narrower>`.
@@ -66,7 +65,7 @@ On some devices a promise above has a known gap: see
 These declared exceptions apply to `run`; each is described on
 {ref}`Command contracts <command-contracts>`:
 
-- {ref}`How long one line of a command can be, on the pooled-shell and default-session routes <exception-how-long-one-line-of-a-command-can-be-on-the-pooled-shell-and-default-session-routes>`
+- {ref}`How long one line of a command can be, on a session with a terminal <exception-how-long-one-line-of-a-command-can-be-on-a-session-with-a-terminal>`
 - {ref}`A 0xFF byte in a command's output, on a console whose host record sets console_options.escapes_iac: false <exception-a-0xff-byte-in-a-command-s-output-on-a-console-whose-host-record-sets-console-options-escapes-iac-false>`
 - {ref}`Elevating a command with sudo= on run and exec, on the embedded and zephyr host families <exception-elevating-a-command-with-sudo-on-run-and-exec-on-the-embedded-and-zephyr-host-families>`
 - {ref}`Running a command as another user= on run and exec, on the embedded and zephyr host families <exception-running-a-command-as-another-user-on-run-and-exec-on-the-embedded-and-zephyr-host-families>`

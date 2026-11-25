@@ -100,7 +100,7 @@ async def _touch(host: BaseHost) -> None:
     probe = InFlight()
     mgr = host._live_session_mgr()
     mgr.run_cmd = probe.run_cmd  # ty: ignore[invalid-assignment]
-    mgr.exec_on_route = probe.exec_on_route  # ty: ignore[invalid-assignment]
+    mgr.exec_on_default_session = probe.exec_on_default_session  # ty: ignore[invalid-assignment]
     await host.exec(":")
 
 
@@ -124,7 +124,7 @@ async def test_gathered_calls_on_an_embedded_host_never_interleave(monkeypatch):
 async def test_gathered_calls_on_ssh_still_overlap(unix_host_ssh, monkeypatch):
     """The control: a host whose exec has channels of its own takes no turn."""
     probe = InFlight()
-    monkeypatch.setattr(unix_host_ssh._live_session_mgr(), "exec_on_route", probe.exec_on_route)
+    monkeypatch.setattr(unix_host_ssh._live_session_mgr(), "exec_pooled", probe.exec_pooled)
     monkeypatch.setattr(unix_host_ssh._live_session_mgr(), "run_cmd", probe.run_cmd)
     await asyncio.gather(*(unix_host_ssh.exec(f"c{i}") for i in range(4)), unix_host_ssh.run("r"))
     assert probe.max_in_flight == 5
@@ -139,7 +139,11 @@ async def test_run_as_user_on_a_console_holds_the_turn_across_the_switch(
     probe = InFlight(seq)
     monkeypatch.setattr(console_unix_host, "as_user", recording_as_user(seq))
     monkeypatch.setattr(console_unix_host._live_session_mgr(), "run_cmd", probe.run_cmd)
-    monkeypatch.setattr(console_unix_host._live_session_mgr(), "exec_on_route", probe.exec_on_route)
+    monkeypatch.setattr(
+        console_unix_host._live_session_mgr(),
+        "exec_on_default_session",
+        probe.exec_on_default_session,
+    )
     await asyncio.gather(console_unix_host.run("a", user="alice"), console_unix_host.exec("b"))
     assert seq in (
         ["switch:alice", "cmd:a", "switch:back", "cmd:b"],
@@ -214,7 +218,7 @@ def test_the_turn_is_taken_after_the_loop_claim_and_the_refusal(console_unix_hos
     async def go() -> list[str]:
         probe = InFlight()
         mgr = console_unix_host._live_session_mgr()
-        monkeypatch.setattr(mgr, "exec_on_route", probe.exec_on_route)
+        monkeypatch.setattr(mgr, "exec_on_default_session", probe.exec_on_default_session)
         order = spy_acquisitions(
             console_unix_host, monkeypatch, also=["_claim_loop", "_refuse_establishing"]
         )
@@ -231,7 +235,11 @@ async def test_a_caller_cancelled_while_waiting_for_the_turn_never_takes_it(
 ):
     seq: list[str] = []
     probe = InFlight(seq, hold=True)
-    monkeypatch.setattr(console_unix_host._live_session_mgr(), "exec_on_route", probe.exec_on_route)
+    monkeypatch.setattr(
+        console_unix_host._live_session_mgr(),
+        "exec_on_default_session",
+        probe.exec_on_default_session,
+    )
     first = asyncio.ensure_future(console_unix_host.exec("a"))
     await probe.started.wait()
     second = asyncio.ensure_future(console_unix_host.exec("b"))
@@ -251,13 +259,13 @@ async def test_a_call_that_raises_while_holding_the_turn_releases_it(
 ):
     calls: list[str] = []
 
-    async def boom(**kw: Any) -> Any:
-        calls.append(kw["cmd"])
-        if kw["cmd"] == "boom":
+    async def boom(*, cmd: str, **kw: Any) -> Any:
+        calls.append(cmd)
+        if cmd == "boom":
             raise ConnectionError("line dropped mid-command")
-        return await InFlight().exec_on_route(**kw)
+        return await InFlight().exec_on_default_session(cmd=cmd, **kw)
 
-    monkeypatch.setattr(console_unix_host._live_session_mgr(), "exec_on_route", boom)
+    monkeypatch.setattr(console_unix_host._live_session_mgr(), "exec_on_default_session", boom)
     with pytest.raises(ConnectionError):
         await console_unix_host.exec("boom")
     await asyncio.wait_for(console_unix_host.exec("next"), 5)
@@ -308,7 +316,9 @@ async def test_a_sudo_probe_and_the_exec_it_serves_are_one_turn(console_unix_hos
     host = console_unix_host
     seq: list[str] = []
     probe = InFlight(seq)
-    monkeypatch.setattr(host._live_session_mgr(), "exec_on_route", probe.exec_on_route)
+    monkeypatch.setattr(
+        host._live_session_mgr(), "exec_on_default_session", probe.exec_on_default_session
+    )
 
     async def prepare(user: "str | None" = None) -> None:
         await host._exec_one("probe", timeout=5.0, needs_shell=True)
@@ -332,7 +342,7 @@ async def test_a_first_run_sudo_and_a_concurrent_exec_sudo_on_a_console_both_com
     seq: list[str] = []
     probe = InFlight(seq)
     mgr = console_unix_host._live_session_mgr()
-    monkeypatch.setattr(mgr, "exec_on_route", probe.exec_on_route)
+    monkeypatch.setattr(mgr, "exec_on_default_session", probe.exec_on_default_session)
     monkeypatch.setattr(mgr, "run_cmd", probe.run_cmd)
     await asyncio.wait_for(  # a bound on the failing path only
         asyncio.gather(
@@ -352,7 +362,11 @@ async def test_a_first_run_sudo_and_a_concurrent_exec_sudo_on_a_console_both_com
 async def test_a_task_created_inside_the_turn_types_without_waiting(console_unix_host, monkeypatch):
     seq: list[str] = []
     probe = InFlight(seq)
-    monkeypatch.setattr(console_unix_host._live_session_mgr(), "exec_on_route", probe.exec_on_route)
+    monkeypatch.setattr(
+        console_unix_host._live_session_mgr(),
+        "exec_on_default_session",
+        probe.exec_on_default_session,
+    )
     async with console_unix_host._line_turn():
         await asyncio.wait_for(asyncio.ensure_future(console_unix_host.exec("child")), 5)
     assert seq == ["cmd:child"]
@@ -364,7 +378,11 @@ async def test_a_task_that_outlives_its_holders_turn_waits_behind_the_next_holde
 ):
     seq: list[str] = []
     probe = InFlight(seq, hold=True)
-    monkeypatch.setattr(console_unix_host._live_session_mgr(), "exec_on_route", probe.exec_on_route)
+    monkeypatch.setattr(
+        console_unix_host._live_session_mgr(),
+        "exec_on_default_session",
+        probe.exec_on_default_session,
+    )
     gate = asyncio.Event()
 
     async def stray() -> None:
@@ -463,7 +481,9 @@ async def test_a_hook_on_one_host_may_call_another_host(
 ):
     other = console_unix_host
     probe = InFlight()
-    monkeypatch.setattr(other._live_session_mgr(), "exec_on_route", probe.exec_on_route)
+    monkeypatch.setattr(
+        other._live_session_mgr(), "exec_on_default_session", probe.exec_on_default_session
+    )
 
     async def hook(handle: object, ctx: object) -> None:
         await other.exec("on-the-other-host")
@@ -518,7 +538,7 @@ async def test_a_task_the_hook_started_is_not_refused_once_the_hook_has_ended(
     with pytest.raises(AssertionError, match="must not reach a handshake"):
         await host._live_session_mgr()._ensure_session()
     probe = InFlight()
-    monkeypatch.setattr(host._live_session_mgr(), "exec_on_route", probe.exec_on_route)
+    monkeypatch.setattr(host._live_session_mgr(), "exec_pooled", probe.exec_pooled)
     setup_done.set()
     await asyncio.wait_for(children[0], 5)  # a bound on the failing path only
     assert probe.seq == ["cmd:later"]

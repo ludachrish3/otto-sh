@@ -47,7 +47,7 @@ branch must take its failure arm rather than proceed on a fiction.
 
 ## What a command's `value` holds
 
-Which hosts and routes keep this rule, and the declared exceptions to it, are
+Which hosts and sessions keep this rule, and the declared exceptions to it, are
 on {ref}`Command contracts <command-contracts>`.
 
 A {class}`~otto.result.CommandResult`'s `value` is the command's output with
@@ -57,8 +57,8 @@ none, and every local session, a bash session on pipes) and on a shell
 session whose frame calibrates its terminal (the `bash` and `ash` frames) on
 every term (`ssh`, `telnet`, `console`), for both `run` and `exec`. A
 docker container's `exec` runs `docker exec` through its parent host, so its
-`value` is designed to follow whichever of these routes the parent takes; the
-command contract does not check the container route yet:
+`value` is designed to follow whichever of these sessions the parent's `exec`
+takes; the command contract does not check a container's `exec` yet:
 
 | The command prints | `value` |
 | --- | --- |
@@ -105,7 +105,7 @@ and nothing else:
   `CR NUL` (RFC 854). otto decodes that on every telnet and console stream
   before it reads anything, unless the server negotiated BINARY.
 - **The terminal's newline translation.** `run` runs on a shell session, and
-  so does every shell-routed `exec` (see the note below). Where that session
+  so does every `exec` ({ref}`exec-session`). Where that session
   has a terminal, a Linux terminal by default sends each `\n` as `\r\n` (`onlcr`).
   otto never changes that setting. The session's readiness handshake measures
   it instead with a **calibration line**, a `printf` of known bytes that runs
@@ -127,8 +127,7 @@ and nothing else:
     removes the `\r` of each `\r\n`, as described above.
 
   A session without a terminal (an ssh `exec`'s by default, every local
-  session) has no translation to undo, and neither has the ssh `exec`
-  channel; `terminal_mapping` always reports the terminal of a session that has one.
+  session) has no translation to undo; `terminal_mapping` always reports the terminal of a session that has one.
 - **The terminal's tab expansion.** A terminal with `tab3` sends each tab as
   the spaces up to the next tab stop, and that has no exact inverse: `a\tb`
   and `a       b` arrive the same. The pty BusyBox telnetd allocates has it
@@ -187,12 +186,12 @@ a terminal would act on it as a keystroke. To send a keystroke, use
 (`printf '\003'`).
 
 ```{note}
-**Upgrading.** Before this, every shell-routed command trimmed blank lines
+**Upgrading.** Before this, every command typed into a shell trimmed blank lines
 from both ends of the output, deleted every `\r`, and left telnet's NUL bytes
 in. That is `run()`, and `exec()` wherever it runs on a shell session: on
 telnet and console, and on ssh when a session-setup hook, a proxied login or a
-call that needs a shell (*expects*, `sudo`, a switched user) routes it through
-the pooled shell. If you compare `value` exactly for a command that prints
+call that needs a terminal (*expects*, `sudo`, a switched user) gives it a
+pooled session with a terminal. If you compare `value` exactly for a command that prints
 blank lines or carriage returns, expect those now. `.strip()` callers are
 unaffected by the blank-line change; output that contains its own carriage
 returns (CRLF files, progress lines) now keeps them.
@@ -212,7 +211,7 @@ leading and trailing spaces are kept, and a program's own carriage return
 stays inside its line (it never splits a record). A command whose `value` is
 empty logs no output line. The rule is
 {func}`otto.logger.relay.log_lines`, and it is the same for the same command
-and `log=` mode on every route and every shell session. What {meth}`~otto.host.session.ShellSession.expect` read is logged
+and `log=` mode on every shell session. What {meth}`~otto.host.session.ShellSession.expect` read is logged
 by the same rule: the terminal mapping undone, one trailing newline removed,
 one record per line. Under an unknown terminal mapping there is no mapping to
 undo, so such a record keeps the terminal's `\r`.
@@ -240,7 +239,7 @@ What the record holds and what a sink shows can differ:
   renders it. {func}`otto.logger.formatters.display_text` is the rule.
 
 When a line is logged depends on the frame. A shell frame that streams (bash,
-ash) and the process routes log each line as it completes. On a shell whose
+ash) logs each line as it completes. On a shell whose
 terminal mapping is unknown, the newest line waits for the next line or the
 end of the command, since only then is it known whether its final `\r` is the
 terminal's (cut from `value`) or the program's (kept). A frame that does not
@@ -282,38 +281,36 @@ Three things are delimited on purpose:
   output.
 
 ```{admonition} Upgrading
-A shell-routed command's log used to drop blank lines, strip leading and
-trailing spaces, delete carriage returns and leave out what an expect had
-matched; and a carriage return split a record on every route. The log is now
+The log of a command typed into a shell used to drop blank lines, strip
+leading and trailing spaces, delete carriage returns and leave out what an
+expect had matched; and a carriage return split a record on every session. The log is now
 the lines of `value`, as above, and a sink shows each carriage-return part of
 a line as a line of its own.
 ```
 
-## Which route ran a command
+(exec-session)=
 
-A {class}`~otto.result.CommandResult`'s `route` names the route that ran the
-command, so a caller (or a test) can assert how a call was carried out and not
-only what it returned. It is one of the {class}`~otto.host.exec_route.ExecRoute`
-values (the type also names `ssh-channel` and `local-subprocess`, which no
-host's `exec` reports):
+## Which session an exec takes
 
-| `route` | The command ran on |
-| --- | --- |
-| `pooled-shell` | a shell session `exec` borrows from its pool, beside the one `run` uses, with or without a terminal ({ref}`host-exec-on-sessions`); every `exec` on ssh, telnet and the local host reports this |
-| `default-session` | the host's one default session; every `run` reports this |
-| `container/<route>` | a container, prefixed to its parent host's route |
+Every `exec` is typed into a shell session, wrapped in a line otto adds
+around it (the {ref}`exec frame <named-sessions-vs-exec>`). On most hosts
+that session is one otto keeps for `exec` alone, beside the one `run` uses
+({ref}`host-exec-pool`); on a console or an embedded host it is the one
+session `run` uses. Which session each call takes, and whether it has a
+terminal, is on {ref}`the exec contract page <command-contract-exec>`. What
+the `exec` shares with `run` depends on the host and, where the host has one
+session, on its frame (`CommandFrame.isolates_exec`):
 
-`route` is `""` for a result no host route produced: a dry run's
-{class}`~otto.result.NotRunResult`, a command on a named session
-({meth}`~otto.host.session.SessionManager.open_session`), or a docker build. It is informational
-and takes no part in equality or hashing, so two results that differ only in
-route compare equal.
+| Host | Starts from what `run` left | What the `exec` changes reaches later commands |
+| --- | --- | --- |
+| ssh, telnet, the local host | no | no |
+| a console, or an embedded host whose frame isolates (bash, ash) | yes: `run`'s directory, variables and shell options | no: a `cd`, a variable, an option or an `exit` stays inside the `exec` |
+| an embedded host whose frame does not isolate (a Zephyr shell) | yes | yes: its shell runs an `exec` as it runs a `run` (not measured on a board) |
+| a docker container | no | no: each `exec` is a new `docker exec` through the parent host ({doc}`../subsystems/docker-hosts`) |
 
-Which route a given call takes is decided by the host's configuration and the
-call's arguments; the routes are listed in
-[Which route your command takes](../../command-contracts/index.md#which-route-your-command-takes),
-and when each command takes each is on its own page ({ref}`run <command-contract-run>`,
-{ref}`exec <command-contract-exec>`).
+On a console `$$` inside an `exec` is the console's one shell, not a shell
+of the `exec`'s own. What the exec frame isolates and restores is
+{ref}`exec-frame-shell-state`.
 
 (exit-codes)=
 
@@ -379,7 +376,7 @@ verdict checks it first with `sh -n`.
 
 `otto.host.exit_status.gave_no_exit_status` is what otto's own code asks
 before it parses a `value`: it holds for a timed-out result and for one with
-`retcode` `-1`. A `retcode` of `-1` from a shell or process route is otto's
+`retcode` `-1`. A `retcode` of `-1` from a shell session is otto's
 own (the session or its transport died before the command gave a status),
 and its `value` is otto's text. Two such results carry the command's own
 output all the same: a timed-out result's `value` holds what the command had
@@ -389,7 +386,7 @@ written (below), and on a Zephyr board a firmware command that returns
 
 (timed-out-command-result)=
 **Timed out.** A command that is still running when its budget expires gives
-the timed-out result on every route: `timed_out` `True`, `status` `Error`,
+the timed-out result on every session: `timed_out` `True`, `status` `Error`,
 `retcode` `-1` and `exit_code` `255`. Where that is checked is on
 {ref}`Command contracts <command-contracts>`. The budget bounds the command,
 not only its output: a command that closes its output and keeps running times
@@ -402,10 +399,11 @@ an unfinished last line included. When it had printed nothing, that first line
 is the whole `value`. A `timeout` of zero, or an `exec` whose time ran out
 before its command was typed, types nothing and gives this result; its
 session is still stopped as below, so on an ssh session without a terminal
-whatever earlier commands on that session left running is stopped too. On a shell route nothing the shell printed after otto
-interrupted the command (the echoed `^C`, the next prompt) is in it. It is built in one place,
-{func}`otto.host.session.timed_out_result`; on a shell route the frame says
-what of the unfinished buffer is the command's
+whatever earlier commands on that session left running is stopped too.
+Nothing the shell printed after otto interrupted the command (the echoed
+`^C`, the next prompt) is in it. It is built in one place,
+{func}`otto.host.session.timed_out_result`; the frame says what of the
+unfinished buffer is the command's
 ({meth}`~otto.host.command_frame.CommandFrame.parse_partial_output`).
 
 **How the command is stopped.** A timed-out command, one whose password was

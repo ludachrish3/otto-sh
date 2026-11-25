@@ -41,10 +41,9 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from otto.host.command_frame import BashFrame
-from otto.host.exec_route import ExecRoute
 from otto.host.host import BaseHost, ShellCommand, output_log_prefix
 from otto.host.limitation import Limitation
-from otto.host.session import RouteRecord, ShellSession
+from otto.host.session import ShellSession
 from otto.host.transfer import (
     TRANSFER_BACKENDS,
     ProgressGranularity,
@@ -2587,9 +2586,6 @@ class _FakeHost:
         self._state = {"cwd": "/home/fake", "run": "unset", "exec": "unset", "opts": ""}
         self._witnesses = fake_witnesses(POSIX)
 
-    #: The route each opener's ``exec`` reports, set by :func:`_fake_cell`.
-    exec_route = "pooled-shell"
-
     #: Which shell answers ``session_pid_command``: a cancel closes the session it ran on.
     session = 4242
 
@@ -2603,10 +2599,7 @@ class _FakeHost:
         return Results.collect(
             items=[
                 self._logged(
-                    self._routed(
-                        self._prompted(one, expects) or self._answer(one, timeout, self._state),
-                        "default-session",
-                    ),
+                    self._prompted(one, expects) or self._answer(one, timeout, self._state),
                     one.log if isinstance(one, ShellCommand) and one.log is not None else log,
                 )
                 for one in commands
@@ -2618,13 +2611,11 @@ class _FakeHost:
             log = command.log
         if (prompted := self._prompted(command, expects)) is not None:
             # A call that answers a prompt needs a shell, as on a real ssh cell.
-            return self._logged(self._routed(prompted, "pooled-shell"), log)
+            return self._logged(prompted, log)
         witnessed = self._witnesses.long_running_path(_outside_subshell(command))
         if witnessed is not None and timeout is None:
             await self._run_until_cancelled(witnessed)
-        return self._logged(
-            self._routed(self._answer(command, timeout, dict(self._state)), self.exec_route), log
-        )
+        return self._logged(self._answer(command, timeout, dict(self._state)), log)
 
     def _prompted(self, command, expects) -> "CommandResult | None":
         """The prompting command's answer: its prompt, then the line *expects* typed.
@@ -2684,11 +2675,6 @@ class _FakeHost:
             await ShellSession._stop_interrupted_command(_FakeShell(stopped), restore=None)
             self.session += 1
             raise
-
-    def _routed(self, result: CommandResult, route: str) -> CommandResult:
-        if "reports-the-wrong-route" in self._twists:
-            route = "local-subprocess"
-        return dataclasses.replace(result, route=route)
 
     def _answer(self, command: str, timeout, state: "dict[str, str]") -> CommandResult:
         if "always-times-out" in self._twists:
@@ -3091,28 +3077,23 @@ def _is_state_command(command: str) -> bool:
 def _fake_cell(host: _FakeHost, entry: str = "") -> ResolvedCell:
     """A resolved cell whose host is *host*, whose vocabulary is POSIX, reached by *entry*.
 
-    A unix ``ssh`` cell without a proxied login, which admits every entry: its
-    plain opener's ``exec`` takes the ssh channel, its hooked opener's the
-    pooled shell.
+    A unix ``ssh`` cell without a proxied login, which admits every entry; both
+    its openers yield *host*.
     """
 
-    def opener_for(exec_route: str):
-        @contextlib.asynccontextmanager
-        async def opener():
-            host.exec_route = exec_route
-            yield host
-
-        return opener
+    @contextlib.asynccontextmanager
+    async def opener():
+        yield host
 
     return ResolvedCell(
         cell=Cell("fake", "ssh", "transfer"),
         kind="fake",
-        open_host=opener_for("pooled-shell"),
+        open_host=opener,
         remote_scratch=lambda tmp: tmp,
         vocabulary=POSIX,
         entry=entry,
         family="unix",
-        open_shell_host=opener_for("pooled-shell"),
+        open_shell_host=opener,
     )
 
 
@@ -3397,23 +3378,6 @@ async def test_a_control_passes_when_its_observable_moves_and_fails_when_it_cann
             continue
         with pytest.raises(AssertionError):
             await control(**kwargs)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "surface",
-    [surface.id for surface in SURFACES if entries_declared(surface.contract)],
-)
-async def test_a_host_that_reports_the_wrong_route_fails_every_command_control(surface):
-    """Every command CONTROL refuses a result that ran on a route its entry does not take.
-
-    The control issues through the same ``issue`` as its contract, so this is
-    the route check proved from the control's side, over every declared entry.
-    """
-    control = CONTROLS[surface]
-    for entry in entries_declared(positive_control_for(surface)):
-        with pytest.raises(AssertionError, match="ran on route"):
-            await control(resolved_cell=_fake_cell(_FakeHost("reports-the-wrong-route"), entry))
 
 
 @pytest.mark.parametrize("surface", [surface.id for surface in SURFACES])
@@ -7750,7 +7714,7 @@ def test_a_branch_naming_a_declaration_that_does_not_resolve_is_reported(committ
         ("otto.host.command_frame:ZephyrFrame.no_such_limitation", False),
         ("otto.host.command_frame:ZephyrFrame.type_name", False),
         ("otto.no_such_module:THING", False),
-        ("otto.host.session:_LINE_BUDGET", True),
+        ("otto.host.session:LINE_BUDGET_LIMITATION", True),
     ):
         drifted = dict(VOICE)
         drifted["transfer-mode"] = dataclasses.replace(
@@ -8038,8 +8002,7 @@ def test_every_declared_limitation_is_on_the_contract_page():
             affects="exact output", kind="device", reason="a frame reason", measured_on=["m2"]
         )
 
-    routes = {ExecRoute.CONTAINER: RouteRecord(implemented_by="docker", limitations={"x": fake})}
-    collected = declared_limitations(frames=[_FakeFrame], routes=routes)
+    collected = declared_limitations(frames=[_FakeFrame], sessions={"x": fake})
     page = _overview(limitations=collected)
     for text in ("a reason nobody wrote", "a frame reason", "- m1\n", "- m2\n"):
         assert text in page, page
@@ -8050,54 +8013,52 @@ def test_every_declared_limitation_is_on_the_contract_page():
         assert "- None declared.\n" in none[f"{command}.md"], command
 
 
-def test_a_route_limitation_is_linked_only_from_the_commands_taking_that_route():
-    """A route's declared exception reaches the pages of the commands that can take the route.
-
-    A frame's or a console's limit reaches every command; one declared only on
-    a route no command takes any more (`ssh-channel`, which no `exec` answers
-    since every `exec` runs on a session) reaches no page.
-    """
+def test_every_declared_exception_is_linked_from_every_command_page():
     from scripts.render_support_matrix import exception_label
 
     pages = render_command_contracts()
     for item in declared_limitations():
         link = f"<{exception_label(item)}>`\n"
-        for command, page in COMMAND_PAGES.items():
-            reaches = bool(
-                item.frames or item.consoles or item.families or set(item.routes) & set(page.routes)
-            )
-            assert (link in pages[f"{command}.md"]) is reaches, (command, item.where)
-    ssh_only = next(i for i in declared_limitations() if i.routes == ["ssh-channel"])
-    assert exception_label(ssh_only) not in pages["run.md"]
-    assert exception_label(ssh_only) not in pages["exec.md"]
+        for command in COMMAND_PAGES:
+            assert link in pages[f"{command}.md"], (command, item.where)
 
 
-def test_a_limitation_declared_on_two_routes_is_one_row():
+def test_the_generator_reads_a_session_limitation_from_its_one_home():
+    from otto.host.session import LINE_BUDGET_LIMITATION
+
+    lim = Limitation(affects="a promise", kind="device", reason="r", measured_on=["m"])
+    (item,) = declared_limitations(frames=[], sessions={"k": lim}, consoles={}, families=[])
+    assert item.sessions == ["k"]
+    assert item.limitation is lim
+    assert item.where == "a session with a terminal"
+    # With otto's own declarations, the line-budget record is the one declared object.
+    (budget,) = [item for item in declared_limitations() if item.sessions]
+    assert budget.sessions == ["line_budget"]
+    assert budget.limitation is LINE_BUDGET_LIMITATION
+
+
+def test_a_limitation_declared_twice_is_one_row():
     shared = Limitation(affects="a promise", kind="device", reason="shared", measured_on=["m"])
     other = Limitation(affects="a promise", kind="device", reason="shared", measured_on=["m"])
-    routes = {
-        ExecRoute.POOLED_SHELL: RouteRecord(implemented_by="otto", limitations={"a": shared}),
-        ExecRoute.DEFAULT_SESSION: RouteRecord(implemented_by="otto", limitations={"a": shared}),
-        ExecRoute.SSH_CHANNEL: RouteRecord(implemented_by="asyncssh", limitations={"a": other}),
-    }
-    collected = declared_limitations(frames=[], routes=routes, consoles={}, families=[])
+    sessions = {"a": shared, "b": shared, "c": other}
+    collected = declared_limitations(frames=[], sessions=sessions, consoles={}, families=[])
     # By identity: an equal object declared elsewhere is its own record.
-    assert [item.routes for item in collected] == [
-        ["pooled-shell", "default-session"],
-        ["ssh-channel"],
-    ]
-    page = _overview(limitations=collected)
+    assert [item.sessions for item in collected] == [["a", "b"], ["c"]]
+    # Two distinct objects that title alike would share a section label: refused.
+    with pytest.raises(ValueError, match="two declared limitations share a section label"):
+        _overview(limitations=collected)
+    # One object declared twice renders one row.
+    once = declared_limitations(
+        frames=[], sessions={"a": shared, "b": shared}, consoles={}, families=[]
+    )
+    page = _overview(limitations=once)
     rows = [line for line in page.splitlines() if line.startswith("| {ref}`")]
-    assert rows[0].startswith(
-        "| {ref}`A promise, on the pooled-shell and default-session routes <"
-    ), rows
-    assert len(rows) == 2, rows
-    assert page.count("Where: the `pooled-shell` and `default-session` routes.") == 1, page
-    # And the real tree's one line-budget limitation is one row naming both routes.
+    assert len(rows) == 1, rows
+    # And the real tree's one line-budget limitation is one row.
     real = _overview()
     table = [line for line in real.splitlines() if line.startswith("| {ref}`")]
-    assert sum("on the pooled-shell and default-session routes <" in line for line in table) == 1
-    assert real.count("Where: the `pooled-shell` and `default-session` routes.") == 1, real
+    assert sum("on a session with a terminal <" in line for line in table) == 1
+    assert real.count("Where: a session with a terminal.") == 1, real
 
 
 def test_the_contract_page_reads_its_frames_from_the_one_builtin_list():
@@ -8311,7 +8272,7 @@ def test_the_contract_page_says_what_a_promise_id_is_and_how_zephyr_exit_codes_r
     assert "(command-contracts-promise-id)=" in page
     assert "`-8` for an unknown command" in page
     assert "```{doctest}\n>>> from otto.result import CommandResult" in page
-    for word in ("**term**", "**route**", "**entry**", "**kind of host**", "**test bed**"):
+    for word in ("**term**", "**session**", "**entry**", "**kind of host**", "**test bed**"):
         assert word in page, word
     assert "lab entry" not in page, "entry means only the call you made"
     assert "`expects` (patterns otto answers while" in pages["exec.md"]
@@ -8377,7 +8338,7 @@ def test_the_timed_out_fields_on_the_overview_come_from_the_one_builder(monkeypa
 
     page = _overview()
     real = session.timed_out_result
-    example = real(cmd="x", timeout=5.0, output=session.ExecOutput(), route=ExecRoute.SSH_CHANNEL)
+    example = real(cmd="x", timeout=5.0, output=session.ExecOutput())
     assert f"`Status.{example.status.name}`, `retcode` `{example.retcode}`" in page
     assert f"`{example.value.splitlines()[0]}`" in page
     monkeypatch.setattr(
@@ -8386,26 +8347,15 @@ def test_the_timed_out_fields_on_the_overview_come_from_the_one_builder(monkeypa
     assert "`retcode` `-7`" in _overview()
 
 
-def test_the_container_sentence_follows_the_cells():
-    """Printed while no cell reaches a container route, gone once one does."""
-    import dataclasses as _dc
+def test_the_overview_says_no_container_is_covered():
+    """No conformance cell is a container, so the page says nothing is promised for one.
 
-    from scripts.render_support_matrix import _reaches_a_container
-
-    cells = _suite_cells()
-    assert not _reaches_a_container(cells)
+    The sentence is printed unconditionally (``scripts/render_support_matrix.py``):
+    nothing in a cell says "container" (``tests/conformance/_entry.py`` builds a
+    cell's host as a unix, embedded or local one), so no fact here can trip
+    when a container cell arrives. Whoever adds one rewords the sentence.
+    """
     assert "no\nhost the conformance suite reaches is a container" in _overview()
-    with pytest.raises(ValueError, match="no expected exec route"):
-        _reaches_a_container([_dc.replace(cells[0], family="container", entry="exec")])
-
-
-def test_route_voice_covers_exactly_the_reported_routes(monkeypatch):
-    from scripts.render_support_matrix import ROUTE_VOICE
-
-    trimmed = {k: v for k, v in ROUTE_VOICE.items() if k != "local-subprocess"}
-    monkeypatch.setattr("scripts.render_support_matrix.ROUTE_VOICE", trimmed)
-    with pytest.raises(ValueError, match="ROUTE_VOICE"):
-        render_command_contracts()
 
 
 def test_an_exception_section_does_not_repeat_its_table_summary():

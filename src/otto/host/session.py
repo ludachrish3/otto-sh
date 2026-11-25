@@ -23,7 +23,6 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncGenerator,
-    AsyncIterable,
     Awaitable,
     Callable,
     Iterable,
@@ -60,8 +59,6 @@ from .errors import (
     SessionSetupError,
     UntypableCommandError,
 )
-from .exec_route import ExecRoute
-from .exit_status import exit_status_of, no_return_code_result
 from .identity import ROOT_LOGIN
 from .limitation import Limitation
 from .login_proxy import (
@@ -75,7 +72,6 @@ from .login_proxy import (
 from .output_codec import (
     MAX_SEPARATOR_LEN,
     OUTPUT_ENCODING,
-    OUTPUT_ERRORS,
     READ_CHUNK,
     PatternReader,
     bounded_pattern,
@@ -116,7 +112,7 @@ from typing_extensions import final
 
 from ..logger.mode import ExecLogContext, LogMode
 from ..logger.relay import log_lines
-from ..result import CommandNotRunError, CommandResult, NotRunResult, Results
+from ..result import CommandNotRunError, CommandResult, Results
 from ..utils import Status
 from . import process_stop
 from .host import (
@@ -389,7 +385,7 @@ def _log_sent(
 def delegated_exec_log(exec_input: "ExecInput | None") -> "ExecLogContext | None":
     """Return the log context a delegating host handed this ``exec`` call, or ``None``.
 
-    The one read of whether a call is delegated: the route's log resolver
+    The one read of whether a call is delegated: the attempt's log resolver
     (:func:`resolve_exec_log`) and the host that logs the line it really runs
     (``BaseHost._exec_one``) both ask it.
     """
@@ -424,12 +420,11 @@ def resolve_exec_log(
     log_output: Callable[[str, LogMode], None],
     exec_input: "ExecInput | None",
 ) -> ExecLog:
-    """Return the one answer to how an exec attempt logs: its own route's, or a delegating host's.
+    """Return the one answer to how an exec attempt logs: its own host's, or a delegating host's.
 
     Every exec attempt asks this once, through :func:`begin_exec_log`, and
-    uses only its answer: on a shell session, and on the ssh channel and
-    local subprocess primitives, which no ``exec`` reaches. *mode* is the
-    route's own fold of the call's mode, and *log_command*/*log_output* its
+    uses only its answer. *mode* is the
+    attempt's own fold of the call's mode, and *log_command*/*log_output* its
     host's sinks; a delegated call (``exec_input.exec_log``) ignores them and
     logs the issued command and its output on the delegating host under the
     context's already-resolved mode.
@@ -448,9 +443,9 @@ def begin_exec_log(
     *,
     exec_input: "ExecInput | None",
 ) -> ExecLog:
-    """Resolve how an exec attempt logs and log its command line: a route's first step.
+    """Resolve how an exec attempt logs and log its command line: an attempt's first step.
 
-    The one opening of an attempt's log, so no route resolves without
+    The one opening of an attempt's log, so no attempt resolves without
     announcing or announces what it did not resolve. The arguments are
     :func:`resolve_exec_log`'s.
     """
@@ -546,12 +541,10 @@ while the hook runs; once the hook has ended, every copy reads released.
 NEVER_RAN = "the command never ran: its end record arrived with no BEGIN marker before it"
 """The value of a command whose end record came with no BEGIN marker before it.
 
-A console's ``exec`` prints BEGIN from the login shell it starts, so a login
-shell that never reaches the command (no ``env``, no such ``$SHELL``, a
-``$SHELL`` that does not take ``-l -c``, a profile that exits or ``exec``s)
-gives this, with ``retcode`` -1 and ``Status.Failed``, whatever status its end
-record carries. Every other frame prints BEGIN before the command, so it
-never sees it in normal operation."""
+Every frame prints BEGIN before the command, so a normal command never
+gives this. An identity guard that finds itself in the wrong shell prints
+its end record alone and gives this, with ``retcode`` -1 and
+``Status.Failed``, whatever status its end record carries."""
 
 _BEFORE_ANY_SESSION_ECHOES = False
 """The echo fact that gives the widest typed-line ceiling: what a check made before any session
@@ -734,10 +727,10 @@ def refuse_if_typed_line_would_be_cut(
     ``None`` for a ``run``'s frame, an ``exec``'s for the exec frame, whose
     opening is longer, so each entry is measured against its own line.
 
-    *exec_escapes* says whether ``exec()`` on this host avoids the bound, and
-    so whether the message may advise it. It does not on a ``console`` term,
-    where ``exec`` runs on the default session, nor on a pooled exec, which
-    types into a shell session of its own; both are refused the same way.
+    *exec_escapes* says whether the message may advise ``exec()``. It is
+    ``False`` on a ``console`` term, where ``exec`` runs on the default
+    session, and on a pooled exec with a terminal, which is typed into a
+    session with the same bound; both are refused the same way.
 
     Raises:
         ~otto.host.errors.UnsupportedOnUserlandError: *frame* is ash and the
@@ -760,10 +753,10 @@ def refuse_if_typed_line_would_be_cut(
         else "a terminal delivers intact on one line"
     )
     way_out = (
-        "Send it through `exec()`, which allocates no pty and took 9000 characters "
-        "in the same measurement, or split it"
+        "Over ssh, an `exec()` without a terminal (the default there) types into a "
+        "session with no line limit; otherwise split it"
         if exec_escapes
-        else "`exec()` types into a shell session on this route too, so split it"
+        else "`exec()` types into a session with a terminal on this host too, so split it"
     )
     refuse_if_gapped(
         "run-command-line-length",
@@ -1824,7 +1817,7 @@ class ShellSession(ABC):
             unread = output.feed(loggable)
             output.feed(taken[len(loggable) :])
             await self._stop_under_bound(restore=restore, disposable=disposable)
-            result = timed_out_result(cmd=cmd, timeout=timeout, output=output, route=None)
+            result = timed_out_result(cmd=cmd, timeout=timeout, output=output)
             if line_log.holds:
                 # The complete lines of the timed-out value not yet logged,
                 # whatever the frame held: the log is the value's lines.
@@ -2220,7 +2213,7 @@ class ShellSession(ABC):
             status = Status.Success if retcode == 0 else Status.Failed
         else:
             # An end record with no BEGIN before it: the command never ran
-            # (a console exec's login shell that never reached it). Never a
+            # (an identity guard in the wrong shell). Never a
             # success, whatever its digits; the raw text is in the DEBUG
             # line below, and the value is one stable sentence.
             output, retcode, status = NEVER_RAN, -1, Status.Failed
@@ -3151,7 +3144,7 @@ class LocalSession(_PatternReaderTransport, ShellSession):
     async def close(self) -> None:
         """Stop the shell's process group through the shared stop, then release the pipes.
 
-        ``process_stop.stop_timed_out`` sends ``TERM`` to the
+        ``process_stop.stop_local_session_group`` sends ``TERM`` to the
         group, and ``KILL`` to what is left of it after the grace; it holds a
         cancellation until the stop ends. A shell that already exited on the
         end of its input (:meth:`end_input`) gets no signal, so what an
@@ -3164,7 +3157,7 @@ class LocalSession(_PatternReaderTransport, ShellSession):
         exited_on_its_input = self._input_ended and self._leader_exited.is_set()
         try:
             if proc is not None and not exited_on_its_input:
-                await process_stop.stop_timed_out(
+                await process_stop.stop_local_session_group(
                     process_stop.LocalStoppable(proc, self._leader_exited),
                     what=f"{self._log_tag}: close",
                 )
@@ -3600,7 +3593,7 @@ class HostSession:
         Internal because *expects* may carry an elevation's
         :class:`~otto.host.host.CredentialExpect`, which no public signature
         does; *timeout* is already validated. A dry run declines here too, so
-        no route reaches the session's ``run_cmd`` under one. *exec_input* is
+        no call reaches the session's ``run_cmd`` under one. *exec_input* is
         an ``exec``'s (:meth:`ShellSession.run_cmd`); ``None`` for a ``run``.
         """
         declined = self._declined_under_dry_run(cmd, timeout=timeout, log=log)
@@ -3626,7 +3619,7 @@ class HostSession:
         The one dry-run check of every path that types into this session:
         :meth:`_run_one` and the manager's pooled ``exec``. ``Host.exec``
         declines earlier; this keeps a private caller of
-        ``SessionManager.exec_on_route`` from typing under a dry run too.
+        ``SessionManager.exec_pooled`` from typing under a dry run too.
         """
         if not is_dry_run():
             return None
@@ -4098,25 +4091,9 @@ _TYPED_LINE_MEASUREMENTS = [
     ),
 ]
 
-SSH_CHANNEL_COMMAND_MAX = 9000
-"""Longest command measured intact on a bare ssh exec channel, on dropbear 2022.83 only.
-
-One server, one version: 9000 characters arrived whole and 9001 failed. It
-is the far server's bound, not otto's, and OpenSSH was not measured; otto
-refuses nothing on it. Declared on the ``ssh-channel`` route as its
-``command_length`` limitation."""
-
-_SSH_CHANNEL_COMMAND_MEASUREMENT = (
-    f"2026-08-13, BusyBox 1.35.0 over dropbear 2022.83: a command on its own exec "
-    f"channel arrives intact at {SSH_CHANNEL_COMMAND_MAX} characters and fails at "
-    f"{SSH_CHANNEL_COMMAND_MAX + 1}"
-)
-"""The measurement behind :data:`SSH_CHANNEL_COMMAND_MAX`, one entry of the
-:data:`_LINE_EDITOR_RECORD` gap record's ``measured_on``."""
-
 
 def _line_budget_limitation() -> Limitation:
-    """Build the ``line_budget`` limitation of a route that types into a pty shell.
+    """Build the ``line_budget`` limitation of a session that types into a pty shell.
 
     Its measurements are :data:`_TYPED_LINE_MEASUREMENTS`; the gap record they
     summarise must exist.
@@ -4135,12 +4112,12 @@ def _line_budget_limitation() -> Limitation:
         kind="device",
         affects="how long one line of a command can be",
         summary=(
-            "in a shell session (the `pooled-shell` and `default-session` routes), "
+            "in a shell session (pooled or the host's default one), "
             f"{PTY_TYPED_LINE_MAX} characters per line; {ASH_ECHOING_LINE_MAX} on a "
             "BusyBox shell whose terminal still echoes"
         ),
         reason=(
-            "On these routes otto types the command into a terminal, and the characters "
+            "In a session otto types the command into a terminal, and the characters "
             "otto adds around the command count against the line's length. A Linux "
             f"terminal cuts a typed line past {PTY_TYPED_LINE_MAX} characters, with no "
             "error: the kernel holds a typed line in a 4096-byte buffer, its newline "
@@ -4159,98 +4136,24 @@ def _line_budget_limitation() -> Limitation:
             "over the limit with an error naming it. Elsewhere the terminal cuts it "
             "without an error.\n\n"
             "Not limited this way: a local host's session, which reads the command from a "
-            "pipe, not a terminal; and `exec` on the `ssh-channel` route, which has its "
-            "own limit. A Zephyr board's own shell buffer is a separate limit, never measured."
+            "pipe, not a terminal. A Zephyr board's own shell buffer is a separate limit, "
+            "never measured."
         ),
         measured_on=_TYPED_LINE_MEASUREMENTS,
     )
 
 
-def _ssh_channel_command_limitation() -> Limitation:
-    """Build the ``command_length`` limitation of the bare ssh exec channel.
+LINE_BUDGET_LIMITATION = _line_budget_limitation()
+"""How long one line of a command typed into a session's terminal can be."""
 
-    Not a ``line_budget``: nothing is typed, so :meth:`SessionManager.line_budget`
-    answers ``None`` for this route and no transfer sizes its lines to it.
-    """
-    return Limitation(
-        kind="device",
-        affects="how long one command can be",
-        summary=(
-            f"{SSH_CHANNEL_COMMAND_MAX} characters ran whole on dropbear 2022.83; other "
-            "ssh servers were not measured"
-        ),
-        reason=(
-            "On this route the command travels as the ssh exec request itself, and the "
-            "ssh server decides how long a request it accepts. On dropbear 2022.83, the "
-            f"one server measured, a command of {SSH_CHANNEL_COMMAND_MAX} characters ran "
-            f"whole and one of {SSH_CHANNEL_COMMAND_MAX + 1} failed; other servers and "
-            "versions were not measured."
-        ),
-        measured_on=[_SSH_CHANNEL_COMMAND_MEASUREMENT],
-    )
+SESSION_EXEC_LIMITATIONS: "dict[str, Limitation]" = {"line_budget": LINE_BUDGET_LIMITATION}
+"""Where an ``exec`` on a shell session falls short of otto's promises: the one declaration.
 
-
-_LINE_BUDGET = _line_budget_limitation()
-
-
-@dataclass(frozen=True, kw_only=True)
-class RouteRecord:
-    """Who implements one :class:`ExecRoute`, and where it falls short.
-
-    The record is the one place a route's differences from otto's behaviour
-    promises are declared. A route otto implements itself may declare only a
-    ``"device"`` limitation; a route a library carries may also declare
-    ``"library"`` for what that library does intrinsically.
-    """
-
-    implemented_by: str
-    """``"otto"``, ``"asyncssh"`` or ``"docker"``: whose code runs the command."""
-
-    limitations: "dict[str, Limitation]"
-    """Capability name to the :class:`~otto.host.limitation.Limitation` that
-    says why it is not ideal on this route. Empty: every promise holds."""
-
-
-EXEC_ROUTES: "dict[ExecRoute, RouteRecord]" = {
-    ExecRoute.SSH_CHANNEL: RouteRecord(
-        implemented_by="asyncssh",
-        limitations={"command_length": _ssh_channel_command_limitation()},
-    ),
-    ExecRoute.POOLED_SHELL: RouteRecord(
-        implemented_by="otto", limitations={"line_budget": _LINE_BUDGET}
-    ),
-    ExecRoute.DEFAULT_SESSION: RouteRecord(
-        implemented_by="otto", limitations={"line_budget": _LINE_BUDGET}
-    ),
-    ExecRoute.LOCAL_SUBPROCESS: RouteRecord(implemented_by="otto", limitations={}),
-    ExecRoute.CONTAINER: RouteRecord(implemented_by="docker", limitations={}),
-}
-"""Every route ``exec`` can dispatch, and its declared limitations.
-
-``UNSUPPORTED`` has no record: it runs nothing. :meth:`SessionManager.line_budget`
-budgets exactly the routes whose record declares ``line_budget``, on a manager
-whose sessions type into a terminal. ``command_length`` on ``SSH_CHANNEL`` is
-published, never budgeted.
+Every ``exec`` that otto runs itself types into a shell session, pooled or the
+host's default one, so one table holds for both. :meth:`SessionManager.line_room`
+budgets a line on a manager whose sessions type into a terminal, and the docs
+generator reads its limitations from here.
 """
-
-
-@dataclass(frozen=True, kw_only=True)
-class ExecPlan:
-    """How one ``exec`` call runs: the route, and whose connection carries it.
-
-    A host family states one per call (``BaseHost._plan_exec``) and runs it
-    (``BaseHost._run_plan``); every reader of the decision reads this value.
-    """
-
-    route: ExecRoute
-    as_user: str | None = None
-    """The user whose own direct-credential ssh connection carries the call,
-    on ``SSH_CHANNEL``; ``None`` means the host's own connection."""
-    plain: bool = False
-    """On ``POOLED_SHELL``: the call takes a session opened without a terminal
-    (the pool's second mode, ``SessionManager._exec_pooled``). Decided by the
-    family's plan alone; ``False`` everywhere a session's own mode is the
-    only one (the local host's pipe, telnet, a console)."""
 
 
 @dataclass(frozen=True)
@@ -4284,8 +4187,8 @@ class BridgeSetup:
 def output_line(raw: str) -> str | None:
     r"""Turn one raw line of a command's output into the line it logs.
 
-    :class:`OutputLog`, the line logger of every route (the process routes'
-    drain and a streaming shell session), logs what this returns. The per-line form of
+    :class:`OutputLog`, the line logger of a streaming shell session, logs
+    what this returns. The per-line form of
     :func:`~otto.host.command_frame.command_value`, so a logged line is cut by
     the same rule as ``value``: the contract in :ref:`command-output-contract`.
 
@@ -4309,13 +4212,12 @@ def output_line(raw: str) -> str | None:
 class ExecOutput:
     r"""The one owner of a command's output as it is read, the unfinished last line included.
 
-    Every exec route feeds it the decoded text it reads, at whatever boundary
-    the text arrived (:func:`drain_exec_output` on the process routes,
-    :meth:`ShellSession.run_cmd` on the shell routes), so a timed-out command
-    keeps what it printed up to the deadline, its last unfinished line too.
-    *valuer* turns everything fed into the command's ``value``: the process
-    routes use :func:`~otto.host.command_frame.command_value`, a shell
-    session its frame's parse of the folded buffer.
+    :meth:`ShellSession.run_cmd` feeds it the decoded text it reads, at
+    whatever boundary the text arrived, so a timed-out command keeps what it
+    printed up to the deadline, its last unfinished line too. *valuer* turns
+    everything fed into the command's ``value``: by default
+    :func:`~otto.host.command_frame.command_value`, on a shell session its
+    frame's parse of the folded buffer.
 
     >>> from otto.host.session import ExecOutput
     >>> out = ExecOutput()
@@ -4359,15 +4261,15 @@ class ExecOutput:
 
 
 class OutputLog:
-    r"""The one logger of a command's output lines as they complete, on every route.
+    r"""The one logger of a command's output lines as they complete, on every session.
 
     Each line handed to :meth:`line` is one complete raw line, ending in its
     ``\n``; :meth:`finish` takes the unfinished last line once the command
     has ended. The lines reaching *on_output* are then exactly
     :func:`~otto.logger.relay.log_lines` of the command's ``value``, whatever
-    boundary the output arrived at, for a route whose ``value`` is its lines
-    with one final line ending cut (the process routes, and a frame that
-    streams: see ``streams_output_live``): a line is logged when it completes
+    boundary the output arrived at, for a session whose ``value`` is its lines
+    with one final line ending cut (a frame that streams: see
+    ``streams_output_live``): a line is logged when it completes
     (*fold* undoes the terminal's mapping, :func:`output_line` cuts its
     ``\n``), and the unfinished line at :meth:`finish`. Nothing here reads
     the ``value``, so the output is never split a second time.
@@ -4651,17 +4553,13 @@ class _HeldLine:
     cut: bool
 
 
-def timed_out_result(
-    *, cmd: str, timeout: float, output: ExecOutput, route: ExecRoute | None
-) -> CommandResult:
-    """Build the one result of a command that ran past its *timeout*, on every route.
+def timed_out_result(*, cmd: str, timeout: float, output: ExecOutput) -> CommandResult:
+    """Build the one result of a command that ran past its *timeout*, on every session.
 
     Its ``value`` is ``Command timed out after <timeout>s``, then a newline and
     *output*'s value when the command printed anything before the deadline.
     Its ``msg`` is that first line alone, so the command line, which prints a
     failed result's ``msg``, says why the command failed (#1098).
-    *route* is ``None`` for a shell session's command, whose route is recorded
-    by the caller that chose the session.
     """
     printed = output.value()
     reason = f"Command timed out after {timeout}s"
@@ -4672,7 +4570,6 @@ def timed_out_result(
         command=cmd,
         retcode=-1,
         timed_out=True,
-        route=route.value if route is not None else "",
     )
 
 
@@ -4694,92 +4591,6 @@ def _timed_out_value_lines(output: ExecOutput) -> list[str]:
     if output.tail() and lines:
         lines.pop()
     return lines
-
-
-async def drain_exec_output(
-    chunks: AsyncIterable[str],
-    output: ExecOutput,
-    log_output: Callable[[str, LogMode], None],
-    mode: LogMode,
-) -> None:
-    """Read an exec's output into *output*, logging each line under *mode*.
-
-    The one drain both process primitives run (the ssh channel's and the
-    local subprocess's, which no ``exec`` reaches; an ``exec`` reads
-    through its session instead). They
-    hand it decoded text of any boundary, decoded with
-    :data:`~otto.host.output_codec.OUTPUT_ENCODING` and
-    :data:`~otto.host.output_codec.OUTPUT_ERRORS`; *output* holds all of it,
-    so a caller that times the drain out still has everything read before
-    the deadline, an unfinished last line included. The lines are logged by
-    :class:`OutputLog`: each complete line as it arrives, and at end-of-file
-    the unfinished last line, so the value is built once, by the caller.
-    On a timeout there is no end-of-file:
-    the unfinished line is in the timed-out result's value but never logged
-    as an output line.
-    """
-    line_log = OutputLog(_sink_for(log_output, mode))
-    try:
-        async for chunk in chunks:
-            for raw in output.feed(chunk):
-                line_log.line(raw)
-    except BaseException:
-        # Timed out or cancelled: the complete line held is logged.
-        line_log.stop()
-        raise
-    line_log.finish(output.tail())
-
-
-async def drain_and_wait(
-    chunks: AsyncIterable[str],
-    output: ExecOutput,
-    wait: Callable[[], Awaitable["int | None"]],
-    log_output: Callable[[str, LogMode], None],
-    mode: LogMode,
-) -> "int | None":
-    """Read an exec's output to end-of-file, then wait for the command's exit; return its code.
-
-    Both process exec routes run this inside ONE bounded wait, so
-    their *timeout* bounds the command, not only its output: a command that
-    closes its output and keeps running times out at its budget (#1063).
-    *wait* returns the route's raw return code (``None`` when there is none),
-    which ``otto.host.exit_status.exit_status_of`` maps.
-    """
-    await drain_exec_output(chunks, output, log_output, mode)
-    return await wait()
-
-
-async def _channel_returncode(process: Any) -> "int | None":
-    """Wait for an exec channel's command; return asyncssh's ``returncode``.
-
-    The exit status, or ``-N`` for a death by signal N, or ``None`` when
-    neither came.
-    """
-    return (await process.wait()).returncode
-
-
-async def _channel_chunks(stdout: Any) -> AsyncGenerator[str, None]:
-    """Yield what an exec channel's *stdout* carries, in the pieces asyncssh reads, to ``""``.
-
-    asyncssh decodes with the channel's ``encoding=``; reading by size rather
-    than by line leaves no unfinished line in asyncssh's own buffer when the
-    drain is timed out.
-    """
-    while chunk := await stdout.read(READ_CHUNK):
-        yield str(chunk)
-
-
-def _ran_on(result: CommandResult, route: ExecRoute) -> CommandResult:
-    """Return *result* recording that it ran on *route*; a decline is returned as it is.
-
-    Each exec primitive calls this where it returns, so a result's route is
-    what ran, never what a plan expected. A :class:`~otto.result.NotRunResult`
-    ran on nothing, and ``dataclasses.replace`` would read its ``value``,
-    which raises.
-    """
-    if isinstance(result, NotRunResult):
-        return result
-    return replace(result, route=route.value)
 
 
 @final
@@ -4946,7 +4757,7 @@ class SessionManager:
         ssh transport can leave the pty out, and only for a login that needs
         no terminal to arrive (no proxied login to type a password into, no
         session-setup hook written against a terminal). Read fresh on every
-        call, as :meth:`exec_route` reads the same conditions.
+        call.
         """
         term = getattr(self._connections, "term", None)
         if term != "ssh" or self._session_factory or self._named_session_factory:
@@ -5151,7 +4962,7 @@ class SessionManager:
 
         The term is ``ssh`` and they have a direct credential
         (:meth:`~otto.host.connections.ConnectionManager.has_direct_cred`): the
-        one answer both the exec plan (whether *user*'s pooled session can
+        one answer both the exec session mode (whether *user*'s pooled session can
         run without a terminal) and ``_own_ssh_login`` (a pooled session over
         their own login) read.
         """
@@ -5482,7 +5293,8 @@ class SessionManager:
         console has no such path — the line serves ONE client, and the
         default session already holds it — so a named request there is
         refused by name rather than dialled. ``exec`` never asks for one on a
-        console: :meth:`exec_route` sends it to the default session.
+        console: the host sends it to the default session
+        (:meth:`exec_on_default_session`).
 
         *ssh_user* (``ssh`` only) builds the session over that user's own
         connection (:meth:`~otto.host.connections.ConnectionManager.ssh_as`)
@@ -5634,11 +5446,11 @@ class SessionManager:
 
         *exec_input* is an ``exec``'s on this session (a console's, an
         embedded host's): it gets this session's restore
-        (``_exec_restore_for``, here and nowhere else for this route), is
+        (``_exec_restore_for``, here and nowhere else for this session), is
         measured by the refusal as the exec frame it types, and
         :meth:`ShellSession.run_cmd` runs it in that frame. ``None`` for a ``run``.
         """
-        exec_input = self._with_restore_for(ExecRoute.DEFAULT_SESSION, exec_input)
+        exec_input = self._with_restore_for(True, exec_input)
         exec_escapes = getattr(self._connections, "term", None) != "console"
         # Before the open the mode asked for answers; an open session
         # answers for itself, here as below.
@@ -5667,11 +5479,10 @@ class SessionManager:
             timeout=timeout,
             exec_input=exec_input,
             exec_escapes=exec_escapes,
-            route=ExecRoute.DEFAULT_SESSION,
             write_progress=write_progress,
         )
 
-    async def _run_framed(  # noqa: PLR0913 — the one framed step: each argument is one thing its two callers hold differently (session, log sinks and mode, frame inputs, route)
+    async def _run_framed(
         self,
         session: ShellSession,
         cmd: str,
@@ -5683,10 +5494,9 @@ class SessionManager:
         timeout: float,
         exec_input: ExecInput | None,
         exec_escapes: bool,
-        route: ExecRoute,
         write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandResult:
-        """Run *cmd* framed on the open *session*, and record that it ran on *route*.
+        """Run *cmd* framed on the open *session*.
 
         THE ONE STEP of :meth:`run_cmd` (``run()`` and a default-session
         ``exec``) and of a pooled ``exec`` (:meth:`_exec_on_pooled`); each
@@ -5708,7 +5518,7 @@ class SessionManager:
                 exec_escapes=exec_escapes,
                 exec_input=exec_input,
             )
-        result = await _log_and_run(
+        return await _log_and_run(
             session,
             log_command,
             log_output,
@@ -5720,203 +5530,45 @@ class SessionManager:
             host=self._name,
             write_progress=write_progress,
         )
-        return _ran_on(result, route)
 
-    async def exec_on_route(
+    @staticmethod
+    def _exec_restore_for(shared: bool) -> ExecRestore:
+        """Return what an isolated ``exec`` restores: the one predicate.
+
+        On the host's *shared* default session (a console's, an embedded
+        target's), the one ``run`` uses, it restores the terminal as it found
+        it (``START``); a pooled session restores the record its handshake
+        kept (``BASELINE``).
+        """
+        return ExecRestore.START if shared else ExecRestore.BASELINE
+
+    @classmethod
+    def _with_restore_for(cls, shared: bool, exec_input: ExecInput | None) -> ExecInput | None:
+        """Return *exec_input* with its session's restore (:meth:`_exec_restore_for`).
+
+        ``None`` (a run) stays ``None``.
+        """
+        if exec_input is None:
+            return None
+        return dataclasses.replace(exec_input, restore=cls._exec_restore_for(shared))
+
+    async def exec_on_default_session(
         self,
         *,
-        route: ExecRoute,
         cmd: str,
         timeout: float,
         log: LogMode,
         expects: "list[Expect | CredentialExpect] | None" = None,
         user: str | None = None,
         exec_input: ExecInput | None = None,
-        plain: bool = False,
     ) -> CommandResult:
-        """Run *cmd* on *route*: a pooled session, or the default session on a console or board.
+        """Run *cmd* as an ``exec`` on the default session, the one ``run`` uses.
 
-        What the command leaves in that session's shell is the dialect's
-        :attr:`~otto.host.command_frame.CommandFrame.isolates_exec` answer.
-
-        The route is the caller's: a host family plans it (``_plan_exec``,
-        reading :meth:`exec_route`) and this dispatches it. Deciding and
-        running are kept apart so every reader of the decision — this
-        dispatch and :meth:`line_budget` — reads the same plan.
-
-        Concurrent calls are safe: on ssh and telnet each call takes an idle
-        session from an internal free-list or opens a new one, preserving the
-        independence contract without the overhead of a fresh TCP + auth
-        round-trip per call.
-
-        On a ``console`` term there is no pool: the
-        line serves one client, so the command runs on the default session
-        (see ``_exec_on_default_session``), and concurrent callers are
-        serialised by the host, not here.
-
-        *user* picks the pooled session opened for that user — see
-        ``_exec_pooled``; *plain* picks its mode (a session without a
-        terminal) on the pooled route. The bare ssh channel (which no
-        ``exec`` takes) authenticates as the host's own connection; a
-        direct-credential user's connection is the host's to open
-        (:meth:`exec_on`).
-
-        *exec_input* is the call's (:meth:`~otto.host.host.BaseHost.exec`
-        builds it); a shell route gives it the restore of its own session
-        (``_exec_restore_for``), and the ssh channel (which no ``exec`` takes)
-        needs none.
-
-        Raises:
-            ValueError: *route* is ``UNSUPPORTED``, or a route this manager
-                does not own (a local subprocess, a container).
-        """
-        # NO logging here: each arm logs the command itself, exactly once.
-        # The pooled arm's `HostSession.run` logs every command it sends, and
-        # `exec_on` logs its own; a pre-match log would double the line.
-        match route:
-            case ExecRoute.POOLED_SHELL:
-                return await self._exec_pooled(
-                    cmd,
-                    timeout=timeout,
-                    log=log,
-                    expects=expects,
-                    user=user,
-                    exec_input=self._with_restore_for(route, exec_input),
-                    plain=plain,
-                )
-            case ExecRoute.DEFAULT_SESSION:
-                # run_cmd gives it the default session's restore.
-                return await self._exec_on_default_session(
-                    cmd, timeout=timeout, log=log, expects=expects, user=user, exec_input=exec_input
-                )
-            case ExecRoute.SSH_CHANNEL:
-                assert self._connections is not None  # noqa: S101 — internal invariant: only a host with a transport plans the ssh channel
-                ssh_conn = await self._connections.ssh()
-                return await self.exec_on(
-                    conn=ssh_conn, cmd=cmd, timeout=timeout, log=log, exec_input=exec_input
-                )
-            case _:
-                term = getattr(self._connections, "term", None)
-                raise ValueError(f'{self._name}: unsupported terminal type "{term}"')
-
-    @staticmethod
-    def _exec_restore_for(route: ExecRoute) -> ExecRestore:
-        """Return what an isolated ``exec`` on *route* restores: the one predicate.
-
-        The default session's ``exec`` (a console's) shares the line ``run``
-        uses, so it restores the terminal as it found it (``START``); a pooled
-        session's restores the record its handshake kept (``BASELINE``).
-        """
-        return ExecRestore.START if route is ExecRoute.DEFAULT_SESSION else ExecRestore.BASELINE
-
-    @classmethod
-    def _with_restore_for(cls, route: ExecRoute, exec_input: ExecInput | None) -> ExecInput | None:
-        """Return *exec_input* with the restore of *route*'s session; ``None`` (a run) stays."""
-        if exec_input is None:
-            return None
-        return dataclasses.replace(exec_input, restore=cls._exec_restore_for(route))
-
-    async def exec_on(
-        self,
-        *,
-        conn: "SSHClientConnection",
-        cmd: str,
-        timeout: float = DEFAULT_COMMAND_TIMEOUT,
-        log: LogMode = LogMode.NORMAL,
-        exec_input: ExecInput | None = None,
-    ) -> CommandResult:
-        """Run *cmd* on a fresh exec channel of *conn* — the SSH stateless arm.
-
-        No ``exec`` reaches it: every ssh ``exec`` runs on a pooled session.
-
-        Extracted from :meth:`exec_on_route`'s ``SSH_CHANNEL`` route so per-user exec
-        (``UnixHost``'s :meth:`~otto.host.host.BaseHost.exec` with ``user=``,
-        spec 2026-09-01 §4) runs the byte-same channel body on a DIFFERENT
-        connection — the one :meth:`otto.host.connections.ConnectionManager.ssh_as`
-        authenticated as that user. Logging, drain, timeout escalation
-        (terminate → kill) and status mapping are unchanged.
-
-        This method logs the command itself, through ``resolve_exec_log``
-        (nothing under :attr:`~otto.logger.mode.LogMode.NEVER`; a delegated
-        call's *exec_input* names whose log and which mode), so
-        :meth:`exec_on_route` must NOT log before dispatching here.
-        """
-        from ._asyncssh import asyncssh
-
-        xl = begin_exec_log(cmd, log, self._log_command, self._log_output, exec_input=exec_input)
-
-        async def stop_started(
-            started: "asyncssh.SSHClientProcess[str]", exc: BaseException
-        ) -> None:
-            # Cancelled while the channel was still opening: the remote
-            # command may already run, and closing the channel signals nothing.
-            await process_stop.stop_interrupted(
-                process_stop.ChannelStoppable(started),
-                exc,
-                what=f"{self._name}: stop the interrupted command",
-            )
-
-        process = await process_stop.started_or_stopped(
-            conn.create_process(
-                cmd,
-                stderr=asyncssh.STDOUT,
-                stdin=asyncssh.DEVNULL,
-                encoding=OUTPUT_ENCODING,
-                errors=OUTPUT_ERRORS,
-            ),
-            stop_started,
-            what=f"{self._name}: start the command",
-        )
-        output = ExecOutput()
-        stoppable = process_stop.ChannelStoppable(process)
-        try:
-            returncode = await result_within(
-                drain_and_wait(
-                    _channel_chunks(process.stdout),
-                    output,
-                    lambda: _channel_returncode(process),
-                    xl.context.log_output,
-                    xl.context.mode,
-                ),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            await process_stop.stop_timed_out(
-                stoppable, what=f"{self._name}: stop the timed-out command"
-            )
-            return timed_out_result(
-                cmd=cmd, timeout=timeout, output=output, route=ExecRoute.SSH_CHANNEL
-            )
-        except BaseException as exc:
-            # An INTERRUPT unwinds the drain, and a one-shot command must not
-            # outlive the process that asked for it: closing a pty-less exec
-            # channel signals nothing, so the stop is explicit.
-            await process_stop.stop_interrupted(
-                stoppable, exc, what=f"{self._name}: stop the interrupted command"
-            )
-            raise
-        retcode = exit_status_of(returncode)
-        if retcode is None:
-            return no_return_code_result(cmd=cmd, route=ExecRoute.SSH_CHANNEL)
-        return CommandResult(
-            status=Status.Success if retcode == 0 else Status.Failed,
-            value=output.value(),
-            command=cmd,
-            retcode=retcode,
-            route=ExecRoute.SSH_CHANNEL.value,
-        )
-
-    async def _exec_on_default_session(
-        self,
-        cmd: str,
-        *,
-        timeout: float,
-        log: LogMode,
-        expects: "list[Expect | CredentialExpect] | None",
-        user: str | None,
-        exec_input: ExecInput | None = None,
-    ) -> CommandResult:
-        """One command on the default session: ``exec`` on a single-client console.
+        A host whose ``run`` and ``exec`` share one line
+        (``BaseHost._shares_one_line``, a console term) sends its ``exec``
+        here. What the command leaves in the session's shell is the dialect's
+        :attr:`~otto.host.command_frame.CommandFrame.isolates_exec` answer;
+        :meth:`run_cmd` gives *exec_input* the default session's restore.
 
         A console line serves one client, so the session ``run`` uses is the
         only one there is: a pooled session would be a second connection to a
@@ -5931,7 +5583,7 @@ class SessionManager:
         switch (:meth:`~otto.host.privilege.PosixPrivilege.as_user`) and so
         holds its line turn (``BaseHost._line_turn``, taken in
         ``BaseHost.exec`` through ``BaseHost._host_entry``) across the switch,
-        the command and the switch back (see ``UnixHost._exec_on_console``). A *user* other than the
+        the command and the switch back (see ``UnixHost._run_exec``). A *user* other than the
         session's current one reaching here is refused by name rather than
         run as the wrong user.
         """
@@ -5946,21 +5598,33 @@ class SessionManager:
             cmd=cmd, expects=expects, timeout=timeout, log=log, exec_input=exec_input
         )
 
-    async def _exec_pooled(
+    async def exec_pooled(
         self,
-        cmd: str,
         *,
+        cmd: str,
         timeout: float,
         log: LogMode,
-        expects: "list[Expect | CredentialExpect] | None",
-        user: str | None,
+        expects: "list[Expect | CredentialExpect] | None" = None,
+        user: str | None = None,
         exec_input: ExecInput | None = None,
         plain: bool = False,
     ) -> CommandResult:
-        """One command on a pooled shell session opened for *user*, without a terminal when *plain*.
+        """Run *cmd* as an ``exec`` on a pooled shell session opened for *user*.
 
-        Every ssh, telnet and local ``exec`` runs here. A shell session is
-        what a proxied login needs anyway (an ssh exec channel authenticates
+        The session has no terminal when *plain*.
+
+        Every ssh, telnet and local ``exec`` runs here. What the command
+        leaves in the session's shell is the dialect's
+        :attr:`~otto.host.command_frame.CommandFrame.isolates_exec` answer,
+        and *exec_input* gets a pooled session's restore
+        (``_exec_restore_for``). Concurrent calls are safe: each takes
+        its own session.
+
+        A term this manager has no transport for is refused by name where
+        the session's transport is chosen (``_open_transport_session``),
+        before anything is opened.
+
+        A shell session is what a proxied login needs anyway (an ssh exec channel authenticates
         as the direct cred and cannot replay the proxy steps, so exec/nc would
         run as the via-user rather than the target): a pooled session,
         which ``open_session`` builds through ``_apply_login_proxy``
@@ -5971,7 +5635,7 @@ class SessionManager:
         launching multiple ``nc -l`` listeners in parallel) each get their
         own, preserving the documented concurrency contract.
 
-        There is one free-list per user (:meth:`_pool_key`: *user*, else the
+        There is one free-list per user (``_pool_key``: *user*, else the
         login) and mode (*plain*: opened without a terminal); the two modes
         never share a session. A session for another user is opened FOR them
         (:meth:`open_session` with ``as_user``): over their own ssh login when
@@ -5990,7 +5654,7 @@ class SessionManager:
         session started, a background process an earlier ``exec`` left
         included. On ``ssh`` a free-list keeps
         at most one idle session, on the local host none
-        (:meth:`_idle_exec_sessions_kept`); elsewhere nothing is evicted and
+        (``_idle_exec_sessions_kept``); elsewhere nothing is evicted and
         each free-list holds at most that user's peak of concurrent ``exec``
         calls. :meth:`close_all` closes them all.
 
@@ -5998,7 +5662,7 @@ class SessionManager:
         a switch to its user: :attr:`ShellSession.reached_by_switch`) has
         another shell underneath it. Where its frame can guard, it carries an
         identity mark set on the line of its identity proof after setup
-        (:meth:`_mark_identity`), and every exec on it is typed with the
+        (``_mark_identity``), and every exec on it is typed with the
         frame's guard (:meth:`~otto.host.command_frame.CommandFrame.identity_guard`).
         When the switched shell has gone (an idle ``TMOUT``, a kill) and the
         shell underneath answers the guard, the command is not run: the
@@ -6012,6 +5676,8 @@ class SessionManager:
         and against the acquired session's echo fact, before anything is typed;
         the session goes back to the free-list untouched.
         """
+        # NO logging here: `_run_framed` logs the command, once.
+        exec_input = self._with_restore_for(False, exec_input)
         key = self._pool_key(user)
         session = await self._acquire_exec_session(user=user, plain=plain)
         result = await self._exec_on_pooled(
@@ -6081,7 +5747,6 @@ class SessionManager:
                 timeout=timeout,
                 exec_input=exec_input,
                 exec_escapes=False,
-                route=ExecRoute.POOLED_SHELL,
             )
         finally:
             await self._release_pooled(session, key, plain=plain)
@@ -6147,107 +5812,41 @@ class SessionManager:
             with suppress(Exception):
                 await session.close()
 
-    def exec_route(self, *, needs_shell: bool = False) -> ExecRoute:
-        """Which primitive an ``exec`` on this manager's transport would run on right now.
+    def line_budget(self, *, shared: bool, plain: bool = False) -> int | None:
+        """Longest line of a command an ``exec`` can carry here, or ``None`` if unbounded.
 
-        The TRANSPORT's conditions live here: the term, proxy hops, a
-        ``session_setup`` hook and the call's own need for a shell. They are
-        one part of a host's plan, and the plan is the only reader:
-
-        * ``UnixHost._plan_exec`` reads this, and decides the pooled
-          session's mode (with or without a terminal) itself.
-        * ``EmbeddedHost``, ``LocalHost`` and ``DockerContainerHost`` never
-          ask: their ``_plan_exec`` answers ``DEFAULT_SESSION``,
-          ``POOLED_SHELL`` and ``CONTAINER`` outright.
-
-        Ask the host's plan (``BaseHost._exec_plan``), not this method, for
-        the route a call takes; this answers only for the host's own
-        connection.
-
-        Order matters. A ``console`` term answers
-        ``DEFAULT_SESSION`` before anything else is read, since it serves one
-        client and so has nothing else to offer. Every other ssh or telnet
-        ``exec`` runs on a pooled shell session; whether that session has a
-        terminal is the plan's (``ExecPlan.plain``). Read fresh on
-        every call rather than cached at construction: ``term`` has a setter,
-        and ``proxy_hops`` is derived from creds that a ``login_target`` change
-        can move, so a cached route would answer for the host as it was.
-
-        ``UNSUPPORTED`` is a real answer rather than a raise, because one of
-        the callers is a QUERY. :meth:`exec_on_route` raises on it, at the
-        point where it has a term to name.
-
-        *needs_shell* is the call's own reason for a pty: a prompt to answer,
-        a user to switch to, an elevation. Both of its answers are the pooled
-        shell; the plan reads it again for the session's mode.
-        """
-        term = getattr(self._connections, "term", None)
-        if term == "console":
-            # First, whatever else the call needs: a console serves ONE
-            # client, so there is no raw channel and no second (pooled)
-            # session to consider. Hops, a hook, a prompt or a user switch
-            # all happen on the session `run` uses.
-            return ExecRoute.DEFAULT_SESSION
-        hops = getattr(self._connections, "proxy_hops", []) if self._connections is not None else []
-        hooked = self._session_setup is not None
-        if hops or hooked or needs_shell:
-            return ExecRoute.POOLED_SHELL
-        match term:
-            case "ssh" | "telnet":
-                return ExecRoute.POOLED_SHELL
-            case _:
-                return ExecRoute.UNSUPPORTED
-
-    def line_budget(self, *, route: ExecRoute, plain: bool = False) -> int | None:
-        """Longest line of a command *route* can carry here, or ``None`` if unbounded.
-
-        ``None`` is not "unknown" and not zero -- it is the answer for a route
-        that types into no line discipline at all (the bare ssh exec channel
-        and a local subprocess, which no ``exec`` takes; a container's
-        ``docker exec``; or a shell route whose session reads a pipe --
-        ``LocalHost``'s, or one opened without a terminal), and a caller
-        reading it should keep doing whatever it did before. That is what
-        keeps an ``ssh`` host's behaviour byte-identical: the path that was
-        never broken is asked the same question and answers "nothing here
-        bounds you".
+        ``None`` is not "unknown" and not zero: it is the answer for a session
+        that types into no line discipline at all (``LocalHost``'s, which
+        reads a pipe, or a pooled session opened without a terminal, *plain*),
+        and a caller reading it should keep doing whatever it did before.
 
         WHO ASKS, AND WHY IT IS ANSWERED HERE. ``ShellFileTransfer`` builds its
         own command lines and needs to know how long one may be, but the two
-        facts that decide it -- which route its ``exec`` takes (the host's
-        plan, handed in as *route*), and what otto's own framing costs on this
-        host's dialect -- are not visible from a transfer backend. Answering
-        it from the plan is what stops the backend from re-deriving a routing
-        rule it cannot see all of.
+        facts that decide it (which session its ``exec`` takes, the host's
+        answer handed in as *shared*, and what otto's own framing costs on
+        this host's dialect) are not visible from a transfer backend.
 
-        ``UNSUPPORTED`` answers ``None`` too: dispatching it raises before any
-        line is typed, so there is no line to budget.
+        *shared* is the host's default session (``BaseHost._shares_one_line``):
+        its ``exec`` restores more (``START``), so it types a longer frame.
 
         The number is :func:`typed_line_budget`'s, with the echo fact the open
         sessions measured: echo off only once every open session showed it.
         It is :meth:`line_room` for an empty command, and a caller that builds
         its own command around a payload asks that instead.
-
-        *plain* is the plan's (``ExecPlan.plain``): a pooled session opened
-        without a terminal reads a pipe, so it answers ``None``.
         """
-        return self.line_room(route=route, cmd="", plain=plain)
+        return self.line_room(cmd="", shared=shared, plain=plain)
 
-    def line_room(self, *, route: ExecRoute, cmd: str, plain: bool = False) -> int | None:
-        """Characters a quote-free payload inserted into *cmd*'s first line may add on *route*.
+    def line_room(self, *, cmd: str, shared: bool, plain: bool = False) -> int | None:
+        """Characters a quote-free payload inserted into *cmd*'s first line may add in an ``exec``.
 
-        ``None`` exactly where :meth:`line_budget` is (no line discipline,
-        a session without a terminal when *plain*).
-        Otherwise :func:`typed_line_room`'s, rendered through the exec frame
-        *route* types, with the echo fact :meth:`line_budget` reads: the
-        quoting a console's exec frame gives the command is counted, so a
-        caller never restates it.
+        ``None`` exactly where :meth:`line_budget` is (no line discipline:
+        a session without a terminal when *plain*, or a manager whose
+        sessions read a pipe). Otherwise :func:`typed_line_room`'s, rendered
+        through the exec frame typed with the restore of the session
+        *shared* names (``_exec_restore_for``), with the echo fact
+        :meth:`line_budget` reads.
         """
-        record = EXEC_ROUTES.get(route)
-        if record is None or "line_budget" not in record.limitations or plain:
-            return None
-        if not self._types_into_terminal:
-            # The route types into a shell, but this manager's shell reads a
-            # pipe (LocalHost): no line discipline, so nothing bounds a line.
+        if plain or not self._types_into_terminal:
             return None
         # No credential: the budget's one caller, the shell transfer, never
         # elevates, and the credential redirect rides the frame's closing
@@ -6256,7 +5855,7 @@ class SessionManager:
             self._command_frame,
             cmd,
             echoes=self._measured_echoes(),
-            exec_input=ExecInput(stdin_eof=True, restore=self._exec_restore_for(route)),
+            exec_input=ExecInput(stdin_eof=True, restore=self._exec_restore_for(shared)),
         )
 
     def _measured_echoes(self) -> bool:
@@ -6492,7 +6091,7 @@ class SessionManager:
 
             # Then the session-setup hook, on the same terms: it runs once per
             # OPEN, so the exec pool's sessions get it too (that is why the
-            # pool is the only exec route a hooked host has).
+            # pool is where a hooked host's exec runs).
             kind: SetupKind = "exec_pool" if name.startswith(_EXEC_POOL_PREFIX) else "named"
             try:
                 await self._apply_session_setup(shell_session, kind)

@@ -19,7 +19,6 @@ from otto.host.command_frame import (
 )
 from otto.host.element import Element
 from otto.host.errors import RawLandingError, UnsupportedOnUserlandError
-from otto.host.exec_route import ExecRoute
 from otto.host.login_proxy import Cred
 from otto.host.session import ShellSession
 from otto.host.session_setup import (
@@ -177,8 +176,7 @@ async def test_an_exec_as_a_switched_user_on_a_two_dialect_host_runs_and_is_not_
     h = _Harness(_enter_python, landing=BashFrame(), target=ZephyrFrame(), extra_creds=[root])
     try:
         for _ in range(2):
-            r = await h.mgr.exec_on_route(
-                route=ExecRoute.POOLED_SHELL,
+            r = await h.mgr.exec_pooled(
                 cmd="kernel version",
                 timeout=5.0,
                 log=LogMode.NORMAL,
@@ -207,8 +205,7 @@ async def test_a_refused_line_on_an_unguarded_switched_session_still_closes_it()
     h = _Harness(_export, target=_UnguardedAsh(), extra_creds=[root])
     try:
         with pytest.raises(UnsupportedOnUserlandError):
-            await h.mgr.exec_on_route(
-                route=ExecRoute.POOLED_SHELL,
+            await h.mgr.exec_pooled(
                 cmd="x" * 10_000,
                 timeout=5.0,
                 log=LogMode.NORMAL,
@@ -359,12 +356,10 @@ async def test_a_named_session_whose_hook_fails_is_torn_down_and_left_unregister
 
 
 @pytest.mark.asyncio
-async def test_exec_route_is_pooled_on_a_hook_host_and_the_hook_sees_exec_pool():
+async def test_exec_is_pooled_on_a_hook_host_and_the_hook_sees_exec_pool():
     h = _Harness(_export)
     try:
-        route = h.mgr.exec_route()
-        assert route is ExecRoute.POOLED_SHELL
-        r = await h.mgr.exec_on_route(route=route, cmd="id", timeout=10.0, log=LogMode.NORMAL)
+        r = await h.mgr.exec_pooled(cmd="id", timeout=10.0, log=LogMode.NORMAL)
         assert r.retcode == 0
         assert ("exec_pool", "admin") in h.calls
     finally:
@@ -382,8 +377,7 @@ async def test_an_exec_as_another_user_is_set_up_as_them_and_reuses_their_sessio
     h = _Harness(_export, extra_creds=[root])
     try:
         for _ in range(2):
-            r = await h.mgr.exec_on_route(
-                route=ExecRoute.POOLED_SHELL,
+            r = await h.mgr.exec_pooled(
                 cmd="id",
                 timeout=10.0,
                 log=LogMode.NORMAL,
@@ -413,9 +407,7 @@ async def test_a_hook_that_leaves_a_pooled_session_as_someone_else_is_refused_by
     h = _Harness(_switch_to_root, extra_creds=[root, alice])
     try:
         with pytest.raises(SessionSetupError) as raised:
-            await h.mgr.exec_on_route(
-                route=ExecRoute.POOLED_SHELL, cmd="id", timeout=10.0, log=LogMode.NORMAL, user=user
-            )
+            await h.mgr.exec_pooled(cmd="id", timeout=10.0, log=LogMode.NORMAL, user=user)
         opened_for = user or "admin"
         message = str(raised.value)
         assert message.startswith(f"h: session setup {h.name!r} left session ")
@@ -440,9 +432,7 @@ async def test_a_hook_whose_switch_is_scoped_keeps_the_pooled_session():
     root = Cred(login="root", proxy="su", via="admin")
     h = _Harness(scoped, extra_creds=[root])
     try:
-        r = await h.mgr.exec_on_route(
-            route=ExecRoute.POOLED_SHELL, cmd="id", timeout=10.0, log=LogMode.NORMAL
-        )
+        r = await h.mgr.exec_pooled(cmd="id", timeout=10.0, log=LogMode.NORMAL)
         assert r.retcode == 0
         assert [s.current_user for s in h.mgr._exec_pools[("admin", False)]] == ["admin"]
         assert any(cmd == "id" for shell in h.shells for _mode, cmd in shell.commands)
@@ -464,7 +454,6 @@ async def test_a_host_without_a_hook_is_unchanged():
     await mgr._ensure_session()
     readies = [w for w in built[0].shell.writes if "READY__" in w]
     assert len(readies) == 1
-    assert mgr.exec_route() is ExecRoute.POOLED_SHELL
 
 
 @pytest.mark.asyncio
@@ -653,9 +642,7 @@ async def test_a_hook_that_raises_on_the_exec_pool_surfaces_from_exec():
     h = _Harness(hook)
     try:
         with pytest.raises(SessionSetupError, match=r"session setup .* failed: boom"):
-            await h.mgr.exec_on_route(
-                route=h.mgr.exec_route(), cmd="id", timeout=10.0, log=LogMode.NORMAL
-            )
+            await h.mgr.exec_pooled(cmd="id", timeout=10.0, log=LogMode.NORMAL)
         assert [kind for kind, _user in h.calls] == ["exec_pool"]
     finally:
         h.unregister()
@@ -789,14 +776,12 @@ def test_a_session_without_a_terminal_does_not_win_on_a_hooked_host():
             host_id="h",
             session_setup=SessionSetup(name="t5-exec-route"),
         )
-        assert hooked.exec_route() is ExecRoute.POOLED_SHELL
         assert "cannot run the session setup 't5-exec-route'" in (
             hooked.no_terminal_limitation() or ""
         )
         # The same manager without the hook can open one, so this cannot be
         # satisfied by refusing it everywhere.
         plain = session_manager(connections=_conn(), name="h", host_id="h")
-        assert plain.exec_route() is ExecRoute.POOLED_SHELL
         assert plain.no_terminal_limitation() is None
     finally:
         SESSION_SETUPS.unregister(name="t5-exec-route")

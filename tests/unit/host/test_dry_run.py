@@ -22,7 +22,6 @@ from otto.host.command_frame import ZephyrFrame
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.embedded_host import EmbeddedHost, ZephyrHost
-from otto.host.exec_route import ExecRoute
 from otto.host.file_ops import refuse_if_base64_is_absent
 from otto.host.host import ShellCommand, _HostFilter, _ProbeAnswer, is_dry_run
 from otto.host.local_host import LocalHost
@@ -706,13 +705,13 @@ class TestADryRunLogsWithTheCommandsOwnMode:
                 ]
                 with pytest.raises(CommandNotRunError):
                     _ = result.value
-                seen[name] = (records, result.status, result.retcode, result.route, result.command)
+                seen[name] = (records, result.status, result.retcode, result.command)
         finally:
             await session.close()
             await host.close()
 
         records = [] if expected is LogMode.NEVER else [expected]
-        want = (records, Status.NotRun, -1, "", "otto-one-decline")
+        want = (records, Status.NotRun, -1, "otto-one-decline")
         assert seen == {"run": want, "exec": want, "session": want}
 
     @pytest.mark.asyncio
@@ -856,9 +855,7 @@ class TestALiveCommandLogsUnderOneModeOnEveryEntry:
                     ("session", lambda cmd=cmd: _only(session.run(cmd, log=LogMode.NORMAL))),
                     (
                         "pooled-exec",
-                        lambda cmd=cmd: pooled.exec_on_route(
-                            route=ExecRoute.POOLED_SHELL, cmd=cmd.cmd, timeout=30, log=cmd.log
-                        ),
+                        lambda cmd=cmd: pooled.exec_pooled(cmd=cmd.cmd, timeout=30, log=cmd.log),
                     ),
                 ]:
                     asked.clear()
@@ -1043,7 +1040,8 @@ class TestADryRunOnAColdHostReachesNothing:
             return reach
 
         monkeypatch.setattr(SessionManager, "_build_session", spy("session"))
-        monkeypatch.setattr(SessionManager, "exec_on_route", spy("exec route"))
+        monkeypatch.setattr(SessionManager, "exec_pooled", spy("pooled exec"))
+        monkeypatch.setattr(SessionManager, "exec_on_default_session", spy("default-session exec"))
         monkeypatch.setattr("otto.host.connections.ssh_connect", spy("ssh connect"))
         # The loop's own spawns, under every higher-level helper.
         monkeypatch.setattr(asyncio.BaseEventLoop, "subprocess_exec", spy("subprocess"))

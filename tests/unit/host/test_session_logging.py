@@ -762,34 +762,6 @@ async def test_a_sink_failing_on_the_held_line_never_replaces_a_shell_command_s_
     assert stopped == [how]
 
 
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("warning_sink")
-@pytest.mark.parametrize("how", ["timeout", "cancel"])
-async def test_a_sink_failing_on_the_held_line_never_replaces_a_drain_s_exception(how: str):
-    from otto.host.session import ExecOutput, drain_exec_output
-
-    reached = asyncio.Event()
-
-    async def chunks():
-        yield "\n"
-        reached.set()
-        await asyncio.Event().wait()
-
-    drain = drain_exec_output(
-        chunks(), ExecOutput(), lambda line, _m: _failing_sink(line), LogMode.NORMAL
-    )
-    if how == "timeout":
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(drain, 0.2)
-        assert reached.is_set()
-        return
-    task = asyncio.create_task(drain)
-    await asyncio.wait_for(reached.wait(), 5)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-
 _LF_MAPPINGS = {
     "identity": _Measurement(IDENTITY, calibrated=True),
 }
@@ -879,31 +851,6 @@ async def test_a_timed_out_shell_command_logs_the_complete_lines_it_held(
     await feed_task
     assert result.timed_out
     assert logged == ["one\r", "two\r"]
-
-
-@pytest.mark.asyncio
-async def test_a_stopped_drain_logs_the_blank_first_line_it_held():
-    from otto.host.session import ExecOutput, drain_exec_output
-
-    logged: list[str] = []
-    reached = asyncio.Event()
-
-    async def chunks():
-        yield "\n"
-        yield "unfini"
-        reached.set()
-        await asyncio.Event().wait()
-
-    drain = asyncio.create_task(
-        drain_exec_output(
-            chunks(), ExecOutput(), lambda line, _m: logged.append(line), LogMode.NORMAL
-        )
-    )
-    await asyncio.wait_for(reached.wait(), 5)
-    drain.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await drain
-    assert logged == [""]
 
 
 @pytest.mark.asyncio
@@ -1177,27 +1124,33 @@ def test_the_console_shows_each_carriage_return_segment_of_a_host_line_as_a_pref
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", [LogMode.NORMAL, LogMode.NEVER], ids=lambda m: m.name)
-@pytest.mark.parametrize("printed", ["a\\nb\\n", "a\\nb", ""])
-async def test_a_process_exec_builds_its_value_once(
+@pytest.mark.parametrize("mode", list(LogMode), ids=lambda m: m.name)
+@pytest.mark.parametrize("printed", ["a\nb\n", "a\nb", ""])
+async def test_a_session_exec_builds_its_value_once(
     monkeypatch: pytest.MonkeyPatch, mode: LogMode, printed: str
 ):
-    from otto.host.local_host import LocalHost
+    # A finished command's value is its frame's parse of the buffer; a
+    # timed-out one's is ExecOutput.value. Either builder, once per result.
+    from otto.host.command_frame import BashFrame
     from otto.host.session import ExecOutput
+    from tests.unit.host._session_feed import scripted_shell_unopened
+    from tests.unit.host.test_session_exec_pooled import _exec, _mgr
 
     built: list[str] = []
-    real = ExecOutput.value
+    parse, value = BashFrame.parse_output, ExecOutput.value
 
-    def counted(self: ExecOutput) -> str:
-        built.append(self.raw())
-        return real(self)
+    def counted_parse(self, buffer, **kw):
+        built.append("parse_output")
+        return parse(self, buffer, **kw)
 
-    monkeypatch.setattr(ExecOutput, "value", counted)
-    host = LocalHost()
-    try:
-        # The subprocess primitive itself: no exec() takes it, and it stays until removed.
-        result = await host._exec_subprocess(f"printf '{printed}'", 10.0, log=mode)
-    finally:
-        await host.close()
-    assert result.route == "local-subprocess"
-    assert len(built) == 1, built
+    def counted_value(self: ExecOutput) -> str:
+        built.append("ExecOutput.value")
+        return value(self)
+
+    monkeypatch.setattr(BashFrame, "parse_output", counted_parse)
+    monkeypatch.setattr(ExecOutput, "value", counted_value)
+    mgr = _mgr()
+    mgr._session_factory = lambda **kw: scripted_shell_unopened(replies={"p": (printed, 0)})
+    result = await _exec(mgr, cmd="p", timeout=10.0, log=mode)
+    assert (result.retcode, result.value) == (0, printed.rstrip("\n"))
+    assert built == ["parse_output"]

@@ -1,7 +1,7 @@
 <!-- GENERATED FILE -- do not edit by hand.
      scripts/render_support_matrix.py (render_command_contracts) renders this
      from the `entries` marker on each command contract and the limitations
-     declared on otto's built-in command frames, exec routes and console settings.
+     declared on otto's built-in command frames, shell sessions and console settings.
      Regenerate with `uv run python -m scripts.render_support_matrix`;
      edits are overwritten. -->
 
@@ -20,11 +20,11 @@ checked through it, and where.
 | Word | Means | Examples |
 | --- | --- | --- |
 | **term** | how otto reaches the host | `ssh`, `telnet`, `console` |
-| **entry** | which call you made | `run`, `exec`, shell-routed `exec` |
-| **route** | which path the command then took | listed in [Which route your command takes](#which-route-your-command-takes) |
+| **entry** | which call you made | `run`, `exec` |
+| **session** | which shell session the command then ran on | listed in [Which session your command takes](#which-session-your-command-takes) |
 
 A host's term is set in its record in the lab file
-({doc}`Host options </configuration/host-options>`). The route follows from
+({doc}`Host options </configuration/host-options>`). The session follows from
 the term, the entry and the call's arguments; each command's page says how.
 Other words these pages use:
 
@@ -55,16 +55,16 @@ returns):
 >>> from otto.result import CommandResult
 >>> from otto.utils import Status
 >>> result = CommandResult(
-...     status=Status.Success, retcode=0, value="hello", route="pooled-shell"
+...     status=Status.Success, retcode=0, value="hello"
 ... )
->>> result.route, result.timed_out, result.value
-('pooled-shell', False, 'hello')
+>>> result.retcode, result.timed_out, result.value
+(0, False, 'hello')
 ```
 
 ## The commands covered
 
 - {doc}`run <run>`: sends a command to the host's one persistent shell session.
-- {doc}`exec <exec>`: runs a one-off command, with no state carried from one call to the next.
+- {doc}`exec <exec>`: runs a one-off command, on a session of its own or the host's one session.
 
 A command not listed here has no contract yet: nothing on these pages is
 promised for it.
@@ -107,20 +107,17 @@ Each promise has a **Promise id**: a fixed name, shared by every command's
 page and by the support matrix. The `exec-` at the start of most ids is
 historical; it does not mean the `exec` command.
 
-## Which route your command takes
+## Which session your command takes
 
-otto picks the route for each call. A command takes one of these:
+otto picks the session for each call. `run` always takes the host's one
+persistent shell session; `exec` takes one of these:
 
-- `default-session`: the host's one persistent shell session, the one `run` uses.
-- `pooled-shell`: a shell session `exec` borrows from a pool beside the one `run` uses, with or without a terminal.
-- `ssh-channel`: a bare SSH channel of the command's own, with no terminal; no `exec` takes it.
-- `local-subprocess`: a fresh process on the local machine; no `exec` takes it.
-- `container`: a docker container's command, run as `docker exec` through its parent host; its result reports `container/` and the route the parent took.
+- The host's one persistent shell session, the one `run` uses.
+- A shell session otto keeps for `exec` beside the one `run` uses, with a terminal.
+- A shell session otto keeps for `exec` beside the one `run` uses, without a terminal.
+- `docker exec` through the container's parent host, as one of the parent's own `exec` calls.
 
-Each command's page says when it takes each. From Python, read the result's
-`route` field
-([Which route ran a command](../architecture/utilities/results.md#which-route-ran-a-command));
-`otto host <id> exec` does not print it.
+Each command's page says when it takes each.
 
 (command-contracts-not-promised)=
 
@@ -188,17 +185,17 @@ page says, and only the narrower one is promised there, for every command:
 - On a host whose `exec` goes through a pooled shell, `exec-isolated` holds in a narrower form.
   - You can run an `exec` that starts from the state its session was set up with -- nothing a `run` or an earlier `exec` changed -- and trust that its `cd`, variables, options, `exit` and terminal settings reach no later `exec` or `run`.
 - On a console, `exec-isolated` holds in a narrower form.
-  - You can run an `exec` in a clean login shell started from the console's one shell -- in the login's home directory, with the login's environment and options, nothing a `run` or an earlier `exec` changed -- and trust that its `cd`, variables, options, `exit` and terminal settings reach no later `exec` or `run`. Where it differs from a pooled shell's `exec`: it runs as whoever the console's shell is at that moment (after a `su`, the switched user); its `HOME`, `TERM`, `USER`, `LOGNAME` and `PATH` are the console shell's as they are then, so a `run` that changed one of them is seen through it, and its `SHELL` names the program it runs in (the console shell's `$SHELL`, `/bin/sh` when that is unset); a session setup hook's effect on the console's shell is not carried into it; what the login profile prints when the shell starts does not reach its output, and no `expects` pattern is answered to it; what a login shell's logout file prints (bash's `~/.bash_logout`, run when the command ends the shell with the `exit` builtin) does reach its output; a login with no `HOME` (unset or empty) starts in `/`; a login shell that never reaches the command (no `env`, no such `$SHELL`, a `$SHELL` that does not take `-l -c` such as csh, or a profile that exits or `exec`s) gives a failed result, never a success, with `retcode` -1 and the value "the command never ran: its end record arrived with no BEGIN marker before it"; and a console whose `$SHELL` is not a POSIX shell (the csh family) cannot run `exec` at all.
+  - You can run an `exec` on the console's one shell, the one `run` uses: it starts from `run`'s directory, variables and options, and its `cd`, variables, options, `exit` and terminal settings reach no later `exec` or `run`. A command that kills `$$` kills that shell, so it ends the session as the same command from `run` does.
 
 (command-contracts-not-covered)=
 
 ## What is not covered at all
 
 No host the conformance suite reaches has a **proxied** login, so the
-route a proxied login takes is covered by unit tests only, and none of
+session a proxied login takes is covered by unit tests only, and none of
 the promises on these pages is checked through it.
 
-A docker container's `exec` is designed to follow its parent host's route
+A docker container's `exec` is designed to follow its parent host's session
 ({ref}`What a command's value holds <command-output-contract>`), but no
 host the conformance suite reaches is a container, so nothing on these
 pages is promised for one.
@@ -212,37 +209,24 @@ that apply to it.
 
 | Exception | In short |
 | --- | --- |
-| {ref}`How long one command can be, on the ssh-channel route <exception-how-long-one-command-can-be-on-the-ssh-channel-route>` | 9000 characters ran whole on dropbear 2022.83; other ssh servers were not measured |
-| {ref}`How long one line of a command can be, on the pooled-shell and default-session routes <exception-how-long-one-line-of-a-command-can-be-on-the-pooled-shell-and-default-session-routes>` | in a shell session (the `pooled-shell` and `default-session` routes), 4095 characters per line; 1022 on a BusyBox shell whose terminal still echoes |
+| {ref}`How long one line of a command can be, on a session with a terminal <exception-how-long-one-line-of-a-command-can-be-on-a-session-with-a-terminal>` | in a shell session (pooled or the host's default one), 4095 characters per line; 1022 on a BusyBox shell whose terminal still echoes |
 | {ref}`A 0xFF byte in a command's output, on a console whose host record sets console_options.escapes_iac: false <exception-a-0xff-byte-in-a-command-s-output-on-a-console-whose-host-record-sets-console-options-escapes-iac-false>` | a 0xFF byte the command writes is lost, and sometimes the bytes after it |
 | {ref}`Elevating a command with sudo= on run and exec, on the embedded and zephyr host families <exception-elevating-a-command-with-sudo-on-run-and-exec-on-the-embedded-and-zephyr-host-families>` | no `sudo` or `su` on the device shell |
 | {ref}`Running a command as another user= on run and exec, on the embedded and zephyr host families <exception-running-a-command-as-another-user-on-run-and-exec-on-the-embedded-and-zephyr-host-families>` | no user accounts on the device shell |
 
 Each section below gives the exception's **kind**: device: the device cannot do it; library: a library otto builds on behaves this way.
 
-(exception-how-long-one-command-can-be-on-the-ssh-channel-route)=
+(exception-how-long-one-line-of-a-command-can-be-on-a-session-with-a-terminal)=
 
-### How long one command can be, on the `ssh-channel` route
+### How long one line of a command can be, on a session with a terminal
 
-Where: the `ssh-channel` route. Kind: device: the device cannot do it.
+Where: a session with a terminal. Kind: device: the device cannot do it.
 
-On this route the command travels as the ssh exec request itself, and the ssh server decides how long a request it accepts. On dropbear 2022.83, the one server measured, a command of 9000 characters ran whole and one of 9001 failed; other servers and versions were not measured.
-
-Measured (the lab detail, for the evidence):
-
-- 2026-08-13, BusyBox 1.35.0 over dropbear 2022.83: a command on its own exec channel arrives intact at 9000 characters and fails at 9001
-
-(exception-how-long-one-line-of-a-command-can-be-on-the-pooled-shell-and-default-session-routes)=
-
-### How long one line of a command can be, on the `pooled-shell` and `default-session` routes
-
-Where: the `pooled-shell` and `default-session` routes. Kind: device: the device cannot do it.
-
-On these routes otto types the command into a terminal, and the characters otto adds around the command count against the line's length. A Linux terminal cuts a typed line past 4095 characters, with no error: the kernel holds a typed line in a 4096-byte buffer, its newline included (measured on BusyBox guests). BusyBox's shell, ash, cuts a line at 1022 characters, but only while the terminal echoes what is typed back. otto turns echo off when it opens a session, so the limit is 4095 where that worked and 1022 where it did not (the device has no `stty`, or its `stty` refuses). otto also uses 1022 when it sizes a file transfer's lines before it has opened any session to the host, since it cannot yet know whether echo is off. `otto host <id> probe` prints the terminal mapping it measured, with `, echo on` after it where echo stayed on, so the limit there is 1022 on a BusyBox shell.
+In a session otto types the command into a terminal, and the characters otto adds around the command count against the line's length. A Linux terminal cuts a typed line past 4095 characters, with no error: the kernel holds a typed line in a 4096-byte buffer, its newline included (measured on BusyBox guests). BusyBox's shell, ash, cuts a line at 1022 characters, but only while the terminal echoes what is typed back. otto turns echo off when it opens a session, so the limit is 4095 where that worked and 1022 where it did not (the device has no `stty`, or its `stty` refuses). otto also uses 1022 when it sizes a file transfer's lines before it has opened any session to the host, since it cannot yet know whether echo is off. `otto host <id> probe` prints the terminal mapping it measured, with `, echo on` after it where echo stayed on, so the limit there is 1022 on a BusyBox shell.
 
 On a host whose `command_frame` is `ash`, `run` counts each line before typing it, and refuses a line over the limit with an error naming it. Elsewhere the terminal cuts it without an error.
 
-Not limited this way: a local host's session, which reads the command from a pipe, not a terminal; and `exec` on the `ssh-channel` route, which has its own limit. A Zephyr board's own shell buffer is a separate limit, never measured.
+Not limited this way: a local host's session, which reads the command from a pipe, not a terminal. A Zephyr board's own shell buffer is a separate limit, never measured.
 
 Measured (the lab detail, for the evidence):
 
@@ -321,7 +305,7 @@ producing them:
   `, tabs expanded` after it, logs a warning once, and the tab arrives as
   spaces.
 - Output after a command changes its own terminal settings on a shell
-  session, whether `run` or a shell-routed `exec` reached it: for example
+  session, whether `run` or `exec` reached it: for example
   `stty -onlcr`, which stops the terminal turning a newline into `\r\n`, or
   a program that leaves the terminal in raw mode, passing every byte through
   unchanged. The session measured its terminal when it opened and does not
@@ -331,12 +315,12 @@ producing them:
 - An `exec(sudo=True)` whose sudo or su asks for a password that otto answers,
   where no device measures it. Password sudo over `ssh` is measured on the
   lab's test1 (sudo's default timestamp) and test3 (`timestamp_timeout=0`):
-  the command reads end of file. Password sudo on a `telnet` or `console`
-  route, and password su on any route (every lab host that elevates with su
+  the command reads end of file. Password sudo over `telnet` or on a console,
+  and password su on any host (every lab host that elevates with su
   logs in as root), are checked only against a stand-in sudo and su.
   Whether the password prompt otto answers appears in the returned value is
   not promised either, for `run` and `exec` alike.
-  On BusyBox 1.16.1, a shell-routed `exec` for which otto answers a password
+  On BusyBox 1.16.1, an `exec` for which otto answers a password
   is expected to fail with that shell's `Bad file descriptor` (status 2): otto
   keeps the terminal for the password on file descriptor 3 (`3<&0`), and
   BusyBox 1.16.1's shell refuses to copy file descriptor 0. The refusal of
@@ -353,7 +337,7 @@ producing them:
 - How long a line the Zephyr shell itself accepts. Its command buffer is a
   firmware build setting (`CONFIG_SHELL_CMD_BUFF_SIZE`) and has never been
   measured. Where otto sizes its own lines on a Zephyr board it uses the
-  Linux terminal's limit ({ref}`How long one line of a command can be, on the pooled-shell and default-session routes <exception-how-long-one-line-of-a-command-can-be-on-the-pooled-shell-and-default-session-routes>`), which is not a
+  Linux terminal's limit ({ref}`How long one line of a command can be, on a session with a terminal <exception-how-long-one-line-of-a-command-can-be-on-a-session-with-a-terminal>`), which is not a
   measurement of any Zephyr board.
 
 ## For contributors: which test checks each promise

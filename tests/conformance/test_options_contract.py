@@ -12,7 +12,7 @@ raises :exc:`~otto.host.errors.UnsupportedOptionError` and types nothing.
 
 The arms are :func:`tests.conformance._options.arms`'s table, built from the
 opened host's declaration and the cell's vocabulary and users; each is issued
-through the cell's entry, its route asserted as a call carrying an option
+through the cell's entry as a call carrying an option
 (:func:`~tests.conformance._entry.issue`), and compared by
 :func:`~tests.conformance._options.arm_mismatch`, which the control shares.
 

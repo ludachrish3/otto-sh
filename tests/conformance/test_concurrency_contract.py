@@ -6,10 +6,6 @@ of its own that holds by construction; where every command shares one line
 (``BaseHost._line_turn``). Either way no call's value carries another call's
 output, and none is missing its own.
 
-Each call goes through ``issue``, which asserts the route the cell's entry
-must take (``check_route``), so a console cell that silently took the pool
-fails here as in the other exec contracts.
-
 The stimulus is the cell's ``distinct_answer_template``, filled with one
 token per call, on every userland: a POSIX shell prints the token, and a
 Zephyr shell, which has no ``echo``, quotes the unknown command back.

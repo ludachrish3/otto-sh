@@ -70,6 +70,7 @@ from tests.conformance import test_dry_run_contract as _dry_run_contract
 from tests.conformance import test_exec_contract as _exec_contract
 from tests.conformance import test_options_contract as _options_contract
 from tests.conformance import test_output_contract as _output_contract
+from tests.conformance import test_state_contract as _state_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
 from tests.conformance._bed import (
     _POSIX_SCRATCH_DIR,
@@ -93,11 +94,9 @@ from tests.conformance._console_safety import (
 )
 from tests.conformance._controls import discover_controls
 from tests.conformance._entry import (
-    ALL_ENTRIES,
     EXEC,
     RUN,
     entries_declared,
-    expected_route,
     hooked_leg,
     space_for,
 )
@@ -2353,8 +2352,6 @@ LIES: dict[str, set[str]] = {
     "leaves_the_command_running": {"timeout"},
     # Every command answered with a value one character off its case's.
     "garbles_the_output": {"output"},
-    # Every result names a route no entry of the cell takes.
-    "reports_the_wrong_route": {"exit code", "framing", "sequence", "timeout", "output"},
 }
 
 
@@ -2401,12 +2398,10 @@ class _ScriptedHost:
         self,
         words: Vocabulary,
         lie: "str | None",
-        exec_route: str,
         witnesses: "FakeWitnesses | None" = None,
     ) -> None:
         self._words = words
         self._lie = lie
-        self._exec_route = exec_route
         self._timed_out = False
         # Shared by every host one cell opens: the witness observer reads the
         # process the host under test started through a second host.
@@ -2414,24 +2409,17 @@ class _ScriptedHost:
 
     async def run(self, command, timeout=None) -> Results:
         commands = [command] if isinstance(command, str) else list(command)
-        entries = [
-            self._routed(self._answer(one, timeout), DEFAULT_SESSION_ROUTE) for one in commands
-        ]
+        entries = [self._answer(one, timeout) for one in commands]
         if self._lie == "stops_after_the_failure":
             entries = self._truncate_at_the_failure(entries)
         return Results.collect(items=entries)
 
     async def exec(self, command, timeout=None) -> CommandResult:
-        result = self._routed(self._answer(command, timeout), self._exec_route)
+        result = self._answer(command, timeout)
         if self._lie == "exec_strips":
             # ast-grep-ignore: no-stripped-command-value -- the lie this host tells
             return dataclasses.replace(result, value=result.value.strip())
         return result
-
-    def _routed(self, result: CommandResult, route: str) -> CommandResult:
-        if self._lie == "reports_the_wrong_route":
-            route = WRONG_ROUTE
-        return dataclasses.replace(result, route=route)
 
     @staticmethod
     def _truncate_at_the_failure(entries: "list[CommandResult]") -> "list[CommandResult]":
@@ -2526,60 +2514,36 @@ class _ScriptedHost:
         return value
 
 
-#: The routes the scripted host reports: what a unix ssh cell's `run` takes, and
-#: one no entry of such a cell takes (its `exec`, hooked or not, takes `pooled-shell`).
-DEFAULT_SESSION_ROUTE = "default-session"
-WRONG_ROUTE = "local-subprocess"
-
-
 def _scripted_cell(
     words: Vocabulary, lie: "str | None", entry: str = RUN, *, hooked: bool = False
 ) -> ResolvedCell:
     """A resolved cell whose host is scripted rather than real, reached by *entry*.
 
     A unix ``ssh`` cell without a proxied login, the one shape that has a
-    hooked leg (*hooked*). Both its openers' ``exec`` take the pooled shell,
-    as a real one's does: the hooked one's with a terminal, the plain one's
-    without, which no route says.
+    hooked leg (*hooked*).
     """
 
     witnesses = fake_witnesses(words)
 
-    def opener_for(exec_route: str):
-        @contextlib.asynccontextmanager
-        async def opener():
-            yield _ScriptedHost(words, lie, exec_route, witnesses)
-
-        return opener
+    @contextlib.asynccontextmanager
+    async def opener():
+        yield _ScriptedHost(words, lie, witnesses)
 
     plain = ResolvedCell(
         cell=Cell("scripted", "ssh", "transfer"),
         kind="scripted",
-        open_host=opener_for("pooled-shell"),
+        open_host=opener,
         remote_scratch=None,
         vocabulary=words,
         entry=entry,
         family="unix",
-        open_shell_host=opener_for("pooled-shell"),
+        open_shell_host=opener,
     )
     if not hooked:
         return plain
     leg = hooked_leg(plain)
     assert leg is not None
     return leg
-
-
-def test_the_scripted_cell_routes_are_the_ones_its_entries_must_take() -> None:
-    """The harness's route literals agree with the suite's independent table."""
-    for entry, hooked, route in [
-        (RUN, False, DEFAULT_SESSION_ROUTE),
-        (EXEC, False, "pooled-shell"),
-        (EXEC, True, "pooled-shell"),
-    ]:
-        assert expected_route(_scripted_cell(POSIX, None, entry, hooked=hooked)) == route
-    assert WRONG_ROUTE not in {
-        expected_route(_scripted_cell(POSIX, None, entry)) for entry in ALL_ENTRIES
-    }
 
 
 @pytest.mark.asyncio
@@ -2674,19 +2638,6 @@ def test_every_driven_contract_declares_entries() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("vocab_name", sorted(VOCABULARIES))
-async def test_a_host_that_reports_the_wrong_route_fails_every_command_contract(vocab_name) -> None:
-    """A command that ran on a route its entry does not take is refused, over every entry."""
-    words = VOCABULARIES[vocab_name]
-    for name in _contracts_for(words):
-        for entry, hooked in _legs_of_contract(name):
-            with pytest.raises(AssertionError, match="ran on route"):
-                await CONTRACTS[name](
-                    _scripted_cell(words, "reports_the_wrong_route", entry, hooked=hooked), []
-                )
-
-
-@pytest.mark.asyncio
 async def test_a_host_whose_exec_strips_fails_the_output_contract() -> None:
     """``exec`` trimming whitespace that ``run`` keeps is caught, hooked and not.
 
@@ -2711,7 +2662,7 @@ class _ScriptedConsoleHost(_ScriptedHost):
     term = "console"
 
     def __init__(self, words: Vocabulary, *, claims: bool, drops_ff: bool) -> None:
-        super().__init__(words, None, DEFAULT_SESSION_ROUTE)
+        super().__init__(words, None)
         self.console_options = ConsoleOptions(escapes_iac=not claims)
         self._drops_ff = drops_ff
 
@@ -3747,3 +3698,87 @@ def test_control_an_unlisted_rung_cell_accepts_its_tool_failure():
     assert_failed_as_the_pin(
         Result(status=Status.Error, msg=port), ["python"], "control", PORT, "python", "put"
     )
+
+
+class _ScriptedConsoleShell:
+    """A unix console's one shell, modelled: ``run`` changes it, an ``exec`` reads it.
+
+    Answers only the state and terminal words of :data:`POSIX` and the state
+    contract's long exec, and raises on anything else. An ``exec`` runs in a
+    subshell of the one shell, so what it sets is gone after it and what ``run``
+    set is what it reads. *lie* ``"exec_resets_options"`` reads every option
+    off inside an ``exec``: a frame that starts its command in a fresh shell.
+    """
+
+    term = "console"
+
+    def __init__(self, lie: "str | None") -> None:
+        self._lie = lie
+        self._state = {"cwd": "/root", "run": "unset", "opts": ""}
+
+    def _read(self, *, in_exec: bool) -> str:
+        s = self._state
+        opts = "" if in_exec and self._lie == "exec_resets_options" else s["opts"]
+        return f"{s['cwd']}|{s['run']}|unset|unset|{opts}|root"
+
+    def _answer(self, command: str, *, in_exec: bool) -> CommandResult:
+        words = POSIX
+        if command == words.state_read_command:
+            value = self._read(in_exec=in_exec)
+        elif command == words.run_state_set_command and not in_exec:
+            self._state = {"cwd": "/dev", "run": "run", "opts": self._state["opts"] + "f"}
+            value = ""
+        elif in_exec and command in (words.exec_state_set_command, words.exit_session_command):
+            value = ""
+        elif command == words.terminal_read_command:
+            value = words.terminal_baseline_answer
+        elif command == words.terminal_change_command:
+            value = ""
+        elif command == _state_contract._LONG_EXEC:
+            value = "otto-cf-long"
+        else:
+            raise AssertionError(f"the state contract issued {command!r}, which this shell lacks")
+        return CommandResult(
+            status=Status.Success,
+            value=value,
+            command=command,
+            retcode=0,
+        )
+
+    async def run(self, command, timeout=None) -> Results:
+        return Results.collect(items=[self._answer(command, in_exec=False)])
+
+    async def exec(self, command, timeout=None, **_kw) -> CommandResult:
+        return self._answer(command, in_exec=True)
+
+
+def _scripted_state_console_cell(lie: "str | None") -> ResolvedCell:
+    @contextlib.asynccontextmanager
+    async def opener():
+        yield _ScriptedConsoleShell(lie)
+
+    return ResolvedCell(
+        cell=Cell("scripted", "console", "shell"),
+        kind="scripted",
+        open_host=opener,
+        remote_scratch=None,
+        vocabulary=POSIX,
+        entry=EXEC,
+        family="unix",
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_console_state_arm_passes_run_s_options_and_catches_their_loss() -> None:
+    """A console ``exec`` that sees ``run``'s options passes; one that resets them fails."""
+    notes: list[str] = []
+    await _state_contract.test_an_exec_starts_from_its_own_state_and_leaves_none(
+        _scripted_state_console_cell(None), notes.append
+    )
+    assert len(notes) == 1
+    assert "on run's shell, whose directory and variables exec sees" in notes[0]
+    with pytest.raises(AssertionError, match="opts"):
+        await _state_contract.test_an_exec_starts_from_its_own_state_and_leaves_none(
+            _scripted_state_console_cell("exec_resets_options"), notes.append
+        )
+    assert len(notes) == 1

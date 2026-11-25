@@ -89,7 +89,6 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from otto.host.connections import ConnectionManager
-from otto.host.exec_route import ExecRoute
 from otto.host.host import DEFAULT_COMMAND_TIMEOUT
 from otto.host.session import _HANDSHAKE_RETRY_BACKOFF, SessionManager, ShellSession
 from otto.logger.mode import LogMode
@@ -208,9 +207,7 @@ class _Factory:
 
 def _pooled_exec(mgr: SessionManager, cmd: str):
     """One ``exec`` on the pooled route, which is what a telnet manager plans."""
-    return mgr.exec_on_route(
-        route=ExecRoute.POOLED_SHELL, cmd=cmd, timeout=DEFAULT_COMMAND_TIMEOUT, log=LogMode.NORMAL
-    )
+    return mgr.exec_pooled(cmd=cmd, timeout=DEFAULT_COMMAND_TIMEOUT, log=LogMode.NORMAL)
 
 
 def _make_mgr(factory: _Factory, term: str = "telnet") -> SessionManager:

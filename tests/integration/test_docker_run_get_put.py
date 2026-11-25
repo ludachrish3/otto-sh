@@ -18,7 +18,6 @@ from otto.config.project import Project
 from otto.docker import build_images, compose_down, compose_up
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOptionError
-from otto.host.exec_route import ExecRoute, container_route
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
@@ -342,7 +341,6 @@ async def test_exec_logs_its_lines_on_the_container_while_it_runs(stack, expects
 
     assert removed.is_ok, removed
     assert result.is_ok, (seen_on, result)
-    assert result.route == container_route(ExecRoute.POOLED_SHELL.value), (seen_on, result)
     # The fixture's parent and container are built at their default mode and
     # nothing here suppresses either, so the chain stands at NORMAL.
     expected_mode = LogMode.NORMAL

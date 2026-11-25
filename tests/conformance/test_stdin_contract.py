@@ -22,7 +22,7 @@ from collections.abc import Callable
 
 import pytest
 
-from tests.conformance._entry import EXEC, expected_route, has_terminal, issue, opened
+from tests.conformance._entry import EXEC, has_terminal, issue, opened
 from tests.conformance._resolved import ResolvedCell
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
@@ -69,7 +69,6 @@ async def test_an_exec_without_expects_reads_end_of_file(
             # Arm: after otto's own password prompt. The prompt otto answered is
             # the terminal's output, ahead of the command's.
             elevated = await host.exec(cmd, timeout=_STDIN_BUDGET_S, sudo=True)
-            assert elevated.route == expected_route(resolved_cell)
             assert (elevated.timed_out, elevated.value.endswith("otto-cf-eof")) == (False, True)
             # A sudo exec needs a terminal for the prompt: read the session's own.
             assert has_terminal(resolved_cell, needs_shell=True)
@@ -96,6 +95,5 @@ async def test_control_input_given_to_the_command_is_read(resolved_cell: Resolve
         if resolved_cell.password_sudo and resolved_cell.entry == EXEC:
             # The elevated arm, on the same cells as the contract's.
             elevated = await host.exec(piped_cmd, timeout=_STDIN_BUDGET_S, sudo=True)
-            assert elevated.route == expected_route(resolved_cell)
             # Fails an elevation that swallows the command's input.
             assert elevated.value.endswith("x\notto-cf-eof")

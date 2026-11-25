@@ -138,8 +138,9 @@ def install_fake_elevation(
     bin_dir.mkdir(parents=True, exist_ok=True)
     state.mkdir(parents=True, exist_ok=True)
     # The state directory is also written into each script, so a stand-in
-    # started with an emptied environment (a console exec's `env -i`) finds
-    # it as a real sudo finds its own state.
+    # started where FAKE_SUDO_DIR is not exported (sudo's own reset
+    # environment, a shell that never saw the overlay) finds it as a real
+    # sudo finds its own state.
     default = f": ${{FAKE_SUDO_DIR:={shlex.quote(str(state))}}}\n"
     for name, text in (("sudo", FAKE_SUDO), ("su", FAKE_SU), ("id", FAKE_ID)):
         path = bin_dir / name

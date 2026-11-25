@@ -294,11 +294,10 @@ async def resolve_stage_dir(stage_dir: Path, host: "Host", who: str = "product")
     The answer is always absolute, deliberately. A relative destination is
     resolved by whoever reads it, and the readers disagree: a transfer lands
     it in the login/SFTP directory while a command resolves it against the
-    SHELL's current directory — the same place only on a direct SSH exec
-    channel, and a different one the moment the host takes the pooled-shell
-    route (telnet, a proxied login, a ``session_setup`` hook that changes
-    directory). An absolute path removes the question instead of encoding an
-    answer that two layers would read differently.
+    SHELL's current directory, which a ``session_setup`` hook or a proxied
+    login can move away from the login directory. An absolute path removes
+    the question instead of encoding an answer that two layers would read
+    differently.
 
     Raises
     ------

@@ -153,7 +153,7 @@ async def console_session(
     Its ``exec_`` calls restore :attr:`ExecRestore.START`, the restore a
     console's default session is given, so they type the console's exec
     frame; ``SHELL`` names *name*'s own program (BusyBox's through a link
-    called ``sh``), so the clean login shell that frame starts is *name*.
+    called ``sh``), so the sudo ``shell`` form a console exec types starts *name*.
     """
     with tempfile.TemporaryDirectory(prefix="otto-ptys-login-") as links:
         argv = dict(SHELLS)[name]
