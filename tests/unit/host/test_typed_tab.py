@@ -17,6 +17,7 @@ import pytest
 
 from otto.host.command_frame import BashFrame
 from tests._fixtures.interactive_shell import (
+    RC_EDITING,
     READY_TIMEOUT,
     SHELLS,
     TAIL_MARKERS,
@@ -86,11 +87,31 @@ def test_a_tab_in_a_here_document_arrives_as_a_tab(name: str):
 
 
 @pytest.mark.parametrize("name", LINE_EDITING)
-def test_typed_bare_a_tab_is_taken_as_a_completion_key(name: str):
-    """The control: without the frame's spelling, a line-editing shell does not deliver the TAB."""
+def test_a_bare_tab_is_taken_as_a_completion_key_without_the_handshake(name: str):
+    """The control: before otto's first line, a line-editing shell does not deliver a bare TAB."""
     with interactive_shell(name) as shell:
-        _handshaken(shell)
         printed = shell.run("printf '%s' '/us\tb' | od -An -c")
     seen = _bytes_seen(printed)
     assert seen, f"{name}: no od row in {printed!r}"
     assert "\\t" not in seen, f"{name}: {printed!r}"
+
+
+@pytest.mark.parametrize(
+    ("name", "editing"),
+    [(name, "") for name in INTERACTIVE]
+    + [(n, m) for n, m in (*RC_EDITING, ("zsh", "bindkey -v")) if n in INTERACTIVE],
+)
+def test_after_the_handshake_a_bare_tab_arrives_as_a_tab(name: str, editing: str):
+    """The handshake makes TAB a plain character in each line editor (#1356).
+
+    A line typed while the previous command runs meets the terminal's line
+    discipline, which consumes the Ctrl-V the frame puts before a TAB; what
+    the editor then reads is this bare TAB. In vi editing mode too, and
+    whatever completion the user's rc file bound to TAB.
+    """
+    with interactive_shell(name) as shell:
+        if editing:  # the user's rc file, before otto's first line
+            shell.run(editing)
+        _handshaken(shell)
+        printed = shell.run("printf '%s' '/us\tb' | od -An -c")
+    assert _bytes_seen(printed) == ["/", "u", "s", "\\t", "b"], f"{name}: {printed!r}"

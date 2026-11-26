@@ -47,9 +47,11 @@ class PtySession(_PatternReaderTransport, ShellSession):
         *,
         env: "dict[str, str] | None" = None,
         restore: ExecRestore = ExecRestore.BASELINE,
+        rc: str = "",
     ) -> None:
         super().__init__()
         self._shell_name = name
+        self._rc = rc
         self._env_overlay = env
         self._test_restore = restore
         self._pty: ControllingPty | None = None
@@ -82,6 +84,9 @@ class PtySession(_PatternReaderTransport, ShellSession):
                 return b""
 
         self._reader = PatternReader(read_chunk)
+        if self._rc:  # what a user's rc file sets, run before otto's first line
+            await self.write_transport(data=f"{self._rc}; echo rc''-done\n")
+            await self._reader.read_transport_until(re.compile(r"rc-done\r?\n"))
 
     async def write_transport(self, *, data: str | SecretStr) -> None:
         assert self._pty is not None
@@ -128,12 +133,14 @@ async def pty_session(
     setup: str = "",
     env: "dict[str, str] | None" = None,
     restore: ExecRestore = ExecRestore.BASELINE,
+    rc: str = "",
 ) -> AsyncIterator[PtySession]:
     """Open a :class:`PtySession` on shell *name*, handshaken, with *setup* typed through ``run``.
 
-    *restore* is what its ``exec_`` calls restore. The shell is killed on exit.
+    *restore* is what its ``exec_`` calls restore. *rc* is typed before the
+    handshake, as a user's rc file would have run it. The shell is killed on exit.
     """
-    session = PtySession(name, env=env, restore=restore)
+    session = PtySession(name, env=env, restore=restore, rc=rc)
     try:
         await session._ensure_initialized()
         if setup:

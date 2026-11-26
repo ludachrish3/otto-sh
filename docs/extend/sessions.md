@@ -124,9 +124,13 @@ has one keeps it. How such a command ends, times out or is stopped is on
 (exec-frame-shell-state)=
 #### Shell state
 
-Every session's handshake makes its shell read a typed command as a script
-line, on bash and zsh as on every other shell: `!` is literal and `#` starts
-a comment.
+The handshake of every bash-family session otto drives makes its shell read
+a typed command as a script line, also on an interactive bash or zsh, which
+would otherwise expand `!` (and, for zsh, read `#` as a word):
+`!` is literal and `#` starts a comment. On bash, zsh and mksh a TAB is a
+character too, never completion, even in a command typed before the shell is
+back at its prompt (otto types the next command as soon as the previous one
+has answered; {ref}`what otto sets in a shell it drives <per-host-session-setup>`).
 
 Where an `exec` starts, and what it can leave behind:
 

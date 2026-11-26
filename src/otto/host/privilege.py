@@ -664,13 +664,15 @@ class PosixPrivilege(UserlandHost):
     def _shell_prefix(self) -> str:
         """Return the statements the shell a user switch starts is told first.
 
-        The same composition as the session manager's
-        (:func:`~otto.host.command_frame.shell_prefix`): the frame's
-        script-line options, then history suppression when the host asked for
-        it. ``getattr`` rather than direct attribute access because this mixin
-        is also inherited by hosts that declare no ``shell_history`` field
-        (LocalHost, DockerContainerHost). ``True`` is the right fallback for
-        them: assume history is recorded and leave the shell as we found it.
+        :func:`~otto.host.command_frame.shell_prefix` of the frame the host's
+        own session is in when it switches: its command frame, which every
+        session here has entered by the time it runs a command. A named
+        session's switch resolves the same function from its own current
+        frame (``ShellSession._new_shell_prefix``), so the two agree.
+        ``getattr`` because this mixin is also inherited by hosts that declare
+        no ``shell_history`` field (LocalHost, DockerContainerHost): ``True``
+        is their fallback, so otto suppresses no history there, the same
+        default their sessions are built with.
         """
         return shell_prefix(
             getattr(self, "command_frame", None),

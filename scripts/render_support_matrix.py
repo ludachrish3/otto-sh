@@ -544,8 +544,9 @@ VOICE: "dict[str, Voice]" = {
     "typed-input": Voice(
         short="typed input",
         capability=(
-            "type a command holding punctuation, a TAB or UTF-8 text and have the shell "
-            "receive it byte for byte; one holding a control character a terminal would act "
+            "type a command holding punctuation, a TAB, UTF-8 text or an unquoted `!word`, "
+            "or one ending in a `#` comment, and have the shell receive it byte for byte, "
+            "the comment read as a comment; one holding a control character a terminal would act "
             "on reaches a session without a terminal intact, and on a session with one is "
             "refused with `UntypableCommandError` before anything is typed"
         ),

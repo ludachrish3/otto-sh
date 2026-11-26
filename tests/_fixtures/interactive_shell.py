@@ -30,7 +30,13 @@ from collections.abc import Iterator
 
 import pytest
 
-from otto.host.command_frame import BashFrame, ExecRestore, SessionMarkers, handshake_prefix
+from otto.host.command_frame import (
+    BashFrame,
+    ExecRestore,
+    SessionMarkers,
+    handshake_prefix,
+    shell_prefix,
+)
 from otto.host.console import strip_ansi
 from otto.host.login_proxy import _identity_pattern, _identity_probe
 from otto.host.session import ShellSession, ready_pattern
@@ -420,7 +426,10 @@ def _restored_pattern(m: SessionMarkers) -> "re.Pattern[str]":
 _RENDER = {
     "handshake": lambda m, history: _handshake(m, history, save_terminal=False),
     "console-handshake": lambda m, history: _handshake(m, history, save_terminal=True),
-    "resync": lambda m, history: _identity_probe(m, BashFrame().quiet_history() if history else ""),
+    # The prefix the host's switch and its undo give the probe (PosixPrivilege._shell_prefix).
+    "resync": lambda m, history: _identity_probe(
+        m, shell_prefix(BashFrame(), shell_history=not history)
+    ),
     "recovery": lambda m, _history: BashFrame().recover(m),
     "exec-restore": lambda m, _history: _restore_line(m),
 }
@@ -488,3 +497,21 @@ def cut_probe(
             f"{name}: {out[-_FAILURE_TAIL:]!r}"
         )
     return out
+
+
+# What a user's rc file may have set before otto's first line: each completion
+# binding bash's readline offers for TAB, and vi editing mode.
+RC_EDITING = [
+    *(
+        ("bash", rc)
+        for rc in (
+            "bind 'TAB: menu-complete'",
+            "bind 'TAB: glob-complete-word'",
+            "bind 'TAB: complete-filename'",
+            "set -o vi",
+            "set -o vi; bind 'TAB: menu-complete'",
+        )
+    ),
+    ("mksh", "set -o vi"),
+]
+"""(shell, rc line) pairs; a test keeps the ones whose shell is installed."""

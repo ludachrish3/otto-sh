@@ -97,11 +97,15 @@ def expected_failure(resolved: ResolvedCell) -> "str | None":
     return None
 
 
-def checksum_command(resolved: ResolvedCell, argument: str) -> str:
-    """The vocabulary's command printing the MD5 of *argument*, shell-quoted."""
+def checksum_command(resolved: ResolvedCell, spelled: str) -> str:
+    """The vocabulary's command printing the MD5 of the shell word *spelled*.
+
+    *spelled* is the argument as the shell must read it: quoted by the caller
+    (``shlex.quote``), or a bare word a script reads as itself.
+    """
     template = resolved.vocabulary.typed_checksum_template
     assert template is not None, f"{resolved.cell}: the domain admitted a cell with no checksum"
-    return template.format(arg=shlex.quote(argument))
+    return template.format(arg=spelled)
 
 
 def md5_of(argument: str) -> str:
@@ -115,18 +119,6 @@ def checksum_answer(result: CommandResult) -> str:
     return fields[0] if fields else ""
 
 
-def unquoted_checksum_command(resolved: ResolvedCell, word: str, tail: str = "") -> str:
-    """The vocabulary's checksum of *word* typed unquoted, with *tail* after it.
-
-    For the words a shell reads as a script reads them only when it treats a
-    typed line as a script line: *word* must hold no character a script
-    would expand or split.
-    """
-    template = resolved.vocabulary.typed_checksum_template
-    assert template is not None, f"{resolved.cell}: the domain admitted a cell with no checksum"
-    return f"{template.format(arg=word)} {tail}".rstrip()
-
-
 async def _arrived(
     host, resolved: ResolvedCell, argument: str, command: "str | None" = None
 ) -> str:
@@ -134,7 +126,7 @@ async def _arrived(
 
     *command* is the line typed, when it is not the argument's quoted checksum.
     """
-    typed = command if command is not None else checksum_command(resolved, argument)
+    typed = command if command is not None else checksum_command(resolved, shlex.quote(argument))
     result = await issue(host, resolved, typed)
     assert result.is_ok, f"{resolved.cell}: the checksum command failed -- {result!r}"
     return checksum_answer(result)
@@ -157,10 +149,10 @@ async def test_a_typed_command_reaches_the_shell_byte_for_byte(
     async with opened(resolved_cell) as host:
         printable = await _arrived(host, resolved_cell, PRINTABLE_ARGUMENT)
         bang = await _arrived(
-            host, resolved_cell, BANG_WORD, unquoted_checksum_command(resolved_cell, BANG_WORD)
+            host, resolved_cell, BANG_WORD, checksum_command(resolved_cell, BANG_WORD)
         )
         commented = await _arrived(
-            host, resolved_cell, "kept", unquoted_checksum_command(resolved_cell, "kept", COMMENT)
+            host, resolved_cell, "kept", f"{checksum_command(resolved_cell, 'kept')} {COMMENT}"
         )
         bel: "str | None" = None
         if terminal:
@@ -170,7 +162,8 @@ async def test_a_typed_command_reaches_the_shell_byte_for_byte(
             assert leave is not None, f"{resolved_cell.cell}: no leave_mark_template"
             assert left is not None, f"{resolved_cell.cell}: no mark_left_template"
             path = scratch_file("typed-input")
-            refused = f"{leave.format(path=path)}; {checksum_command(resolved_cell, BEL_ARGUMENT)}"
+            bel_command = checksum_command(resolved_cell, shlex.quote(BEL_ARGUMENT))
+            refused = f"{leave.format(path=path)}; {bel_command}"
             with pytest.raises(UntypableCommandError):
                 await issue(host, resolved_cell, refused)
             marked = mark_answer(await issue(host, resolved_cell, left.format(path=path)))

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import SecretStr
+from typing_extensions import override
 
 from otto.host import session as session_mod
 from otto.host.app_shell import AppShell
@@ -32,6 +33,7 @@ from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.utils import Status
 from tests._fixtures.dialect_shell import DialectSession, DialectShell
+from tests._fixtures.fake_shell import is_resync
 from tests.conftest import active_context
 from tests.unit.host._sessions import session_manager
 
@@ -458,19 +460,25 @@ async def test_a_host_without_a_hook_is_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_the_shell_prefix_renders_from_the_landing_frame():
-    h = _Harness(_export, landing=BashFrame(), target=ZephyrFrame(), shell_history=False)
+async def test_a_login_proxy_hop_in_the_landing_shell_takes_the_landing_frame_s_prefix():
+    """The hops run before frame entry, so the shell a hop starts gets the LANDING frame's prefix.
+
+    Pinned against the frames themselves rather than a literal. The pair is
+    the point: the landing frame has a payload, the command frame renders
+    none, so a hop told nothing would mean the command frame was asked.
+    """
+    hop = Cred(login="mysql", proxy="su", via="admin")
+    h = _Harness(
+        _enter_python, landing=BashFrame(), target=ZephyrFrame(), hops=[hop], shell_history=False
+    )
     try:
-        # Pinned against the frames themselves rather than a literal: bash's
-        # payload leads with the `command` prefix that survives a special
-        # builtin's failure, so `startswith("HISTFILE=")` would be false of
-        # the very bytes this renders. The pair is the whole point — the
-        # LANDING frame has a payload, the command frame renders none, so an
-        # empty answer here would mean the command frame was asked.
-        assert h.mgr._shell_prefix() == shell_prefix(BashFrame(), shell_history=False)
-        assert h.mgr._shell_prefix().startswith(BashFrame().script_parsing())
-        assert "HISTFILE=/dev/null" in h.mgr._shell_prefix()
-        assert ZephyrFrame().quiet_history() == ""
+        await h.mgr._ensure_session()
+        probes = _resyncs_in(h.shells[0])
+        assert probes, h.shells[0].writes
+        want = shell_prefix(BashFrame(), shell_history=False)
+        assert all(want in p for p in probes), probes
+        assert "HISTFILE=/dev/null" in want
+        assert shell_prefix(ZephyrFrame(), shell_history=False) == ""
     finally:
         h.unregister()
 
@@ -604,6 +612,78 @@ async def test_frame_entry_carries_the_target_frames_history_prefix():
         # Behind the line's anchor (whole_line_echo), which has to open it.
         assert writes[0].index(BashFrame().quiet_history()) < writes[0].index("stty -echo")
         assert RawFrame().quiet_history() == ""  # the landing could not have supplied it
+    finally:
+        h.unregister()
+
+
+class _LandingParsing(BashFrame):
+    """A bash-shaped landing frame whose script-line statements are its own."""
+
+    @override
+    def script_parsing(self) -> str:
+        return ": landing-statements; "
+
+
+class _TargetParsing(BashFrame):
+    """A bash-shaped command frame whose script-line statements are its own."""
+
+    @override
+    def script_parsing(self) -> str:
+        return ": target-statements; "
+
+
+def _resyncs_in(shell: DialectShell) -> list[str]:
+    """The resync probes typed into *shell*: the lines each new shell is told first."""
+    return [w for w in shell.writes if is_resync(w)]
+
+
+@pytest.mark.parametrize("where", ["hook", "named"])
+@pytest.mark.asyncio
+async def test_a_switch_after_a_raw_landing_tells_the_new_shell_the_bash_prefix(where):
+    """The prefix is the frame the session is IN when it switches, not its landing frame (#1346).
+
+    A raw landing renders no prefix; once the hook has entered bash, the
+    shell a switch starts must still be told bash's statements, on the
+    hook's own handle and on a named session handed out afterwards.
+    """
+    root = Cred(login="root", proxy="su", via="admin")
+
+    async def hook(session, ctx):
+        await session.enter_frame()
+        if where == "hook" and ctx.kind == "default":
+            async with session.as_user(user="root"):
+                pass
+
+    h = _Harness(hook, landing=RawFrame(), target=BashFrame(), extra_creds=[root])
+    try:
+        await h.mgr._ensure_session()
+        shell = h.shells[0]
+        if where == "named":
+            aux = await h.mgr.open_session(name="aux")
+            shell = h.shells[1]
+            async with aux.as_user(user="root"):
+                pass
+            await aux.switch_user(user="root")
+        probes = _resyncs_in(shell)
+        assert probes, shell.writes
+        assert all(BashFrame().script_parsing() in p for p in probes), probes
+    finally:
+        h.unregister()
+
+
+@pytest.mark.asyncio
+async def test_a_named_session_s_switch_types_the_target_frame_s_statements():
+    """Distinct landing and target statements: the switch after frame entry types the target's."""
+    root = Cred(login="root", proxy="su", via="admin")
+    h = _Harness(_export, landing=_LandingParsing(), target=_TargetParsing(), extra_creds=[root])
+    try:
+        await h.mgr._ensure_session()
+        aux = await h.mgr.open_session(name="aux")
+        await aux.switch_user(user="root")
+        probes = _resyncs_in(h.shells[1])
+        assert probes, h.shells[1].writes
+        assert all(": target-statements; " in p for p in probes), probes
+        assert not any(": landing-statements; " in p for p in probes), probes
     finally:
         h.unregister()
 

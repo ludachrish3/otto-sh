@@ -397,11 +397,14 @@ class CommandFrame(ABC):
         returns ``""`` instead — what :class:`RawFrame` does, and what
         ``ShellSession._handshake`` reads as "nothing to confirm".
 
-        *prefix* is the statements that must share this first line (history
-        suppression, from :meth:`CommandFrame.quiet_history`; ``""`` for a dialect with no
-        history). The frame composes the whole line, so it places *prefix*
-        itself: after anything that has to open the line (bash's anchor, see
-        :func:`whole_line_echo`) and before the probe.
+        *prefix* is the statements that must share this first line (the
+        script-line statements and history suppression, from
+        ``shell_prefix()``; ``""`` for a dialect that has neither). They keep
+        the rules :meth:`CommandFrame.quiet_history` and
+        :meth:`CommandFrame.script_parsing` state. The frame composes the
+        whole line, so it places *prefix* itself: after anything that has to
+        open the line (bash's anchor, see :func:`whole_line_echo`) and before
+        the probe.
         """
         ...
 
@@ -889,7 +892,11 @@ class BashFrame(CommandFrame):
         # dropped a TAB between two words and replaced `/us<TAB>` with `/usr/`
         # (#1224). LITERAL_NEXT (Ctrl-V) before it makes the editor, or the
         # terminal's own line discipline where the shell has no editor, take
-        # the TAB as a character. Measured on every shell of
+        # the TAB as a character. A line typed while the previous command
+        # still runs meets the terminal in cooked mode instead: the line
+        # discipline consumes the Ctrl-V and queues a bare TAB for the editor.
+        # So the handshake also makes TAB a plain character in those editors
+        # (script_parsing, #1356). Measured on every shell of
         # tests/_fixtures/interactive_shell.py, command line and here-document,
         # after the handshake turned echo off. Not covered: BusyBox ash's own
         # line editor, which runs only while the terminal echoes (a host with
@@ -1138,9 +1145,24 @@ class BashFrame(CommandFrame):
         # word naming a program on PATH (`interactivecomments` ends in `ts`).
         # A typed line is read before its statements run, so the options
         # hold from the next line on: the handshake's line itself has no `!`.
+        # The `bind` and `bindkey` statements make TAB a plain character in
+        # bash's, zsh's and mksh's line editors, in emacs and vi mode and
+        # whatever completion a user's rc file bound to it (#1356; see
+        # typed()). bash's `bind` binds the keymap in use and warns when line
+        # editing is off, hence its guard. mksh's `bind` and `set` refuse in
+        # a shell that is not interactive, hence the `$-` guard; its vi mode
+        # completes on TAB through `vi-tabcomplete`, not a binding. zsh's
+        # `bindkey` is silent everywhere.
+        # No quote of any kind: a tail cut inside one would open a quote the
+        # line never closes, and the resent line would not recover. The
+        # backslash keeps zsh's `^I` from being a glob under extendedglob.
         return (
-            "case ${BASH_VERSION:-} in ?*) set +H;; esac; "
-            "case ${ZSH_VERSION:-} in ?*) setopt NOBANGHIST INTERACTIVECOMMENTS;; esac; "
+            "case ${BASH_VERSION:-} in ?*) set +H; case :${SHELLOPTS:-}: in "
+            "*:emacs:*|*:vi:*) bind TAB:self-insert;; esac;; esac; "
+            "case ${ZSH_VERSION:-} in ?*) setopt NOBANGHIST INTERACTIVECOMMENTS; "
+            "bindkey \\^I self-insert;; esac; "
+            "case ${KSH_VERSION:-} in *MIRBSD*|*LEGACY*) case $- in *i*) "
+            "set +o vi-tabcomplete; bind \\^I=auto-insert;; esac;; esac; "
         )
 
     @override
