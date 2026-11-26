@@ -27,6 +27,7 @@ Each is one instance of a class. This design adds one guard per class, written t
 11. **One bed guest selects the built-in `busybox` profile** (bb1350). `[host_preferences]` keeps winning over a lab entry, as documented.
 12. **`otto host <id> probe` measures the netcat rungs** and prints the `nc_options` lines to paste. `auto` stays the default: the run-time choice costs one command per host and is not removed.
 13. **The probe's listener check opens no port for now.** A check against a listener the probe opens itself is a low-priority backlog issue.
+    Superseded by ruling 4 of `2026-11-24-netcat-conformance-design.md`: the probe now opens, counts and closes one listener of its own.
 14. **A custom host class changes its default by redeclaring the list only** (2026-11-24). Its first entry is the default. No public name is added for marking a default.
 15. **bb1350's entry in the loading golden is edited by hand** (`tests/_fixtures/unchanged_loading.json`), never regenerated; every other entry stays byte for byte.
 
