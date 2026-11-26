@@ -14,6 +14,7 @@ from otto.host.survey import run_survey
 from otto.host.survey.engine import dial_for
 from otto.host.survey.report import drift_rows, menu_pin
 from otto.host.survey.verdict import SWEEP_DIAL_TIMEOUT_S
+from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.labdata import element_for, host_data
 
 pytestmark = pytest.mark.timeout(150)
@@ -23,6 +24,20 @@ HOP_ID = "test4"
 
 _DEAD_PORT = 2323
 """A port nothing serves on either Zephyr guest — the sweep's telnet alternate."""
+
+
+@pytest.fixture
+def _test1_nc_lease():
+    """Hold the host pool's test1 lease while the survey opens its netcat listener on test1.
+
+    The probe reserves no port, so a netcat transfer another worker runs on
+    test1 could take the probe's port between its scan and its bind. Every
+    other suite that puts a transfer on test1 reaches it through the host
+    pool's lease, so holding it keeps them off test1 for the survey; the same
+    layer the hop suite's netcat tests hold on test2.
+    """
+    with lease_unix_host(("test1",)):
+        yield
 
 
 def _row(s, protocol, port):
@@ -43,6 +58,7 @@ async def _sweep_dial(host, port: int):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("host1", ["ssh"], indirect=True)
+@pytest.mark.usefixtures("_test1_nc_lease")
 async def test_test1_reports_its_real_menu_and_only_shell_drifts(host1):
     """test1's declared menu is all live; the one drift is the shell it never declared.
 
@@ -78,6 +94,7 @@ async def test_test1_reports_its_real_menu_and_only_shell_drifts(host1):
     assert (s.nc_rungs.port.state, s.nc_rungs.port.rung) == ("measured", "ss"), s.nc_rungs
     assert (s.nc_rungs.listener.state, s.nc_rungs.listener.rung) == ("measured", "ss"), s.nc_rungs
     assert s.nc_rungs.failed == [], s.nc_rungs
+    assert s.nc_rungs.listener_left == "", s.nc_rungs
     assert menu_pin(host1.valid_terms, host1.valid_transfers, s) == [
         'valid_transfers = ["scp", "sftp", "ftp", "nc", "shell"]',
         '"nc_options": {"port_strategy": "ss", "listener_check": "ss"}',
@@ -88,6 +105,7 @@ async def test_test1_reports_its_real_menu_and_only_shell_drifts(host1):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_test1_nc_lease")
 async def test_a_dead_declared_ftp_port_drifts_and_the_inventory_finds_the_real_one():
     """test1 with ftp_options.port deliberately wrong.
 

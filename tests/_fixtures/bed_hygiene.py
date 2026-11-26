@@ -16,6 +16,7 @@ the existing suite-wide detectors; this module is remote-state only.
 
 import dataclasses
 import re
+from typing import TYPE_CHECKING
 
 from otto.host.daemon import parse_ps_output, ps_failed
 from otto.link.netem import NetEmImpairer, parse_scoped_outputs
@@ -26,6 +27,9 @@ from otto.tunnel.check_probes import CHECK_PREFIX, PS_FAILED, SWEEP_COMMAND
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
 from tests._fixtures.docker_reap import E2E_IMAGE_LABEL, ORPHAN_FRAGMENTS, image_ids_command
 from tests._fixtures.netcat_names import NETCAT_EXEC_NAMES
+
+if TYPE_CHECKING:
+    from otto.host.host import BaseHost
 
 
 def argv_pattern(needle: str) -> str:
@@ -160,6 +164,17 @@ def probe_lines(text: str) -> list[str]:
     an ``""`` item that a before/after comparison reports.
     """
     return text.split("\n") if text else []
+
+
+async def netcat_listeners(host: "BaseHost", label: str) -> list[str]:
+    """The netcat listeners on *host*, as :data:`_NC_LISTENER_PROBE` lists them; one per line.
+
+    The one way a bed test asks a host for its netcat listeners. A probe that
+    fails fails the test, named by *label*.
+    """
+    answered = await host.exec(_NC_LISTENER_PROBE)
+    assert answered.retcode == 0, f"{label}: the orphan-listener probe failed: {answered}"
+    return probe_lines(answered.value)
 
 
 def local_nc_listeners() -> list[str]:

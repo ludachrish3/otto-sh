@@ -1823,6 +1823,12 @@ BUSYBOX_PARAM_TOKENS: frozenset[str] = frozenset(BUSYBOX_BACKENDS) | frozenset(B
 # failure the group exists to prevent.
 BUSYBOX_BED_GROUP = "busybox_bed"
 
+# The xdist group of the bed tests that probe the Ubuntu 24.04 guest behind
+# `test4` (`tests/integration/test_probe_netcat_guest.py`): one worker runs them
+# one after another, so no test opens or closes a listener on the guest while
+# another compares the guest's listeners before and after its survey.
+NETCAT_GUEST_GROUP = "netcat_guest"
+
 
 def embedded_param_id(backend_id: str) -> str:
     """Descriptive test id for an embedded backend, derived from lab data.

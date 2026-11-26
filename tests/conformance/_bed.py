@@ -60,6 +60,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
+from otto.host.connections import teardown_step
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.factory import create_host_from_dict
 from otto.host.host import BaseHost
@@ -530,15 +531,31 @@ def _opener_for(
     hooked cell's opener is this one with a hook. *login* is passed
     through the same way (:meth:`BedCell.open_host_as`), and so is *options*
     (:meth:`BedCell.open_host_with`).
+
+    The opener also closes every host of the lab it installs, once the
+    guest's own close has run and whether or not the open or the body
+    raised. A caller that observes from a hop, as a probe does, runs commands
+    on the lab's hop object and so opens a session there; the opener built
+    that object and is the only thing that holds it, so nothing else would
+    close it. Closing a host that never opened anything does nothing. Each
+    close is one guarded teardown step, so a failing one is logged and the
+    others still run.
     """
 
     @contextlib.asynccontextmanager
     async def opener() -> "AsyncIterator[BaseHost]":
-        with bed_lab_context(BED_TECH):
-            host = build_bed_host(cell, session_setup=session_setup, login=login, options=options)
-            async with host:
-                await _require_an_answer(cell, host)
-                yield host
+        with bed_lab_context(BED_TECH) as lab:
+            try:
+                host = build_bed_host(
+                    cell, session_setup=session_setup, login=login, options=options
+                )
+                async with host:
+                    await _require_an_answer(cell, host)
+                    yield host
+            finally:
+                for lab_host in lab.hosts.values():
+                    with teardown_step(lab_host.id, "bed lab host close"):
+                        await lab_host.close()
 
     return opener
 

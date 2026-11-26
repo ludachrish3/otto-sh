@@ -55,6 +55,46 @@ _TREE = ast.parse(_SOURCE)
 _REAPING_FUNCTION = "_cancel_and_reap"
 
 
+# The one listener lifetime, which both transfers enter.
+_LIFETIME = "_remote_listener"
+# The one spelling of a listener command.
+_BUILDER = "_listener_command"
+_TRANSFERS = ("_put_files_nc", "_get_files_nc_tunneled")
+# The probe's listener, which enters the same lifetime and runs no transfer.
+_MEASUREMENT = "_measure_listener_checks"
+
+
+def _method(name: str) -> ast.AsyncFunctionDef | ast.FunctionDef:
+    class_def = next(
+        node
+        for node in ast.walk(_TREE)
+        if isinstance(node, ast.ClassDef) and node.name == "NcFileTransfer"
+    )
+    return next(
+        node
+        for node in class_def.body
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) and node.name == name
+    )
+
+
+def _calls(node: ast.AST, attr: str) -> list[ast.Call]:
+    """Every ``<anything>.attr(...)`` call under *node*."""
+    return [
+        c
+        for c in ast.walk(node)
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == attr
+    ]
+
+
+def _call_names(nodes: list[ast.stmt]) -> list[str]:
+    return [
+        c.func.attr
+        for f in nodes
+        for c in ast.walk(f)
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Helpers for the cap, whose convention now comes from `Userland`
 # ---------------------------------------------------------------------------
@@ -236,38 +276,45 @@ def test_every_attempt_reaps_from_its_finally_not_per_branch():
     guard below, built from the same enumeration, reported clean — a guard
     inherits the blind spot of the query that built it.
 
-    So the invariant is structural: each attempt reaps on the way out,
-    unconditionally, before releasing the port.
+    So the invariant is structural: one lifetime reaps on the way out of its
+    body, unconditionally, before releasing the port, and both attempts
+    (get and put) run their listener inside it.
     """
     reaping_finallys = [
         node
         for node in ast.walk(_TREE)
-        if isinstance(node, ast.Try)
-        and any(
-            isinstance(c, ast.Call)
-            and isinstance(c.func, ast.Attribute)
-            and c.func.attr == _REAPING_FUNCTION
-            for f in node.finalbody
-            for c in ast.walk(f)
-        )
+        if isinstance(node, ast.Try) and _REAPING_FUNCTION in _call_names(node.finalbody)
     ]
-    assert len(reaping_finallys) == 2, (
-        f"expected both nc attempts (get and put) to reap in `finally`, found "
-        f"{len(reaping_finallys)}. Reaping only on enumerated branches misses "
+    assert len(reaping_finallys) == 1, (
+        f"expected the one listener lifetime ({_LIFETIME}) to reap in `finally`, "
+        f"found {len(reaping_finallys)}. Reaping only on enumerated branches misses "
         "any path that raises without cancelling — which is how the PUT "
         "listener-not-ready leak survived the first fix."
     )
-    for node in reaping_finallys:
-        names = [
-            c.func.attr
-            for f in node.finalbody
-            for c in ast.walk(f)
-            if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+    (reaping,) = reaping_finallys
+    assert _enclosing_function(reaping, _TREE) == _LIFETIME
+    # The release runs in the finally that encloses the reaping one, so after it.
+    releasing = [
+        node
+        for node in ast.walk(_method(_LIFETIME))
+        if isinstance(node, ast.Try) and "_release_port" in _call_names(node.finalbody)
+    ]
+    assert len(releasing) == 1
+    assert any(n is reaping for b in releasing[0].body for n in ast.walk(b)), (
+        "the reap must run BEFORE _release_port, or the port can be handed "
+        "to the next transfer while a listener still holds it"
+    )
+    for name in _TRANSFERS:
+        entered = [
+            item
+            for node in ast.walk(_method(name))
+            if isinstance(node, ast.AsyncWith)
+            for item in node.items
+            if isinstance(item.context_expr, ast.Call)
+            and isinstance(item.context_expr.func, ast.Attribute)
+            and item.context_expr.func.attr == _LIFETIME
         ]
-        assert names.index(_REAPING_FUNCTION) < names.index("_release_port"), (
-            "the reap must run BEFORE _release_port, or the port can be handed "
-            "to the next transfer while a listener still holds it"
-        )
+        assert len(entered) == 1, f"{name} must run its listener inside `{_LIFETIME}`"
 
 
 def test_every_attempt_releases_its_local_forward_where_it_releases_the_port():
@@ -290,36 +337,31 @@ def test_every_attempt_releases_its_local_forward_where_it_releases_the_port():
     releasing_finallys = [
         node
         for node in ast.walk(_TREE)
-        if isinstance(node, ast.Try)
-        and any(
-            isinstance(c, ast.Call)
-            and isinstance(c.func, ast.Attribute)
-            and c.func.attr == "unforward_port"
-            for f in node.finalbody
-            for c in ast.walk(f)
-        )
+        if isinstance(node, ast.Try) and "unforward_port" in _call_names(node.finalbody)
     ]
-    assert len(releasing_finallys) == 2, (
-        f"expected both nc attempts (get and put) to release their forward in "
+    assert len(releasing_finallys) == 1, (
+        f"expected the one listener lifetime to release its forward in "
         f"`finally`, found {len(releasing_finallys)}. A forward held past its "
         "attempt lives until the host closes, so a bulk put of N files strands "
         "N listening sockets for the rest of the session."
     )
-    for node in releasing_finallys:
-        names = [
-            c.func.attr
-            for f in node.finalbody
-            for c in ast.walk(f)
-            if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
-        ]
-        assert names.index(_REAPING_FUNCTION) < names.index("unforward_port"), (
-            "the forward must be released AFTER the reap — the reap connects "
-            "through that forward to make the remote listener exit"
-        )
-        assert names.index("unforward_port") < names.index("_release_port"), (
-            "release the forward BEFORE the port, so the port is never handed "
-            "to the next transfer while a forward still points at it"
-        )
+    (node,) = releasing_finallys
+    assert _enclosing_function(node, _TREE) == _LIFETIME
+    names = _call_names(node.finalbody)
+    reaping_inside = [
+        n
+        for b in node.body
+        for n in ast.walk(b)
+        if isinstance(n, ast.Try) and _REAPING_FUNCTION in _call_names(n.finalbody)
+    ]
+    assert reaping_inside, (
+        "the forward must be released AFTER the reap — the reap connects "
+        "through that forward to make the remote listener exit"
+    )
+    assert names.index("unforward_port") < names.index("_release_port"), (
+        "release the forward BEFORE the port, so the port is never handed "
+        "to the next transfer while a forward still points at it"
+    )
 
 
 def test_no_listener_is_cancelled_without_being_reaped():
@@ -345,21 +387,50 @@ def test_both_listener_spawns_carry_the_hard_cap():
 
     If otto is killed outright, or the SSH channel dies, no ``finally`` runs and
     nothing local can reap. The remote-side cap is the only thing left, so it
-    must be on BOTH spawn sites — the get direction is the one that tends to be
+    must be on every listener — the get direction is the one that tends to be
     forgotten, and its old ``-Nl`` spelling is exactly the one the bed-hygiene
-    probe was also blind to.
+    probe was also blind to. One builder spells every listener with the cap,
+    the lifetime is the one site that spawns, and every listener it is handed
+    comes from the builder.
     """
-    spawns = [
+    spelled = [
         line
         for line in _SOURCE.splitlines()
         if "self._nc_exec}" in line and ("-l " in line or "-Nl " in line)
     ]
-    assert len(spawns) == 2, f"expected 2 listener spawn sites, found {len(spawns)}: {spawns}"
-    unwrapped = [s for s in spawns if "_nc_listener_prefix" not in s]
-    assert not unwrapped, (
-        f"listener spawned without the hard-cap prefix: {unwrapped}. Without it, "
+    assert len(spelled) == 1, f"expected 1 listener spelling, found {len(spelled)}: {spelled}"
+    lines = _SOURCE.splitlines()
+
+    def function_of(line: str) -> str:
+        at = lines.index(line) + 1
+        return _enclosing_function(
+            next(n for n in ast.walk(_TREE) if getattr(n, "lineno", 0) == at), _TREE
+        )
+
+    # The one spelling is the bare one; the builder adds the cap to it, and
+    # every listener spawned comes from the builder (below).
+    assert function_of(spelled[0]) == "_bare_listener_command"
+    capped = [line for line in lines if "_listener_prefix_for(cap_s)}{self._bare_listener" in line]
+    assert len(capped) == 1, (
+        f"listener spelled without the hard-cap prefix: {capped}. Without it, "
         "an otto that dies with a listener up strands it permanently."
     )
+    assert function_of(capped[0]) == _BUILDER
+    spawn_sites = {_enclosing_function(c, _TREE) for c in _calls(_TREE, "_spawn_listener")}
+    assert spawn_sites == {_LIFETIME}, f"listeners are spawned from {sorted(spawn_sites)}"
+    entries = _calls(_TREE, _LIFETIME)
+    assert {_enclosing_function(c, _TREE) for c in entries} >= {"_attempt", _MEASUREMENT}
+    assert len(entries) == len(_TRANSFERS) + 1
+    for call in entries:
+        cmd = call.args[1]
+        built_by = (
+            cmd.func.attr
+            if isinstance(cmd, ast.Call) and isinstance(cmd.func, ast.Attribute)
+            else None
+        )
+        assert built_by == _BUILDER, (
+            f"nc.py:{call.lineno} hands the lifetime a listener not built by {_BUILDER}"
+        )
 
 
 def test_the_hard_cap_is_a_backstop_not_a_transfer_deadline():
@@ -646,11 +717,14 @@ def test_every_method_that_spawns_a_listener_warms_the_transfer_first():
     def _lines(node: ast.AST, attr: str) -> list[int]:
         return [n.lineno for n in ast.walk(node) if isinstance(n, ast.Attribute) and n.attr == attr]
 
-    spawning = [m for m in methods if _lines(m, "_nc_listener_prefix")]
+    def _default_cap_builds(node: ast.AST) -> list[int]:
+        return [c.lineno for c in _calls(node, _BUILDER) if not c.keywords]
+
+    spawning = [m for m in methods if _default_cap_builds(m)]
     assert len(spawning) == 2, (
-        f"expected the two spawning methods (get-tunneled and put) to read the "
-        f"prefix, found {[m.name for m in spawning]} — this query has rotted and "
-        "would pass on anything"
+        f"expected the two spawning methods (get-tunneled and put) to build a "
+        f"listener at the default cap, found {[m.name for m in spawning]} — this "
+        "query has rotted and would pass on anything"
     )
     unwarmed = [m.name for m in spawning if not _lines(m, "_warmup_for_transfer")]
     assert not unwarmed, (
@@ -668,7 +742,7 @@ def test_every_method_that_spawns_a_listener_warms_the_transfer_first():
     late = [
         m.name
         for m in spawning
-        if min(_lines(m, "_warmup_for_transfer")) > min(_lines(m, "_nc_listener_prefix"))
+        if min(_lines(m, "_warmup_for_transfer")) > min(_default_cap_builds(m))
     ]
     assert not late, (
         f"{late} warms the transfer AFTER the listener spawn that needs it. The "
@@ -710,18 +784,20 @@ def test_the_listener_spawns_are_plain_foreground_commands():
         if isinstance(node, ast.JoinedStr)
         and any(
             isinstance(v, ast.FormattedValue)
-            and isinstance(v.value, ast.Attribute)
-            and v.value.attr == "_nc_listener_prefix"
+            and isinstance(v.value, ast.Call)
+            and isinstance(v.value.func, ast.Attribute)
+            and v.value.func.attr == "_listener_prefix_for"
             for v in node.values
         )
     ]
-    assert len(spawns) == 2, (
-        f"expected 2 listener spawn expressions carrying the prefix, found {len(spawns)}"
+    assert len(spawns) == 1, (
+        f"expected 1 listener expression carrying the prefix (the builder), found {len(spawns)}"
     )
     for node in spawns:
+        assert _enclosing_function(node, _TREE) == _BUILDER
         text = ast.get_source_segment(_SOURCE, node) or ""
         flat = " ".join(text.split())
-        before_prefix = flat.split("{self._nc_listener_prefix}", 1)[0]
+        before_prefix = flat.split("{self._listener_prefix_for(cap_s)}", 1)[0]
         assert not before_prefix.rstrip("f\"' ").rstrip().endswith(("(", "$(")), (
             f"nc.py:{node.lineno} composes the listener into a subshell: {flat[:90]!r}. "
             "A subshell is not a job, so it never gets the terminal, and the "

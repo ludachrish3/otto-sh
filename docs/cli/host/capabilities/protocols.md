@@ -167,12 +167,14 @@ Nothing is applied for you.
 (netcat-strategy-probe)=
 ### Netcat strategies
 
-When the survey finds `nc` supported and the session is not a console, it
-also measures which {doc}`netcat strategy <../netcat>` works on the host:
-one for finding a free port (`port_strategy`) and one for checking the
-listener (`listener_check`). It tries each strategy whose tool is on the
-host, in the `auto` order, and keeps the first that works. Nothing listens
-and nothing is left on the host.
+When the survey finds `nc` supported (or `nc_options.exec_name` names
+another netcat) and the session is not a console, it also measures which {doc}`netcat strategy <../netcat>` works on the host:
+a port strategy for finding a free port (`port_strategy`) and a listener
+check for confirming the listener is up (`listener_check`). It tries each
+one whose tool is on the host, in the `auto` order, and keeps the first
+that works. To measure the listener checks, the probe opens one netcat
+listener on a free port for a moment, asks each listener check to count it,
+and closes it. Once it is closed, nothing of it is left on the host.
 
 A measured strategy goes into the pin, in the same `nc_options` fragment
 as a moved `port`:
@@ -186,26 +188,58 @@ Paste it into the host's
 Pinning is optional: under `auto`, the first netcat transfer in a session
 runs one command to pick both strategies.
 
-The listener check is asked about a TCP listener from the survey's
-inventory of the host, one other than the session's own port when there is
-one (behind a port forward the declared port may be the forwarder's), and
-the session's port when it is the only TCP listener listed. Under `--user`
-the strategies are measured as that user, so each gets a line of its own
-and none goes into the pin, which applies to every login of the host: run
-the probe without `--user` to get one.
+The listener is opened on any Unix host that has netcat, whatever the
+host's own `transfer` setting is. There is no option to turn it off. It
+stays open only for the few commands the listener checks take. If otto
+loses the session before closing it, and the host can install a lifetime
+cap, the listener ends by itself within 90 seconds of its start. When the
+port strategy is pinned and the listener check is not, the pinned port
+strategy runs once to find the port.
+
+Under `--user` the listener is opened and the strategies are measured as
+that user, so each gets a line of its own and none goes into the pin, which
+applies to every login of the host: run the probe without `--user` to get
+one.
 
 A strategy that is not in the pin gets a line of its own above it:
 
 - `nc port_strategy: "proc" is declared in nc_options, so it was not
-  measured` — the entry already pins that strategy, so the survey does not
-  run it.
+  measured` — the entry already pins that strategy, so the survey reports
+  it as declared and does not measure it. For a pinned `listener_check`, no
+  listener is opened.
 - `nc listener_check: not measured: <reason>` — nothing was measured; the
   reason says why (one line names both options when they share it), for
   example that `nc` is not supported, that no strategy's tool is on the
-  host (then it says how to set `custom`), or that the survey had no
-  listener to check. A transfer still picks its
-  strategy when it runs.
+  host (then it says how to set `custom`), that no listener check counted
+  the listener in time, that the listener otto opened ended before otto
+  closed it or was lost while otto closed it, that the checks could not be
+  run, or that the survey budget ran out. Each reason says what to do: a
+  command to run on the host, the probe to run again, or a `custom` check to
+  set. A transfer still picks its strategy when it runs.
 - `nc strategy "ss" failed for port_strategy: <reason>` — the strategy's
-  tool is on the host but its script failed, timed out, gave no answer, or
-  (for `listener_check`) found no listener on the port it checked; the
-  survey went on to the next one.
+  tool is on the host but its script failed, timed out or gave no answer;
+  the survey went on to the next one.
+
+A listener check before the first one that counts the probe's listener
+correctly is named as failed; the ones after it are not reported.
+`did not see the listener otto opened on :<port>` means the check is blind
+to this netcat; another listener check may have counted it. `counted <n>
+listeners on :<port>, where otto opened one` means the listener check
+miscounts this netcat or another process holds the same port. Running the
+probe again may tell the two apart; the same result twice does not prove
+either. Either way, pin a listener check that counted one in
+{ref}`nc_options <nc-options-reference>`. Which listener check works with
+which netcat is in {doc}`../netcat-compatibility`.
+
+When the netcat in `nc_options.exec_name` is not found (status 127) or
+cannot be run (status 126), the listener checks are not measured and the
+reason says so. Install netcat, make it executable, or point `exec_name` at
+the one the host has. For any other status, including 0, the reason gives
+the likely causes and a command to run on the host to see how the netcat
+behaves, or says to run the probe again.
+
+When otto could not confirm that its listener ended, one more line names the
+port; it also says when no lifetime cap could be installed. If it ends `It ends by itself within 90 seconds of its start`,
+nothing needs doing. If it ends `No lifetime cap could be installed, so it
+may stay until it is ended on the host`, look for the netcat on that port
+and end it.

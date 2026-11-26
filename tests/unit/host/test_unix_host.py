@@ -29,7 +29,7 @@ from otto.host.host import DEFAULT_COMMAND_TIMEOUT, _ProbeAnswer
 from otto.host.login_proxy import Cred
 from otto.host.options import NcOptions, SftpOptions, SshOptions, UserlandOptions
 from otto.host.session import ShellSession
-from otto.host.transfer.nc import _TIMEOUT_STYLE_PREFIXES
+from otto.host.transfer.nc import _NC_LISTENER_HARD_CAP_S, _TIMEOUT_STYLE_PREFIXES
 from otto.host.userland import Userland
 from otto.logger.mode import LogMode
 from otto.result import CommandResult, Result
@@ -304,7 +304,9 @@ class TestUserland:
         )
         monkeypatch.setattr(h, "exec", _refuses)
         await h._userland().resolve()
-        assert h._file_transfer._nc_listener_prefix == _TIMEOUT_STYLE_PREFIXES[style]
+        assert h._file_transfer._nc_listener_prefix == _TIMEOUT_STYLE_PREFIXES[style].format(
+            cap=_NC_LISTENER_HARD_CAP_S
+        )
 
     @pytest.mark.asyncio
     async def test_the_userland_probes_this_host_and_not_something_else(self, monkeypatch):

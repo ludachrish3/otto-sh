@@ -62,7 +62,7 @@ from otto.host.transfer.nc import available_rungs
 from otto.host.transfer.nc_scripts import ListenerRung
 from otto.result import Result, Status
 from otto.utils import WaitTimeoutError, wait_for_async
-from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE, probe_lines
+from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE, netcat_listeners, probe_lines
 from tests._fixtures.busybox import BUSYBOX_BANNER_COMMAND, reports_busybox_version
 from tests._fixtures.netcat_names import NETCAT_EXEC_NAMES
 from tests.conformance._bed import BedCell, bed_scratch_dir, nc_bed_cell
@@ -477,12 +477,6 @@ async def test_each_implementation_round_trips_files_and_lands_the_mode(
 # --- the orphan-listener probe -------------------------------------------------------
 
 
-async def _probe(host: BaseHost, label: str) -> list[str]:
-    answered = await host.exec(_NC_LISTENER_PROBE)
-    assert answered.retcode == 0, f"{label}: the orphan-listener probe failed: {answered}"
-    return probe_lines(answered.value)
-
-
 def _lines_for_port(lines: list[str], port: int) -> list[str]:
     return [line for line in lines if re.search(rf" -l -p {port}( |$)", line)]
 
@@ -530,7 +524,7 @@ async def test_the_orphan_probe_sees_a_listener_of_each_implementation(
         port = await backend._find_free_port()
         pid = ""
         try:
-            before = _lines_for_port(await _probe(host, label), port)
+            before = _lines_for_port(await netcat_listeners(host, label), port)
             assert before == [], f"{label}: a listener on port {port} before planting: {before}"
             # The form measured on every netcat bed host, BusyBox telnet
             # sessions included: the pid is the last non-empty line. The
@@ -548,7 +542,7 @@ async def test_the_orphan_probe_sees_a_listener_of_each_implementation(
                 f"{label}: the listener check '{_first_check(element, exec_name).name}' "
                 f"counted {count} listener(s) on port {port}, not the one planted"
             )
-            seen = _lines_for_port(await _probe(host, label), port)
+            seen = _lines_for_port(await netcat_listeners(host, label), port)
             # Which process carries which argv depends on the host's
             # `timeout` (GNU forks the program and stays; newer BusyBox
             # execs it in place and leaves a watchdog), so no arrangement

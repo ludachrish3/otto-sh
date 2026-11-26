@@ -331,10 +331,15 @@ def test_a_valid_transfers_pin_drops_a_dead_transfer_and_keeps_the_rest_in_order
     assert menu_pin(["ssh"], ["sftp", "scp", "ftp"], s) == ['valid_transfers = ["sftp", "ftp"]']
 
 
-def _rungs(port, listener, failed=()):
+def _rungs(port, listener, failed=(), listener_left=""):
     from otto.host.survey.engine import NcLadderResult, NcRungs
 
-    return NcRungs(port=NcLadderResult(*port), listener=NcLadderResult(*listener), failed=[*failed])
+    return NcRungs(
+        port=NcLadderResult(*port),
+        listener=NcLadderResult(*listener),
+        failed=[*failed],
+        listener_left=listener_left,
+    )
 
 
 def test_the_pin_carries_both_measured_strategies_in_one_nc_fragment():
@@ -429,6 +434,34 @@ def test_under_user_the_measured_strategies_are_printed_and_not_offered_as_a_pin
             " run the probe without --user for one"
         ),
     ]
+
+
+@pytest.mark.parametrize("capped", [True, False], ids=["capped", "no-cap"])
+def test_an_unconfirmed_listener_end_prints_one_line_last(capped):
+    from otto.host.survey.engine import SURVEY_BUDGET_S, _nc_listener_left
+
+    left = _nc_listener_left(9100, capped=capped, cap_s=int(SURVEY_BUDGET_S))
+    s = _survey(
+        nc_rungs=_rungs(
+            ("measured", "ss"),
+            ("unmeasured", None, "the survey budget ran out before it ran"),
+            failed=[NcFailedStrategy("port", "ss", "ss: the tool is missing or failed")],
+            listener_left=left,
+        )
+    )
+    lines = _nc_text(s)
+    assert [ln for ln in lines if ln.startswith("nc: ")] == [f"nc: {left}"]
+    assert lines[-1] == f"nc: {left}"
+    assert left.startswith("otto could not confirm the listener it opened on :9100 ended.")
+    if capped:
+        assert f"It ends by itself within {int(SURVEY_BUDGET_S)} seconds of its start" in left
+    else:
+        assert "No lifetime cap could be installed" in left
+
+
+def test_a_confirmed_end_prints_nothing_more():
+    s = _survey(nc_rungs=_rungs(("measured", "ss"), ("measured", "ss")))
+    assert _nc_text(s) == []
 
 
 def test_terminal_mapping_lines_name_each_term_and_what_was_observed():

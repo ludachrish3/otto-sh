@@ -28,7 +28,7 @@ what today:
 ``elevation``
     ``otto.host.privilege.PosixPrivilege._elevate``
 ``timeout_style``
-    ``otto.host.transfer.nc.NcFileTransfer._nc_listener_prefix``
+    ``otto.host.transfer.nc.NcFileTransfer._listener_prefix_for``
 ``stat_size``
     ``otto.host.transfer.shell.ShellFileTransfer.run_get`` (via
     ``_remote_size``) — ``transfer/nc.py`` still writes its own remote stat
@@ -550,7 +550,7 @@ def _parse_applet_answers(output: str) -> "dict[str, bool]":
 #     that one case, taken because the alternative is worse: guessing a
 #     spelling builds ``timeout 3600 nc -l`` on a ``-t`` host, the applet
 #     fails to exec ``3600``, and nothing listens at all. See
-#     ``NcFileTransfer._nc_listener_prefix``, which enumerates the four ways
+#     ``NcFileTransfer._listener_prefix_for``, which enumerates the four ways
 #     the cap is lost.
 # ``base64_flag``
 #     ``absent``, because the alternative is to claim a decode flag works and

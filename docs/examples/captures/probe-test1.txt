@@ -26,6 +26,7 @@ INFO     @test1 > | 2
 INFO     @test1 > | >>>
 INFO     @test1   | exit()
 INFO     Connection closed to <Peer 10.10.200.11 23>
+INFO     @test1   | export APP_ENV=lab
                 userland
 ╭─────────────────┬───────────┬────────╮
 │ capability      │ value     │ source │
