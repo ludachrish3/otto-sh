@@ -805,6 +805,102 @@ class TestPooledSessionsLeaveNothingBehind:
         assert _pool_names(mgr._named_session_locks) == []
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("phase", ["first attempt", "backoff", "second attempt"])
+    async def test_a_cancel_while_the_open_is_retried_leaves_nothing_open(self, phase, monkeypatch):
+        """A cancel in either handshake or the pause between them closes every session built."""
+        mgr = _mgr(term="telnet")
+        built: list[_StubExecSession] = []
+        closed: list[_StubExecSession] = []
+        reached = asyncio.Event()
+        hangs_at = {"first attempt": 1, "backoff": None, "second attempt": 2}[phase]
+
+        class _FailsThenHangs(_StubExecSession):
+            def __init__(self) -> None:
+                super().__init__()
+                built.append(self)
+                self.index = len(built)
+
+            async def _ensure_initialized(self) -> None:
+                if self.index == hangs_at:
+                    reached.set()
+                    await asyncio.Event().wait()
+                raise ConnectionError("shell never became ready after open")
+
+            async def close(self) -> None:
+                closed.append(self)
+                await super().close()
+
+        # Distinctive, so the gated sleep below recognises it; only the
+        # backoff phase is held there.
+        backoff = 0.041 if phase == "backoff" else 0.0
+        real_sleep = asyncio.sleep
+
+        async def gated_sleep(delay, *args, **kwargs):
+            if delay == 0.041:
+                reached.set()
+                await asyncio.Event().wait()
+            return await real_sleep(delay, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "sleep", gated_sleep)
+        mgr._session_factory = _FailsThenHangs
+        mgr._retry_backoff = backoff
+        task = asyncio.ensure_future(_exec(mgr, cmd="c"))
+        await reached.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert len(built) == (2 if phase == "second attempt" else 1)
+        assert closed == built
+        assert _pool_names(mgr._named_sessions) == []
+        assert _pool_names(mgr._named_session_locks) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
+    @pytest.mark.parametrize(
+        ("phase", "scripts"),
+        [
+            ("first attempt", ["hold"]),
+            ("backoff", ["discard"]),
+            ("second attempt", ["discard", "hold"]),
+        ],
+    )
+    async def test_a_cancel_while_the_open_is_retried_leaves_no_connection_open(
+        self, phase, scripts, monkeypatch
+    ):
+        """The same three cancels against a telnet device: it has no connection left."""
+        from tests._fixtures.loopback_servers import telnet_device, telnet_host
+
+        backoff = 0.043  # distinctive: what the gated sleep below holds
+        gated = asyncio.Event()
+        real_sleep = asyncio.sleep
+
+        async def gated_sleep(delay, *args, **kwargs):
+            if delay == backoff:
+                gated.set()
+                await asyncio.Event().wait()
+            return await real_sleep(delay, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "sleep", gated_sleep)
+        async with telnet_device(scripts) as (port, device):
+            host = telnet_host(port)
+            mgr = host._session_mgr
+            mgr._retry_backoff = backoff if phase == "backoff" else 0.0
+            try:
+                task = asyncio.ensure_future(host.exec("echo hi"))
+                await (gated if phase == "backoff" else device.holding).wait()
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                await wait_for_async(
+                    lambda: device.open == 0, 10.0, interval=0.01, on_timeout="still open"
+                )
+                assert device.connections == (2 if phase == "second attempt" else 1)
+                assert _pool_names(mgr._named_sessions) == []
+                assert _pool_names(mgr._named_session_locks) == []
+            finally:
+                await host.close()
+
+    @pytest.mark.asyncio
     async def test_a_second_cancel_during_the_local_stop_leaves_no_dead_entry(
         self, tmp_path, monkeypatch
     ):

@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock
 import pytest
 from telnetlib3.stream_reader import TelnetReader
 
+from otto.host.options import ConsoleOptions
 from otto.host.output_codec import (
     MAX_SEPARATOR_LEN,
     READ_CHUNK,
@@ -333,6 +334,7 @@ def _telnet_reader_session(fed: _Fed, *, console: bool):
         class _Console:
             logged_in = False
             read_gate = ReadGate()
+            options = ConsoleOptions()
 
         session = TelnetSession(reader=reader, writer=writer, console_client=_Console())
     else:

@@ -136,7 +136,14 @@ class FakeTransport:
 
 
 def _client(
-    replies, *, login=True, eof_after=False, isig_flush=False, login_flush=False, **opt
+    replies,
+    *,
+    login=True,
+    eof_after=False,
+    isig_flush=False,
+    login_flush=False,
+    password="Password1",  # noqa: S107 — a fake, test-only password
+    **opt,
 ) -> ConsoleClient:
     reader = ScriptedReader(
         replies, eof_after=eof_after, isig_flush=isig_flush, login_flush=login_flush
@@ -158,7 +165,7 @@ def _client(
         host="localhost",
         port=54321,
         user="test",
-        password="Password1",
+        password=password,
         options=opts,
         name="test2",
         server="test1",
@@ -1686,3 +1693,56 @@ class TestTakeThenRelease:
         assert "B returned" in events
         assert c.writer is fresh.writer
         assert not c._released.is_set(), "the new stream is live"
+
+
+_CONTROL_PASSWORD = "alpha\x1b[31mbeta\x01"
+"""A fake password holding an escape sequence and a control character."""
+
+
+def _control_password_forms() -> list[str]:
+    """Raw, ANSI-stripped, caret-echoed (``^X``) and visible parts of :data:`_CONTROL_PASSWORD`."""
+    caret = "".join(f"^{chr(ord(c) ^ 0x40)}" if ord(c) < 0x20 else c for c in _CONTROL_PASSWORD)
+    return [_CONTROL_PASSWORD, strip_ansi(_CONTROL_PASSWORD), caret, "alphabeta", "beta"]
+
+
+def _echo_of_the_control_password() -> bytes:
+    caret = "".join(f"^{chr(ord(c) ^ 0x40)}" if ord(c) < 0x20 else c for c in _CONTROL_PASSWORD)
+    return f"{_CONTROL_PASSWORD}\r\n{caret}\r\n".encode()
+
+
+@pytest.mark.asyncio
+class TestAControlCharacterPasswordIsNeverQuoted:
+    """Every console quote shows nothing when the password holds a control character."""
+
+    async def test_the_already_logged_in_message_quotes_nothing(self):
+        from otto.host.errors import ConsoleLoggedInError
+
+        c = _client(
+            [(b"\r", _echo_of_the_control_password() + b"test@test2:~$ ")],
+            password=_CONTROL_PASSWORD,
+        )
+        with pytest.raises(ConsoleLoggedInError) as ei:
+            await c.login_sequence()
+        texts = [str(ei.value), repr(ei.value), ei.value.seen, ei.value.prompt]
+        # Bools only, so a failure never prints a form of the password.
+        leaked = any(form in text for form in _control_password_forms() for text in texts)
+        named = "did not show a login prompt" in str(ei.value)
+        empty = ei.value.seen == repr("")
+        assert not leaked, "a form of the password reached the error"
+        assert named, "not the did-not-show-a-login-prompt message"
+        assert empty, "the line was quoted"
+
+    async def test_no_password_prompt_after_username_quotes_nothing(self):
+        c = _client(
+            [(b"\r", b"login: "), (b"test\r", _echo_of_the_control_password() + b"$ ")],
+            password=_CONTROL_PASSWORD,
+        )
+        with pytest.raises(ConsoleError) as ei:
+            await c.login_sequence()
+        texts = [str(ei.value), repr(ei.value)]
+        leaked = any(form in text for form in _control_password_forms() for text in texts)
+        named = "showed no password prompt" in str(ei.value)
+        empty = str(ei.value).endswith("seen: ''")
+        assert not leaked, "a form of the password reached the error"
+        assert named, "not the showed-no-password-prompt message"
+        assert empty, "the line was quoted"

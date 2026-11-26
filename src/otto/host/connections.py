@@ -48,6 +48,7 @@ from .telnet import (
     open_connection_default,
     single_client,
 )
+from .telnet import retries_failed_open as telnet_retries_failed_open
 from .transport import teardown_ssh_connection
 
 if TYPE_CHECKING:
@@ -947,15 +948,16 @@ class ConnectionManager:
         return CONSOLE_QUIESCE_BUDGET if single_client(term, self._telnet_options) else 0.0
 
     def retries_failed_open(self, *, term: str | None = None) -> bool:
-        """Return whether ``SessionManager._ensure_session`` retries a failed open on *term*.
+        """Return whether ``SessionManager._open_confirmed`` retries a failed open on *term*.
 
-        Every term but a console that logs in: once its client has typed the
-        password, the session refuses a retry, which would type it again
-        (``TelnetSession`` clears ``_retry_failed_handshake`` for a logged-in
-        console client).
+        That one sequence opens the default, named and pooled sessions alike;
+        the rule is :func:`~otto.host.telnet.retries_failed_open`, the one
+        the built session starts its own verdict from. This answers for the
+        default session: a named or pooled open on a line that serves one
+        client is not retried (the rule's *named*).
         """
         term = self._term if term is None else term
-        return not (term == "console" and self._console_options.login)
+        return telnet_retries_failed_open(term, self._console_options)
 
     @property
     def connected(self) -> bool:

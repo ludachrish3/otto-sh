@@ -81,7 +81,14 @@ from .output_codec import (
 )
 from .secret_wire import reveal, shown
 from .shell_liveness import confirm_live
-from .telnet import TELNET_EOL, ReadGate, ReadGateClosed, TelnetClient, telnet_line_ends
+from .telnet import (
+    TELNET_EOL,
+    ReadGate,
+    ReadGateClosed,
+    TelnetClient,
+    retries_failed_open,
+    telnet_line_ends,
+)
 from .terminal_mapping import (
     ONLCR,
     UNMEASURED,
@@ -232,7 +239,7 @@ def resolve_init_timeout(
 
 
 # Default pause between a failed first readiness handshake and the single retry
-# in ``SessionManager._ensure_session``. Calibrated to single-client RTOS telnet
+# in ``SessionManager._open_confirmed``. Calibrated to single-client RTOS telnet
 # servers (Zephyr's ``CONFIG_SHELL_BACKEND_TELNET``) that don't free the console
 # slot the instant the FIN lands. Injectable via ``SessionManager(retry_backoff=)``
 # so fakes-only unit tests can zero it instead of paying the real wall-clock wait.
@@ -921,9 +928,11 @@ class ShellSession(ABC):
     _init_probe_interval: float = 0.5
 
     # Whether SessionManager may rebuild the transport and retry a handshake
-    # that failed with the generic readiness error. True everywhere but a
-    # console session whose client typed a password: its retry would re-run
-    # the login and type that password into the line again.
+    # that failed with the generic readiness error: ``retries_failed_open``
+    # (otto.host.telnet), narrowed by a console session whose client typed
+    # a password. True on every term without a console client. A named or
+    # pooled open on a line that serves one client is not retried either
+    # (``_retries_named_open``, the same rule's ``named``).
     _retry_failed_handshake: bool = True
     # Whether the handshake makes the shell read a typed line as a script
     # line (CommandFrame.script_parsing). False only where the shell is
@@ -1228,6 +1237,25 @@ class ShellSession(ABC):
         """
         return None
 
+    async def _seen_at_open(self, partial: str) -> str:  # noqa: ARG002 — the parameter is the override's; this quotes-nothing default needs none
+        """Quote what the device sent before the open's handshake failed, or ``""``.
+
+        ``""`` by default. Overridden by :class:`TelnetSession` off a
+        console, where a login(1) that refused the login printed why.
+        *partial* is what the read that met end of stream had gathered.
+        Called from :meth:`_fail_init` before :meth:`close`.
+        """
+        return ""
+
+    def _retries_named_open(self) -> bool:
+        """Whether a named or pooled open of this session is rebuilt after a failed handshake.
+
+        ``True`` by default. :class:`TelnetSession` asks the one rule
+        (:func:`~otto.host.telnet.retries_failed_open`), which refuses on a
+        line that serves one client.
+        """
+        return True
+
     def _connection_lost_errors(self) -> list[type[BaseException]]:
         """Exceptions that mean **this session's own transport** dropped mid-command.
 
@@ -1365,7 +1393,7 @@ class ShellSession(ABC):
         if self._initialized:
             return
         await self.open_transport()
-        await self._handshake()
+        await self._handshake(opening=True)
 
     @property
     def markers(self) -> SessionMarkers:
@@ -1376,7 +1404,7 @@ class ShellSession(ABC):
         """
         return self._markers
 
-    async def _handshake(self, timeout: float | None = None) -> None:
+    async def _handshake(self, timeout: float | None = None, *, opening: bool = False) -> None:
         """Confirm the current frame's shell is at a prompt; the dialect half of open.
 
         Renders the frame's readiness payload (the shell prefix included)
@@ -1421,6 +1449,9 @@ class ShellSession(ABC):
 
         Split from :meth:`_ensure_initialized` so :meth:`enter_frame` can run
         a SECOND handshake, in a different dialect, on the same transport.
+        *opening* is set only by the open's own handshake: its failure may
+        quote what the device sent (:meth:`_seen_at_open`), a frame entry's
+        never does, since a hook or a hop may have typed other credentials.
         """
         deadline = self._init_timeout if timeout is None else timeout
         # Decided once per handshake, before any send: every resend of this
@@ -1449,7 +1480,10 @@ class ShellSession(ABC):
             return reply
 
         confirmed = False
-        with suppress(asyncio.IncompleteReadError):
+        # What the read that met end of stream had gathered: the far side's
+        # last words, kept for the failure's quote.
+        partial = ""
+        try:
             confirmed = await confirm_live(
                 lambda data: self.write_transport(data=data),
                 _expect,
@@ -1460,8 +1494,10 @@ class ShellSession(ABC):
                 probe_timeout=self._init_probe_interval,
                 deadline=deadline,
             )
+        except asyncio.IncompleteReadError as exc:
+            partial = exc.partial.decode(errors="replace")
         if not confirmed:
-            await self._fail_init()
+            await self._fail_init(partial=partial, opening=opening)
 
         # confirm_live owns the resend bookkeeping internally and doesn't
         # expose a per-probe attempt count to its caller, so this is
@@ -1600,7 +1636,9 @@ class ShellSession(ABC):
         logger.debug(f"{self._log_tag}: entering frame {type(frame).__name__}")
         await self._handshake(timeout=timeout)
 
-    async def _fail_init(self, attempt: int = 0) -> None:
+    async def _fail_init(
+        self, attempt: int = 0, *, partial: str = "", opening: bool = False
+    ) -> None:
         """Tear down a session whose readiness handshake never completed.
 
         The message must not accuse the device of being down (issue #260).
@@ -1618,6 +1656,10 @@ class ShellSession(ABC):
         the cause is contention (find the other client, or restart the
         console); anywhere else it is a shell that never started or a login
         that never completed (check credentials).
+
+        *partial* is what the read that met end of stream had gathered, and
+        *opening* says the failed handshake was the open's own; together they
+        feed :meth:`_seen_at_open`.
         """
         logger.debug(
             f"{self._log_tag}: handshake FAILED after {attempt} attempt(s); "
@@ -1629,6 +1671,8 @@ class ShellSession(ABC):
         refused: Exception | None = None
         with suppress(Exception):  # pragma: no cover - best-effort diagnosis
             refused = await self._refused_login()
+            if opening and refused is None and not self._handshake_seen:
+                self._handshake_seen = await self._seen_at_open(partial)
         # On a single-client console the close drains the line to quiet
         # before it releases it, as every release of such a line does.
         with suppress(Exception):  # pragma: no cover - best-effort cleanup
@@ -2826,8 +2870,13 @@ class TelnetSession(ShellSession):
         # *reader*/*writer* are that client's streams, and closing this
         # session closes it (logout, then release). Every telnet-term session
         # has ``_client`` instead.
-        if console_client is not None and console_client.logged_in:
-            self._retry_failed_handshake = False
+        # The retry verdict starts from the one rule (``retries_failed_open``);
+        # a client that typed a password anyway narrows it.
+        if console_client is not None:
+            self._retry_failed_handshake = (
+                retries_failed_open("console", console_client.options)
+                and not console_client.logged_in
+            )
         # Paced-write tuning for slow/RX-limited consoles. ``write_chunk_size``
         # of 0 (the default) writes each payload in a single call — correct for
         # a host-terminated telnet shell (e.g. x86 + E1000). A positive value
@@ -2958,6 +3007,37 @@ class TelnetSession(ShellSession):
         return None
 
     @override
+    def _retries_named_open(self) -> bool:
+        if self.console_client is not None:
+            return retries_failed_open("console", self.console_client.options, named=True)
+        options = None if self._client is None else self._client.options
+        return retries_failed_open("telnet", telnet_options=options, named=True)
+
+    @override
+    async def _seen_at_open(self, partial: str) -> str:
+        """Quote the device's words before a failed open, off a console.
+
+        The text is *partial* then what no read took (:meth:`_take_unread`).
+        Lines carrying this session's marker are otto's own probe, echoed by
+        the tty, and are dropped; the rest goes through the console client's
+        formatter (:func:`~otto.host.console.seen_suffix`) with this client's
+        password, which the formatter scrubs before it cuts: a login that
+        discarded the password echoed it first. A console session quotes
+        through :meth:`_refused_login` instead, so this returns ``""`` there.
+        The two hooks stay separate because they decide different things:
+        ``_refused_login`` names a console's refusal and makes the open raise
+        it, while this one only adds a quote to the generic message.
+        """
+        if self.console_client is not None or self._client is None:
+            return ""
+        from .console import seen_suffix  # off the session import path: a failed open only
+
+        text = partial + await self._take_unread()
+        lines = text.splitlines(keepends=True)
+        device = "".join(line for line in lines if self._session_id not in line)
+        return seen_suffix(device, self._client.password)
+
+    @override
     async def console_login(self) -> None:
         """Run the console login state machine on this session's own streams.
 
@@ -2973,6 +3053,8 @@ class TelnetSession(ShellSession):
             )
         await self.console_client.login_sequence()
         # The client just typed the password: a retry would type it again.
+        # This narrows ``retries_failed_open``, whose rule cannot know that a
+        # hook logs in on a console declared ``login: false``.
         # Set is unconditional (rather than mirroring console_client.logged_in
         # live) so this stays correct even if a future client subclass
         # returns False for a login it still performed.
@@ -4710,7 +4792,7 @@ class SessionManager:
         # telnet console has a larger family default.
         self._init_timeout = init_timeout
         self._default_init_timeout = default_init_timeout
-        # Pause before the single handshake retry in ``_ensure_session``. ``None``
+        # Pause before the single handshake retry in ``_open_confirmed``. ``None``
         # resolves to the production default; tests pass ``0`` to skip the real
         # wall-clock wait without changing the retry logic itself.
         self._retry_backoff = _HANDSHAKE_RETRY_BACKOFF if retry_backoff is None else retry_backoff
@@ -4871,12 +4953,15 @@ class SessionManager:
         return resolve_init_timeout(self._init_timeout, self._default_init_timeout)
 
     def open_budget(self, *, term: str | None = None) -> float:
-        """Seconds opening the default session can take to report a shell that never became ready.
+        """Seconds opening a session can take to report a shell that never became ready.
 
-        Two attempts when ``_ensure_session`` retries a failed handshake on a
+        Two attempts when ``_open_confirmed`` (the open of the default, a
+        named and a pooled session alike) retries a failed handshake on a
         rebuilt transport, with the pause before the retry between them; one
         on a term it does not retry (a console that logs in, see
         :meth:`~otto.host.connections.ConnectionManager.retries_failed_open`).
+        It budgets the default session's open: a named or pooled open on a
+        line that serves one client is not retried, so it takes one attempt.
         Each attempt is the transport's bounded waits on *term* (the active
         one by default; see
         :meth:`~otto.host.connections.ConnectionManager.connect_allowance`)
@@ -5145,23 +5230,10 @@ class SessionManager:
         as ``alive=False`` (because the handshake hasn't run yet) and falling
         through to recreate.
 
-        A failed readiness handshake (``ConnectionError`` from ``_fail_init``)
-        is retried **once** with a brief backoff. The failure mode this
-        addresses: concurrent fan-out across multiple embedded targets
-        sharing a single SSH hop (e.g. ``do_for_all_hosts(EmbeddedHost.put,
-        …)`` to several Zephyr boards over one ``test4`` hop) can land
-        a fresh telnet socket on a device whose console isn't quite ready —
-        the peer accepts the TCP connection then closes it before the
-        marker probe lands, producing ``IncompleteReadError(0 bytes)`` →
-        ``ConnectionError``. Rebuilding the transport (the closed session's
-        teardown drops the stale ``TelnetClient``; ``connections.telnet()``
-        re-opens cleanly) and retrying once recovers from the race without
-        masking a genuine misconfiguration: a real never-reached-a-prompt
-        failure (see :meth:`ShellSession._fail_init` for what that message now
-        distinguishes) will fail the same way on the second attempt and
-        propagate. A console session whose client typed a password is not
-        retried at all: the rebuild re-runs the login, typing the password
-        into the line a second time (see ``_retry_failed_handshake``).
+        The session is built and its handshake confirmed by
+        :meth:`_open_confirmed`, which rebuilds it once after a failed
+        handshake; the login proxy's hops and the setup hook run after, and
+        are not retried.
         """
         plain = self._wants_plain(terminal)
         current = self._default_session(plain=plain)
@@ -5181,80 +5253,129 @@ class SessionManager:
             if current is not None:
                 await current.close()
 
-            last_exc: ConnectionError | None = None
-            # A retry of the one-shot build on a handshake race, not a poll of
-            # a state (the rule's note names it).
-            # ast-grep-ignore: no-handrolled-deadline-poll
-            for attempt in range(2):
-                new_session = await self._build_session(terminal=not plain)
-                new_session._on_output = _sink_for(self._log_output, LogMode.NORMAL)  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
-                self._seed_user(new_session)
-                # The marker handshake can take ~1 s on a cold telnet open. A
-                # caller-side ``wait_for`` cancellation (or a failed login)
-                # landing here would otherwise drop the just-built session — and
-                # its open transport FD — on the floor. Close it before the
-                # exception propagates.
-                try:
-                    await new_session._ensure_initialized()  # noqa: SLF001 — intra-package access to ShellSession._ensure_initialized for handshake
-                    await self._apply_login_proxy(new_session)
-                    await self._apply_session_setup(new_session, "default")
-                except (LoginProxyError, SessionSetupError, RawLandingError, ConsoleError):
-                    # A proxy or setup failure is not a handshake race — the transport
-                    # came up fine, so retrying it would just repeat the same
-                    # failed hop (or re-run the same hook against the same
-                    # console). Nor is a console login the handshake found
-                    # refused: a retry would only type the same password into
-                    # the line again. Tear down and propagate on the first try,
-                    # without falling into the ConnectionError retry below
-                    # (LoginProxyError, SessionSetupError and ConsoleError subclass it).
-                    with suppress(Exception):  # pragma: no cover - best-effort cleanup
-                        await new_session.close()
-                    raise
-                except ConnectionError as exc:
-                    with suppress(Exception):  # pragma: no cover - best-effort cleanup
-                        await new_session.close()
-                    last_exc = exc
-                    if attempt == 0 and new_session._retry_failed_handshake:  # noqa: SLF001 — intra-package read of the session's own retry verdict
-                        logger.debug(
-                            f"SessionManager[{self._name}]: handshake failed "
-                            f"on first attempt ({exc!r}); rebuilding transport "
-                            f"and retrying once"
-                        )
-                        # Backoff lets the peer fully release any half-open
-                        # slot before the next telnet() rebuilds the TCP
-                        # connection. The default (``_HANDSHAKE_RETRY_BACKOFF``,
-                        # 2 s) is calibrated to single-client RTOS telnet servers
-                        # (Zephyr's ``CONFIG_SHELL_BACKEND_TELNET``) which do not
-                        # always free the slot the instant the FIN lands —
-                        # observed on live QEMU runs to take well over 500 ms
-                        # after the close. Injectable so fakes-only tests skip it.
-                        await asyncio.sleep(self._retry_backoff)
-                        continue
-                    raise
-                except BaseException:
-                    with suppress(Exception):  # pragma: no cover - best-effort cleanup
-                        await new_session.close()
-                    raise
-                if plain:
-                    self._plain_session = new_session
-                else:
-                    self._session = new_session
-                    self._baseline_user = new_session.current_user
-                return new_session
-            # The loop always returns or raises; this is for the type checker.
-            assert last_exc is not None  # pragma: no cover  # noqa: S101 — internal invariant
-            raise last_exc  # pragma: no cover
+            new_session = await self._open_confirmed(
+                lambda: self._build_session(terminal=not plain)
+            )
+            # The handshake is confirmed; a hop or the setup hook failing
+            # now is not a handshake race, so it is not retried: the session
+            # is closed and the error propagates.
+            try:
+                await self._apply_login_proxy(new_session)
+                await self._apply_session_setup(new_session, "default")
+            except BaseException:
+                with suppress(Exception):  # pragma: no cover - best-effort cleanup
+                    await new_session.close()
+                raise
+            if plain:
+                self._plain_session = new_session
+            else:
+                self._session = new_session
+                self._baseline_user = new_session.current_user
+            return new_session
+
+    async def _open_confirmed(
+        self,
+        build: "Callable[[], Awaitable[ShellSession]]",
+        *,
+        user: str | None = None,
+        named: bool = False,
+    ) -> "ShellSession":
+        """Build a session with *build* and return it once its marker handshake is confirmed.
+
+        The one open sequence of the default session (``_ensure_session``)
+        and of a named or pooled session (``open_session``): wire the output
+        sink, seed *user* (:meth:`_seed_user`), run the handshake. Nothing is
+        published here; the caller does that with the confirmed session.
+
+        A handshake that fails with a ``ConnectionError`` is retried **once**,
+        on a session *build* makes afresh, after ``_retry_backoff``. Two
+        failures were measured on healthy devices:
+
+        - a single-slot console not yet ready: concurrent fan-out across
+          embedded targets sharing one ssh hop (``do_for_all_hosts`` over
+          several Zephyr boards) can land a fresh telnet socket on a device
+          that accepts the TCP connection then closes it before the marker
+          probe lands (``IncompleteReadError`` of 0 bytes). Single-client
+          RTOS telnet servers do not always free the slot the instant the
+          FIN lands, hence the backoff;
+        - a login whose password the device discarded: BusyBox 1.21.1 and
+          1.22.1 ``login`` print the password prompt before they flush
+          pending input, so a password sent the instant the prompt appears
+          can be thrown away and ``login`` exits on what follows.
+
+        A genuine never-reached-a-prompt failure (see
+        :meth:`ShellSession._fail_init`) fails the same way on the second
+        attempt and propagates. A wrong password is so offered twice per
+        session opened. Never retried: a :class:`ConsoleError`, and a
+        session whose ``_retry_failed_handshake`` is false (a console whose
+        client typed a password: a rebuild would type it into the line
+        again), and a *named* (named or pooled) open on a line that serves
+        one client (:func:`~otto.host.telnet.retries_failed_open`). Any
+        failure, cancellation included, closes the session it built before
+        propagating.
+        """
+        # A retry of the one-shot build on a handshake race, not a poll of
+        # a state (the rule's note names it).
+        # ast-grep-ignore: no-handrolled-deadline-poll
+        for attempt in range(2):
+            session = await build()
+            session._on_output = _sink_for(self._log_output, LogMode.NORMAL)  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
+            self._seed_user(session, user)
+            try:
+                await session._ensure_initialized()  # noqa: SLF001 — intra-package access to ShellSession._ensure_initialized for handshake
+            except ConsoleError:
+                with suppress(Exception):  # pragma: no cover - best-effort cleanup
+                    await session.close()
+                raise
+            except ConnectionError as exc:
+                with suppress(Exception):  # pragma: no cover - best-effort cleanup
+                    await session.close()
+                retries = session._retry_failed_handshake and (  # noqa: SLF001 — intra-package read of the session's own retry verdict
+                    not named or session._retries_named_open()  # noqa: SLF001 — the same verdict, for a named or pooled open
+                )
+                if attempt == 0 and retries:
+                    logger.info(
+                        f"SessionManager[{self._name}]: handshake failed "
+                        f"on first attempt ({exc!r}); rebuilding "
+                        f"transport and retrying once"
+                    )
+                    await asyncio.sleep(self._retry_backoff)
+                    continue
+                raise
+            except BaseException:
+                with suppress(Exception):  # pragma: no cover - best-effort cleanup
+                    await session.close()
+                raise
+            return session
+        # The second attempt returns or raises.
+        raise AssertionError("unreachable")  # pragma: no cover
 
     async def _build_session(self, *, terminal: bool = True) -> "ShellSession":
         """Construct a fresh ShellSession from the configured factory or connection manager.
 
-        Split out from ``_ensure_session`` so the retry path can rebuild the transport cleanly.
+        :meth:`_open_confirmed` calls it again to rebuild the transport after a failed handshake.
         *terminal* false is the transport's session without a terminal; a
         factory builds the one kind of session it knows.
         """
         if self._session_factory is not None:
             return self._from_factory(self._session_factory)
         return await self._open_transport_session(named=False, terminal=terminal)
+
+    async def _build_named_session(
+        self, *, own_login: str | None, terminal: bool | None
+    ) -> "ShellSession":
+        """Construct a fresh ShellSession for ``open_session``.
+
+        The named factory (else the default one) unless the session
+        authenticates as *own_login*, its own ssh user; else the transport's
+        named session, of mode *terminal* (``None`` is a terminal).
+        """
+        named_factory = self._named_session_factory or self._session_factory
+        if named_factory is not None and own_login is None:
+            return self._from_factory(named_factory)
+        return await self._open_transport_session(
+            named=True, ssh_user=own_login, terminal=terminal is not False
+        )
 
     def _from_factory(self, factory: "Callable[[], ShellSession]") -> "ShellSession":
         """Build a session from *factory*, holding the deadline this manager resolves.
@@ -5984,7 +6105,10 @@ class SessionManager:
         1. its transport: *as_user*'s own ssh connection when they are not
            the login and have a direct credential on an ``ssh`` term
            (``_own_ssh_login``), else the login's;
-        2. the marker handshake;
+        2. the marker handshake; when it fails, the transport is rebuilt
+           and the handshake run once more (``_open_confirmed``), except on
+           a line that serves one client, whose slot the default session
+           may hold (:func:`~otto.host.telnet.retries_failed_open`);
         3. the login proxy's hops (``_apply_login_proxy``), for the
            login's session only;
         4. when *as_user* is not who the session now is, a switch to them
@@ -6024,34 +6148,17 @@ class SessionManager:
                 await existing._session.close()  # noqa: SLF001 — intra-package access to HostSession._session to close dead transport
 
             own_login = self._own_ssh_login(as_user)
-            named_factory = self._named_session_factory or self._session_factory
-            if named_factory is not None and own_login is None:
-                shell_session: ShellSession = self._from_factory(named_factory)
-            else:
-                shell_session = await self._open_transport_session(
-                    named=True, ssh_user=own_login, terminal=terminal is not False
-                )
-
-            shell_session._on_output = _sink_for(self._log_output, LogMode.NORMAL)  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
-            self._seed_user(shell_session, own_login)
-            # The marker handshake can take ~1 s on a cold telnet open (the
-            # slow window that used to live inside ``connect()``'s login
-            # drain). A cancellation or failed login landing here must not
-            # orphan the just-built session — for telnet that would leak the
-            # owned client's socket and skip the session's cleanup duties.
-            try:
-                await shell_session._ensure_initialized()  # noqa: SLF001 — intra-package access to ShellSession._ensure_initialized for handshake
-            except BaseException:
-                with suppress(Exception):  # pragma: no cover - best-effort cleanup
-                    await shell_session.close()
-                raise
+            shell_session = await self._open_confirmed(
+                lambda: self._build_named_session(own_login=own_login, terminal=terminal),
+                user=own_login,
+                named=True,
+            )
 
             # Replay proxy hops (if any) so this named session ends up as
             # login_target too — this is also the exec-pool path
             # (_acquire_exec_session -> open_session), so pooled sessions
-            # get proxied for free. A failed hop tears the session down and
-            # propagates, leaving no entry in _named_sessions (mirrors the
-            # handshake-failure cleanup just above).
+            # get proxied for free. A failed hop is not retried: it tears the
+            # session down and propagates, leaving no entry in _named_sessions.
             # Not on a session that authenticated as its own user: the hops
             # lead to the login, which that session is not.
             try:

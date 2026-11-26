@@ -80,9 +80,9 @@ because the production error path is where the long, patient retries live.
 import asyncio
 import math
 import re
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -94,9 +94,13 @@ from otto.host.session import _HANDSHAKE_RETRY_BACKOFF, SessionManager, ShellSes
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from tests._fixtures.fake_shell import probe_marker
+from tests._fixtures.loopback_servers import DEVICE_PASSWORD, telnet_host
 from tests.unit.host._session_feed import identity_handshake_reply, writes_handshake
 from tests.unit.host._sessions import session_manager
 from tests.unit.host.test_session import idle_exec_sessions
+
+if TYPE_CHECKING:
+    from otto.host.unix_host import UnixHost
 
 pytestmark = pytest.mark.concurrency
 
@@ -883,3 +887,268 @@ async def test_ensure_session_retry_backoff_is_configurable(
     )
 
     await mgr.close_all()
+
+
+# ── A device that discards the first password (#1359) ────────────────────────
+
+
+async def _open_default(host: "UnixHost") -> str:
+    return (await host.run("echo default"))[0].value
+
+
+async def _open_named(host: "UnixHost") -> str:
+    session = await host._session_mgr.open_session(name="named")
+    return (await session.run("echo named"))[0].value
+
+
+async def _open_pooled(host: "UnixHost") -> str:
+    return (await host.exec("echo pooled")).value
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_an_exec_session_is_opened_again_when_the_device_refuses_the_first_login() -> None:
+    """BusyBox 1.21.1 ``login`` threw the password away: the pooled session is opened again."""
+    from tests._fixtures.loopback_servers import telnet_device
+
+    async with telnet_device(["discard", "accept"]) as (port, device):
+        host = telnet_host(port)
+        try:
+            result = await host.exec("echo hi")
+        finally:
+            await host.close()
+    assert result.status.is_ok, result
+    assert result.value == "hi"
+    assert device.connections == 2
+    # Fails for the right reason: the password line itself was discarded,
+    # and what the device then refused as a password was another line.
+    # Compared here, so no assertion shows a password.
+    discarded_the_password = device.discarded == [DEVICE_PASSWORD]
+    refused_another_line = device.passwords[0] != DEVICE_PASSWORD
+    accepted_the_password = device.passwords[1:] == [DEVICE_PASSWORD]
+    assert discarded_the_password, "the discarded line was not the configured password"
+    assert refused_another_line, "the refused line was the configured password"
+    assert accepted_the_password, "the second login did not read the configured password"
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+@pytest.mark.parametrize(
+    ("open_", "value"),
+    [
+        pytest.param(_open_default, "default", id="default"),
+        pytest.param(_open_named, "named", id="named"),
+        pytest.param(_open_pooled, "pooled", id="pooled"),
+    ],
+)
+async def test_run_and_exec_open_their_session_through_one_sequence(open_, value) -> None:
+    """The default, a named and a pooled session recover from the same device the same way."""
+    from tests._fixtures.loopback_servers import telnet_device
+
+    async with telnet_device(["discard", "accept"]) as (port, device):
+        host = telnet_host(port)
+        try:
+            assert await open_(host) == value
+        finally:
+            await host.close()
+    assert device.connections == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_four_concurrent_execs_all_answer_when_one_login_is_refused() -> None:
+    """One discarded password costs its own exec one more connection, and no other exec anything."""
+    from tests._fixtures.loopback_servers import telnet_device
+
+    async with telnet_device(["discard", "accept"]) as (port, device):
+        host = telnet_host(port)
+        try:
+            results = await _gather_settled(*(host.exec(f"echo {i}") for i in range(4)))
+        finally:
+            await host.close()
+    assert [getattr(r, "value", r) for r in results] == ["0", "1", "2", "3"]
+    assert device.connections == 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_a_wrong_password_is_offered_twice_per_session_opened() -> None:
+    """A device refusing every password sees two connections per exec, eight for four at once."""
+    from tests._fixtures.loopback_servers import telnet_device
+
+    async with telnet_device(["refuse"]) as (port, device):
+        host = telnet_host(port)
+        try:
+            with pytest.raises(ConnectionError):
+                await host.exec("echo hi")
+            assert device.connections == 2
+            results = await _gather_settled(*(host.exec(f"echo {i}") for i in range(4)))
+        finally:
+            await host.close()
+    assert all(isinstance(r, ConnectionError) for r in results), results
+    assert device.connections == 2 + 8
+
+
+def _failing_once_factory(
+    factory: _Factory, *, retry: bool = True
+) -> "Callable[[], _HandshakeFailsOnceFakeSession]":
+    """A counting factory whose first session's handshake fails; *retry* is its own verdict."""
+
+    def make_session() -> _HandshakeFailsOnceFakeSession:
+        session = _HandshakeFailsOnceFakeSession(instance_id=len(factory.created) + 1)
+        session._retry_failed_handshake = retry
+        factory.created.append(session)
+        return session
+
+    return make_session
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_a_console_session_whose_client_logged_in_is_opened_once() -> None:
+    """A session that typed a password is never rebuilt, by a named open either."""
+    factory = _Factory()
+    mgr = session_manager(
+        connections=cast("ConnectionManager", SimpleNamespace(term="console")),
+        session_factory=_failing_once_factory(factory, retry=False),
+        retry_backoff=0.0,
+    )
+    with pytest.raises(ConnectionError):
+        await mgr.open_session(name="n")
+    assert factory.created_count == 1
+    assert factory.created[0]._alive is False
+    assert "n" not in mgr._named_sessions
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_a_named_session_factory_builds_both_attempts() -> None:
+    """A manager with a named factory builds the rebuilt session through it too."""
+    factory = _Factory()
+    default = _Factory()
+    mgr = session_manager(
+        connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
+        session_factory=default,
+        named_session_factory=_failing_once_factory(factory),
+        retry_backoff=0.0,
+    )
+    session = await mgr.open_session(name="n")
+    assert session.alive
+    assert factory.created_count == 2
+    assert default.created_count == 0
+    await mgr.close_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_an_ssh_session_without_a_terminal_is_built_twice_when_its_first_handshake_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The transport's own session (no factory), opened without a terminal, is rebuilt once."""
+    factory = _Factory()
+    make_session = _failing_once_factory(factory)
+    terminals: list[bool] = []
+    mgr = session_manager(
+        connections=cast("ConnectionManager", SimpleNamespace(term="ssh")),
+        retry_backoff=0.0,
+    )
+
+    async def transport_session(*, named: bool, terminal: bool, **_kw: object) -> ShellSession:
+        assert named
+        terminals.append(terminal)
+        return make_session()
+
+    monkeypatch.setattr(mgr, "_open_transport_session", transport_session)
+    session = await mgr.open_session(name="n", terminal=False)
+    assert session.alive
+    assert terminals == [False, False]
+    assert factory.created[0]._alive is False
+    await mgr.close_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_a_rebuilt_pooled_session_runs_its_setup_hook_once_on_the_confirmed_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hook runs after the confirmed handshake: never on the session that failed it."""
+    factory = _Factory()
+    mgr = session_manager(
+        connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
+        session_factory=_failing_once_factory(factory),
+        retry_backoff=0.0,
+    )
+    hooked: list[tuple[ShellSession, str]] = []
+
+    async def setup(session: ShellSession, kind: str) -> None:
+        hooked.append((session, kind))
+
+    monkeypatch.setattr(mgr, "_apply_session_setup", setup)
+    result = await mgr.exec_pooled(
+        cmd="echo hi", timeout=DEFAULT_COMMAND_TIMEOUT, log=LogMode.QUIET
+    )
+    assert result.status.is_ok, result
+    assert hooked == [(factory.created[1], "exec_pool")]
+    await mgr.close_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_a_hop_failing_after_the_default_session_is_confirmed_closes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed hop is not a handshake race: no rebuild, the confirmed session is closed."""
+    from otto.host.login_proxy import LoginProxyError
+
+    factory = _Factory()
+    mgr = session_manager(
+        connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
+        session_factory=factory,
+        retry_backoff=0.0,
+    )
+
+    async def hop(_session: ShellSession) -> None:
+        raise LoginProxyError("the hop failed")
+
+    monkeypatch.setattr(mgr, "_apply_login_proxy", hop)
+    with pytest.raises(LoginProxyError):
+        await mgr.run_cmd(cmd="echo hi", timeout=2.0)
+    assert factory.created_count == 1
+    assert factory.created[0]._alive is False
+    assert mgr._session is None
+
+
+async def _named_aux(host: "UnixHost") -> object:
+    return await host._session_mgr.open_session(name="aux")
+
+
+async def _pooled(host: "UnixHost") -> object:
+    return await host.exec("echo pooled")
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+@pytest.mark.parametrize(
+    "open_",
+    [pytest.param(_named_aux, id="named"), pytest.param(_pooled, id="pooled")],
+)
+async def test_a_second_open_on_a_one_client_line_dials_once(open_) -> None:
+    """The default session holds the one slot: a named or pooled open dials once, then fails.
+
+    A second dial cannot succeed while the slot is held, and on a Zephyr
+    ``shell_telnet`` it stops the line answering the default session.
+    """
+    from tests._fixtures.loopback_servers import telnet_device
+
+    async with telnet_device(["accept"], one_client=True) as (port, device):
+        host = telnet_host(port, single_client_console=True)
+        try:
+            assert (await host.run("echo first"))[0].value == "first"
+            with pytest.raises(ConnectionError):
+                await open_(host)
+            dials = device.connections
+            after = (await host.run("echo after"))[0].value
+        finally:
+            await host.close()
+    assert dials == 2, "the named or pooled open dialled the held line again"
+    assert after == "after"

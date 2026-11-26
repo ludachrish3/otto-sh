@@ -34,7 +34,7 @@ from ..errors import OttoError
 from ..models.base import as_secret
 from ..utils import WaitTimeoutError, wait_for_async
 from .cancel_safe import await_within
-from .options import TelnetOptions
+from .options import ConsoleOptions, TelnetOptions
 from .secret_wire import reveal
 
 logger = logging.getLogger(__name__)
@@ -375,6 +375,35 @@ def single_client(term: str, telnet_options: TelnetOptions | None = None) -> boo
     if term == "telnet":
         return telnet_options is not None and telnet_options.single_client_console
     return False
+
+
+def retries_failed_open(
+    term: str,
+    console_options: ConsoleOptions | None = None,
+    *,
+    telnet_options: TelnetOptions | None = None,
+    named: bool = False,
+) -> bool:
+    """Whether a session on *term* may be rebuilt after its first handshake failed.
+
+    Every term but a console that logs in (*console_options* ``login``):
+    its client types the password, and a rebuilt session would type it into
+    the line again. A *named* open (a named or pooled session) is not
+    rebuilt either on a line that serves one client (:func:`single_client`):
+    the host's default session may hold that one slot, so a second dial
+    cannot succeed, and a Zephyr ``shell_telnet`` dialled again while its
+    slot is held stops answering the session that holds it. The open budget
+    (:meth:`~otto.host.connections.ConnectionManager.retries_failed_open`)
+    and the session's own verdict (``ShellSession._retry_failed_handshake``,
+    which ``SessionManager._open_confirmed`` reads) both start here; the
+    session only narrows it at run time, when its client typed a password
+    this rule did not foresee. A named open asks with *named* through
+    ``ShellSession._retries_named_open``; the budget, which sizes the
+    default open, does not.
+    """
+    if named and single_client(term, telnet_options):
+        return False
+    return not (term == "console" and console_options is not None and console_options.login)
 
 
 _ABORT_GRACE: float = 0.1
