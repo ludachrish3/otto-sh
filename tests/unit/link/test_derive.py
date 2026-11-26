@@ -125,6 +125,21 @@ class TestResolveDeclaredLinks:
         (link,) = _resolve([entry], HOSTS, loaded_ids={"test1"})
         assert {link.a.host, link.b.host} == {"test1", "test4"}
 
+    def test_a_malformed_entry_is_refused_on_one_line_without_its_values(self):
+        bad = DeclaredLinkEntry(
+            origin=Path("b/links.json"),
+            index=0,
+            entry=_entry(protocol={"token": "hunter2"}),
+        )
+        with pytest.raises(
+            ValueError, match=r"^Invalid link in b/links\.json at index 0: protocol: "
+        ) as e:
+            resolve_declared_links(
+                [bad], HOSTS, loaded_ids=set(HOSTS), selection=frozenset({"bench"})
+            )
+        assert "hunter2" not in str(e.value)
+        assert "\n" not in str(e.value), "one line, not pydantic's block"
+
     def test_an_error_names_the_entrys_own_document_and_index(self):
         good = DeclaredLinkEntry(origin=Path("a/lab.json"), index=0, entry=_entry())
         bad = DeclaredLinkEntry(

@@ -18,6 +18,7 @@ from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.element import Element
 from ..host.factory import host_identity
 from ..host.remote_host import slug
+from ..models.base import failure_reason
 from ..models.link import LinkSpec
 from .model import Link, LinkEndpoint, Provenance
 
@@ -292,7 +293,7 @@ def resolve_declared_links(
             _validate_impair(spec.impair, a, b, hosts)
         except ValueError as e:
             raise ValueError(
-                f"Invalid link in {declared.origin} at index {declared.index}: {e}"
+                f"Invalid link in {declared.origin} at index {declared.index}: {failure_reason(e)}"
             ) from e
         links.append(
             Link(

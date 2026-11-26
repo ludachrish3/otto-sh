@@ -239,8 +239,10 @@ class TestErrors:
         f = tmp_path / "list.json"
         f.write_text("[1, 2, 3]")
         backend = _JsonReservationBackend(path=f)
-        with pytest.raises(ReservationBackendError, match="Invalid reservation file"):
+        with pytest.raises(ReservationBackendError, match="Invalid reservation file") as e:
             backend.fetch_reservations("alice")
+        assert "\n" not in str(e.value), "one line, not pydantic's block"
+        assert "input_value" not in str(e.value)
 
     def test_unsupported_version_raises(self, tmp_path):
         backend = _make_backend(tmp_path, {"version": 99, "reservations": []})

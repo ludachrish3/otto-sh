@@ -20,7 +20,7 @@ from ..host.factory import (
 from ..host.inventory_ref import NOT_RECORDING, recording_fields
 from ..host.os_profile import ProfileContext
 from ..host.remote_host import describe_identity
-from ..models.base import OttoModel, compact_validation_error
+from ..models.base import OttoModel, compact_validation_error, failure_reason
 from ..models.lab import ElementSpec, LabEntrySpec
 from ..utils import anchor_path, refuse_empty_entry
 from .drops import Diagnostic
@@ -155,7 +155,9 @@ def parse_lab_entries(raw: dict[str, Any], source: str) -> dict[str, LabEntrySpe
         try:
             out[name] = LabEntrySpec.model_validate(value)
         except ValidationError as e:
-            raise LabRepositoryError(f"Lab file '{source}': labs[{name!r}] {e}") from e
+            raise LabRepositoryError(
+                f"Lab file '{source}': labs[{name!r}] {compact_validation_error(e)}"
+            ) from e
     return out
 
 
@@ -196,7 +198,9 @@ def _parse_element(entry: object, idx: int, source: str) -> ElementSpec:
     try:
         return ElementSpec.model_validate(entry)
     except ValidationError as e:
-        raise LabRepositoryError(f"Lab file '{source}': elements[{idx}] {e}") from e
+        raise LabRepositoryError(
+            f"Lab file '{source}': elements[{idx}] {compact_validation_error(e)}"
+        ) from e
 
 
 @dataclass(frozen=True, slots=True)
@@ -868,11 +872,7 @@ def _identified_entries(
                     skip_failure(
                         where=_entry_where(origin=doc.path, element=element, index=index),
                         error=e,
-                        reason=(
-                            compact_validation_error(e)
-                            if isinstance(e, ValidationError)
-                            else str(e)
-                        ),
+                        reason=failure_reason(e),
                     )
                     continue
                 yield IdentifiedEntry(
@@ -942,7 +942,7 @@ def _addressing(
             # whose os_profile / command_frame is registered by init modules
             # this process never loaded, and the downstream symptom is a
             # confusing "unknown host" for a host that is right there.
-            reason = compact_validation_error(e) if isinstance(e, ValidationError) else str(e)
+            reason = failure_reason(e)
             logger.debug(f"Skipping unresolvable host record ({describe_refused(h)}): {reason}")
             skipped.append(SkippedHostRecord(element=runtime.name, origin=origin, reason=reason))
             continue

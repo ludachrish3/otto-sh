@@ -774,6 +774,7 @@ def discover() -> DiscoveryResult:
     cannot outlive the discovery that produced it.
     """
     if _discovery.result is None:
+        from ..models.base import validation_message
         from .env import load_otto_env
 
         env = load_otto_env()
@@ -785,7 +786,14 @@ def discover() -> DiscoveryResult:
             except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY config-data failure becomes a framed error
                 if not is_containable(e):
                     raise
-                errors.append(BootstrapError(root, source=str(TOML_SETTINGS_PATH), cause=e))
+                errors.append(
+                    BootstrapError(
+                        root,
+                        source=str(TOML_SETTINGS_PATH),
+                        cause=e,
+                        reason=validation_message(e),
+                    )
+                )
         duplicates = _duplicate_root_errors(projects)
         if duplicates:
             refused = {str(e.root) for e in duplicates}

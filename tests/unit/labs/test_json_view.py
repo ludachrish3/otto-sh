@@ -331,6 +331,26 @@ def test_an_empty_reason_is_refused(tmp_path, reason):
         source.load_lab("bench")
 
 
+@pytest.mark.parametrize(
+    ("doc", "where"),
+    [
+        ({"labs": {"bench": {"unavailable": {"password": "hunter2"}}}}, r"labs\['bench'\] "),
+        (
+            {"labs": {"bench": {}}, "elements": [{"name": {"password": "hunter2"}}]},
+            r"elements\[0\] ",
+        ),
+    ],
+    ids=["lab-entry", "element"],
+)
+def test_a_refused_lab_file_entry_never_prints_what_it_holds(tmp_path, doc, where):
+    """Each entry is validated whole: pydantic's echo of its input must not reach the error."""
+    source = _source(tmp_path, doc)
+    with pytest.raises(LabRepositoryError, match=where) as e:
+        source.load_lab("bench")
+    assert "hunter2" not in str(e.value)
+    assert "\n" not in str(e.value), "one line, not pydantic's block"
+
+
 def test_status_skips_a_malformed_sibling_as_list_labs_does(tmp_path):
     good = _write(tmp_path / "a.json", {"labs": {"bench": {"unavailable": "down"}}})
     (tmp_path / "b.json").write_text("{not json")

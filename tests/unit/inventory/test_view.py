@@ -138,6 +138,16 @@ def test_one_project_inlining_the_default_store_does_not_conflict(tmp_path):
         assert view.bare_refused_by == {}
 
 
+def test_a_refused_inventories_entry_never_prints_what_it_holds(tmp_path):
+    """The entry is validated whole: pydantic's echo of its input must not reach the error."""
+    entry = {"name": "physical", "backend": {"token": "hunter2"}}
+    project = _project(tmp_path, "a", inventories=[entry])
+    with pytest.raises(InventoryError, match=r"\[\[inventories\]\] backend: ") as e:
+        build_inventory_view(projects=[project], user_settings_path=tmp_path / "absent.toml")
+    assert "hunter2" not in str(e.value)
+    assert "\n" not in str(e.value), "one line, not pydantic's block"
+
+
 def test_two_projects_must_agree_on_a_name(tmp_path):
     a = _project(tmp_path, "a", inventories=[{"name": "physical", **_json(tmp_path / "pa.json")}])
     b = _project(tmp_path, "b", inventories=[{"name": "physical", **_json(tmp_path / "pb.json")}])

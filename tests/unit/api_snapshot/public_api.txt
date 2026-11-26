@@ -2,7 +2,7 @@
 # producer-schema 1
 name	otto.bootstrap:BootstrapError	class
 mro	otto.bootstrap:BootstrapError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
-call	otto.bootstrap:BootstrapError	sync	PK:root:- KO:source:- KO:cause:-
+call	otto.bootstrap:BootstrapError	sync	PK:root:- KO:source:- KO:cause:- KO:reason:N
 abstract	otto.bootstrap:BootstrapError	-
 name	otto.bootstrap:BootstrapResult	class
 mro	otto.bootstrap:BootstrapResult	-

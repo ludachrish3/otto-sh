@@ -42,9 +42,11 @@ from ..models.base import (
     Cred,
     CredSpec,
     OttoModel,
+    failure_reason,
     nonnegative,
     resources_nonempty,
     strip_comment_keys,
+    validation_message,
 )
 from .address import validate_address
 from .binary_loader import LOADER_CLASSES, build_binary_loader
@@ -445,18 +447,9 @@ class _Selected:
     witness: "dict[str, str] | None"
 
 
-def _message(exc: Exception) -> str | None:
-    """Render a ValidationError without its input (its ``str()`` quotes it); else ``None``."""
-    from pydantic import ValidationError
-
-    from ..models.base import compact_validation_error
-
-    return compact_validation_error(exc) if isinstance(exc, ValidationError) else None
-
-
 def _describe(exc: Exception) -> str:
     """Render *exc* for a message without quoting its input (a ValidationError's input may)."""
-    message = _message(exc)
+    message = validation_message(exc)
     return message if message is not None else f"{type(exc).__name__}: {exc}"
 
 
@@ -871,10 +864,7 @@ class HostSpec(OttoModel):
         except HostValidationError:
             raise
         except ValueError as exc:
-            message = _message(exc)
-            raise HostValidationError(
-                f"host {ctx.host_id!r}: {exc if message is None else message}"
-            ) from exc
+            raise HostValidationError(f"host {ctx.host_id!r}: {failure_reason(exc)}") from exc
         try:
             self.check_in(ctx)
         except HostValidationError:

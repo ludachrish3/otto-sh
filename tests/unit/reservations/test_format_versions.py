@@ -42,6 +42,6 @@ def test_the_json_backend_refuses_a_version_outside_the_declared_reads(tmp_path)
     )
     backend = _JsonReservationBackend(path=path, username="alice")
     with pytest.raises(
-        ReservationBackendError, match=r"version\n\s+Input should be .*\[type=literal_error"
+        ReservationBackendError, match=r": version: Input should be .*\[type=literal_error\]$"
     ):
         backend.fetch_reservations("alice")
