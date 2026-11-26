@@ -64,21 +64,43 @@ def reap_marked_script(variable: str) -> str:
     would release that shell to run its next statement before the sweep
     reached it. A frozen shell runs nothing. The ``KILL`` sweep is then
     repeated until one finds nothing (ten at most), so a process started
-    mid-sweep is caught by the next. The script's own
-    processes do not carry the token and are never matched. Only what
-    BusyBox ``sh`` and ``grep`` have; where there is no ``/proc`` it matches
-    nothing and ends. It reaches what the user running it may read: another
-    user's process (after ``su`` or ``sudo``) and a process that rewrote its
-    environment area are not matched. Two narrow gaps are accepted: a bash
+    mid-sweep is caught by the next. The script's own processes do not carry
+    the token and are never matched: the token is an argument of the
+    sweeping shell and of its ``grep``, never in their environment.
+
+    A sweep is ONE ``grep`` over every ``/proc/<pid>/environ``, whatever the
+    number of processes, and then one ``kill`` (a shell builtin) for each
+    file it lists. A ``grep`` for each process costs one new process each,
+    which on a slow host is most of the time a stop has: 100 processes took
+    7 seconds a sweep on an emulated guest, and one ``grep`` takes half a
+    second there. What is killed is decided from the names ``grep`` lists,
+    never from its exit status, which is an error whenever a file could not
+    be read or its process had gone. The token is matched as a pattern, not
+    with ``-F``: BusyBox ``grep -F`` reads an ``environ`` file only as far as
+    its first NUL byte, so it finds the mark in a process's first variable
+    alone. A token is hexadecimal digits, which mean themselves in a pattern.
+
+    Only what BusyBox ``sh`` and ``grep`` have. Where a sweep cannot list
+    anything it matches nothing and ends: a host with no ``/proc``, no
+    ``grep``, or so many processes that their paths exceed what one command
+    may be given as arguments (about 25 bytes a process against a limit of
+    at least 128 KiB). A process is signalled up to one sweep after its file
+    was read, so a pid that ended and was handed to a new process within
+    that sweep would be signalled in its place; that needs the host's whole
+    pid range to be used up within one sweep.
+
+    It reaches what the user running it may read: another user's process
+    (after ``su`` or ``sudo``) and a process that rewrote its environment
+    area are not matched. Two narrow gaps are accepted: a bash
     that turned job control on (``set -m``) is handed control when its
     command is frozen, and may run on if the sweep reaches the command
     first; and a process forked by one that was itself forked during the
     two ``STOP`` sweeps is killed without having been frozen.
     """
     return (
-        "t=$1; s() { f=; for e in /proc/[0-9]*/environ; do "
-        f'if grep -q "{variable}=$t" "$e" 2>/dev/null; then '
-        'p=${e#/proc/}; kill "$1" "${p%/environ}" 2>/dev/null && f=1; fi; done; }; '
+        "t=$1; s() { f=; for e in $(cd /proc 2>/dev/null && "
+        f'grep -l "{variable}=$t" [0-9]*/environ 2>/dev/null); do '
+        'kill "$1" "${e%/environ}" 2>/dev/null && f=1; done; }; '
         "s -STOP; s -STOP; "
         'n=0; while [ $n -lt 10 ]; do s -KILL; [ -n "$f" ] || break; n=$((n + 1)); done; :'
     )

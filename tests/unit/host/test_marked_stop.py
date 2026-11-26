@@ -112,6 +112,77 @@ def test_every_marked_process_is_frozen_before_any_is_killed(tmp_path, shell):
     assert {sig for sig, _ in sent} == {"-STOP", "-KILL"}, sent
 
 
+def _counting_grep(directory: Path, body: str) -> tuple[dict[str, str], Path]:
+    """An environment whose ``grep`` is *body* after it has recorded that it was started.
+
+    Returns the environment and the file holding one line for each start.
+    """
+    count = directory / "greps"
+    stand_in = directory / "bin" / "grep"
+    stand_in.parent.mkdir()
+    stand_in.write_text(f"#!/bin/sh\necho started >> {count}\n{body}\n")
+    stand_in.chmod(0o755)
+    return {**os.environ, "PATH": f"{stand_in.parent}{os.pathsep}{os.environ['PATH']}"}, count
+
+
+@pytest.mark.parametrize("shell", ["sh", "bash"])
+def test_a_sweep_starts_one_grep_however_many_processes_are_running(tmp_path, shell):
+    """The stop's cost in new processes does not grow with the host's process count.
+
+    A ``grep`` for each process is one new process each, which on a slow host
+    is longer than the stop has. Twenty more processes are started here, none
+    marked: a stop that looked at each with its own ``grep`` would start
+    sixty or more, and this one starts one for each sweep (two ``STOP``
+    sweeps, then at most ten ``KILL`` sweeps).
+    """
+    real = shutil.which("grep")
+    assert real is not None
+    env, count = _counting_grep(tmp_path, f'exec {real} "$@"')
+    token = secrets.token_hex(16)
+    others = [subprocess.Popen(["/bin/sleep", "60"]) for _ in range(20)]
+    try:
+        with _waiting_on_a_command(["sh"], "/bin/sleep 60; /bin/sleep 60", token) as proc:
+            subprocess.run([shell, "-c", reap_marked_command(VARIABLE, token)], env=env, check=True)
+            proc.wait(timeout=10)
+            assert _marked(token) == []
+    finally:
+        for other in others:
+            other.kill()
+            other.wait()
+    sweeps = len(count.read_text().splitlines())
+    # Two STOP sweeps, one KILL sweep that kills and one that finds nothing, at least.
+    assert 4 <= sweeps <= 12, sweeps
+
+
+@pytest.mark.parametrize("shell", ["sh", "bash", "busybox"])
+def test_a_sweep_that_can_list_nothing_kills_nothing_and_ends(tmp_path, shell):
+    """A ``grep`` that fails and lists nothing is "nothing matched": no signal, and the stop ends.
+
+    That is what a host with no ``/proc``, no ``grep`` or too many processes
+    for one command's arguments gives. The marked shell runs on. The sweep is
+    run with ``kill`` wrapped, so a signal sent would be recorded.
+    """
+    argv = _shell(shell)
+    env, count = _counting_grep(tmp_path, "exit 2")
+    token, log = secrets.token_hex(16), tmp_path / "sent"
+    with _waiting_on_a_command(["sh"], "/bin/sleep 60; /bin/sleep 60", token) as proc:
+        marked = sorted(_marked(token))
+        recorded = f'kill() {{ echo "$1 $2" >> {log}; command kill "$@"; }}; '
+        # `command grep` is not used by the script, so a shell whose own grep
+        # would be preferred to the one on PATH is given the stand-in by name.
+        named = f'grep() {{ {tmp_path / "bin" / "grep"} "$@"; }}; '
+        subprocess.run(
+            [*argv, "-c", named + recorded + reap_marked_script(VARIABLE), "sh", token],
+            env=env,
+            check=True,
+        )
+        assert sorted(_marked(token)) == marked
+        assert proc.poll() is None
+    assert not log.exists()
+    # Two STOP sweeps and the one KILL sweep that finds nothing.
+    assert len(count.read_text().splitlines()) == 3
+
+
 def test_the_marked_shell_command_starts_a_login_shell_carrying_the_token(tmp_path):
     """The shell the command starts has the token in its own start environment."""
     env = {**os.environ, "SHELL": shutil.which("bash") or "bash", "HOME": str(tmp_path)}
