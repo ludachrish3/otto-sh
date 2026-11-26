@@ -1826,7 +1826,9 @@ BUSYBOX_BED_GROUP = "busybox_bed"
 # The xdist group of the bed tests that probe the Ubuntu 24.04 guest behind
 # `test4` (`tests/integration/test_probe_netcat_guest.py`): one worker runs them
 # one after another, so no test opens or closes a listener on the guest while
-# another compares the guest's listeners before and after its survey.
+# another compares the guest's listeners before and after its survey. Every
+# test there today is also `serial_timing` and runs in a lane's -n0 pass, so
+# the group only acts on a test added to that file without that mark.
 NETCAT_GUEST_GROUP = "netcat_guest"
 
 
