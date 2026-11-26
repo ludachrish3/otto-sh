@@ -41,7 +41,17 @@ the netcat by that long. A listener really left behind stays for its
 
 
 async def listeners_of(host: BaseHost, label: str) -> list:
-    """Every listener on *host*, read with the survey's own inventory, in a stable order."""
+    """Every listener on *host*, read with the survey's own inventory, in a stable order.
+
+    One command goes through ``run`` first, so its session is open before
+    the read. The inventory bounds each read at five seconds, and a survey
+    opens that session under the login's own budget before its inventory
+    runs. A read made here on a session not yet open would spend the bound on
+    the login: 2.6 of the five seconds on the emulated Ubuntu guest with the
+    bed idle, and more than five beside a loaded lane, against 0.4 seconds
+    on the open session.
+    """
+    await host.run("true")
     inv = await run_inventory(partial(_run_only, host), elevate=False)
     assert not inv.error, (label, inv)
     return sorted(inv.listeners, key=repr)
