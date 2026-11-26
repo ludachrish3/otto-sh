@@ -115,3 +115,26 @@ def test_logging_levels_conflict_error_is_a_value_error():
 
     assert issubclass(LoggingLevelsConflictError, OttoError)
     assert issubclass(LoggingLevelsConflictError, ValueError)
+
+
+def test_instruction_error_built_from_record():
+    from otto.config.scope import InactiveReason
+    from otto.session import InstructionInactiveError
+
+    record = InactiveReason(
+        project="Acme",
+        normalized="acme",
+        reason="host_starved",
+        loaded_labs=("a", "b"),
+        lab_patterns=("a",),
+        host_patterns=("h1", "h2"),
+        applicable_labs=("a",),
+    )
+    err = InstructionInactiveError.from_record(instruction="blink", owner="Acme", reason=record)
+    assert (err.project, err.reason) == ("acme", "host_starved")
+    assert (err.loaded_labs, err.host_patterns) == (["a", "b"], ["h1", "h2"])
+    assert str(err) == (
+        "'blink' belongs to project 'Acme', which is inactive: its [project] host_patterns "
+        "(h1, h2) match no host in the loaded lab(s) [a, b]; to activate it, widen "
+        "host_patterns, or add acme to include_projects"
+    )

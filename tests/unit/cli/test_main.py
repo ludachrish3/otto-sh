@@ -218,9 +218,12 @@ class TestEagerOptions:
         # every other caller sees it — would silently run the real bootstrap.
         from rich.panel import Panel
 
-        project = fake_project(
-            get_lab_panel=lambda *, report=None, view=None: Panel("sentinel-lab-from-patch")
-        )
+        def sentinel_panel(
+            *, report=None, view=None, listed_labs=frozenset(), absence_provable=False
+        ):
+            return Panel("sentinel-lab-from-patch")
+
+        project = fake_project(get_lab_panel=sentinel_panel)
         with patch("otto.declared.get_projects", return_value=[project]):
             result = runner.invoke(app, ["--list-labs"])
         assert result.exit_code == 0, result.output

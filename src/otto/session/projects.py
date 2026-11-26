@@ -1,10 +1,11 @@
 """Project selection and the bootstrap gate: who takes part, and whether a broken one stops it."""
 
 import dataclasses
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from typing_extensions import final
 
+from ..config.scope import PreLabReason
 from .errors import ProjectLoadError, ProjectSelectionError
 
 if TYPE_CHECKING:
@@ -36,7 +37,7 @@ class DemotedProject:
     """The project's name as discovered."""
     normalized_name: str
     """The project's normalised name, the spelling the project switches take."""
-    reason: 'Literal["excluded", "out_of_scope"]'
+    reason: PreLabReason
     labs: list[str] = dataclasses.field(default_factory=list)
     """The lab selection an ``"out_of_scope"`` verdict was made against."""
 
@@ -67,7 +68,7 @@ class RequiredProject:
     """The project's name as discovered."""
     normalized_name: str
     """The project's normalised name, the spelling the project switches take."""
-    reason: 'Literal["excluded", "out_of_scope"]'
+    reason: PreLabReason
     """Why the project is inactive on its own, switched off or outside the labs."""
     required_by: list[str]
     """The active projects that require it, directly or transitively, by discovered name."""
@@ -82,7 +83,7 @@ class RequiredProject:
 
 
 def _inactive_reason_text(
-    reason: 'Literal["excluded", "out_of_scope"]',
+    reason: PreLabReason,
     normalized_name: str,
     labs: list[str],
     *,
@@ -175,18 +176,11 @@ def classify_load_errors(
     Validating the names (unknown, overlapping) is :func:`select_projects`'s
     job, at the CLI and ``open_context`` boundary.
     """
-    from ..config.scope import inactive_before_lab
+    from ..config.scope import pre_lab_inactive_reason
     from ..models.dependencies import normalize_name
 
-    included, excluded = set(_normalised(list(include))), set(_normalised(list(exclude)))
-
-    def inactive_reason(project: "Project") -> 'Literal["excluded", "out_of_scope"] | None':
-        name = normalize_name(project.name)
-        if name in excluded:
-            return "excluded"
-        if name not in included and inactive_before_lab(project.project_scope, labs or None):
-            return "out_of_scope"
-        return None
+    def inactive_reason(project: "Project") -> PreLabReason | None:
+        return pre_lab_inactive_reason(project, labs=labs, include=include, exclude=exclude)
 
     by_dir = {str(project.root): project for project in result.projects}
     required = _required_by(

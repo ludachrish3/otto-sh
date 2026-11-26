@@ -173,3 +173,32 @@ class TestWalkWithEverythingExcluded:
         assert "project 'project1' switched off for this run" in blob
         assert "project 'project2' switched off for this run" in blob
         assert result.returncode == 1, blob
+
+
+class TestListLabsScope:
+    def test_e2e_list_labs_omits_unmatched_lab(self, tmp_path):
+        """``--list-labs`` lists the lab a project's ``lab_patterns`` admit and no other."""
+        import json
+
+        from tests._fixtures.labdata import lab_json_v2
+
+        document = lab_json_v2(
+            [
+                {"ip": "10.0.0.1", "element": "a", "labs": ["scoped_lab"]},
+                {"ip": "10.0.0.2", "element": "b", "labs": ["unmatched_lab"]},
+            ]
+        )
+        project = make_project(
+            tmp_path / "scopedproj",
+            name="scopedproj",
+            version="0.0.1",
+            extra=(
+                '[[lab.sources]]\nbackend = "json"\npaths = ["labdata"]\n'
+                '[project]\nlab_patterns = ["scoped_lab"]\n'
+            ),
+            files={"labdata/lab.json": json.dumps(document)},
+        )
+        result = _run(["--list-labs"], roots=str(project), xdir=tmp_path / "x")
+        assert result.returncode == 0, result.stderr
+        assert "scoped_lab" in result.stdout
+        assert "unmatched_lab" not in result.stdout

@@ -619,3 +619,21 @@ class TestCovTicketsJsonOption:
         assert exit_code != 0
         assert ctx_obj == {}
         assert "[coverage.tickets]" in output
+
+
+def test_exit_no_tests_matched_names_each_project_left_out(capsys, monkeypatch):
+    """A selection scoping emptied exits 1 and prints one line per dropped project, unwrapped."""
+    from otto.cli.test import _exit_no_tests_matched
+    from otto.suite.run import _no_tests
+
+    monkeypatch.setenv("COLUMNS", "40")
+    wide = "project b was not searched: " + "x" * 80 + " -I b"
+    error = _no_tests(["project a was not searched: [x] -I a", wide])
+    assert error.not_searched == ("project a was not searched: [x] -I a", wide)
+    with pytest.raises(typer.Exit) as caught:
+        _exit_no_tests_matched(error)
+    assert caught.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "No tests matched the selection." in out
+    assert "project a was not searched: [x] -I a" in out
+    assert wide in out.splitlines()

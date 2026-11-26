@@ -28,6 +28,8 @@ from .scope import (
     DuplicateProjectError,
     MonitorSettings,
     ProjectScopeConfig,
+    applies_to_any,
+    applies_to_lab,
 )
 
 if TYPE_CHECKING:
@@ -428,12 +430,15 @@ class Project:
         *,
         report: "LabStatusReport | Exception | None" = None,
         view: "InventoryView | None" = None,
+        listed_labs: frozenset[str] = frozenset(),
+        absence_provable: bool = False,
     ) -> "Panel":
-        """Build a Rich panel listing the labs this project's host sources declare.
+        """Build a Rich panel listing the labs this project applies to.
 
         With *report* (``otto --list-labs`` builds one over every project's
-        sources), the rows are the labs some source of this project declares,
-        as *report* decided them: ``• name`` for an available lab,
+        sources), the rows are the labs some source of this project declares
+        that its ``[project] lab_patterns`` admit (every one when it declares
+        none), as *report* decided them: ``• name`` for an available lab,
         ``• name — unavailable: reason`` otherwise, then one
         ``⚠ source X unavailable: reason`` row for each of this project's
         sources that failed. Without one, the project's own sources are built
@@ -445,6 +450,13 @@ class Project:
         returns it, and shows the same row. *view* is not used when *report*
         is given. Listing promises a lab's status only: loading it can still
         fail.
+
+        *listed_labs* is every lab the whole listing knows, from every
+        project's sources, and *absence_provable* says whether that is
+        everything the sources declare (no source failed, one combined
+        report): together they let ``_lab_rows`` tell a project whose
+        patterns match no lab anywhere from one whose labs another project's
+        sources declare.
         """
         from rich.panel import Panel
         from rich.text import Text
@@ -461,7 +473,13 @@ class Project:
                 # host source; surface the reason in-panel instead of a traceback.
                 lab_name_text = Text(f"⚠ host source unavailable: {report}", style="red")
             else:
-                lab_name_text = _lab_rows(report=report, project_root=self.root)
+                lab_name_text = _lab_rows(
+                    report=report,
+                    project_root=self.root,
+                    scope=self.project_scope,
+                    listed_labs=listed_labs,
+                    absence_provable=absence_provable,
+                )
 
         return Panel(
             lab_name_text,
@@ -845,23 +863,52 @@ def discovered_teardown_deadline() -> "float | None":
         return None
 
 
-def _lab_rows(*, report: "LabStatusReport", project_root: Path) -> "Text":
-    """Return the lab rows of the panel of the project at *project_root*, as *report* decided."""
+def _lab_rows(
+    *,
+    report: "LabStatusReport",
+    project_root: Path,
+    scope: ProjectScopeConfig | None,
+    listed_labs: frozenset[str],
+    absence_provable: bool,
+) -> "Text":
+    """Return the lab rows of the panel of the project at *project_root*, as *report* decided.
+
+    A lab row stays only when *scope* applies to the lab
+    (:func:`~otto.config.scope.applies_to_lab`), available or not; the
+    ``⚠ source X unavailable`` rows describe a source, not a lab, and stay. A
+    declared *scope* that applies to none of *listed_labs* (every lab the
+    whole listing knows) earns a warning row when *absence_provable*; one
+    that applies to some other project's lab and has no row of its own says
+    where its labs come from.
+    """
     from rich.text import Text
 
-    rows: list[str] = []
+    lines: list[Text] = []
     for status in report.statuses_declared_in(project_root=project_root):
+        if not applies_to_lab(scope, status.name):
+            continue
         if status.unavailable is None:
-            rows.append(f"• {status.name}")
+            lines.append(Text(f"• {status.name}"))
         else:
-            rows.append(f"• {status.name} — unavailable: {status.unavailable.reason}")
-    text = Text("\n".join(rows))
-    for outage in report.unavailable_sources:
-        if outage.source.project_root == project_root:
-            if text:
-                text.append("\n")
-            text.append(
-                f"⚠ source {outage.source.label} unavailable: {outage.diagnostic.reason}",
-                style="red",
+            lines.append(Text(f"• {status.name} — unavailable: {status.unavailable.reason}"))
+    lines.extend(
+        Text(
+            f"⚠ source {outage.source.label} unavailable: {outage.diagnostic.reason}",
+            style="red",
+        )
+        for outage in report.unavailable_sources
+        if outage.source.project_root == project_root
+    )
+    if scope is not None:
+        if absence_provable and not applies_to_any(scope, listed_labs):
+            patterns = ", ".join(p.pattern for p in scope.lab_patterns)
+            lines.append(
+                Text(
+                    f"⚠ no lab listed: lab_patterns ({patterns}) in this project's "
+                    ".otto/settings.toml match no lab any source declares",
+                    style="yellow",
+                )
             )
-    return text
+        elif not lines and applies_to_any(scope, listed_labs):
+            lines.append(Text("its labs come from another project's lab sources", style="dim"))
+    return Text("\n").join(lines)

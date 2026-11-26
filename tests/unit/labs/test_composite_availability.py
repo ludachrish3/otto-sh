@@ -521,7 +521,15 @@ def test_a_projects_lab_rows_read_the_statuses_once(monkeypatch) -> None:
         raise AssertionError("status(name=...) scans every lab; the rows must not call it")
 
     monkeypatch.setattr(LabStatusReport, "status", no_scan)
-    rows = str(_lab_rows(report=report, project_root=_ROOT_A)).splitlines()
+    rows = str(
+        _lab_rows(
+            report=report,
+            project_root=_ROOT_A,
+            scope=None,
+            listed_labs=frozenset(),
+            absence_provable=False,
+        )
+    ).splitlines()
     assert len(rows) == 500
     assert rows[7] == "• lab-0007 — unavailable: off"
     assert report.statuses_declared_in(project_root=_ROOT_B) == []

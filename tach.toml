@@ -524,7 +524,7 @@ depends_on = ["otto.errors"]
 [[modules]]
 path = "otto.session.activation"
 layer = "run"
-depends_on = ["otto.session.errors", "otto.config.scope", "otto.models.dependencies"]
+depends_on = ["otto.session.errors", "otto.config.scope"]
 
 [[modules]]
 path = "otto.session.dependencies"

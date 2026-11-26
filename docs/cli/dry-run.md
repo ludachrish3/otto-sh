@@ -69,6 +69,10 @@ acme 0.1.0
         └── test_expect_and_artifacts
 ```
 
+The tree is the active projects' only; a project left out has none, and the
+command names it ([Tests and listings search only the active
+projects](projects.md#tests-and-listings-search-only-the-active-projects)).
+
 ## `otto run` and `otto test` build and show their options
 
 `run` and `test` are the verbs that take *registered* options

@@ -1120,10 +1120,20 @@ def test_no_panel_when_otto_registered_nothing(monkeypatch):
     assert first_party_instructions_panel() is None
 
 
+def _all_participate(ctx, projects):
+    """Stand-in for the listing preamble: every project takes part (its own tests pin the rest)."""
+    from otto.config.scope import Participation
+
+    return Participation(kept=list(projects), dropped=[], tier="pre_lab")
+
+
 def test_list_instructions_shows_the_defaults_with_no_projects_configured(registered):
     from unittest.mock import patch
 
-    with patch("otto.declared.get_projects", return_value=[]):
+    with (
+        patch("otto.declared.get_projects", return_value=[]),
+        patch("otto.cli.invoke.listing_participation", _all_participate),
+    ):
         result = runner.invoke(run_app, ["--list-instructions"])
 
     assert result.exit_code == 0, result.output
@@ -1160,7 +1170,10 @@ def test_list_instructions_puts_the_defaults_ahead_of_the_project_panels(registe
     from unittest.mock import patch
 
     projects = [_PanelProject("first-project 1.0"), _PanelProject("second-project 1.0")]
-    with patch("otto.declared.get_projects", return_value=projects):
+    with (
+        patch("otto.declared.get_projects", return_value=projects),
+        patch("otto.cli.invoke.listing_participation", _all_participate),
+    ):
         result = runner.invoke(run_app, ["--list-instructions"])
 
     assert result.exit_code == 0, result.output
@@ -1171,6 +1184,107 @@ def test_list_instructions_puts_the_defaults_ahead_of_the_project_panels(registe
         < titles.index("first-project")
         < titles.index("second-project")
     )
+
+
+# ── --list-instructions: only the participating projects ─────────────────────
+
+
+@pytest.fixture
+def two_projects(monkeypatch):
+    """``alpha`` and ``beta``, both discovered; the bootstrap gate and the lab load stand aside."""
+    projects = [fake_project("alpha"), fake_project("beta")]
+    monkeypatch.setattr("otto.declared.get_projects", lambda: projects)
+    monkeypatch.setattr("otto.cli.invoke.fail_loud_on_bootstrap_errors", lambda ctx=None: None)
+    monkeypatch.setattr("otto.cli.invoke.ensure_inline_lab", lambda ctx: None)
+    # The switch check reads the real discovery, which does not know alpha and beta.
+    monkeypatch.setattr("otto.cli.invoke.validate_project_switches", lambda ctx: None)
+    return projects
+
+
+def _root(monkeypatch, **fields):
+    """Stand in for the root callback's stash: the ``-l`` / ``-I`` / ``-E`` it parsed."""
+    from otto.cli import invoke
+    from tests._fixtures.rootoptions import make_root_options
+
+    opts = make_root_options(**fields)
+    monkeypatch.setattr(invoke, "maybe_root_options", lambda ctx: opts)
+
+
+def test_list_instructions_omits_inactive_project_panel(registered, two_projects, monkeypatch):
+    _root(monkeypatch, exclude_projects=("beta",))
+
+    result = runner.invoke(run_app, ["--list-instructions"])
+
+    assert result.exit_code == 0, result.output
+    assert "alpha" in result.output
+    assert "beta" not in result.output
+
+
+def test_list_instructions_first_party_panel_stays(registered, two_projects, monkeypatch):
+    _root(monkeypatch, exclude_projects=("alpha", "beta"))
+
+    result = runner.invoke(run_app, ["--list-instructions"])
+
+    assert result.exit_code == 0, result.output
+    assert "otto defaults" in result.output
+    assert "alpha" not in result.output
+
+
+def test_list_instructions_otto_lab_env_narrows(registered, two_projects, monkeypatch):
+    """OTTO_LAB through the real root callback picks the lab tier and prints no cue."""
+    from typer.testing import CliRunner
+
+    from otto.cli.main import app
+    from otto.config.scope import Participation
+
+    seen = []
+
+    def narrow(projects, *, ctx=None, selection=None):
+        seen.append((ctx, selection))
+        return Participation(
+            kept=[p for p in projects if p.name == "alpha"], dropped=[], tier="lab"
+        )
+
+    monkeypatch.setattr("otto.config.scope.participating", narrow)
+    monkeypatch.setenv("OTTO_LAB", "somelab")
+    result = CliRunner().invoke(app, ["run", "--list-instructions"])
+
+    assert result.exit_code == 0, result.output
+    assert len(seen) == 1
+    assert seen[0][1] is None, "the lab tier answered, not the pre-lab one"
+    assert "no lab selected" not in result.output
+    assert "alpha" in result.output
+    assert "beta" not in result.output
+
+
+def test_list_instructions_gates_the_switches_before_anything_else(registered, monkeypatch):
+    """A typo'd ``-E`` with no projects is the switch refusal (exit 2)."""
+    from otto.cli import invoke
+
+    _root(monkeypatch, exclude_projects=("typo",))
+    monkeypatch.setattr("otto.declared.get_projects", list)
+    monkeypatch.setattr(invoke, "fail_loud_on_bootstrap_errors", lambda ctx=None: None)
+
+    result = runner.invoke(run_app, ["--list-instructions"])
+
+    assert result.exit_code == 2, result.output
+    assert "no project 'typo'" in result.output
+
+
+@pytest.mark.parametrize("labs", [None, ["somelab"]])
+def test_list_instructions_no_lab_cue(registered, two_projects, monkeypatch, labs):
+    _root(monkeypatch, labs=labs)
+    monkeypatch.setattr("otto.run_context.get_context", lambda: None)
+    monkeypatch.setattr(
+        "otto.config.scope.participating",
+        lambda projects, **_kw: _all_participate(None, projects),
+    )
+    cue = "no lab selected, showing every project; -l <lab> narrows"
+
+    result = runner.invoke(run_app, ["--list-instructions"])
+
+    assert result.exit_code == 0, result.output
+    assert (cue in " ".join(result.output.split())) is (labs is None)
 
 
 # ── The merge: one command, every body's flags ───────────────────────────────
@@ -1506,7 +1620,7 @@ class TestProjectInstructionOwnOptionValidation:
         The patch feeds the run's projects, and with them the orchestrator's walk
         order (``ctx.ordered_projects``).
         ``project_scope=None`` is the documented undeclared shape
-        (:func:`otto.config.scope._lab_applies`) -- the whole-lab fallback,
+        (:func:`otto.config.scope.applies_to_lab`) -- the whole-lab fallback,
         never a narrowing -- so whatever verdicts the context resolves, this
         project's walk is never narrowed away.
         """

@@ -32,7 +32,6 @@ from ..declared import (
     MatchValue,
     declared_for_host,
     host_matches,
-    surviving_projects,
 )
 from ..utils import anchor_path
 from .dev_tool import registered_dev_tool_providers
@@ -130,13 +129,13 @@ class LabListing:
     unused: list[UnusedEntry] = field(default_factory=list[UnusedEntry])
 
 
-def active_projects() -> list[Any]:
-    """Return the bootstrapped projects whose declarations apply, in discovery order.
+def _participates(item: Any, names: set[str]) -> bool:
+    """Whether *item*'s owner is among the participating project *names*.
 
-    Delegates to :func:`otto.declared.surviving_projects`, the same set
-    :func:`otto.declared.declared_for_host` collects from.
+    An item with no owner is not a non-participating project's, so it stays.
     """
-    return surviving_projects()
+    owner = getattr(item, "owner", None)
+    return not owner or owner in names
 
 
 def _entries(project: Any, seam: str) -> list[DeclaredEntry]:
@@ -297,9 +296,13 @@ def _unused_declared(projects: list[Any], seam: str, hosts: list[Any]) -> list[U
     Per host: the entries :func:`~otto.declared.declared_for_host` admits passed
     the scope gate, those of them :func:`~otto.declared.host_matches` accepts
     matched, and the ones that built are read off the recorded ``source_entry``
-    stamps. Entries are tracked by identity (``DeclaredEntry`` holds dicts, so it
-    does not hash). An entry whose ``variant`` differs from the run's is
-    passed over by ingest, so it reads ``variant 'x' (run is y)``.
+    stamps. *projects* are the participating ones, but taking part is not
+    passing the gate: ``-I`` keeps a project whose ``[project]`` scope admits
+    no host of the lab (``-I`` does not invent a fleet), and its entries read
+    ``outside <project>'s [project] scope``. Entries are tracked by identity
+    (``DeclaredEntry`` holds dicts, so it does not hash). An entry whose
+    ``variant`` differs from the run's is passed over by ingest, so it reads
+    ``variant 'x' (run is y)``.
     """
     from ..invocation import current_policy
 
@@ -336,8 +339,11 @@ def _unused_declared(projects: list[Any], seam: str, hosts: list[Any]) -> list[U
     return out
 
 
-def _unused_providers(seam: str, hosts: list[Any]) -> list[UnusedEntry]:
-    """List provider instances dropped for a taken name that no host ended up carrying."""
+def _unused_providers(seam: str, hosts: list[Any], names: set[str]) -> list[UnusedEntry]:
+    """List provider instances dropped for a taken name that no host ended up carrying.
+
+    Only providers owned by a project in *names* (the participating ones) are listed.
+    """
     meta = _SEAMS[seam]
     carried = {
         (getattr(item, "owner", None), item.name)
@@ -349,6 +355,8 @@ def _unused_providers(seam: str, hosts: list[Any]) -> list[UnusedEntry]:
     seen: set[tuple[str, str]] = set()
     for host in hosts:
         for _host_id, item in getattr(host, meta["shadowed"], []):
+            if not _participates(item, names):
+                continue
             if (getattr(item, "owner", None), item.name) in carried:
                 continue
             reason = f"shadowed by an earlier entry named {item.name!r}"
@@ -363,6 +371,9 @@ def _unused_providers(seam: str, hosts: list[Any]) -> list[UnusedEntry]:
 def lab_rows(lab: Any, projects: list[Any], seam: str) -> LabListing:
     """Describe what ingest attached to *lab*'s hosts for *seam*, and what it left out.
 
+    *projects* are the participating ones; an item owned by any other project
+    gets no row and no ``unused`` line.
+
     One row per distinct (project, name, kind, variant, instrumented, artifact,
     stage dir), rows in order of first appearance walking the lab's hosts,
     each carrying the ids of the hosts that have it. ``unused`` lists declared
@@ -371,6 +382,7 @@ def lab_rows(lab: Any, projects: list[Any], seam: str) -> LabListing:
     nothing here asks a host anything.
     """
     hosts = list(lab.hosts.values())
+    names = {p.name for p in projects}
     roots = {r.name: Path(r.root) for r in projects if getattr(r, "root", None) is not None}
     by_key: dict[tuple[str, str, str, str, str, str, str], LabRow] = {}
     # Each host builds its own instance of a shared definition; scan an artifact
@@ -380,6 +392,8 @@ def lab_rows(lab: Any, projects: list[Any], seam: str) -> LabListing:
     instrumented_memo: dict[Any, str] = {}
     for host in hosts:
         for item in getattr(host, _SEAMS[seam]["attached"], []):
+            if not _participates(item, names):
+                continue
             project = getattr(item, "owner", None) or ""
             kind = _kind_cell(item)
             artifact = _artifact_cell(item, roots)
@@ -404,5 +418,5 @@ def lab_rows(lab: Any, projects: list[Any], seam: str) -> LabListing:
                 row.hosts.append(host.id)
     return LabListing(
         rows=list(by_key.values()),
-        unused=_unused_declared(projects, seam, hosts) + _unused_providers(seam, hosts),
+        unused=_unused_declared(projects, seam, hosts) + _unused_providers(seam, hosts, names),
     )

@@ -122,7 +122,7 @@ def list_labs_callback(value: bool) -> None:
 
 
 def _lab_panels(projects: "list[Project]") -> "list[Panel]":
-    """Each project's lab panel, formatted from the one listing.
+    """Each project's lab panel, formatted from the one listing and filtered by its scope.
 
     The listing (:func:`~otto.labs.sources.lab_listing`) is ``otto
     --list-labs``' and the ``otto init`` doctor's alike. Its report is the
@@ -136,8 +136,19 @@ def _lab_panels(projects: "list[Project]") -> "list[Panel]":
     from ..labs.sources import lab_listing
 
     listing = lab_listing(projects=projects, view=deferred_inventory_view(projects=projects))
+    report = listing.report
+    # Every lab the listing knows, unavailable ones included: a project may apply
+    # to a lab another project's sources declare. Absence is provable only from
+    # one combined report with no failed source.
+    listed_labs = frozenset(s.name for s in report.labs) if report is not None else frozenset()
+    absence_provable = report is not None and not report.unavailable_sources
     return [
-        project.get_lab_panel(report=listing.outcome(root=project.root)) for project in projects
+        project.get_lab_panel(
+            report=listing.outcome(root=project.root),
+            listed_labs=listed_labs,
+            absence_provable=absence_provable,
+        )
+        for project in projects
     ]
 
 
@@ -684,7 +695,7 @@ def main(  # noqa: PLR0913 — CLI command params
             "--list-labs",
             callback=list_labs_callback,
             is_eager=True,
-            help="List all available lab names.",
+            help="List the labs each project applies to.",
         ),
     ] = False,
     show_lab: Annotated[

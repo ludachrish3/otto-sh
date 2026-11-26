@@ -125,7 +125,7 @@ member	otto.config:Project.dependencies	field
 member	otto.config:Project.dependencies_summary	method	sync	-
 member	otto.config:Project.docker_settings	field
 member	otto.config:Project.get_instructions_panel	method	sync	-
-member	otto.config:Project.get_lab_panel	method	sync	KO:report:N KO:view:N
+member	otto.config:Project.get_lab_panel	method	sync	KO:report:N KO:view:N KO:listed_labs:Z:[] KO:absence_provable:B:false
 member	otto.config:Project.get_markers_panel	method	sync	KO:markers:-
 member	otto.config:Project.get_otto_settings_path	method	sync	-
 member	otto.config:Project.host_preferences	field
@@ -5790,6 +5790,7 @@ abstract	otto.session:DependencyRefusedError	-
 name	otto.session:InstructionInactiveError	class
 mro	otto.session:InstructionInactiveError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.session:InstructionInactiveError	sync	PK:instruction:- KO:owner:- KO:project:- KO:reason:- KO:loaded_labs:N KO:lab_patterns:N KO:host_patterns:N
+member	otto.session:InstructionInactiveError.from_record	classmethod	sync	KO:instruction:- KO:owner:- KO:reason:-
 abstract	otto.session:InstructionInactiveError	-
 name	otto.session:LabBuildError	class
 mro	otto.session:LabBuildError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
@@ -5876,6 +5877,7 @@ abstract	otto.suite:MonitorHandle	@final @manifest:subclass=false
 name	otto.suite:NoTestsMatchedError	class
 mro	otto.suite:NoTestsMatchedError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.suite:NoTestsMatchedError	sync	@builtin:builtins.ValueError
+member	otto.suite:NoTestsMatchedError.not_searched	attribute
 abstract	otto.suite:NoTestsMatchedError	-
 name	otto.suite:OttoFixturesPlugin	class
 mro	otto.suite:OttoFixturesPlugin	-
@@ -5924,7 +5926,7 @@ member	otto.suite:SuiteRunResult.stability_unstable	field
 abstract	otto.suite:SuiteRunResult	@final @manifest:subclass=false
 name	otto.suite:UnknownSelectionError	class
 mro	otto.suite:UnknownSelectionError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
-call	otto.suite:UnknownSelectionError	sync	PK:message:- KO:param_hint:S:"NAMES"
+call	otto.suite:UnknownSelectionError	sync	PK:message:- KO:param_hint:S:"NAMES" KO:not_searched:T:[]
 abstract	otto.suite:UnknownSelectionError	-
 name	otto.suite:prepare_run	function
 call	otto.suite:prepare_run	sync	PK:opts:- KO:dry_run:B:false

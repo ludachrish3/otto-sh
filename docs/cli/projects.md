@@ -69,7 +69,7 @@ another project's `init` module.
 
 ## What enforcement looks like
 
-Activation shows up at exactly four surfaces, and each says which axis
+Activation shows up at exactly five surfaces, and each says which axis
 decided.
 
 ### Fleet walks skip the project, out loud
@@ -147,6 +147,53 @@ rather than the labs.
 
 First-party instructions (`status`, `install`, and the rest of the built-ins)
 have no owning project and are never refused.
+
+### Tests and listings search only the active projects
+
+`otto test`, `--list-tests`, the dry run and `--list-markers` look only in the
+projects that take part. A project left out has no tree and no marker panel,
+and is never collected. A run logs one line for each project it left out, the
+fleet walks' line with `test` as the verb:
+
+```console
+$ otto --lab alpha test test_in_a
+WARN     project 'project_b' is not applicable to the loaded lab(s) [alpha]
+         (lab_patterns: beta) — skipping it for test
+```
+
+The listings and the dry run log no such line; they say it with the
+not-searched lines below when it decides the answer. A `--list-tests` that
+selects no test, because every project was left out for example, prints those
+lines after any trees and still exits **0**.
+
+A name only a left-out project holds is an unknown name: the command exits **2**
+with did-you-mean suggestions from the projects that were searched, then one
+line per project left out, each saying how to search it (`-I <project>`, or
+dropping the `-E`):
+
+```console
+$ otto --lab alpha test --list-tests test_only_b
+Usage: otto test [OPTIONS] [NAMES...]...
+Error: Invalid value for NAMES: no collected test matches: 'test_only_b' (did you mean: test_in_a?)
+project project_b was not searched: its lab_patterns (beta) do not match the loaded lab(s) alpha. Use -I project_b to search it anyway.
+```
+
+(not-searched-lines)=
+The line takes one of three forms, by why the project was left out (lists are
+joined with `, `):
+
+```text
+project {name} was not searched: its lab_patterns ({patterns}) do not match the loaded lab(s) {labs}. Use -I {name} to search it anyway.
+project {name} was not searched: its host_patterns ({patterns}) match no host in the loaded lab(s) {labs}. Use -I {name} to search it anyway.
+project {name} was not searched: it was switched off with -E {name}. Remove -E {name} to search it.
+```
+
+`No tests matched the selection.` (exit **1**) is for a selection no table
+knows a name for, or an empty `-m` selection; it carries the same lines.
+`--list-labs` shows only the labs each project applies to, and the other
+listings follow the same rule. Without `--lab` there is no lab to decide, so
+the listings show every project the switches leave in and say so
+({ref}`project-scope-active`).
 
 ### A broken project you are not using is a warning, not a failure
 

@@ -93,7 +93,7 @@ def test_list_products_without_lab_exits_zero_and_prints_the_declared_table(list
         "match",
         "artifact",
     ]
-    assert "products" in result.output.splitlines()[0]
+    assert "products" in result.output.splitlines()[1]  # [0] is the no-lab cue
     assert "╭" in result.output  # box.ROUNDED
     agent = next(line for line in result.output.splitlines() if "agent" in line)
     assert [c.strip() for c in agent.strip("│").split("│")] == [
@@ -112,7 +112,7 @@ def test_list_tools_without_lab_lists_the_dev_tool_entries(listing_world):
     _declare_two(listing_world)
     result = _invoke("--list-tools")
     assert result.exit_code == 0, result.output
-    assert "dev tools" in result.output.splitlines()[0]
+    assert "dev tools" in result.output.splitlines()[1]  # [0] is the no-lab cue
     assert "trace" in result.output
     assert "agent" not in result.output
 
@@ -198,13 +198,33 @@ def test_the_not_used_section_is_absent_when_everything_landed(listing_world):
     assert "not used in this lab" not in result.output
 
 
-def test_outside_scope_reason_prints_its_brackets_literally(listing_world):
+def test_a_project_outside_its_scope_is_omitted_from_the_lab_view(listing_world):
+    """A project whose lab patterns miss the lab does not take part: no row, no unused line."""
     project = listing_world
     project.declared_products = [_entry(project, "agent", artifact="a")]
     project.project_scope = ProjectScopeConfig([re.compile("other")], [re.compile(".*")])
     result = _invoke("--lab", "test_lab", "--list-products")
     assert result.exit_code == 0, result.output
-    assert "  agent (shell, test_project): outside test_project's [project] scope" in result.output
+    assert "products in lab test_lab" in result.output
+    assert "agent" not in result.output
+    assert "not used in this lab" not in result.output
+
+
+def test_a_project_forced_on_outside_its_scope_says_so_literally(listing_world):
+    """``-I`` keeps the project but invents no fleet: its entry is outside its scope.
+
+    The reason holds ``[project]``, which prints as written, not as Rich markup.
+    """
+    project = listing_world
+    project.declared_products = [_entry(project, "agent", artifact="a")]
+    project.project_scope = ProjectScopeConfig([re.compile("other")], [re.compile(".*")])
+    result = _invoke("--lab", "test_lab", "-I", project.name, "--list-products")
+    assert result.exit_code == 0, result.output
+    assert "not used in this lab:" in result.output
+    assert f"  agent (shell, {project.name}): outside {project.name}'s [project] scope" in (
+        result.output
+    )
+    assert "no host matches" not in result.output
 
 
 def test_a_provider_product_row_reads_code_and_its_class(listing_world):
@@ -327,9 +347,15 @@ def test_a_listing_flag_combines_with_the_other_lab_flags(listing_world):
 def test_the_lab_name_in_the_title_is_not_read_as_markup(listing_world):
     from types import SimpleNamespace
 
+    from otto.config.scope import Participation
+
     lab = SimpleNamespace(name="lab[x]", hosts={})
     with (
         patch("otto.cli.invoke.ensure_inline_lab"),
+        patch(
+            "otto.config.scope.participating",
+            lambda projects, **_kw: Participation(list(projects), [], "lab"),
+        ),
         patch("otto.run_context.get_context", return_value=SimpleNamespace(lab=lab)),
     ):
         result = _invoke("--lab", "test_lab", "--list-products")
@@ -375,3 +401,38 @@ def test_identifier_cells_are_literal_and_fold_whole_at_60_columns(listing_world
     assert result.exit_code == 0, result.output
     assert rejoin_column(result.output, 0) == "[red]n:smile:"
     assert rejoin_column(result.output, 6) == artifact
+
+
+# ── Only the participating projects ──────────────────────────────────────────────
+
+
+def test_list_products_honours_exclude(listing_world):
+    _declare_two(listing_world)
+    result = _invoke("-E", listing_world.name, "--list-products")
+    assert result.exit_code == 0, result.output
+    assert "products" in result.output.splitlines()[1]  # [0] is the no-lab cue
+    assert "test_project" not in result.output.split("no lab selected")[-1]
+    assert "agent" not in result.output
+    assert "kcov" not in result.output
+
+
+@pytest.mark.parametrize("flag", ["--list-products", "--list-tools"])
+def test_list_star_no_lab_cue(listing_world, flag):
+    _declare_two(listing_world)
+    cue = "no lab selected, showing every project; -l <lab> narrows"
+    assert cue in " ".join(_invoke(flag).output.split())
+    assert cue not in " ".join(_invoke("--lab", "test_lab", flag).output.split())
+
+
+def test_a_typod_exclude_with_no_projects_is_the_switch_refusal_not_no_project(monkeypatch):
+    """The gates run in the old order: switches (exit 2) before the no-projects refusal (exit 1)."""
+    from otto.cli import invoke
+    from tests._fixtures.rootoptions import make_root_options
+
+    opts = make_root_options(exclude_projects=("typo",))
+    monkeypatch.setattr(invoke, "maybe_root_options", lambda ctx: opts)
+    monkeypatch.setattr("otto.declared.get_projects", list)
+    monkeypatch.setattr(invoke, "fail_loud_on_bootstrap_errors", lambda ctx=None: None)
+    result = runner.invoke(app, ["--list-products"], env=WIDE)
+    assert result.exit_code == 2, result.output
+    assert "no project 'typo'" in result.output

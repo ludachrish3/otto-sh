@@ -32,8 +32,8 @@ otto test --list-markers
 
 - **`NAMES`** are tests to run, any number of them: a test name
   (`test_reboot`), a class name (`TestDevice`, every test in it) or both
-  (`TestDevice::test_reboot`). Each name is looked up in every configured
-  project. {doc}`selection` has the forms and how they match.
+  (`TestDevice::test_reboot`). Each name is looked up in every project that
+  takes part in the run ({ref}`project-scope`). {doc}`selection` has the forms and how they match.
 - **A run needs a name or `-m`.** With neither, `otto test` exits 2 with
   `otto test needs at least one test name or -m EXPR`. `-m` alone selects by
   marker; with names, it narrows the named tests.
@@ -41,8 +41,9 @@ otto test --list-markers
   `otto test --firmware 2.1 TestDevice` are the same command.
 - **`--help` and the `--list-*` flags** answer and exit before that check, so
   they need no name. `--list-tests` and `--list-markers` also need no
-  `--lab`: they read what pytest collects from the test files, and load no
-  lab.
+  `--lab`: they read what pytest collects from the test files. Without one
+  they show every project that `-E` has not switched off and say so ({ref}`project-scope-active`); with
+  `--lab` they show only the projects active for that lab and contact no host.
 - **Global options go before `test`.** `--lab`, `-n` (dry run) and
   `--log-level` belong to `otto` itself
   ([Global options](../index.md#global-options)):
@@ -163,7 +164,14 @@ project1 1.0.0
         └── test_interface_up[mgmt0]
 ```
 
-With no names and no `--markers` it lists every collected test. Every
+With no names and no `--markers` it lists every collected test of the
+projects that take part. A project that does not (inactive for the `--lab`, or
+switched off with `-E`) has no tree and is not searched; what the command
+says about it is in
+[Tests and listings search only the active projects](../projects.md#tests-and-listings-search-only-the-active-projects).
+`--list-tests --lab` loads
+the lab, which builds the reservation backend as `--list-products --lab` does
+(the reservation is not evaluated; `-R` skips it). Every
 listing is a fresh pytest collection of the files it covers, and what it
 collects updates the test-name cache
 ([What a run collects](selection.md#what-a-run-collects)).
@@ -367,7 +375,8 @@ markers = [
 ]
 ```
 
-`otto test --list-markers` prints one panel per project and then one for otto.
+`otto test --list-markers` prints one panel per participating project (every
+project without `--lab`; see {ref}`project-scope`) and then one for otto.
 A project's panel lists every marker pytest knew when it last collected the
 project's tests: the ones a pytest config declares, the ones pytest itself, a
 plugin or a conftest registers (such as `asyncio`), and the ones a test

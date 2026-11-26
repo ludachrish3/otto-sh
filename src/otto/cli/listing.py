@@ -25,11 +25,23 @@ def _print_line(text: str) -> None:
     print_literal(text)
 
 
+def print_no_lab_cue() -> None:
+    """Say, dim on stderr, that no lab narrowed the listing."""
+    from rich.console import Console
+    from rich.text import Text
+
+    Console(stderr=True).print(
+        Text("no lab selected, showing every project; -l <lab> narrows", style="dim"),
+        soft_wrap=True,
+    )
+
+
 def show_listing(ctx: "typer.Context", seam: str) -> None:
     """Print the *seam* listing (``"products"`` or ``"dev_tools"``) for this invocation.
 
     The lab view is chosen exactly when ``--lab`` was given; the declared view
-    never demands one.
+    never demands one. Which projects show is
+    :func:`otto.cli.invoke.listing_participation`'s answer in both views.
     """
     from rich import box
     from rich import print as rprint
@@ -40,20 +52,20 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
     from ..declared import get_projects
     from ..host import listing
     from .invoke import (
-        ensure_inline_lab,
-        fail_loud_on_bootstrap_errors,
         fail_without_projects,
-        root_options,
-        validate_project_switches,
+        listing_participation,
+        scope_selection,
     )
 
     title = _TITLES[seam]
-    if root_options(ctx).labs:
+    # The preamble gates the switches and the bootstrap world first.
+    participation = listing_participation(ctx, get_projects())
+    projects = participation.kept
+    if scope_selection(ctx).labs:
         from ..run_context import get_context
 
-        ensure_inline_lab(ctx)
         lab = get_context().lab
-        result = listing.lab_rows(lab, listing.active_projects(), seam)
+        result = listing.lab_rows(lab, projects, seam)
         table = Table(title=f"{title} in lab {escape(lab.name)}", box=box.ROUNDED)
         id_column(table, "name")
         table.add_column("kind")
@@ -79,11 +91,7 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
                 _print_line(f"  {entry.name} ({entry.kind}, {entry.project}): {entry.reason}")
         return
 
-    # A half-registered world would list a partial answer as if it were whole.
-    validate_project_switches(ctx)
-    fail_loud_on_bootstrap_errors(ctx)
     fail_without_projects(get_projects())
-    projects = listing.active_projects()
     table = Table(title=title, box=box.ROUNDED)
     id_column(table, "name")
     table.add_column("kind")

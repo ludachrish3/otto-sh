@@ -6,8 +6,10 @@
     otto test --list-tests [NAMES...] [-m EXPR]
     otto test --list-markers
 
-**Names.** Each name is resolved against every configured project's pytest
-collection. ``test_reboot`` selects every test of that name, in any class,
+**Names.** Each name is resolved against the pytest collection of every
+project that takes part (see :ref:`project-scope`; a project left out is named
+in a ``not searched`` line, and ``-I <project>`` brings it back).
+``test_reboot`` selects every test of that name, in any class,
 module or project (every parametrization of it); ``TestDevice`` selects every
 test in every class of that name; ``TestDevice::test_reboot`` selects that
 test in every such class. ``-m EXPR`` narrows the named tests, or, with no
@@ -36,7 +38,9 @@ matches one of the run flags below is refused when the command is built.
 **Listing**
 
 ``--list-tests``    List what the names and ``-m`` select, as a tree per project:
-                    module, then class, then test. Needs no lab.
+                    module, then class, then test.
+                    With ``--lab``, lists only the projects active for that lab;
+                    contacts no host. See :ref:`project-scope`.
 
 ``--list-markers``  List the markers available to ``-m`` and exit.
 
@@ -165,7 +169,7 @@ files it collects and runs no test, so parametrizations are expanded and
 
 import inspect
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Optional, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, NoReturn, Optional, cast, get_args, get_origin
 
 import typer
 from rich import print as rprint
@@ -177,12 +181,14 @@ from ..utils import MIN_INTERVAL_SECONDS, annotation_is_subclass
 from .completers import completion_source
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rich.panel import Panel
     from rich.tree import Tree
 
     from ..config.project import Project
     from ..suite.plugin import SelectedTest
-    from ..suite.run import Listing
+    from ..suite.run import Listing, NoTestsMatchedError
     from .invoke import LeafOptions
 
 
@@ -284,8 +290,12 @@ def _builtin_markers_panel() -> "Panel":
     )
 
 
-def list_markers_callback(value: bool) -> None:
-    """Print the markers available to --markers (one panel per project, plus otto's) and exit.
+def list_markers_callback(ctx: typer.Context, value: bool) -> None:
+    """Print the markers available to --markers (per participating project, plus otto's) and exit.
+
+    The projects are the listing's own (:func:`otto.cli.invoke.listing_participation`):
+    with a lab, those active for it; without one, the pre-lab selection. A
+    project left out is neither collected nor shown.
 
     A project's markers are the ones pytest knew when it last collected the
     project's tests: each one a pytest config file, a plugin or a conftest
@@ -293,7 +303,7 @@ def list_markers_callback(value: bool) -> None:
     (``otto.suite.run._refresh_tables``); a warm one is read as it is, with
     no collection.
     """
-    if not value:
+    if not value or ctx.resilient_parsing:
         return
     # The composition root: importing it installs the initiator that composes
     # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
@@ -303,10 +313,11 @@ def list_markers_callback(value: bool) -> None:
     from ..declared import get_projects
     from ..suite.markers import OTTO_MARKERS
     from ..suite.run import _refresh_tables
+    from .invoke import listing_participation
 
     panels = []
     code = 0
-    projects = get_projects()
+    projects = listing_participation(ctx, get_projects()).kept
     for project, table in zip(projects, _refresh_tables(projects, cold_only=True), strict=True):
         markers: list[str] = []
         if table is None:
@@ -365,27 +376,66 @@ def tests_tree(project: "Project", tests: "list[SelectedTest]") -> "Tree":
     return tree
 
 
-def _selected_tests(names: "list[str]", markers: str) -> "Listing":
+def _print_not_searched(not_searched: "Sequence[str]") -> None:
+    """Print one line per project left out, each saying how to search it, as written."""
+    from ..console import print_literal
+
+    for line in not_searched:
+        print_literal(line)
+
+
+def _print_no_tests_matched(not_searched: "Sequence[str]") -> None:
+    """Print THE "no tests matched" message, then a line per project left out.
+
+    The one CLI spelling, shared by a run, ``--list-tests`` and the dry run.
+    """
+    from rich.text import Text
+
+    from ..console import print_literal
+    from ..suite.run import NO_TESTS_MESSAGE
+
+    print_literal(Text(NO_TESTS_MESSAGE, style="red"))
+    _print_not_searched(not_searched)
+
+
+def _matched_nothing(listing: "Listing") -> bool:
+    """Whether *listing* finished and selected no test: the dry run and ``--list-tests`` ask it."""
+    return not listing.exit_code and not any(listing.tests.values())
+
+
+def _exit_no_tests_matched(error: "NoTestsMatchedError") -> NoReturn:
+    """End the command as a selection that matched nothing: exit 1, naming each project left out."""
+    _print_no_tests_matched(error.not_searched)
+    raise typer.Exit(code=1) from None
+
+
+def _selected_tests(ctx: typer.Context, names: "list[str]", markers: str) -> "Listing":
     """Collect what *names* and *markers* select, as a run would, running nothing.
 
     :func:`otto.suite.run.selected_tests`. A name no project holds ends it as
     it ends a run: a usage error with did-you-mean suggestions, or, with no
     collected test to suggest from, "No tests matched the selection." (exit 1).
+
+    Only the participating projects are searched. With a lab installed, its
+    verdict decides; without one, the root ``-I`` / ``-E`` do.
     """
     from ..suite.run import NoTestsMatchedError, selected_tests
     from ..suite.selection import UnknownSelectionError
+    from .invoke import scope_selection
 
+    selection = scope_selection(ctx)
     try:
-        return selected_tests(names, markers=markers)
+        return selected_tests(
+            names, markers=markers, include=selection.include, exclude=selection.exclude
+        )
     except UnknownSelectionError as e:
         raise typer.BadParameter(str(e), param_hint="NAMES") from None
-    except NoTestsMatchedError:
-        rprint("[red]No tests matched the selection.[/red]")
-        raise typer.Exit(code=1) from None
+    except NoTestsMatchedError as e:
+        _exit_no_tests_matched(e)
 
 
 def _print_trees(listing: "Listing") -> None:
-    """Print *listing* as one tree per project, a project with no selected test included."""
+    """Print *listing* as one tree per participating project, one with no selected test included."""
     # The composition root: importing it installs the initiator that composes
     # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
@@ -393,8 +443,10 @@ def _print_trees(listing: "Listing") -> None:
     del bootstrap
     from ..declared import get_projects
 
+    shown = set(listing.projects)
     for project in get_projects():
-        rprint(tests_tree(project, listing.tests.get(project.name, [])))
+        if project.name in shown:
+            rprint(tests_tree(project, listing.tests.get(project.name, [])))
 
 
 DRY_RUN_TESTS_HEADLINE = "dry run: pytest collected these tests; nothing ran"
@@ -422,7 +474,8 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
         typer.Option(
             "--list-tests",
             help=(
-                "List what the names and --markers select, by project, module and class, and exit."
+                "List what the names and --markers select, by project, module and class, and exit. "
+                "With --lab, lists only the projects active for that lab; contacts no host."
             ),
         ),
     ] = False,
@@ -697,8 +750,18 @@ class _OttoTestCommand(TyperCommand):
         try:
             if params.get("list_tests"):
                 names = list(params.get("names") or [])
-                listing = _selected_tests(names, params.get("markers") or "")
+                from .. import bootstrap
+
+                del bootstrap
+                from ..declared import get_projects
+                from .invoke import listing_participation
+
+                listing_participation(ctx, get_projects())
+                listing = _selected_tests(ctx, names, params.get("markers") or "")
                 _print_trees(listing)
+                if _matched_nothing(listing):
+                    # Nothing to show: say which projects were left out, and why.
+                    _print_not_searched(listing.not_searched)
                 ctx.exit(listing.exit_code)
             _check_selection(ctx, params)
         except UsageError as e:
@@ -743,9 +806,9 @@ def _run(ctx: typer.Context, names: "list[str]", prepared: "LeafOptions") -> Non
         except (OptionsValidationError, DestinationError) as e:
             raise usage_error_from(e, flags=RUN_FLAGS) from e
         print_preview_dry_run(ctx, instances)
-        listing = _selected_tests(names, run_options.markers)
-        if not listing.exit_code and not any(listing.tests.values()):
-            rprint("[red]No tests matched the selection.[/red]")
+        listing = _selected_tests(ctx, names, run_options.markers)
+        if _matched_nothing(listing):
+            _print_no_tests_matched(listing.not_searched)
             raise typer.Exit(code=1)
         rprint(f"[magenta]{DRY_RUN_TESTS_HEADLINE}[/magenta]")
         _print_trees(listing)
@@ -762,9 +825,8 @@ def _run(ctx: typer.Context, names: "list[str]", prepared: "LeafOptions") -> Non
         raise usage_error_from(e, flags=RUN_FLAGS) from e
     except UnknownSelectionError as e:
         raise typer.BadParameter(str(e), param_hint="NAMES") from None
-    except NoTestsMatchedError:
-        rprint("[red]No tests matched the selection.[/red]")
-        raise typer.Exit(code=1) from None
+    except NoTestsMatchedError as e:
+        _exit_no_tests_matched(e)
 
     if result.exit_code != 0:
         raise typer.Exit(code=result.exit_code)
