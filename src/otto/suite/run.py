@@ -22,7 +22,7 @@ import os
 import secrets
 import sys
 import threading
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +32,7 @@ from ..utils import Status
 if TYPE_CHECKING:
     from ..config.collected_tests import Classification, FileRecord, ProjectTable
     from ..config.project import Project
+    from ..config.scope import Participation
     from ..coverage.reports import CleanReport
     from ..registry import RegistrationRefused
     from ..run_context import OttoContext
@@ -60,7 +61,15 @@ class NoTestsMatchedError(OttoError, ValueError):
     Subclasses ``ValueError`` so it stays catchable as one, but the CLI adapter
     catches *this* specifically — a broad ``except ValueError`` would misreport
     an unrelated pipeline ``ValueError`` as "No tests matched the selection."
+
+    :attr:`not_searched` holds one line per project that does not take part in
+    the run (switched off, out of lab scope, host-starved), each already
+    appended to the message, one per line, so a selection scoping emptied names
+    every project it left out and why.
     """
+
+    not_searched: "tuple[str, ...]" = ()
+    """One line per project left out, already appended to the message; set by ``_no_tests``."""
 
 
 def _lexical_path(path: Path) -> Path:
@@ -354,6 +363,45 @@ def _final_exit_code(rc: int, unstable: bool, iteration_failures_only: bool = Fa
     return Status.Unstable.value if (unstable and rc == 0) else int(rc)
 
 
+def lab_less_context(
+    *,
+    include: Sequence[str] = (),
+    exclude: Sequence[str] = (),
+    output_dir: Path | None = None,
+) -> "OttoContext":
+    """Build (without installing) the sentinel lab-less context, carrying ``-I``/``-E``.
+
+    Its ``Lab`` is the ``LIBRARY_LAB_NAME`` sentinel with no hosts, so no lab
+    verdict exists for it and project participation falls back to the *include*
+    and *exclude* switches alone. The policy carries *output_dir*, inherits the
+    current variant and takes its teardown deadline from
+    ``OTTO_TEARDOWN_DEADLINE``. The one place the sentinel is constructed:
+    ``_session_context`` installs it, :func:`selected_tests` borrows it.
+    """
+    # The composition root: importing it installs the initiator that composes
+    # the library context's projects on their first read (spec 2026-10-11
+    # placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..labs.loader import Lab
+    from ..run_context import (
+        LIBRARY_LAB_NAME,
+        OttoContext,
+        fill_teardown_deadline,
+        prepared_policy,
+    )
+
+    policy = prepared_policy(output_dir=output_dir)
+    fill_teardown_deadline(policy)
+    return OttoContext(
+        lab=Lab(name=LIBRARY_LAB_NAME),
+        policy=policy,
+        include_projects=tuple(include),
+        exclude_projects=tuple(exclude),
+    )
+
+
 @contextlib.contextmanager
 def _session_context(log_dir: Path) -> "Generator[OttoContext, None, None]":
     """Guarantee an active ``OttoContext`` with an ``output_dir`` for the session(s).
@@ -393,25 +441,9 @@ def _session_context(log_dir: Path) -> "Generator[OttoContext, None, None]":
 
     active = try_get_context()
     if active is None:
-        # The composition root: importing it installs the initiator that composes
-        # the library context's projects on their first read (spec 2026-10-11
-        # placement-and-phases §3.12).
-        from .. import bootstrap
+        from ..run_context import reset_context, set_context
 
-        del bootstrap
-        from ..labs.loader import Lab
-        from ..run_context import (
-            LIBRARY_LAB_NAME,
-            OttoContext,
-            fill_teardown_deadline,
-            prepared_policy,
-            reset_context,
-            set_context,
-        )
-
-        policy = prepared_policy(output_dir=log_dir)
-        fill_teardown_deadline(policy)
-        ctx = OttoContext(lab=Lab(name=LIBRARY_LAB_NAME), policy=policy)
+        ctx = lab_less_context(output_dir=log_dir)
         token = set_context(ctx)
         try:
             yield ctx
@@ -1515,8 +1547,11 @@ class _Sessions:
         opts: RunOptions,
         home: Path,
         ctx: "OttoContext | None" = None,
+        not_searched: Sequence[str] = (),
     ) -> None:
         self.projects = projects
+        self.not_searched = list(not_searched)
+        """The notices for the projects this run does not search, carried by its errors."""
         self.runs = runs
         self.names = names
         self.opts = opts
@@ -1703,8 +1738,10 @@ class _Sessions:
                 if record.error is not None:
                     broken.append(f"{_shown(run.project, key)} did not collect: {record.error}")
         if not (known or broken):
-            return NoTestsMatchedError("No tests matched the selection.")
-        return UnknownSelectionError(unknown_names_message(unknown, known, broken=broken))
+            return _no_tests(self.not_searched)
+        return UnknownSelectionError(
+            unknown_names_message(unknown, known, broken=broken), not_searched=self.not_searched
+        )
 
     def _log_broken(self, run: _ProjectRun, outcome: _SessionOutcome) -> None:
         """Log each file *outcome*'s session could not collect, once per run."""
@@ -1737,6 +1774,40 @@ def _read_known(projects: "list[Project]", home: Path) -> list[_Known]:
     return known
 
 
+NO_TESTS_MESSAGE = "No tests matched the selection."
+
+
+def _no_tests(not_searched: Sequence[str]) -> NoTestsMatchedError:
+    """Build THE :class:`NoTestsMatchedError`: its one message, then a line per project left out."""
+    from .selection import with_not_searched
+
+    error = NoTestsMatchedError(with_not_searched(NO_TESTS_MESSAGE, not_searched))
+    error.not_searched = tuple(not_searched)
+    return error
+
+
+def _has_tests(project: "Project") -> bool:
+    """Whether *project* has a test directory on disk."""
+    return any(d.exists() for d in project.tests)
+
+
+def _collection_candidates(participation: "Participation") -> "list[Project]":
+    """Return the projects a run or a listing searches: those taking part that have tests.
+
+    THE one narrowing, shared by :func:`run_tests` and :func:`selected_tests`:
+    applied before any stored table is read, so a project that does not take
+    part is never collected.
+    """
+    return [p for p in participation.kept if _has_tests(p)]
+
+
+def _not_searched(participation: "Participation") -> list[str]:
+    """One notice per dropped project, as the errors and a listing carry them."""
+    from ..config.scope import not_searched_line
+
+    return [not_searched_line(d.reason) for d in participation.dropped]
+
+
 def run_tests(
     *,
     names: list[str] | None = None,
@@ -1744,7 +1815,11 @@ def run_tests(
     options: list[object] | None = None,
     output_dir: Path | None = None,
 ) -> SuiteRunResult:
-    """Run the named tests, and/or those a marker expression selects, in every project.
+    """Run the named tests, and/or those a marker expression selects, in the projects taking part.
+
+    A project that does not take part (switched off with ``-E``, outside the loaded
+    lab's scope, or host-starved) is not searched; a run announces each skip with one
+    warning, and ``-I <project>`` brings one back.
 
     *names* select by :func:`otto.suite.selection.matches_name`'s rule:
     ``test_reboot`` selects every test of that name, ``TestDevice`` every
@@ -1813,7 +1888,9 @@ def run_tests(
             not show took it away: then the error comes after the run.
         NoTestsMatchedError: no project had a test to run — no projects, no project
             carrying the marker, named tests the marker expression excludes,
-            or no test universe to search at all. Both this and
+            or no test universe to search at all, or every project was left out by
+            scoping. ``not_searched`` and the message hold one line per project
+            left out and why. Both this and
             ``UnknownSelectionError`` subclass ``ValueError``; catch
             ``UnknownSelectionError`` first to tell the typo case apart.
         otto.registry.RegistrationRefused: a test file or conftest
@@ -1831,6 +1908,7 @@ def run_tests(
     import pytest
 
     from ..config.home import workspace_home
+    from ..config.scope import announce_dropped, participating
     from ..output_dir import LIBRARY_TEST, materialize_output_dir, resolve_output_dir
     from ..params import use_options
     from .layout import ArtifactLayout
@@ -1847,10 +1925,16 @@ def run_tests(
         # The context first, then its projects: an inherited context's snapshot, or
         # the library sentinel's, read once (the sentinel bootstraps lazily).
         projects = session_ctx.projects
-        searched = [r for r in projects if any(d.exists() for d in r.tests)]
-        multi = len(searched) > 1
+        # Where a run's files go (junit.xml vs junit_<project>.xml, per-project
+        # dirs) is judged over every project with tests, before the participation
+        # filter, so dropping one never flips a layout.
+        multi = sum(_has_tests(r) for r in projects) > 1
+        participation = participating(projects, ctx=session_ctx)
+        announce_dropped(participation.dropped, verb="test", log=logger)
+        not_searched = _not_searched(participation)
+        searched = _collection_candidates(participation)
         if not searched:
-            raise NoTestsMatchedError("No tests matched the selection.")
+            raise _no_tests(not_searched)
 
         # Destination and tickets preflight: local checks only, so they fail
         # before the instrumentation scan. Check-only here: an overwrite
@@ -1898,7 +1982,9 @@ def run_tests(
                 project_test_dirs=project_test_dirs,
             )
             runs.append(_ProjectRun(project=project, known=known, setup=setup))
-        sessions = _Sessions(projects, runs, names, opts, home, session_ctx)
+        sessions = _Sessions(
+            projects, runs, names, opts, home, session_ctx, not_searched=not_searched
+        )
         taking_part: list[tuple[_ProjectRun, _SessionOutcome]] = []
         in_flight: BaseException | None = None
         try:
@@ -1932,7 +2018,7 @@ def run_tests(
         if sessions.interrupted is not None:
             raise SystemExit(128 + sessions.interrupted)
         if not taking_part and sessions.failed is None:
-            raise NoTestsMatchedError("No tests matched the selection.")
+            raise _no_tests(not_searched)
 
     outcomes = [outcome for _, outcome in taking_part]
     reports = [o.report for o in outcomes if o.report is not None]
@@ -2012,10 +2098,24 @@ class Listing:
     session collected (or whose collection did not finish) has none."""
     exit_code: int
     """``0``, or the exit code of a collection that could not finish (it was logged)."""
+    projects: list[str] = dataclasses.field(default_factory=list)
+    """The projects that take part, by name, in discovery order — one with no test directory
+    included, one that does not take part not."""
+    not_searched: list[str] = dataclasses.field(default_factory=list)
+    """One notice per project left out, saying why and how to search it anyway."""
 
 
-def selected_tests(names: list[str], *, markers: str = "") -> Listing:
-    """Collect what *names* and *markers* select in every project, as :func:`run_tests` would.
+def selected_tests(
+    names: list[str],
+    *,
+    markers: str = "",
+    include: Sequence[str] = (),
+    exclude: Sequence[str] = (),
+) -> Listing:
+    """Collect what *names* and *markers* select in the projects taking part, as a run would.
+
+    A project that does not take part is not collected; :attr:`Listing.not_searched`
+    says why, and nothing is logged.
 
     The sessions a run would start, each ``--collect-only``: the same
     decision over the test-names cache, the same pruned or whole-tree
@@ -2027,10 +2127,18 @@ def selected_tests(names: list[str], *, markers: str = "") -> Listing:
     A project's libraries are imported once per process: after editing one,
     start a new process to see the change.
 
+    The context is the installed one when there is one (it already carries the
+    CLI's ``-I``/``-E``, so *include* and *exclude* are ignored); otherwise a
+    :func:`lab_less_context` built from *include* and *exclude*, installed only
+    for the duration of this call and never recorded as the run's options. A
+    test file or conftest calling ``get_context()`` at import sees that
+    lab-less context, the same as under a run.
+
     Raises:
-        otto.suite.selection.UnknownSelectionError: a name no project holds,
-            with did-you-mean suggestions.
-        NoTestsMatchedError: a name, and no collected test to suggest from.
+        otto.suite.selection.UnknownSelectionError: a name no project that takes part
+            holds, with did-you-mean suggestions and the not-searched lines.
+        NoTestsMatchedError: a name, and no collected test to suggest from, or no
+            project takes part; it carries the not-searched lines.
         otto.registry.RegistrationRefused: a test file or conftest
             registered something while loading.
     """
@@ -2040,16 +2148,38 @@ def selected_tests(names: list[str], *, markers: str = "") -> Listing:
     from .. import bootstrap
 
     del bootstrap
+    from ..run_context import reset_context, set_context, try_get_context
+
+    ctx = try_get_context()
+    token = None
+    if ctx is None:
+        ctx = lab_less_context(include=include, exclude=exclude)
+        token = set_context(ctx)
+    try:
+        return _collect_listing(names, markers)
+    finally:
+        if token is not None:
+            reset_context(token)
+
+
+def _collect_listing(names: list[str], markers: str) -> Listing:
+    """Run the ``--collect-only`` sessions of :func:`selected_tests` under its context."""
     from ..config.home import workspace_home
-    from ..declared import current_projects
+    from ..config.scope import participating
+    from ..run_context import get_context
 
     names = [n.strip() for n in names if n.strip()]
-    projects = current_projects()
-    searched = [r for r in projects if any(d.exists() for d in r.tests)]
+    ctx = get_context()
+    projects = ctx.projects
+    participation = participating(projects, ctx=ctx)
+    not_searched = _not_searched(participation)
+    searched = _collection_candidates(participation)
     home = workspace_home()
     known = _read_known(searched, home)
     runs = [_ProjectRun(project=r, known=k) for r, k in zip(searched, known, strict=True)]
-    sessions = _Sessions(projects, runs, names, RunOptions(markers=markers), home)
+    sessions = _Sessions(
+        projects, runs, names, RunOptions(markers=markers), home, not_searched=not_searched
+    )
     sessions.run()
     if sessions.interrupted is not None:
         raise SystemExit(128 + sessions.interrupted)
@@ -2057,4 +2187,6 @@ def selected_tests(names: list[str], *, markers: str = "") -> Listing:
         tests={run.project.name: run.outcome.selected for run in runs if run.outcome is not None},
         # No stability verdict in a listing, but the same code mapping as a run.
         exit_code=_final_exit_code(sessions.failed or 0, unstable=False),
+        projects=[p.name for p in participation.kept],
+        not_searched=not_searched,
     )

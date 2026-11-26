@@ -19,25 +19,8 @@ def check_instruction_active(*, name: str, owner: "str | None", ctx: "OttoContex
     """
     if owner is None:
         return
-    from ..config.scope import active, scopes_of, switched_off
+    from ..config.scope import inactive_reason
 
-    if active(owner, ctx):
-        return
-    from ..models.dependencies import normalize_name
-
-    project = normalize_name(owner)
-    if switched_off(owner, ctx):
-        raise InstructionInactiveError(name, owner=owner, project=project, reason="excluded")
-    # Not switched off, yet inactive: `active()` reaches that verdict only by
-    # finding an unusable ProjectScope under the project's declared name, so the
-    # lookup cannot miss.
-    scope = scopes_of(ctx)[owner]
-    raise InstructionInactiveError(
-        name,
-        owner=owner,
-        project=project,
-        reason="out_of_lab_scope" if scope.excluded else "host_starved",
-        loaded_labs=list(scope.loaded_labs),
-        lab_patterns=list(scope.lab_patterns),
-        host_patterns=list(scope.host_patterns),
-    )
+    reason = inactive_reason(owner, ctx)
+    if reason is not None:
+        raise InstructionInactiveError.from_record(instruction=name, owner=owner, reason=reason)

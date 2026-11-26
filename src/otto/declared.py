@@ -719,18 +719,6 @@ def _loaded_projects() -> "_LoadedProjects | None":
     )
 
 
-def surviving_projects() -> list[Any]:
-    """Return the discovered projects whose declarations apply, in discovery order.
-
-    The set :func:`declared_for_host` collects from: every discovered project except
-    one the dependency pass skipped. Empty when nothing is composed.
-    """
-    loaded = _loaded_projects()
-    if loaded is None:
-        return []
-    return [r for r in loaded.projects if getattr(r, "name", None) in loaded.surviving]
-
-
 def declared_for_host(host: Any, seam_attr: str) -> list[DeclaredEntry]:
     """Collect every loaded project's *seam_attr* entries admitted for *host*.
 

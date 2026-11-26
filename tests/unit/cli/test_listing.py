@@ -17,6 +17,7 @@ from otto.config.project import Project
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.project_scaffold import make_project
+from tests.unit.cli.conftest import _flat
 
 runner = CliRunner()
 
@@ -106,6 +107,16 @@ class TestGetLabPanel:
         text = _render(project.get_lab_panel())
         assert "host source unavailable" in text
         assert "does-not-exist" in text
+
+
+class TestListLabsHelp:
+    def test_list_labs_help_text(self):
+        from otto.cli.main import app
+
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        # Help wraps at the runner's width, so compare single-spaced text.
+        assert "List the labs each project applies to." in _flat(result.output)
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ import inspect
 from collections.abc import Callable, Generator, Sequence
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast, get_type_hints
 
 import typer
 from rich.markup import escape
@@ -43,6 +43,8 @@ if TYPE_CHECKING:
     from _typeshed import DataclassInstance
     from typer.core import TyperGroup
 
+    from ..config.project import Project
+    from ..config.scope import Participation, PreLabReason, ScopeSelection
     from ..coverage.config import DestinationError
     from ..errors import FieldError
     from ..inventory.view import InventoryView
@@ -228,16 +230,20 @@ def pending_options(ctx: typer.Context) -> "RecordedOptions | None":
     return RecordedOptions(group=group, pending=True)
 
 
-def settle_options(ctx: typer.Context) -> None:
+def settle_options(ctx: typer.Context, *, records_nothing: bool = False) -> None:
     """Clear the pending mark for a leaf that records nothing, so its body reads defaults.
 
     When the record in force (``recorded_in_force``) is pending and *ctx*'s
     callback has no :data:`RECORDS_OPTIONS_ATTR`, that record's ``pending`` is
     set ``False``; it keeps its group and is not replaced. A leaf that
     records clears the mark by recording (:func:`prepare_leaf_options`).
+
+    *records_nothing* clears the mark even when *ctx*'s callback records: for
+    a parse-time listing (``otto test --list-tests -l``) that answers and
+    exits before the leaf ever records its flags.
     """
     recorded = recorded_in_force()
-    if recorded is not None and recorded.pending and not _records_options(ctx):
+    if recorded is not None and recorded.pending and (records_nothing or not _records_options(ctx)):
         recorded.pending = False
 
 
@@ -1289,6 +1295,58 @@ def validate_project_switches(ctx: typer.Context) -> None:
         report_project_selection_error(e)
 
 
+def scope_selection(ctx: typer.Context) -> "ScopeSelection":
+    """Read the ``-l`` / ``-I`` / ``-E`` selection from the root options (``OTTO_LAB`` too).
+
+    ``RootOptions.labs`` is already split into component names by the root
+    callback's ``parse_lab_selection``, so it is never split again here. Where
+    the root callback never ran (a library caller, a test) nothing was
+    selected: an empty selection, as :func:`validate_project_switches` reads it.
+    """
+    from ..config.scope import ScopeSelection
+
+    opts = maybe_root_options(ctx)
+    if opts is None:
+        return ScopeSelection(labs=(), include=(), exclude=())
+    return ScopeSelection(
+        labs=tuple(opts.labs or ()),
+        include=tuple(opts.include_projects),
+        exclude=tuple(opts.exclude_projects),
+    )
+
+
+def listing_participation(ctx: typer.Context, projects: "Sequence[Project]") -> "Participation":
+    """Answer which of *projects* take part in this listing -- the one listing preamble.
+
+    Validates the switches and the bootstrap world like the leaf preamble, once:
+    with a lab selected, :func:`ensure_inline_lab` runs both gates before it
+    loads the lab; without one, they run here. With a lab the answer is the
+    lab's verdict; without one it says so (``print_no_lab_cue``) and answers
+    with the pre-lab selection.
+
+    A listing records no options: the lab context is installed under the
+    command's pending mark (:func:`ensure_lab_context`), and the mark is
+    cleared as soon as the lab is in, so a conftest or test module that reads
+    an options class while the listing collects gets its defaults, as in a
+    lab-free leaf, instead of ``OptionsNotAvailableError``
+    (:func:`settle_options` with ``records_nothing``: the ``otto test`` leaf
+    records, but its listings never reach that recording).
+    """
+    from ..config.scope import participating
+    from ..run_context import get_context
+    from .listing import print_no_lab_cue
+
+    selection = scope_selection(ctx)
+    if selection.labs:
+        ensure_inline_lab(ctx)
+        settle_options(ctx, records_nothing=True)
+        return participating(projects, ctx=get_context())
+    validate_project_switches(ctx)
+    fail_loud_on_bootstrap_errors(ctx)
+    print_no_lab_cue()
+    return participating(projects, selection=selection)
+
+
 def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     """Exit(1) on an ACTIVE project's load error, or one an active project requires — loud gate.
 
@@ -1391,9 +1449,7 @@ def _echo_required(required: "list[RequiredProject]") -> None:
         )
 
 
-def _inactive_flag_reason(
-    reason: Literal["excluded", "out_of_scope"], normalized_name: str, labs: list[str]
-) -> str:
+def _inactive_flag_reason(reason: "PreLabReason", normalized_name: str, labs: list[str]) -> str:
     """Say why a project is inactive before the lab, in flag spelling."""
     from ..session.projects import _inactive_reason_text
 

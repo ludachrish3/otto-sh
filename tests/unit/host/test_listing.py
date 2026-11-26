@@ -415,6 +415,7 @@ def test_an_entry_no_host_matches_is_not_used_with_that_reason(ingest):
 
 
 def test_an_entry_outside_the_projects_project_scope_says_so(ingest):
+    """A project kept with ``-I`` whose scope admits no host of the lab (the CLI drives ``-I``)."""
     scope = ProjectScopeConfig([re.compile("otherlab")], [re.compile(".*")])
     projects = [
         _project("project1", products=[_entry("project1", "agent", artifact="a")], scope=scope)
@@ -867,3 +868,29 @@ def test_a_plain_dev_tool_is_scanned_through_the_lab_rows(ingest, tmp_path):
     lab = ingest(projects, [_host("test1")])
     (row,) = listing.lab_rows(lab, projects, "dev_tools").rows
     assert row.instrumented == "yes"
+
+
+# ── Only the participating projects ──────────────────────────────────────────────
+
+
+def test_list_products_lab_view_skips_non_participating_owner(ingest):
+    projects = [
+        _project("project1", products=[_entry("project1", "agent", artifact="a")]),
+        _project("project2", products=[_entry("project2", "fw", artifact="f")]),
+    ]
+    lab = ingest(projects, [_host("test1")])
+    result = listing.lab_rows(lab, projects[:1], "products")
+    assert [r.name for r in result.rows] == ["agent"]
+    assert [u.name for u in result.unused] == []
+    assert [r.name for r in listing.lab_rows(lab, projects, "products").rows] == ["agent", "fw"]
+
+
+def test_list_products_unused_list_participants_only(ingest):
+    with registering_project("project1"):
+        register_product_provider(lambda host: [ProbeProduct("agent")])
+    with registering_project("project2"):
+        register_product_provider(lambda host: [ProbeProduct("agent")])
+    projects = [_project("project1"), _project("project2")]
+    lab = ingest(projects, [_host("test1")])
+    assert [u.project for u in listing.lab_rows(lab, projects, "products").unused] == ["project2"]
+    assert listing.lab_rows(lab, projects[:1], "products").unused == []

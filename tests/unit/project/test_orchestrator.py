@@ -4141,3 +4141,47 @@ async def test_concurrent_host_callbacks_each_keep_their_own_block():
 
     ctx = _Ctx([SimpleNamespace(id="h0"), SimpleNamespace(id="h1")])
     assert await ctx.do_for_all_hosts(callback) == {"h0": 1, "h1": 2}
+
+
+def _applicable_ctx(scopes, exclude=()):
+    from otto.labs.loader import Lab
+    from tests._fixtures.bootstrap_seam import fake_bootstrap_result
+
+    ctx = OttoContext(
+        lab=Lab(name="t"), exclude_projects=tuple(exclude), bootstrap=fake_bootstrap_result([])
+    )
+    seed_scope_verdicts(ctx, scopes)
+    return ctx
+
+
+def test_applicable_parity_order_and_keys(caplog):
+    from otto.project.orchestrator import _applicable
+    from tests._fixtures.scoping import verdict
+
+    names = ["Zed_Proj", "mid", "Alpha.Proj"]
+    projects = [fake_project(n) for n in names]
+    ctx = _applicable_ctx({"mid": verdict("mid", excluded=True)}, exclude=("alpha-proj",))
+    with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
+        kept = _applicable(ctx, projects, "build", require_dependencies=True)
+    assert [p.name for p in kept] == ["Zed_Proj"]
+    said = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(said) == 2
+    assert said[0].startswith("project 'mid' is not applicable")
+    assert said[1].startswith("project 'Alpha.Proj' switched off")
+
+
+def test_applicable_dependency_refusal_without_announce(caplog):
+    from otto.project.orchestrator import _applicable
+    from tests._fixtures.scoping import verdict
+
+    provider = fake_project("Prov_One")
+    dependent = fake_project("dependent", dependencies=[_dep("Prov_One", required=True)])
+    ctx = _applicable_ctx({"Prov_One": verdict("Prov_One", excluded=True)})
+    with (
+        caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"),
+        pytest.raises(InactiveRequiredDependencyError),
+    ):
+        _applicable(
+            ctx, [provider, dependent], "install", require_dependencies=True, announce=False
+        )
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]

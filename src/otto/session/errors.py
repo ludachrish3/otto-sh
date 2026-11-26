@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from ..errors import FieldError, OttoError
 
 if TYPE_CHECKING:
-    from ..config.scope import BootstrapError
+    from ..config.scope import BootstrapError, InactiveReason
     from ..env.preflight import Unsatisfied
     from .projects import DemotedProject, RequiredProject
 
@@ -177,6 +177,21 @@ class InstructionInactiveError(OttoError):
             fix = f"widen host_patterns, or {activate}"
         super().__init__(
             f"{instruction!r} belongs to project {owner!r}, {why}; to activate it, {fix}"
+        )
+
+    @classmethod
+    def from_record(
+        cls, *, instruction: str, owner: str, reason: "InactiveReason"
+    ) -> "InstructionInactiveError":
+        """Build the error from *reason*, the record of why *owner*'s project is inactive."""
+        return cls(
+            instruction,
+            owner=owner,
+            project=reason.normalized,
+            reason=reason.reason,
+            loaded_labs=list(reason.loaded_labs),
+            lab_patterns=list(reason.lab_patterns),
+            host_patterns=list(reason.host_patterns),
         )
 
 

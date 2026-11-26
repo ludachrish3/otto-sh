@@ -56,14 +56,15 @@ imports the rest from this module directly.
 import dataclasses
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import final
 
 from ..errors import OttoError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    import logging
+    from collections.abc import Iterable, Sequence
 
     from ..host.host import Host
     from ..models.settings import ProjectScopeSpec
@@ -405,22 +406,47 @@ def project_targets(scope: "ProjectScopeConfig | None", lab_name: str, host_id: 
     """
     if scope is None:
         return True
-    return _lab_applies(scope, lab_name) and any(p.fullmatch(host_id) for p in scope.host_patterns)
+    return applies_to_lab(scope, lab_name) and any(
+        p.fullmatch(host_id) for p in scope.host_patterns
+    )
 
 
-def _lab_applies(scope: "ProjectScopeConfig | None", lab_name: str) -> bool:
+def applies_to_lab(scope: "ProjectScopeConfig | None", lab_name: str) -> bool:
     """Report whether *scope* applies to the lab *lab_name* (the lab axis alone).
 
-    Private, and called by BOTH :func:`project_targets` and :func:`resolve_scopes`
-    — the resolver needs the lab axis without a host to pair it with (a lab can
-    be applicable while holding no matching host, which is a distinct verdict),
-    and spelling ``any(p.fullmatch(lab_name) ...)`` a second time there would
-    put the module's one rule in two places. ``None`` applies everywhere, for
-    the same reason it targets everything.
+    The one place ``lab_patterns`` is matched: :func:`project_targets`,
+    :func:`resolve_scopes`, :func:`applies_to_any` and every pre-lab seam call
+    it, so the module's lab rule is not spelled twice. The resolver needs the
+    lab axis without a host to pair it with (a lab can be applicable while
+    holding no matching host, which is a distinct verdict). ``None`` applies
+    everywhere, for the same reason it targets everything.
+
+    >>> import re
+    >>> from otto.config.scope import ProjectScopeConfig, applies_to_lab
+    >>> scope = ProjectScopeConfig([re.compile("bench")], [])
+    >>> applies_to_lab(scope, "bench"), applies_to_lab(scope, "bench-overflow")
+    (True, False)
     """
     if scope is None:
         return True
     return any(p.fullmatch(lab_name) for p in scope.lab_patterns)
+
+
+def applies_to_any(scope: "ProjectScopeConfig | None", lab_names: "Iterable[str]") -> bool:
+    """Report whether *scope* applies to at least one of *lab_names* (lab axis).
+
+    ``True`` for an undeclared (``None``) scope whatever the names; ``False`` for a
+    declared scope and no names, since nothing was loaded for it to apply to.
+
+    >>> import re
+    >>> from otto.config.scope import ProjectScopeConfig, applies_to_any
+    >>> scope = ProjectScopeConfig([re.compile("bench")], [])
+    >>> applies_to_any(scope, ["other", "bench"]), applies_to_any(scope, [])
+    (True, False)
+    """
+    if scope is None:
+        return True
+    return any(applies_to_lab(scope, name) for name in lab_names)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -557,7 +583,7 @@ def resolve_scopes(
     scopes: dict[str, ProjectScope] = {}
     for project in projects:
         config = project.project_scope
-        applicable = frozenset(name for name in component_names if _lab_applies(config, name))
+        applicable = frozenset(name for name in component_names if applies_to_lab(config, name))
         # An undeclared project's universe is the whole lab BY CONSTRUCTION —
         # never per-host evaluation. The short-circuit is load-bearing, not an
         # optimization: projects are routinely VISIBLE without declaring anything
@@ -767,7 +793,7 @@ def _not_switched_off(
 
 
 def inactive_before_lab(
-    scope: "ProjectScopeConfig | None", lab_selection: "list[str] | None"
+    scope: "ProjectScopeConfig | None", lab_selection: "Sequence[str] | None"
 ) -> bool:
     """Report whether *scope* is inactive on the LAB AXIS alone, for seams that run pre-lab.
 
@@ -781,7 +807,302 @@ def inactive_before_lab(
     """
     if not lab_selection or scope is None:
         return False
-    return not any(_lab_applies(scope, name) for name in lab_selection)
+    return not applies_to_any(scope, lab_selection)
+
+
+PreLabReason = Literal["excluded", "out_of_scope"]
+# Why a project is inactive before the lab is built: switched off, or outside the ``-l`` labs.
+
+
+def pre_lab_inactive_reason(
+    project: "Project",
+    *,
+    labs: "Sequence[str] | None",
+    include: "Sequence[str]",
+    exclude: "Sequence[str]",
+) -> PreLabReason | None:
+    """Say why *project* is inactive before the lab is built, or ``None`` when it is active.
+
+    THE pre-lab verdict: the switches (PEP 503-normalised, as ``_switched``
+    does), an ``exclude`` beating an ``include``, then the lab axis
+    (:func:`inactive_before_lab`) for a project no ``include`` forces on.
+    *labs* is the ``-l`` selection already split into component names; empty
+    or ``None`` means no lab axis. The host axis needs the built lab and is
+    not judged here.
+    """
+    from ..models.dependencies import normalize_name
+
+    name = normalize_name(project.name)
+    if name in _switched(tuple(exclude)):
+        return "excluded"
+    if name not in _switched(tuple(include)) and inactive_before_lab(
+        project.project_scope, labs or None
+    ):
+        return "out_of_scope"
+    return None
+
+
+InactiveKind = Literal["excluded", "out_of_lab_scope", "host_starved"]
+# The three ways a project is inactive: switched off, wrong lab, or no host of interest.
+
+
+@dataclasses.dataclass(frozen=True)
+class InactiveReason:
+    """The ONE record of why a project is inactive; every message renders from it.
+
+    Built only by :func:`inactive_reason` (lab verdicts known) and
+    :func:`pre_lab_reason_record` (an already-decided ``PreLabReason``), so
+    the excluded / out-of-lab-scope / host-starved branch exists in one place
+    and each surface (instruction refusal, skip warning, ``not searched``
+    line) is only a renderer over these fields.
+    """
+
+    project: str
+    """The project's declared name, as it is written."""
+
+    normalized: str
+    """The PEP 503-normalised name, which is what ``-I`` / ``-E`` take."""
+
+    reason: InactiveKind
+    """Why it is inactive."""
+
+    loaded_labs: "tuple[str, ...]"
+    """Every loaded component lab (empty for ``"excluded"``)."""
+
+    lab_patterns: "tuple[str, ...]"
+    """The declared ``lab_patterns`` (empty for ``"excluded"`` and when undeclared)."""
+
+    host_patterns: "tuple[str, ...]"
+    """The declared ``host_patterns`` (empty for ``"excluded"`` and when undeclared)."""
+
+    applicable_labs: "tuple[str, ...]"
+    """The loaded labs its scope applies to (empty for ``"excluded"`` and out of lab scope)."""
+
+
+def inactive_reason(project_name: str, ctx: "OttoContext") -> "InactiveReason | None":
+    """Say why *project_name* is inactive in *ctx*, or ``None`` when :func:`active` says it is.
+
+    THE reason branch: the switch (:func:`switched_off`) first, then the lab
+    verdict's ``excluded`` flag separates a wrong lab from a host-starved
+    project. *project_name* is the declared name, as for :func:`active`.
+    """
+    from ..models.dependencies import normalize_name
+
+    if active(project_name, ctx):
+        return None
+    normalized = normalize_name(project_name)
+    if switched_off(project_name, ctx):
+        return InactiveReason(
+            project=project_name,
+            normalized=normalized,
+            reason="excluded",
+            loaded_labs=(),
+            lab_patterns=(),
+            host_patterns=(),
+            applicable_labs=(),
+        )
+    # Not switched off, yet inactive: `active()` reaches that verdict only by
+    # finding an unusable ProjectScope under the declared name, so the lookup
+    # cannot miss.
+    scope = scopes_of(ctx)[project_name]
+    return InactiveReason(
+        project=project_name,
+        normalized=normalized,
+        reason="out_of_lab_scope" if scope.excluded else "host_starved",
+        loaded_labs=scope.loaded_labs,
+        lab_patterns=scope.lab_patterns,
+        host_patterns=scope.host_patterns,
+        applicable_labs=tuple(lab for lab in scope.loaded_labs if lab in scope.applicable_labs),
+    )
+
+
+def pre_lab_reason_record(
+    project: "Project", reason: PreLabReason, *, labs: "Sequence[str]"
+) -> InactiveReason:
+    """Record an already-decided pre-lab *reason* for *project* as an :class:`InactiveReason`.
+
+    Maps, never decides: *reason* came from :func:`pre_lab_inactive_reason`.
+    ``"out_of_scope"`` becomes ``"out_of_lab_scope"`` and carries the ``-l``
+    *labs* as the loaded ones; no lab applies, by that verdict.
+    """
+    from ..models.dependencies import normalize_name
+
+    normalized = normalize_name(project.name)
+    if reason == "excluded":
+        return InactiveReason(
+            project=project.name,
+            normalized=normalized,
+            reason="excluded",
+            loaded_labs=(),
+            lab_patterns=(),
+            host_patterns=(),
+            applicable_labs=(),
+        )
+    declared = project.project_scope
+    return InactiveReason(
+        project=project.name,
+        normalized=normalized,
+        reason="out_of_lab_scope",
+        loaded_labs=tuple(labs),
+        lab_patterns=tuple(p.pattern for p in declared.lab_patterns) if declared else (),
+        host_patterns=tuple(p.pattern for p in declared.host_patterns) if declared else (),
+        applicable_labs=tuple(lab for lab in labs if applies_to_lab(declared, lab)),
+    )
+
+
+def not_searched_line(reason: InactiveReason) -> str:
+    """Render the one-line ``project X was not searched`` notice for *reason*."""
+    name = reason.project
+    labs = ", ".join(reason.loaded_labs)
+    if reason.reason == "excluded":
+        return (
+            f"project {name} was not searched: it was switched off with -E {name}. "
+            f"Remove -E {name} to search it."
+        )
+    if reason.reason == "out_of_lab_scope":
+        return (
+            f"project {name} was not searched: its lab_patterns "
+            f"({', '.join(reason.lab_patterns)}) do not match the loaded lab(s) {labs}. "
+            f"Use -I {name} to search it anyway."
+        )
+    return (
+        f"project {name} was not searched: its host_patterns "
+        f"({', '.join(reason.host_patterns)}) match no host in the loaded lab(s) {labs}. "
+        f"Use -I {name} to search it anyway."
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class ScopeSelection:
+    """The pre-lab selection (``-l``, ``-I``, ``-E``) a listing judges projects by."""
+
+    labs: "tuple[str, ...]"
+    """The ``-l`` lab names, already split into components."""
+
+    include: "tuple[str, ...]"
+    """``-I``: the switches as given; :func:`pre_lab_inactive_reason` normalises them."""
+
+    exclude: "tuple[str, ...]"
+    """``-E``: the switches as given; :func:`pre_lab_inactive_reason` normalises them."""
+
+
+@dataclasses.dataclass(frozen=True)
+class DroppedProject:
+    """A project that does not take part, with the record of why."""
+
+    project: "Project"
+    reason: InactiveReason
+
+
+ParticipationTier = Literal["lab", "pre_lab"]
+# Which verdict judged: ``"lab"`` (the built lab's) or ``"pre_lab"`` (``-l`` names only).
+
+
+@dataclasses.dataclass(frozen=True)
+class Participation:
+    """Which of a project list take part, input order kept in both lists."""
+
+    kept: "list[Project]"
+    dropped: "list[DroppedProject]"
+    tier: ParticipationTier
+
+
+def participating(
+    projects: "Sequence[Project]",
+    *,
+    ctx: "OttoContext | None" = None,
+    selection: "ScopeSelection | None" = None,
+) -> Participation:
+    """Split *projects* into those that take part and those that do not -- THE answer.
+
+    Exactly one source of truth: *ctx* (a built lab: :func:`inactive_reason`,
+    tier ``"lab"``) or *selection* (no lab yet: :func:`pre_lab_inactive_reason`
+    over the ``-l`` names, tier ``"pre_lab"``). Passing both or neither is a
+    :class:`TypeError`.
+    """
+    if (ctx is None) == (selection is None):
+        raise TypeError("participating() takes exactly one of ctx= or selection=")
+    kept: "list[Project]" = []
+    dropped: "list[DroppedProject]" = []
+    for project in projects:
+        if ctx is not None:
+            reason = inactive_reason(project.name, ctx)
+        else:
+            assert selection is not None  # noqa: S101 — narrowed by the guard above
+            pre = pre_lab_inactive_reason(
+                project,
+                labs=selection.labs,
+                include=selection.include,
+                exclude=selection.exclude,
+            )
+            reason = (
+                None if pre is None else pre_lab_reason_record(project, pre, labs=selection.labs)
+            )
+        if reason is None:
+            kept.append(project)
+        else:
+            dropped.append(DroppedProject(project, reason))
+    return Participation(kept, dropped, "lab" if ctx is not None else "pre_lab")
+
+
+def _skip_message(reason: "InactiveReason", verb: str) -> str:
+    """Render WHY a project is being left out of *verb*'s walk, over its ``InactiveReason``.
+
+    TWO CONDITIONS, TWO TEXTS, each reachable only under its own -- the same
+    split :func:`_unusable_scope_message` makes for the
+    abort, and for the same reason: "no loaded lab applies to you" and "no host
+    in the labs that do apply matches your host_patterns" have different fixes,
+    and one text covering both sends half its readers to edit the wrong line.
+    The out-of-lab-scope project's reader needs the loaded labs beside the
+    declared ``lab_patterns``; the host-starved one's needs the
+    ``host_patterns``, because its ``-l`` and its ``lab_patterns`` are already
+    right and saying otherwise would send it to change them. A switched-off
+    project has its own text (:func:`switched_off_message`).
+
+    Args:
+        reason: Why the project is inactive, from
+            :func:`~otto.config.scope.inactive_reason`.
+        verb: What is being skipped, so the reader knows which operation left
+            the project out.
+
+    Returns:
+        The WARNING line, ready to log.
+    """
+    if reason.reason == "excluded":
+        return switched_off_message(reason, verb)
+    if reason.reason == "out_of_lab_scope":
+        return (
+            f"project {reason.project!r} is not applicable to the loaded lab(s) "
+            f"[{', '.join(reason.loaded_labs) or '(none)'}] "
+            f"(lab_patterns: {', '.join(reason.lab_patterns) or '(none)'}) "
+            f"— skipping it for {verb}"
+        )
+    return (
+        f"project {reason.project!r} applies to lab(s) "
+        f"[{', '.join(sorted(reason.applicable_labs)) or '(none)'}] but its [project] "
+        f"host_patterns ({', '.join(reason.host_patterns) or '(none)'}) match no host there "
+        f"— skipping it for {verb}"
+    )
+
+
+def switched_off_message(reason: "InactiveReason", verb: str) -> str:
+    """Render the warning for a project ``--exclude-projects`` switched off, for *verb*."""
+    return (
+        f"project {reason.project!r} switched off for this run "
+        f"(--exclude-projects {reason.normalized}) — skipping it for {verb}"
+    )
+
+
+def announce_dropped(
+    dropped: "Sequence[DroppedProject]", *, verb: str, log: "logging.Logger"
+) -> None:
+    """Log one WARNING per dropped project saying why *verb* skips it.
+
+    *log* is the caller's own logger, which already carries the operator's
+    handlers and level, so the lines keep their source.
+    """
+    for item in dropped:
+        log.warning(_skip_message(item.reason, verb))
 
 
 def _unusable_scope_message(scope: "ProjectScope") -> str:

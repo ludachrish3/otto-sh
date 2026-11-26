@@ -174,43 +174,6 @@ def _enforce_current_scope(ctx: "OttoContext") -> None:
         require_current_scope(scopes_of(ctx), projects[0].name)
 
 
-def _skip_message(scope: "ProjectScope", verb: str) -> str:
-    """Render WHY a project is being left out of *verb*'s walk, per condition.
-
-    TWO CONDITIONS, TWO TEXTS, each reachable only under its own -- the same
-    split ``otto.config.scope._unusable_scope_message`` makes for the
-    abort, and for the same reason: "no loaded lab applies to you" and "no host
-    in the labs that do apply matches your host_patterns" have different fixes,
-    and one text covering both sends half its readers to edit the wrong line.
-    The excluded project's reader needs the loaded labs beside the declared
-    ``lab_patterns``; the host-starved one's needs the ``host_patterns``,
-    because its ``-l`` and its ``lab_patterns`` are already right and saying
-    otherwise would send it to change them.
-
-    Args:
-        scope: The verdict being skipped -- unusable by
-            :func:`~otto.config.scope.unusable_scope`.
-        verb: What is being skipped, so the reader knows which operation left
-            the project out.
-
-    Returns:
-        The WARNING line, ready to log.
-    """
-    if scope.excluded:
-        return (
-            f"project {scope.project_name!r} is not applicable to the loaded lab(s) "
-            f"[{', '.join(scope.loaded_labs) or '(none)'}] "
-            f"(lab_patterns: {', '.join(scope.lab_patterns) or '(none)'}) "
-            f"— skipping it for {verb}"
-        )
-    return (
-        f"project {scope.project_name!r} applies to lab(s) "
-        f"[{', '.join(sorted(scope.applicable_labs)) or '(none)'}] but its [project] "
-        f"host_patterns ({', '.join(scope.host_patterns) or '(none)'}) match no host there "
-        f"— skipping it for {verb}"
-    )
-
-
 def _applicable(
     ctx: "OttoContext",
     projects: "Iterable[Project]",
@@ -318,31 +281,20 @@ def _applicable(
             project requires a provider this run dropped on the LAB axis. See
             that class for why the switch shape warns instead.
     """
-    from ..config.scope import active, scopes_of, switched_off
+    from ..config.scope import announce_dropped, participating
     from ..models.dependencies import normalize_name
 
-    keep: "list[Project]" = []
-    dropped: "dict[str, Project]" = {}
-    for project in projects:
-        if active(project.name, ctx):
-            keep.append(project)
-            continue
-        # Keyed by the NORMALIZED name because that is what a dependency
-        # declaration is matched on; ``active`` above was asked with the raw
-        # ``Project.name``, which is how ``scopes_of(ctx)`` is keyed. Two spellings,
-        # two lookups, each with the one its own mapping uses.
-        dropped[normalize_name(project.name)] = project
-        if not announce:
-            continue
-        if switched_off(project.name, ctx):
-            logger.warning(
-                f"project {project.name!r} switched off for this run "
-                f"(--exclude-projects {normalize_name(project.name)}) — skipping it for {verb}"
-            )
-        else:
-            # Not switched off and not active leaves exactly one cause, so the
-            # verdict is present: ``active`` resolves True for a missing one.
-            logger.warning(_skip_message(scopes_of(ctx)[project.name], verb))
+    verdict = participating(list(projects), ctx=ctx)
+    keep = verdict.kept
+    # Keyed by the NORMALIZED name because that is what a dependency
+    # declaration is matched on; ``active`` is asked with the raw
+    # ``Project.name``, which is how ``scopes_of(ctx)`` is keyed. Two spellings,
+    # two lookups, each with the one its own mapping uses.
+    dropped: "dict[str, Project]" = {
+        normalize_name(d.project.name): d.project for d in verdict.dropped
+    }
+    if announce:
+        announce_dropped(verdict.dropped, verb=verb, log=logger)
 
     for project in keep:
         for dep in project.dependencies:
@@ -1174,8 +1126,7 @@ async def status(*, opts: "StatusOptions | OptionsSource | None" = None) -> Proj
     would put a line in front of every operator whose lab merely does not
     include some project, which is the ordinary case and not news.
     """
-    from ..config.scope import active, scopes_of, switched_off
-    from ..models.dependencies import normalize_name
+    from ..config.scope import inactive_reason, scopes_of, switched_off_message
 
     # THE TABLE'S OWN BODY AND COMBINER, exactly as :func:`_run_bodies` and
     # :func:`_combine` use them. This walk is hand-written rather than theirs --
@@ -1200,13 +1151,10 @@ async def status(*, opts: "StatusOptions | OptionsSource | None" = None) -> Proj
         # The walks' own predicate, not a copy of its condition: a project they
         # leave out has no state to fold, and asking it for one reaches a fleet
         # that is empty by declaration -- which raises, out of a READING verb.
-        if not active(project.name, ctx):
-            if switched_off(project.name, ctx):
-                logger.warning(
-                    f"project {project.name!r} switched off for this run "
-                    f"(--exclude-projects {normalize_name(project.name)}) "
-                    "— skipping it for status"
-                )
+        reason = inactive_reason(project.name, ctx)
+        if reason is not None:
+            if reason.reason == "excluded":
+                logger.warning(switched_off_message(reason, "status"))
             continue
         actions = actions_for(project=project, ctx=ctx)
         if _counts(actions):

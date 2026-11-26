@@ -164,6 +164,20 @@ def test_settling_clears_a_leaf_that_does_not_record_and_leaves_one_that_does(
             otto.get_options(Knobs)
 
 
+def test_settling_for_a_listing_clears_a_leaf_that_records():
+    """``records_nothing``: a parse-time listing of a recording leaf reads defaults."""
+
+    def test_leaf() -> None: ...
+
+    setattr(test_leaf, RECORDS_OPTIONS_ATTR, True)
+    stamped = _with_callback(chain("otto", "test", "test"), test_leaf)
+    marked = pending_options(stamped)
+    assert marked is not None
+    with command_options(marked):
+        settle_options(stamped, records_nothing=True)
+        assert otto.get_options(Knobs) == Knobs()
+
+
 def test_settling_runs_before_the_dry_run_seam(monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr(invoke, "validate_project_switches", lambda ctx: None)

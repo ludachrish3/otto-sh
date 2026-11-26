@@ -73,12 +73,13 @@ def test_the_teardown_deadline_reads_the_real_environment(declaring_project, mon
 
 
 def test_declared_entries_read_the_real_projects(declaring_project):
-    from otto.declared import surviving_projects
+    from otto.declared import _loaded_projects
 
     bs.bootstrap()
-    assert [r.name for r in surviving_projects()] == ["scoped"], (
-        "declared entries saw no projects: the accessor import failed"
-    )
+    loaded = _loaded_projects()  # what declared_for_host collects from
+    assert loaded is not None, "declared entries saw no projects: the accessor import failed"
+    assert [r.name for r in loaded.projects] == ["scoped"]
+    assert loaded.surviving == {"scoped"}
 
 
 def test_the_walk_resolves_its_scopes_from_the_real_projects(declaring_project):

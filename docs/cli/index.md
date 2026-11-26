@@ -35,7 +35,7 @@ These options are available on every `otto` command:
 | `--probe` | | `False` | With `--dry-run`: open a connection to each host the command names and report reachability. A connection only — never a command |
 | `--holder USERNAME` | | current user | Check reservations as USERNAME instead of the current user |
 | `--skip-reservation-check, -R` | | `False` | Bypass the reservation check entirely (emergency use only) |
-| `--list-labs` | | | List available lab names and exit |
+| `--list-labs` | | | List the labs each project applies to and exit |
 | `--list-hosts` | | | List host IDs in the loaded lab and exit |
 | `--list-products` | | | List the products the projects declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
 | `--list-tools` | | | List the dev tools the projects declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
@@ -83,7 +83,7 @@ wins](../configuration/lab/inventory-references.md#when-two-declarations-are-one
 ### Inspecting what a lab holds
 
 ```bash
-otto --lab my_lab --list-labs      # list all available lab names
+otto --lab my_lab --list-labs      # list the labs each project applies to
 otto --lab my_lab --list-hosts     # list host IDs in the loaded lab
 otto --lab my_lab --show-lab       # the lab as a tree; --lab-depth 1 shows host ids only
 ```
@@ -117,6 +117,9 @@ host behind it.
 ### What `--list-labs` shows
 
 `--list-labs` prints one panel per project, listing the labs that project's
+sources declare **and that its `[project]` `lab_patterns` admit**
+({ref}`project-scope`).  A lab the patterns do not match is not shown, with no
+marker or count; a project that declares no `[project]` table lists every lab its
 sources declare.  otto asks every source, once, whether each lab can be
 loaded now: the same question `--lab` asks before it loads, so the listing and
 a load agree on which labs are unavailable.  A panel's rows are:
@@ -130,6 +133,16 @@ a load agree on which labs are unavailable.  A panel's rows are:
 - `⚠ source my_project/cmdb unavailable: connection refused`: one of this
   project's scoped sources failed when asked.  The labs in its scope show as
   unavailable.
+- `⚠ no lab listed: lab_patterns (bench) in this project's .otto/settings.toml
+  match no lab any source declares`, in yellow: the project's `lab_patterns`
+  match no lab that any project's sources declare, which is not an expected
+  configuration.  It is judged over the whole listing, so a project whose labs
+  another project's sources declare does not get it, and it is withheld while a
+  source is unavailable or the sources are listed one project at a time, when
+  the missing lab could be one that failed to load.
+- `its labs come from another project's lab sources`, dim: the project's own
+  sources declare no lab it applies to, but its `lab_patterns` match a lab
+  another project's sources declare.
 
 A lab declared by two projects shows in both panels, with the status of its
 last declaration.
@@ -159,6 +172,8 @@ can therefore load a lab with `--lab` that its project's panel does not list.
 `--list-products` and `--list-tools` print a table of the products or dev tools
 your projects declare in {doc}`../configuration/declared-products-tools`. Neither
 contacts a host, and neither is lab-gated: they work with or without `--lab`.
+Only the projects that take part are listed; {ref}`project-scope` says who that
+is, and what the dim `no lab selected` line means.
 A narrow terminal folds long cells onto more lines rather than cutting them
 (see `COLUMNS` under [Environment variables](#environment-variables)).
 
@@ -201,8 +216,9 @@ not used in this lab:
 ```
 
 The reasons an entry is not used are `no host matches`, `outside <project>'s
-[project] scope` (the project's `[project]` table does not target any host of the
-lab; see {ref}`project-scope-required`), `variant 'field' (run is debug)` (see
+[project] scope` (the project takes part only because `-I` names it, and its
+`[project]` table does not target any host of the lab; see
+{ref}`project-scope-required`), `variant 'field' (run is debug)` (see
 below), and `shadowed by an earlier entry named '<name>'` — the first entry
 with a name wins on a host. A provider product whose name a declared entry
 holds is not listed at all: the lab refuses to load, naming both

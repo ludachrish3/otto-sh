@@ -60,3 +60,86 @@ def test_list_tests_class_scoped(tmp_path: Path) -> None:
     # The class name keeps output within the fixture class
     assert "TestE2EFixture" in r.stdout
     assert_no_output_dir(tmp_path)  # discovery flag — no run dir
+
+
+# ── scope: only the projects that take part ──────────────────────────────────
+
+
+def _scoped_roots(tmp_path: Path) -> str:
+    """``project_a`` is always active and carries the lab; ``project_b`` applies to ``beta``."""
+    import json
+    import os
+
+    from tests._fixtures.labdata import lab_json_v2
+    from tests._fixtures.project_scaffold import make_project
+
+    document = lab_json_v2([{"ip": "192.0.2.1", "element": "a", "labs": ["alpha"]}])
+    a = make_project(
+        tmp_path / "project_a",
+        name="project_a",
+        tests=["tests"],
+        extra='[[lab.sources]]\nbackend = "json"\npaths = ["labdata"]\n',
+        files={
+            "labdata/lab.json": json.dumps(document),
+            "tests/test_a.py": "def test_in_a(): pass\n",
+        },
+    )
+    b = make_project(
+        tmp_path / "project_b",
+        name="project_b",
+        tests=["tests"],
+        extra='[project]\nlab_patterns = ["beta"]\nhost_patterns = [".*"]\n',
+        files={"tests/test_b.py": "def test_in_b(): pass\ndef test_only_b(): pass\n"},
+    )
+    return f"{a}{os.pathsep}{b}"
+
+
+def _otto(tmp_path: Path, argv: list[str], **kwargs):
+    return run_otto(
+        argv,
+        xdir=tmp_path / "x",
+        roots=None,
+        extra_argv_prefix=["-R", *kwargs.pop("prefix", [])],
+        extra_env={"OTTOPATH": _scoped_roots(tmp_path), **kwargs.pop("env", {})},
+        **kwargs,
+    )
+
+
+def test_e2e_list_tests_other_lab_omits_project(tmp_path: Path) -> None:
+    r = _otto(tmp_path, ["test", "--list-tests"], lab="alpha")
+    assert r.returncode == 0, r.stderr
+    assert "test_in_a" in r.stdout
+    assert "project_b" not in r.stdout
+    assert "test_in_b" not in r.stdout
+
+
+def test_e2e_list_tests_otto_lab_env_narrows(tmp_path: Path) -> None:
+    r = _otto(tmp_path, ["test", "--list-tests"], env={"OTTO_LAB": "alpha"})
+    assert r.returncode == 0, r.stderr
+    assert "test_in_a" in r.stdout
+    assert "test_in_b" not in r.stdout
+
+
+def test_e2e_exclude_list_tests_omits_project(tmp_path: Path) -> None:
+    r = _otto(tmp_path, ["test", "--list-tests"], prefix=["-E", "project_b"])
+    assert r.returncode == 0, r.stderr
+    assert "test_in_a" in r.stdout
+    assert "test_in_b" not in r.stdout
+    assert "no lab selected, showing every project" in r.stderr
+
+
+def test_e2e_test_name_in_inactive_project_reports_not_searched(tmp_path: Path) -> None:
+    r = _otto(tmp_path, ["test", "--list-tests", "test_only_b"], lab="alpha")
+    blob = r.stdout + r.stderr
+    assert r.returncode == 2, blob
+    assert "project project_b was not searched" in blob
+    assert "-I project_b" in blob
+
+
+def test_e2e_list_tests_without_lab_lists_every_project(tmp_path: Path) -> None:
+    """No lab: every project not switched off takes part, one declaring lab_patterns too."""
+    r = _otto(tmp_path, ["test", "--list-tests"])
+    assert r.returncode == 0, r.stderr
+    assert "test_in_a" in r.stdout
+    assert "test_in_b" in r.stdout
+    assert "no lab selected, showing every project" in r.stderr

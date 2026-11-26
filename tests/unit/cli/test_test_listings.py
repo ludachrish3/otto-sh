@@ -16,6 +16,7 @@ import pytest
 
 from otto.config.collected_tests import classify, read_table
 from tests._fixtures.import_log_project import ImportLogProject, logged_test
+from tests.unit.cli.conftest import _flat
 
 _TREE_GLYPHS = "│├└─ "
 
@@ -335,3 +336,263 @@ def test_list_markers_on_a_warm_table_collects_nothing_and_shows_what_pytest_kno
     # otto's markers once, in otto's panel: never bare, as a project's panel lists names.
     assert not re.search(r"• (ensure|retry)\s", result.output)
     assert "• retry(n)" in result.output
+
+
+# ── scope: only the projects that take part ──────────────────────────────────
+
+_SCOPED_B = '[project]\nlab_patterns = ["other_lab"]\nhost_patterns = [".*"]\n'
+
+
+@pytest.fixture
+def scoped_projects(project_root, monkeypatch, _generated_modules_evicted):
+    """``project_a`` is always active; ``project_b`` applies to ``other_lab`` only."""
+    from tests._fixtures.project_scaffold import make_project
+    from tests._fixtures.run_projects import _wire_projects
+
+    a = make_project(
+        project_root / "project_a",
+        name="project_a",
+        tests=["tests"],
+        files={"tests/test_a.py": "import pytest\n\n\ndef test_in_a(): pass\n"},
+    )
+    b = make_project(
+        project_root / "project_b",
+        name="project_b",
+        tests=["tests"],
+        extra=_SCOPED_B,
+        files={"tests/test_b.py": "def test_in_b(): pass\ndef test_only_b(): pass\n"},
+    )
+    _wire_projects(monkeypatch, [a, b])
+    # The lab load is the lab slice's, not under test: the installed context stands in.
+    monkeypatch.setattr("otto.cli.invoke.ensure_inline_lab", lambda ctx: None)
+    return a, b
+
+
+def _root(monkeypatch, **fields):
+    """Stand in for the root callback's stash: the ``-l`` / ``-I`` / ``-E`` it parsed."""
+    from otto.cli import invoke
+    from tests._fixtures.rootoptions import make_root_options
+
+    opts = make_root_options(**fields)
+    monkeypatch.setattr(invoke, "maybe_root_options", lambda ctx: opts)
+
+
+def test_list_tests_with_lab_omits_inactive_tree(otto_test_cli, scoped_projects, monkeypatch):
+    _root(monkeypatch, labs=["unix"])
+    result = otto_test_cli(["test", "--list-tests"], lab="unix")
+
+    assert result.exit_code == 0, result.output
+    assert "test_in_a" in result.output
+    assert "project_b" not in result.output
+    assert "test_in_b" not in result.output
+
+
+def test_list_tests_with_lab_makes_no_run_dir(
+    otto_test_cli, scoped_projects, tmp_path, monkeypatch
+):
+    """The listing exits at parse time: no run directory is made."""
+    _root(monkeypatch, labs=["unix"])
+    result = otto_test_cli(["test", "--list-tests"], lab="unix")
+
+    assert result.exit_code == 0, result.output
+    assert list((tmp_path / "otto-out").iterdir()) == []
+
+
+def test_list_tests_exclude_without_lab(otto_test_cli, scoped_projects, monkeypatch):
+    """The root ``-E`` reaches the library call (the e2e test drives it end to end)."""
+    from otto.suite import run
+    from otto.suite.run import Listing
+
+    seen = {}
+
+    def fake(names, **kwargs):
+        seen.update(kwargs)
+        return Listing(tests={}, exit_code=0)
+
+    monkeypatch.setattr(run, "selected_tests", fake)
+    # The root callback hands the switches over PEP-503-normalised.
+    _root(monkeypatch, exclude_projects=("project-a",), include_projects=("project-b",))
+    result = otto_test_cli(["test", "--list-tests"], lab=None)
+
+    assert result.exit_code == 0, result.output
+    assert "no lab selected, showing every project" in result.output
+    assert (seen["include"], seen["exclude"]) == (("project-b",), ("project-a",))
+
+
+def test_list_tests_without_lab_says_so(otto_test_cli, scoped_projects, monkeypatch):
+    # The autouse CLI fixture installs a stub lab context whenever none is; with a
+    # lab loaded its verdicts rightly drop project_b. A real no-lab listing has none.
+    monkeypatch.setattr("otto.run_context.try_get_context", lambda: None)
+    result = otto_test_cli(["test", "--list-tests"], lab=None)
+
+    assert result.exit_code == 0, result.output
+    assert "no lab selected, showing every project" in result.output
+    # No lab: every project not switched off takes part, one declaring lab_patterns too.
+    assert "test_in_a" in result.output
+    assert "test_in_b" in result.output
+
+
+def test_list_tests_with_every_project_left_out_says_why(
+    otto_test_cli, scoped_projects, monkeypatch
+):
+    """Nothing to list: the not-searched lines say why, and the listing still exits 0."""
+    monkeypatch.setattr("otto.run_context.try_get_context", lambda: None)
+    # The root callback hands the switches over PEP-503-normalised.
+    _root(monkeypatch, exclude_projects=("project-a", "project-b"))
+    result = otto_test_cli(["test", "--list-tests"], lab=None)
+
+    assert result.exit_code == 0, result.output
+    assert "project project_a was not searched" in result.output
+    assert "project project_b was not searched" in result.output
+    assert "No tests matched" not in result.output
+
+
+_READS_OPTIONS = (
+    "import dataclasses\n"
+    "import os\n"
+    "from pathlib import Path\n\n"
+    "import otto\n\n\n"
+    "@dataclasses.dataclass\n"
+    "class Knobs:\n"
+    "    depth: int = 3\n\n\n"
+    'Path(os.environ["OTTO_TEST_OPTIONS_READ"]).write_text(repr(otto.get_options(Knobs)))\n\n\n'
+    "def test_reads_options(): pass\n"
+)
+
+
+@pytest.mark.parametrize("flag", ["--list-tests", "--list-markers"])
+@pytest.mark.usefixtures("_generated_modules_evicted")
+def test_a_lab_listing_collects_with_option_defaults(
+    otto_test_cli, project_root, tmp_path, monkeypatch, flag
+):
+    """A listing records no options: a module that reads one while it collects gets the defaults.
+
+    The lab is installed under the command's pending mark (``ensure_lab_context``);
+    the listing clears it once the lab is in, so the read is not refused.
+    """
+    from otto.cli.invoke import pending_options
+    from otto.run_context import get_context, record_options
+    from tests._fixtures.project_scaffold import make_project
+    from tests._fixtures.run_projects import _wire_projects
+
+    a = make_project(
+        project_root / "project_a",
+        name="project_a",
+        tests=["tests"],
+        files={"tests/test_reads.py": _READS_OPTIONS},
+    )
+    _wire_projects(monkeypatch, [a])
+
+    def marked_lab(ctx):
+        # What the real lab load leaves behind: the command's pending mark on the context.
+        recorded = pending_options(ctx)
+        assert recorded is not None
+        assert recorded.pending
+        record_options(get_context(), recorded)
+
+    monkeypatch.setattr("otto.cli.invoke.ensure_inline_lab", marked_lab)
+    read = tmp_path / "read.txt"
+    monkeypatch.setenv("OTTO_TEST_OPTIONS_READ", str(read))
+    _root(monkeypatch, labs=["unix"])
+
+    result = otto_test_cli(["test", flag], lab="unix")
+
+    assert result.exit_code == 0, result.output
+    assert read.read_text() == "Knobs(depth=3)"
+
+
+def test_list_tests_typo_exclude_fails(otto_test_cli, scoped_projects, monkeypatch):
+    _root(monkeypatch, exclude_projects=("projectt_a",))
+    result = otto_test_cli(["test", "--list-tests"], lab=None)
+
+    assert result.exit_code == 2, result.output
+    assert "test_in_a" not in result.output
+
+
+def test_dry_run_omits_inactive_tree(otto_test_cli, scoped_projects):
+    result = otto_test_cli(["-n", "test", "test_in_a"], lab="unix")
+
+    assert result.exit_code == 0, result.output
+    assert "pytest collected these tests" in result.output
+    assert "project_a" in result.output
+    assert "project_b" not in result.output
+
+
+def test_dry_run_empty_marker_selection_prints_not_searched(otto_test_cli, scoped_projects):
+    result = otto_test_cli(["-n", "test", "-m", "no_such_marker_anywhere"], lab="unix")
+
+    assert result.exit_code == 1, result.output
+    assert "No tests matched the selection." in result.output
+    assert "project project_b was not searched" in result.output
+    assert "pytest collected these tests" not in result.output
+
+
+def test_dry_run_empty_selection_prints_not_searched(otto_test_cli, scoped_projects):
+    result = otto_test_cli(["-n", "test", "test_only_b"], lab="unix")
+
+    # A name only the inactive project holds is an unknown name, with the reason.
+    assert result.exit_code == 2, result.output
+    # The usage error is a wrapped panel, so compare single-spaced text.
+    out = _flat(result.output)
+    assert "project project_b was not searched" in out
+    assert "-I project_b to search it anyway." in out
+    assert "pytest collected these tests" not in out
+
+
+def test_list_markers_skips_inactive_tables(otto_test_cli, scoped_projects, sessions, monkeypatch):
+    _root(monkeypatch, labs=["unix"])
+    result = otto_test_cli(["test", "--list-markers"], lab="unix")
+
+    assert result.exit_code == 0, result.output
+    assert "project_a" in result.output
+    assert "project_b" not in result.output
+    # One cold collection, of the project that takes part.
+    assert len(sessions) == 1
+
+
+@pytest.mark.usefixtures("_generated_modules_evicted")
+def test_list_markers_with_lab_skips_host_starved_project(otto_test_cli, project_root, monkeypatch):
+    from tests._fixtures.project_scaffold import make_project
+    from tests._fixtures.run_projects import _wire_projects
+
+    a = make_project(
+        project_root / "project_a",
+        name="project_a",
+        tests=["tests"],
+        files={"tests/test_a.py": "def test_in_a(): pass\n"},
+    )
+    c = make_project(
+        project_root / "project_c",
+        name="project_c",
+        tests=["tests"],
+        extra='[project]\nhost_patterns = ["^no-such-host$"]\n',
+        files={"tests/test_c.py": "def test_in_c(): pass\n"},
+    )
+    _wire_projects(monkeypatch, [a, c])
+    monkeypatch.setattr("otto.cli.invoke.ensure_inline_lab", lambda ctx: None)
+    _root(monkeypatch, labs=["unix"])
+
+    result = otto_test_cli(["test", "--list-markers"], lab="unix")
+
+    assert result.exit_code == 0, result.output
+    assert "project_a" in result.output
+    assert "project_c" not in result.output
+
+
+def test_list_markers_without_lab_shows_every_project(otto_test_cli, scoped_projects):
+    result = otto_test_cli(["test", "--list-markers"], lab=None)
+
+    assert result.exit_code == 0, result.output
+    assert "project_a" in result.output
+    assert "project_b" in result.output
+
+
+def test_list_tests_help_text():
+    import typing
+
+    from otto.cli import test as cli_test
+
+    annotation = cli_test._run_flags.__annotations__["list_tests"]
+    [info] = [m for m in typing.get_args(annotation)[1:] if hasattr(m, "help")]
+    assert "Needs no lab" not in info.help
+    assert "With --lab, lists only the projects active for that lab; contacts no host." in info.help

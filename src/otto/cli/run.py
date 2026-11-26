@@ -217,9 +217,14 @@ def first_party_instructions_panel() -> "Panel | None":
     )
 
 
-def list_instructions_callback(value: bool) -> None:
-    """Print every run instruction (one panel per project) and exit when the flag is set."""
-    if not value:
+def list_instructions_callback(ctx: typer.Context, value: bool) -> None:
+    """Print every run instruction (one panel per participating project) and exit.
+
+    The projects are the listing's own (:func:`otto.cli.invoke.listing_participation`):
+    with a lab, those active for it; without one, the pre-lab selection. A
+    project left out gets no panel.
+    """
+    if not value or ctx.resilient_parsing:
         return
     from rich.table import Table
 
@@ -229,8 +234,12 @@ def list_instructions_callback(value: bool) -> None:
 
     del bootstrap
     from ..declared import get_projects
+    from .invoke import listing_participation
 
-    panels = [project.get_instructions_panel() for project in get_projects()]
+    panels = [
+        project.get_instructions_panel()
+        for project in listing_participation(ctx, get_projects()).kept
+    ]
     # Ahead of the projects: these are the verbs every lab has, and the ones a
     # reader must recognize as taken before writing an instruction of their own.
     first_party = first_party_instructions_panel()

@@ -84,7 +84,7 @@ otto run --list-instructions
 
 | Option | Description |
 | ------ | ----------- |
-| `--list-instructions` | List all available instructions and exit |
+| `--list-instructions` | List the available instructions, one panel per project that takes part ({ref}`project-scope`), and exit |
 
 Each instruction defines its own options via Typer annotations.  Use
 `otto run <instruction> --help` to see them.

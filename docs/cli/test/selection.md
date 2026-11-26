@@ -1,11 +1,15 @@
 # Choosing tests
 
-`otto test` runs the tests its names and `-m` select, across every
-configured project. This page is how that selection works.
+`otto test` runs the tests its names and `-m` select, across every project
+that takes part in the run. A project that does not is not searched and not
+listed; [what the command says about it](../projects.md#tests-and-listings-search-only-the-active-projects)
+is on one page, and {ref}`project-scope` says who takes part. This page is how
+that selection works.
 
 ## Names
 
-Each name is looked up in every project's tests, as pytest collects them:
+Each name is looked up in every participating project's tests, as pytest
+collects them:
 
 | Name | Selects |
 | --- | --- |

@@ -8,9 +8,21 @@ from pydantic import ValidationError
 
 from otto.config.project import Project
 from otto.config.scope import (
+    DroppedProject,
+    InactiveReason,
+    Participation,
     ProjectScopeConfig,
+    ScopeSelection,
     active,
+    announce_dropped,
+    applies_to_any,
+    applies_to_lab,
     inactive_before_lab,
+    inactive_reason,
+    not_searched_line,
+    participating,
+    pre_lab_inactive_reason,
+    pre_lab_reason_record,
     project_targets,
     scopes_of,
     switched_off,
@@ -621,6 +633,31 @@ class TestInactiveImpliesAttributable:
         assert inactive_seen > 0, "no cell was inactive — the implication held vacuously"
 
 
+def _lab_cfg(*labs):
+    return ProjectScopeConfig(lab_patterns=[re.compile(p) for p in labs], host_patterns=[])
+
+
+def test_applies_to_lab_fullmatch():
+    cfg = _lab_cfg("bench")
+    assert applies_to_lab(cfg, "bench") is True
+    assert applies_to_lab(cfg, "bench-overflow") is False
+
+
+def test_applies_to_lab_none_scope_applies():
+    assert applies_to_lab(None, "anything") is True
+
+
+def test_applies_to_any_any_match():
+    cfg = _lab_cfg("bench")
+    assert applies_to_any(cfg, ["other", "bench"]) is True
+    assert applies_to_any(cfg, iter(["other", "bench-overflow"])) is False
+    assert applies_to_any(None, []) is True
+
+
+def test_applies_to_any_empty_names_false():
+    assert applies_to_any(_lab_cfg("bench"), []) is False
+
+
 class TestInactiveBeforeLab:
     """The pre-lab projection used by bootstrap-error demotion (plan deviation 1)."""
 
@@ -637,5 +674,245 @@ class TestInactiveBeforeLab:
     def test_non_matching_selection_is_inactive(self):
         assert inactive_before_lab(self._cfg("unix_alt"), ["unix"]) is True
 
+    def test_inactive_before_lab_accepts_tuple(self):
+        assert inactive_before_lab(self._cfg("unix_alt"), ("unix",)) is True
+        assert inactive_before_lab(self._cfg("unix"), ("unix",)) is False
+
     def test_any_matching_component_keeps_it_active(self):
         assert inactive_before_lab(self._cfg("unix_alt"), ["unix", "unix_alt"]) is False
+
+
+def _pre_lab(project, *, labs=None, include=(), exclude=()):
+    return pre_lab_inactive_reason(project, labs=labs, include=include, exclude=exclude)
+
+
+def test_pre_lab_reason_excluded_wins_over_include(tmp_path):
+    project = _scoped_project(tmp_path, "proj", labs=["bench"])
+    assert _pre_lab(project, labs=["bench"], include=["proj"], exclude=["proj"]) == "excluded"
+
+
+def test_pre_lab_reason_normalises_switch_spelling(tmp_path):
+    project = _scoped_project(tmp_path, "My.Proj", labs=["bench"])
+    assert _pre_lab(project, exclude=["my_proj"]) == "excluded"
+    other = _scoped_project(tmp_path, "My_Other", labs=["bench"])
+    assert _pre_lab(other, labs=["lab-x"], include=["my-other"]) is None
+
+
+def test_pre_lab_reason_out_of_scope(tmp_path):
+    project = _scoped_project(tmp_path, "proj", labs=["bench"])
+    assert _pre_lab(project, labs=["other"]) == "out_of_scope"
+    assert _pre_lab(project, labs=["other"], include=["proj"]) is None
+
+
+def test_pre_lab_reason_no_labs_is_active(tmp_path):
+    project = _scoped_project(tmp_path, "proj", labs=["bench"])
+    assert _pre_lab(project, labs=None) is None
+    assert _pre_lab(project, labs=[]) is None
+
+
+@pytest.mark.parametrize("labs", [["bench"], ["other"], ["bench", "other"]])
+@pytest.mark.parametrize("include", [(), ("proj",)])
+@pytest.mark.parametrize("exclude", [(), ("proj",)])
+def test_pre_lab_matches_active_on_lab_axis(tmp_path, labs, include, exclude):
+    project = _scoped_project(tmp_path, "proj", labs=["bench"])
+    applies = applies_to_any(project.project_scope, labs)
+    ctx = _ctx(
+        include=include,
+        exclude=exclude,
+        scopes={"proj": verdict("proj", excluded=not applies)},
+    )
+    reason = _pre_lab(project, labs=labs, include=include, exclude=exclude)
+    assert (reason is not None) == (not active("proj", ctx))
+
+
+def test_inactive_reason_active_is_none():
+    assert inactive_reason("acme", _ctx()) is None
+    assert inactive_reason("acme", _ctx(scopes={"acme": verdict("acme")})) is None
+
+
+def test_inactive_reason_excluded():
+    reason = inactive_reason("Acme_Proj", _ctx(exclude=("acme-proj",)))
+    assert reason == InactiveReason(
+        project="Acme_Proj",
+        normalized="acme-proj",
+        reason="excluded",
+        loaded_labs=(),
+        lab_patterns=(),
+        host_patterns=(),
+        applicable_labs=(),
+    )
+
+
+def test_inactive_reason_out_of_lab_scope():
+    reason = inactive_reason("acme", _ctx(scopes={"acme": verdict("acme", excluded=True)}))
+    assert reason == InactiveReason(
+        project="acme",
+        normalized="acme",
+        reason="out_of_lab_scope",
+        loaded_labs=("bench",),
+        lab_patterns=("acme-lab",),
+        host_patterns=(".*",),
+        applicable_labs=(),
+    )
+
+
+def test_inactive_reason_host_starved():
+    reason = inactive_reason("acme", _ctx(scopes={"acme": verdict("acme", universe=())}))
+    assert reason is not None
+    assert reason.reason == "host_starved"
+    assert reason.applicable_labs == ("bench",)
+    assert reason.host_patterns == (".*",)
+
+
+def test_inactive_reason_switch_beats_verdict():
+    ctx = _ctx(exclude=("acme",), scopes={"acme": verdict("acme", excluded=True)})
+    reason = inactive_reason("acme", ctx)
+    assert reason is not None
+    assert reason.reason == "excluded"
+
+
+def test_pre_lab_reason_record_maps_without_deciding(tmp_path):
+    project = _scoped_project(tmp_path, "proj", labs=["bench", "other"])
+    out = pre_lab_reason_record(project, "out_of_scope", labs=["x", "y"])
+    assert out.reason == "out_of_lab_scope"
+    assert out.loaded_labs == ("x", "y")
+    assert out.lab_patterns == ("bench", "other")
+    assert out.applicable_labs == ()
+    off = pre_lab_reason_record(project, "excluded", labs=["x"])
+    assert (off.reason, off.normalized, off.loaded_labs) == ("excluded", "proj", ())
+
+
+def test_not_searched_line_each_reason():
+    def rec(kind, **kw):
+        base = {
+            "project": "acme",
+            "normalized": "acme",
+            "reason": kind,
+            "loaded_labs": (),
+            "lab_patterns": (),
+            "host_patterns": (),
+            "applicable_labs": (),
+        }
+        return InactiveReason(**{**base, **kw})
+
+    assert not_searched_line(
+        rec("out_of_lab_scope", loaded_labs=("a", "b"), lab_patterns=("x.*", "y"))
+    ) == (
+        "project acme was not searched: its lab_patterns (x.*, y) do not match the "
+        "loaded lab(s) a, b. Use -I acme to search it anyway."
+    )
+    assert not_searched_line(
+        rec("host_starved", loaded_labs=("a", "b"), host_patterns=("h1", "h2"))
+    ) == (
+        "project acme was not searched: its host_patterns (h1, h2) match no host in the "
+        "loaded lab(s) a, b. Use -I acme to search it anyway."
+    )
+    assert not_searched_line(rec("excluded")) == (
+        "project acme was not searched: it was switched off with -E acme. "
+        "Remove -E acme to search it."
+    )
+
+
+# -- participating: THE answer to "which projects take part" ------------------
+
+
+def _named(*names):
+    from tests._fixtures.fake_project import fake_project
+
+    return [fake_project(n) for n in names]
+
+
+def test_participating_lab_tier_uses_active():
+    projects = _named("a", "b")
+    ctx = _ctx(scopes={"a": verdict("a"), "b": verdict("b", excluded=True)}, exclude=())
+    out = participating(projects, ctx=ctx)
+    assert isinstance(out, Participation)
+    assert out.tier == "lab"
+    assert [p.name for p in out.kept] == ["a"]
+    assert [d.project.name for d in out.dropped] == ["b"]
+    assert out.dropped[0].reason == inactive_reason("b", ctx)
+
+
+def test_participating_pre_lab_tier(tmp_path):
+    scoped = _scoped_project(tmp_path, "scoped", labs=["x"])
+    plain = _scoped_project(tmp_path, "plain")
+    sel = ScopeSelection(labs=("y",), include=(), exclude=())
+    out = participating([scoped, plain], selection=sel)
+    assert out.tier == "pre_lab"
+    assert [p.name for p in out.kept] == ["plain"]
+    (dropped,) = out.dropped
+    assert isinstance(dropped, DroppedProject)
+    assert dropped.reason == pre_lab_reason_record(scoped, "out_of_scope", labs=["y"])
+    forced = participating([scoped], selection=ScopeSelection(("y",), ("scoped",), ()))
+    assert [p.name for p in forced.kept] == ["scoped"]
+    off = participating([plain], selection=ScopeSelection((), (), ("plain",)))
+    assert off.dropped[0].reason.reason == "excluded"
+
+
+def test_participating_preserves_order():
+    projects = _named("d", "c", "b", "a")
+    ctx = _ctx(scopes={n: verdict(n, excluded=n in {"c", "a"}) for n in "abcd"})
+    out = participating(projects, ctx=ctx)
+    assert [p.name for p in out.kept] == ["d", "b"]
+    assert [d.project.name for d in out.dropped] == ["c", "a"]
+
+
+@pytest.mark.parametrize("pattern", ["a", "b"])
+def test_participating_merged_lab_component_match(tmp_path, pattern):
+    # `-l a+b` arrives as ("a", "b"); a pattern matching either component admits it.
+    project = _scoped_project(tmp_path, "proj", labs=[pattern])
+    out = participating([project], selection=ScopeSelection(("a", "b"), (), ()))
+    assert [p.name for p in out.kept] == ["proj"]
+    miss = participating([project], selection=ScopeSelection(("c", "d"), (), ()))
+    assert [d.project.name for d in miss.dropped] == ["proj"]
+
+
+def test_participating_requires_exactly_one_source():
+    sel = ScopeSelection((), (), ())
+    with pytest.raises(TypeError):
+        participating([])
+    with pytest.raises(TypeError):
+        participating([], ctx=_ctx(), selection=sel)
+
+
+def test_announce_dropped_one_warning_each(caplog):
+    import logging
+
+    projects = _named("a", "b")
+    ctx = _ctx(exclude=("a", "b"))
+    out = participating(projects, ctx=ctx)
+    with caplog.at_level(logging.WARNING):
+        announce_dropped(out.dropped, verb="build", log=logging.getLogger("otto.test"))
+    said = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert said == [
+        "project 'a' switched off for this run (--exclude-projects a) — skipping it for build",
+        "project 'b' switched off for this run (--exclude-projects b) — skipping it for build",
+    ]
+
+
+def test_skip_message_built_from_record():
+    from otto.config.scope import _skip_message
+
+    def rec(kind, **kw):
+        base = {
+            "project": "Acme",
+            "normalized": "acme",
+            "reason": kind,
+            "loaded_labs": ("a", "b"),
+            "lab_patterns": ("x",),
+            "host_patterns": ("h",),
+            "applicable_labs": ("b", "a"),
+        }
+        return InactiveReason(**{**base, **kw})
+
+    assert _skip_message(rec("out_of_lab_scope"), "build") == (
+        "project 'Acme' is not applicable to the loaded lab(s) [a, b] "
+        "(lab_patterns: x) — skipping it for build"
+    )
+    assert _skip_message(rec("host_starved"), "build") == (
+        "project 'Acme' applies to lab(s) [a, b] but its [project] "
+        "host_patterns (h) match no host there — skipping it for build"
+    )
+    assert _skip_message(rec("excluded"), "build") == (
+        "project 'Acme' switched off for this run (--exclude-projects acme) — skipping it for build"
+    )

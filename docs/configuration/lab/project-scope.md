@@ -79,6 +79,48 @@ every provider or declared entry the project registers would be dead code.
 A project that registers no providers and declares no `[[products]]` or
 `[[dev_tools]]` entries needs no `[project]` table at all.
 
+(project-scope-active)=
+
+## Which projects take part
+
+Project configuration scopes what you see and act on, and scoping is the
+default: a project that does not take part in an invocation is left out of
+what the surfaces below search or show.  Who takes part is the activation rule
+in {doc}`../../cli/projects` (an explicit `-E` or `-I` first, then
+`lab_patterns` and `host_patterns` against the loaded labs); a project with no
+`[project]` table always takes part.
+
+Two tiers decide it, by what the surface knows when it runs:
+
+- **A lab is loaded** (`otto --lab bench ...`): both patterns apply.  A project
+  whose `host_patterns` match no host in the loaded lab is *host-starved* and
+  does not take part.
+- **No lab is loaded yet** (a listing without `--lab`): only the lab selection
+  and the `-I`/`-E` switches are known, so only the lab axis can decide.  A
+  host-starved project still takes part here, since its hosts cannot be seen
+  before the lab loads.  That is the one difference between the tiers.
+
+With no lab selected there is nothing to infer from, so every project that
+`-E` has not switched off takes part, and the listings say so with one dim line
+on stderr:
+
+```text
+no lab selected, showing every project; -l <lab> narrows
+```
+
+These surfaces show or search only the projects that take part:
+
+| Surface | What is left out |
+| ------- | ---------------- |
+| `otto --list-labs` | labs the project's `lab_patterns` do not match |
+| `otto test`, `--list-tests`, `-n test` | the project's tests, never collected |
+| `otto test --list-markers` | the project's marker panel |
+| `otto run --list-instructions` | the project's instructions panel |
+| `--list-products`, `--list-tools` | the project's rows |
+
+A name only a left-out project holds is refused with a line saying why that
+project was not searched; {ref}`the three not-searched forms <not-searched-lines>` are listed there.
+
 (project-scope-effects)=
 ## What the declaration changes
 
@@ -87,6 +129,9 @@ A project that registers no providers and declares no `[[products]]` or
   declared universe rather than the whole loaded lab.  See
   {doc}`../../cli/run/defaults` for the walk semantics, the union across projects, and
   the whole-lab fallback for projects that declare nothing.
+- **Listings and `otto test` show only the projects that take part**; see
+  {ref}`project-scope-active`.  `otto --list-labs` lists only the labs
+  `lab_patterns` admit ({ref}`listing-labs`).
 - **Monitoring and coverage walk it too.**  `otto monitor` picks its hosts
   from the same universe, and coverage collection does as well, containers
   included.  A `[coverage]` `hosts` regex ({ref}`settings-coverage`) narrows

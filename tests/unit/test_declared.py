@@ -551,7 +551,6 @@ from otto.declared import (
     install_initiator,
     publish_composed,
     scope_for_project,
-    surviving_projects,
 )
 
 
@@ -686,7 +685,6 @@ def test_declared_for_host_never_starts_composition(monkeypatch):
     clear_composed()
     monkeypatch.setattr(declared_mod._composition, "initiator", _initiator)
     assert declared_for_host(_host(), "declared_products") == []
-    assert surviving_projects() == []
     assert not called, "declared_for_host must never call the initiator"
 
 

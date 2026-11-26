@@ -14,8 +14,14 @@ adapter in ``otto.cli.test`` owns the translation to ``typer.BadParameter``.
 """
 
 import difflib
+from collections.abc import Sequence
 
 from ..errors import OttoError
+
+
+def with_not_searched(message: str, not_searched: Sequence[str]) -> str:
+    """Return *message* followed by one *not_searched* line per project, each on its own line."""
+    return "\n".join([message, *not_searched]) if not_searched else message
 
 
 class UnknownSelectionError(OttoError, ValueError):
@@ -25,7 +31,8 @@ class UnknownSelectionError(OttoError, ValueError):
     name matched no test in any project's whole tree while there *were*
     collected tests to search — i.e. a genuine typo, not an empty selection.
     The message carries the same did-you-mean suggestions the CLI has always
-    shown; ``param_hint`` names the CLI parameter the selection came from so
+    shown, followed by one line per project the run did not search
+    (``not_searched``); ``param_hint`` names the CLI parameter the selection came from so
     the CLI adapter can re-raise as ``typer.BadParameter`` with an identical
     rendering.
 
@@ -33,9 +40,13 @@ class UnknownSelectionError(OttoError, ValueError):
     for "nothing matched" must catch this first to distinguish the typo case.
     """
 
-    def __init__(self, message: str, *, param_hint: str = "NAMES") -> None:
-        super().__init__(message)
+    def __init__(
+        self, message: str, *, param_hint: str = "NAMES", not_searched: Sequence[str] = ()
+    ) -> None:
+        super().__init__(with_not_searched(message, not_searched))
         self.param_hint = param_hint
+        self.not_searched = list(not_searched)
+        """One line per project the run did not search, already appended to the message."""
 
 
 def base_test_name(name: str) -> str:
