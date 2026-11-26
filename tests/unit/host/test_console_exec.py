@@ -20,7 +20,6 @@ from otto.host.session import NEVER_RAN
 from otto.logger.mode import LogMode
 from otto.utils import Status
 from tests.unit.host._pty_session import PTY_SHELLS, console_session, pty_session
-from tests.unit.host.test_exec_frame import _ZSH_INTERACTIVE
 from tests.unit.host.test_exec_stdin import _ADMIN
 from tests.unit.host.test_frame_shell_portability import FRAME_EDGE_CASES
 from tests.unit.host.test_privilege import _host_with_userland
@@ -49,40 +48,20 @@ def test_shells_are_installed():
 @pytest.mark.parametrize("name", PTY_SHELLS)
 @pytest.mark.asyncio
 async def test_a_console_exec_keeps_every_frame_edge_case(case, name):
-    expected = _ZSH_INTERACTIVE.get(case.text, case.expected) if name == "zsh" else case.expected
     async with console_session(name) as s:
         r = await s.exec_(case.text, timeout=5)
-    assert (r.timed_out, r.value, r.retcode) == (False, expected, case.code)
-
-
-_INTERACTIVE_WORDS = {
-    ("zsh", "x='a'\"'\"'b'; echo \"$x\" # it's a comment"): (True, -1),
-    ("zsh", _BANG): (True, -1),
-    ("bash", _BANG): (True, -1),
-}
-"""What an interactive shell does where another shell differs, as ``(timed_out, retcode)``.
-
-Without ``interactivecomments`` (_ZSH_INTERACTIVE) zsh reads the ``#`` as an
-ordinary word, so the apostrophe after it opens a quote that never closes.
-Interactive bash and zsh expand history, so the unquoted ``!b`` is an event
-that is not found and the shell drops the whole typed line. Either way the
-frame never ends and the call times out, as the same command from ``run``
-does, and the next call finds the console working."""
+    assert (r.timed_out, r.value, r.retcode) == (False, case.expected, case.code)
 
 
 @pytest.mark.parametrize(("cmd", "value", "code"), _WORDS)
 @pytest.mark.parametrize("name", PTY_SHELLS)
 @pytest.mark.asyncio
 async def test_a_console_exec_runs_the_command_with_its_own_status(name, cmd, value, code):
-    differs = _INTERACTIVE_WORDS.get((name, cmd))
     async with console_session(name) as s:
         r = await s.exec_(cmd, timeout=5)
-        if differs is not None:
-            assert (r.timed_out, r.retcode) == differs
-        else:
-            assert (r.timed_out, r.retcode) == (False, code)
-            if value is not None:
-                assert r.value == value
+        assert (r.timed_out, r.retcode) == (False, code)
+        if value is not None:
+            assert r.value == value
         assert (await s.exec_("echo ok", timeout=5)).value == "ok"
 
 

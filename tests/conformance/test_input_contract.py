@@ -44,6 +44,13 @@ PRINTABLE_ARGUMENT = f"{string.punctuation}\tx\théllo wörld ✓ 日本語"
 BEL_ARGUMENT = "a\x07b"
 """An argument holding BEL, a control character a terminal acts on and a pipe passes."""
 
+BANG_WORD = "!word"
+"""A word typed UNQUOTED: a history event to interactive bash or zsh, literal in a script."""
+
+COMMENT = "# it's a comment"
+"""A comment typed after the command: an ordinary word to an interactive zsh, whose
+apostrophe would open a quote (#1346). In a script it is ignored."""
+
 
 def applicable_cell(resolved: ResolvedCell) -> bool:
     """The drawn cells this contract is about.
@@ -108,9 +115,27 @@ def checksum_answer(result: CommandResult) -> str:
     return fields[0] if fields else ""
 
 
-async def _arrived(host, resolved: ResolvedCell, argument: str) -> str:
-    """The checksum the shell computed over *argument*, as typed through *resolved*'s entry."""
-    result = await issue(host, resolved, checksum_command(resolved, argument))
+def unquoted_checksum_command(resolved: ResolvedCell, word: str, tail: str = "") -> str:
+    """The vocabulary's checksum of *word* typed unquoted, with *tail* after it.
+
+    For the words a shell reads as a script reads them only when it treats a
+    typed line as a script line: *word* must hold no character a script
+    would expand or split.
+    """
+    template = resolved.vocabulary.typed_checksum_template
+    assert template is not None, f"{resolved.cell}: the domain admitted a cell with no checksum"
+    return f"{template.format(arg=word)} {tail}".rstrip()
+
+
+async def _arrived(
+    host, resolved: ResolvedCell, argument: str, command: "str | None" = None
+) -> str:
+    """The checksum the shell computed over *argument*, as typed through *resolved*'s entry.
+
+    *command* is the line typed, when it is not the argument's quoted checksum.
+    """
+    typed = command if command is not None else checksum_command(resolved, argument)
+    result = await issue(host, resolved, typed)
     assert result.is_ok, f"{resolved.cell}: the checksum command failed -- {result!r}"
     return checksum_answer(result)
 
@@ -118,6 +143,7 @@ async def _arrived(host, resolved: ResolvedCell, argument: str) -> str:
 @pytest.mark.entries("run", "exec")
 @pytest.mark.observable(
     "the MD5 the shell computes over an argument of ASCII punctuation, TABs and UTF-8 text, "
+    "over an unquoted `!word`, over a word with a `#` comment after the command, "
     "then over one holding BEL (or otto's refusal of it, and the absence of the mark the "
     "refused command would leave), then whether "
     "`{words.single_line_command}` answers on the same host"
@@ -130,6 +156,12 @@ async def test_a_typed_command_reaches_the_shell_byte_for_byte(
     terminal = has_terminal(resolved_cell)
     async with opened(resolved_cell) as host:
         printable = await _arrived(host, resolved_cell, PRINTABLE_ARGUMENT)
+        bang = await _arrived(
+            host, resolved_cell, BANG_WORD, unquoted_checksum_command(resolved_cell, BANG_WORD)
+        )
+        commented = await _arrived(
+            host, resolved_cell, "kept", unquoted_checksum_command(resolved_cell, "kept", COMMENT)
+        )
         bel: "str | None" = None
         if terminal:
             # The refused command would leave a mark first: its absence afterwards
@@ -153,6 +185,14 @@ async def test_a_typed_command_reaches_the_shell_byte_for_byte(
         f"{resolved_cell.cell}: the shell received other bytes than the command held: "
         f"MD5 {printable!r}, sent {md5_of(PRINTABLE_ARGUMENT)!r}"
     )
+    assert bang == md5_of(BANG_WORD), (
+        f"{resolved_cell.cell}: an unquoted {BANG_WORD!r} was not read literally, as a "
+        f"script reads it: MD5 {bang!r}, sent {md5_of(BANG_WORD)!r}"
+    )
+    assert commented == md5_of("kept"), (
+        f"{resolved_cell.cell}: {COMMENT!r} after the command was not read as a comment: "
+        f"MD5 {commented!r}, expected {md5_of('kept')!r}"
+    )
     if not terminal:
         assert bel == md5_of(BEL_ARGUMENT), (
             f"{resolved_cell.cell}: a BEL typed into a session without a terminal did not "
@@ -167,7 +207,8 @@ async def test_a_typed_command_reaches_the_shell_byte_for_byte(
         else "no terminal: a BEL arrived intact"
     )
     note_observable(
-        f"the MD5 the shell computes over punctuation, TABs and UTF-8 text; {mode}; "
+        f"the MD5 the shell computes over punctuation, TABs and UTF-8 text, an unquoted "
+        f"`!word` and a word before a `#` comment; {mode}; "
         f"and `{words.single_line_command}` answered afterwards"
     )
 

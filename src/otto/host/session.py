@@ -50,7 +50,7 @@ from .command_frame import (
     command_value,
     frame_or_default,
     handshake_prefix,
-    history_prefix,
+    shell_prefix,
 )
 from .errors import (
     ConsoleError,
@@ -925,6 +925,10 @@ class ShellSession(ABC):
     # console session whose client typed a password: its retry would re-run
     # the login and type that password into the line again.
     _retry_failed_handshake: bool = True
+    # Whether the handshake makes the shell read a typed line as a script
+    # line (CommandFrame.script_parsing). False only where the shell is
+    # handed to a person, who keeps their own `!` recall and `#` reading.
+    _script_lines: bool = True
 
     def __init__(
         self,
@@ -1307,12 +1311,13 @@ class ShellSession(ABC):
     def _handshake_payload(self, m: SessionMarkers) -> str:
         """Render the complete first line written into a fresh shell.
 
-        The dialect's readiness probe, carrying history suppression when the
-        host asked for it. Suppression rides this existing line rather than
-        being a command of its own: the payload is silent and idempotent, so
-        it costs no extra round-trip and stays invisible to the frame parser
-        even though ``confirm_live`` resends the probe on a loop. It has to be
-        on the FIRST line the shell executes — anything written before it is
+        The dialect's readiness probe, carrying the shell prefix
+        (:func:`~otto.host.command_frame.shell_prefix`: the script-line options, and
+        history suppression when the host asked for it). It rides this existing line
+        rather than being a command of its own: the payload is silent and idempotent, so
+        it costs no extra round-trip and stays invisible to the frame parser even though
+        ``confirm_live`` resends the probe on a loop. It has to be on the FIRST line the
+        shell executes — anything written before it is
         already in the history list. The frame places it in the line
         (:meth:`~otto.host.command_frame.CommandFrame.handshake`), after the
         anchor that has to open it. On the first handshake of a terminal that
@@ -1324,6 +1329,7 @@ class ShellSession(ABC):
             m,
             shell_history=self._shell_history,
             save_terminal=self._saves_terminal(),
+            script_lines=self._script_lines,
         )
         return self._frame.handshake(m, prefix=prefix)
 
@@ -1361,7 +1367,7 @@ class ShellSession(ABC):
     async def _handshake(self, timeout: float | None = None) -> None:
         """Confirm the current frame's shell is at a prompt; the dialect half of open.
 
-        Renders the frame's readiness payload (history suppression included)
+        Renders the frame's readiness payload (the shell prefix included)
         and resends it via :func:`~otto.host.shell_liveness.confirm_live`
         until the READY marker comes back or *timeout* (default
         ``_init_timeout``) passes; a failure tears the session down through
@@ -3286,7 +3292,7 @@ class HostSession:
             await mon.close()
     """
 
-    def __init__(  # noqa: PLR0913 — wide session-handle API: each arg is one thing the manager already resolved (creds, identity, history payload, frame, term)
+    def __init__(  # noqa: PLR0913 — wide session-handle API: each arg is one thing the manager already resolved (creds, identity, shell prefix, frame, term)
         self,
         name: str,
         session: ShellSession,
@@ -3295,7 +3301,7 @@ class HostSession:
         deregister: Callable[[str], None],
         creds: "list[Cred] | None" = None,
         host_id: str = "",
-        history_prefix: str = "",
+        shell_prefix: str = "",
         target_frame: "CommandFrame | None" = None,
         establishing: bool = False,
         *,
@@ -3317,9 +3323,9 @@ class HostSession:
         # passwordless / ad-hoc. Set by SessionManager.
         self._creds = creds
         self._host_id = host_id
-        # History-suppression payload replayed into each shell this session's
+        # The shell prefix (command_frame.shell_prefix) replayed into each shell this session's
         # switch_user/as_user enters, resolved once by the SessionManager.
-        self._history_prefix = history_prefix
+        self._shell_prefix = shell_prefix
         # Set only on the handle a session-setup hook receives: the frame
         # enter_frame() switches to, and the guard that keeps the hook from
         # closing a session the manager is mid-way through establishing.
@@ -3439,7 +3445,7 @@ class HostSession:
             current_user=self._session.current_user,
             stamp=_stamp_of(self._session),
             host_id=self._host_id,
-            history_prefix=self._history_prefix,
+            shell_prefix=self._shell_prefix,
             term=self._term,
         )
 
@@ -3476,7 +3482,7 @@ class HostSession:
             current_user=self._session.current_user,
             stamp=_stamp_of(self._session),
             host_id=self._host_id,
-            history_prefix=self._history_prefix,
+            shell_prefix=self._shell_prefix,
             term=self._term,
         )
         # Narrowed local: `self._creds` re-widens to `list[Cred] | None` once
@@ -3494,7 +3500,7 @@ class HostSession:
                 # term-scoped cred cannot answer the two directions with
                 # different passwords for one login.
                 via = cred_for(creds, via_login, self._term) or Cred(login=via_login)
-                await run_undo(self, hop, via, self._host_id, self._history_prefix)
+                await run_undo(self, hop, via, self._host_id, self._shell_prefix)
             self._session.current_user = prev
 
         # Same contract as PosixPrivilege.as_user's shielded undo: hold a
@@ -4915,8 +4921,11 @@ class SessionManager:
         """
         return self._command_frame if self._command_frame is not None else BashFrame()
 
-    def _history_prefix(self) -> str:
-        """Return this host's history-suppression payload ("" when history is kept).
+    def _shell_prefix(self) -> str:
+        """Return the statements a shell this host's sessions enter starts with.
+
+        The frame's script-line options, then history suppression when the
+        host asked for it (:func:`~otto.host.command_frame.shell_prefix`).
 
         Resolved from the same frame + flag every session here is built with,
         so a shell entered through a login proxy is quieted exactly like the
@@ -4940,7 +4949,7 @@ class SessionManager:
         :meth:`ShellSession._handshake` renders suppression from the session's
         OWN current frame.
         """
-        return history_prefix(self._session_frame, self._shell_history)
+        return shell_prefix(self._session_frame, shell_history=self._shell_history)
 
     def _seed_user(self, session: "ShellSession", user: str | None = None) -> None:
         """Stamp a freshly built session with *user*, or the login user when ``None``.
@@ -5020,7 +5029,7 @@ class SessionManager:
         for hop in hops:
             via = cred_for(switch_creds, via_login, term) or Cred(login=via_login)
             await run_proxy(
-                io, hop, via=via, host_id=self._host_id, history_prefix=self._history_prefix()
+                io, hop, via=via, host_id=self._host_id, shell_prefix=self._shell_prefix()
             )
             session.note_reached_by_switch()
             via_login = hop.login
@@ -5062,7 +5071,7 @@ class SessionManager:
             deregister=lambda _n: None,
             creds=self._creds,
             host_id=self._host_id,
-            history_prefix=self._history_prefix(),
+            shell_prefix=self._shell_prefix(),
             target_frame=target,
             establishing=True,
             term=getattr(self._connections, "term", None),
@@ -5958,7 +5967,7 @@ class SessionManager:
             host_id=self._host_id,
             user=session.current_user,
             marking=frame.identity_mark_statement(mark=mark),
-            history_prefix=self._history_prefix(),
+            shell_prefix=self._shell_prefix(),
         )
         if not proven:
             # The shell could not name itself (no `id`): a mark it holds
@@ -6080,7 +6089,7 @@ class SessionManager:
                         current_user=shell_session.current_user,
                         stamp=_stamp_of(shell_session),
                         host_id=self._host_id,
-                        history_prefix=self._history_prefix(),
+                        shell_prefix=self._shell_prefix(),
                         term=getattr(self._connections, "term", None),
                     )
                     shell_session.note_reached_by_switch()
@@ -6112,7 +6121,7 @@ class SessionManager:
                 deregister=self._forget_session,
                 creds=self._creds,
                 host_id=self._host_id,
-                history_prefix=self._history_prefix(),
+                shell_prefix=self._shell_prefix(),
                 # getattr: a test double standing in for the connection
                 # manager need not carry a term.
                 term=getattr(self._connections, "term", None),

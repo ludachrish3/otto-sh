@@ -16,6 +16,7 @@ from otto.host.command_frame import (
     ExecInput,
     RawFrame,
     ZephyrFrame,
+    shell_prefix,
 )
 from otto.host.element import Element
 from otto.host.errors import RawLandingError, UnsupportedOnUserlandError
@@ -457,7 +458,7 @@ async def test_a_host_without_a_hook_is_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_history_prefix_renders_from_the_landing_frame():
+async def test_the_shell_prefix_renders_from_the_landing_frame():
     h = _Harness(_export, landing=BashFrame(), target=ZephyrFrame(), shell_history=False)
     try:
         # Pinned against the frames themselves rather than a literal: bash's
@@ -466,8 +467,9 @@ async def test_history_prefix_renders_from_the_landing_frame():
         # the very bytes this renders. The pair is the whole point — the
         # LANDING frame has a payload, the command frame renders none, so an
         # empty answer here would mean the command frame was asked.
-        assert h.mgr._history_prefix() == BashFrame().quiet_history()
-        assert "HISTFILE=/dev/null" in h.mgr._history_prefix()
+        assert h.mgr._shell_prefix() == shell_prefix(BashFrame(), shell_history=False)
+        assert h.mgr._shell_prefix().startswith(BashFrame().script_parsing())
+        assert "HISTFILE=/dev/null" in h.mgr._shell_prefix()
         assert ZephyrFrame().quiet_history() == ""
     finally:
         h.unregister()

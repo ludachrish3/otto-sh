@@ -518,6 +518,8 @@ async def test_the_default_bridge_leaves_shell_history_alone(hook):
         log_line=lambda _l: None,
     )
     assert BashFrame().quiet_history() not in console.sent[0].decode()
+    # The person keeps their shell's `!` recall and `#` reading (#1346).
+    assert all(BashFrame().script_parsing() not in line.decode() for line in console.sent)
 
 
 @pytest.mark.asyncio

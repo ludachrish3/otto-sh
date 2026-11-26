@@ -823,6 +823,7 @@ member	otto.host.command_frame:BashFrame.restore_line	method	sync	PK:restore:- P
 member	otto.host.command_frame:BashFrame.restore_terminal	method	sync	PK:saved:-
 member	otto.host.command_frame:BashFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:BashFrame.save_terminal	method	sync	PK:m:-
+member	otto.host.command_frame:BashFrame.script_parsing	method	sync	-
 member	otto.host.command_frame:BashFrame.single_client_console	attribute
 member	otto.host.command_frame:BashFrame.streams_output_live	attribute
 member	otto.host.command_frame:BashFrame.terminal_restore	method	sync	PK:restore:-
@@ -859,6 +860,7 @@ member	otto.host.command_frame:CommandFrame.restore_line	method	sync	PK:restore:
 member	otto.host.command_frame:CommandFrame.restore_terminal	method	sync	PK:saved:-
 member	otto.host.command_frame:CommandFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.save_terminal	method	sync	PK:m:-
+member	otto.host.command_frame:CommandFrame.script_parsing	method	sync	-
 member	otto.host.command_frame:CommandFrame.single_client_console	attribute
 member	otto.host.command_frame:CommandFrame.streams_output_live	attribute
 member	otto.host.command_frame:CommandFrame.typed	method	sync	KO:cmd:-
@@ -911,6 +913,7 @@ member	otto.host.command_frame:RawFrame.restore_line	method	sync	PK:restore:- PK
 member	otto.host.command_frame:RawFrame.restore_terminal	method	sync	PK:saved:-
 member	otto.host.command_frame:RawFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:RawFrame.save_terminal	method	sync	PK:m:-
+member	otto.host.command_frame:RawFrame.script_parsing	method	sync	-
 member	otto.host.command_frame:RawFrame.single_client_console	attribute
 member	otto.host.command_frame:RawFrame.streams_output_live	attribute
 member	otto.host.command_frame:RawFrame.type_name	attribute
@@ -961,6 +964,7 @@ member	otto.host.command_frame:ZephyrFrame.restore_line	method	sync	PK:restore:-
 member	otto.host.command_frame:ZephyrFrame.restore_terminal	method	sync	PK:saved:-
 member	otto.host.command_frame:ZephyrFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host.command_frame:ZephyrFrame.save_terminal	method	sync	PK:m:-
+member	otto.host.command_frame:ZephyrFrame.script_parsing	method	sync	-
 member	otto.host.command_frame:ZephyrFrame.shell_lines_after_begin	attribute
 member	otto.host.command_frame:ZephyrFrame.single_client_console	attribute
 member	otto.host.command_frame:ZephyrFrame.streams_output_live	attribute
@@ -1604,6 +1608,7 @@ member	otto.host:BashFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host:BashFrame.restore_terminal	method	sync	PK:saved:-
 member	otto.host:BashFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host:BashFrame.save_terminal	method	sync	PK:m:-
+member	otto.host:BashFrame.script_parsing	method	sync	-
 member	otto.host:BashFrame.single_client_console	attribute
 member	otto.host:BashFrame.streams_output_live	attribute
 member	otto.host:BashFrame.terminal_restore	method	sync	PK:restore:-
@@ -1640,6 +1645,7 @@ member	otto.host:CommandFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host:CommandFrame.restore_terminal	method	sync	PK:saved:-
 member	otto.host:CommandFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host:CommandFrame.save_terminal	method	sync	PK:m:-
+member	otto.host:CommandFrame.script_parsing	method	sync	-
 member	otto.host:CommandFrame.single_client_console	attribute
 member	otto.host:CommandFrame.streams_output_live	attribute
 member	otto.host:CommandFrame.typed	method	sync	KO:cmd:-
@@ -2629,6 +2635,7 @@ member	otto.host:RawFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host:RawFrame.restore_terminal	method	sync	PK:saved:-
 member	otto.host:RawFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host:RawFrame.save_terminal	method	sync	PK:m:-
+member	otto.host:RawFrame.script_parsing	method	sync	-
 member	otto.host:RawFrame.single_client_console	attribute
 member	otto.host:RawFrame.streams_output_live	attribute
 member	otto.host:RawFrame.type_name	attribute
@@ -3292,6 +3299,7 @@ member	otto.host:ZephyrFrame.restore_line	method	sync	PK:restore:- PK:m:-
 member	otto.host:ZephyrFrame.restore_terminal	method	sync	PK:saved:-
 member	otto.host:ZephyrFrame.restored_pattern	method	sync	PK:m:-
 member	otto.host:ZephyrFrame.save_terminal	method	sync	PK:m:-
+member	otto.host:ZephyrFrame.script_parsing	method	sync	-
 member	otto.host:ZephyrFrame.shell_lines_after_begin	attribute
 member	otto.host:ZephyrFrame.single_client_console	attribute
 member	otto.host:ZephyrFrame.streams_output_live	attribute

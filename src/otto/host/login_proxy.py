@@ -481,13 +481,13 @@ _SETUP_MISMATCH_CAUSE = (
 """Why the post-setup proof (:func:`prove_identity`) usually fails."""
 
 
-def _identity_probe(m: SessionMarkers, history_prefix: str, marking: str = "") -> str:
+def _identity_probe(m: SessionMarkers, shell_prefix: str, marking: str = "") -> str:
     """Render the liveness+identity probe for markers *m*.
 
     Anchored like the handshake (:func:`~otto.host.command_frame.whole_line_echo`):
     su flushes the tty the same way login(1) does, and a probe whose head
     was flushed must print no identity reply, or otto would accept a shell
-    that skipped the history suppression riding after the anchor.
+    that skipped the shell prefix riding after the anchor.
 
     It also establishes the exec frame's variables where the shell has none
     (:func:`~otto.host.terminal_mapping.establish_exec_state` without
@@ -501,7 +501,7 @@ def _identity_probe(m: SessionMarkers, history_prefix: str, marking: str = "") -
     proof is the shell that ran it.
     """
     marked = f"{marking}; " if marking else ""
-    statements = f"{history_prefix}{establish_exec_state(replace=False)}; {marked}"
+    statements = f"{shell_prefix}{establish_exec_state(replace=False)}; {marked}"
     return whole_line_echo(m.recover, RECOVER_SUFFIX, statements, after="$?__$(id -un)__")
 
 
@@ -519,7 +519,7 @@ async def _resync_shell(
     io: ProxyIO,
     host_id: str,
     hop_login: str,
-    history_prefix: str = "",
+    shell_prefix: str = "",
     *,
     prompt: str | None = None,
     password: SecretStr | None = None,
@@ -530,12 +530,12 @@ async def _resync_shell(
 ) -> str:
     """Resync with the shell after a su/sudo/exit transition, and prove who it is.
 
-    *history_prefix* is the caller's already-resolved history-suppression
-    payload (:func:`~otto.host.command_frame.history_prefix`), or ``""`` to
-    leave the new shell's history alone. It rides the probe rather than
-    following it: a ``su`` starts a fresh shell that re-reads rc files and so
-    resets ``HISTFILE``, and anything sent after the resync would mean otto's
-    own probes had already been recorded in the elevated user's history.
+    *shell_prefix* is the caller's already-resolved statements for a new shell
+    (:func:`~otto.host.command_frame.shell_prefix`: the script-line options, then
+    history suppression when asked), or ``""`` to leave the new shell as it is. It rides
+    the probe rather than following it: a ``su`` starts a fresh shell that re-reads rc
+    files and so resets ``HISTFILE``, and anything sent after the resync would mean
+    otto's own probes had already been recorded in the elevated user's history.
 
     Drives the shared :func:`~otto.host.shell_liveness.confirm_live` loop with
     a fresh :class:`~otto.host.command_frame.SessionMarkers` per probe. The
@@ -644,7 +644,7 @@ async def _resync_shell(
     confirmed = await confirm_live(
         io.send,
         expect,
-        lambda m: _identity_probe(m, history_prefix, marking),
+        lambda m: _identity_probe(m, shell_prefix, marking),
         _identity_pattern,
         lambda: SessionMarkers.for_session(session_id=uuid.uuid4().hex[:12]),
         settle=settle,
@@ -660,7 +660,7 @@ async def _resync_shell(
 
 
 async def run_proxy(
-    io: ProxyIO, hop: Cred, via: Cred, host_id: str, history_prefix: str = ""
+    io: ProxyIO, hop: Cred, via: Cred, host_id: str, shell_prefix: str = ""
 ) -> None:
     """Run *hop*'s proxy steps over *io*, wrapping failures with context.
 
@@ -678,7 +678,7 @@ async def run_proxy(
             io,
             host_id,
             hop.login,
-            history_prefix,
+            shell_prefix,
             prompt=proxy.prompt if _may_challenge(hop, via) else None,
             password=hop.password,
             expect_user=hop.login or ROOT_LOGIN,
@@ -691,9 +691,7 @@ async def run_proxy(
         ) from e
 
 
-async def run_undo(
-    io: ProxyIO, hop: Cred, via: Cred, host_id: str, history_prefix: str = ""
-) -> None:
+async def run_undo(io: ProxyIO, hop: Cred, via: Cred, host_id: str, shell_prefix: str = "") -> None:
     """Reverse *hop*: the registered undo, or the default ``exit``.
 
     Also ends with a post-transition shell resync, like :func:`run_proxy` —
@@ -723,7 +721,7 @@ async def run_undo(
         # root -- failing every undo out of a session whose login user was
         # never recorded. An unknown identity is not checkable, so it is not
         # checked.
-        await _resync_shell(io, host_id, hop.login, history_prefix, expect_user=via.login)
+        await _resync_shell(io, host_id, hop.login, shell_prefix, expect_user=via.login)
     except LoginProxyError:
         raise
     except Exception as e:
@@ -739,7 +737,7 @@ async def perform_switch(
     password: str | SecretStr | None,
     current_user: str,
     host_id: str,
-    history_prefix: str = "",
+    shell_prefix: str = "",
     protocol: str | None = None,
 ) -> list[Cred]:
     """Become *user* from *current_user*; return the hops applied, in order.
@@ -772,11 +770,11 @@ async def perform_switch(
     applied: list[Cred] = []
     if cred.via is not None and cred.via != current_user:
         applied += await perform_switch(
-            io, creds, cred.via, None, current_user, host_id, history_prefix, protocol
+            io, creds, cred.via, None, current_user, host_id, shell_prefix, protocol
         )
         current_user = applied[-1].login
     via = cred_for(creds, current_user, protocol) or Cred(login=current_user)
-    await run_proxy(io, cred, via=via, host_id=host_id, history_prefix=history_prefix)
+    await run_proxy(io, cred, via=via, host_id=host_id, shell_prefix=shell_prefix)
     applied.append(cred)
     return applied
 
@@ -790,7 +788,7 @@ async def switch_and_stamp(
     current_user: str,
     stamp: Callable[[str], None],
     host_id: str,
-    history_prefix: str,
+    shell_prefix: str,
     term: str | None,
 ) -> list[Cred]:
     """Switch to *user* from *current_user* through *io*, then *stamp* who it now is.
@@ -811,21 +809,22 @@ async def switch_and_stamp(
         current_user: who the session is before the switch.
         stamp: records the identity the switch landed on.
         host_id: the host, for the hops' messages.
-        history_prefix: the history-suppression payload the hops are typed with.
+        shell_prefix: the statements each new shell is told first
+            (:func:`~otto.host.command_frame.shell_prefix`).
         term: the session's term, which picks among same-login creds.
 
     Raises:
         LoginProxyError: a hop failed.
     """
     applied = await perform_switch(
-        io, creds, user, password, current_user, host_id, history_prefix, protocol=term
+        io, creds, user, password, current_user, host_id, shell_prefix, protocol=term
     )
     stamp(applied[-1].login or ROOT_LOGIN)
     return applied
 
 
 async def prove_identity(
-    io: ProxyIO, *, host_id: str, user: str, marking: str, history_prefix: str = ""
+    io: ProxyIO, *, host_id: str, user: str, marking: str, shell_prefix: str = ""
 ) -> bool:
     """Prove the shell on *io* is *user*, running *marking* on the proof's own line.
 
@@ -843,7 +842,7 @@ async def prove_identity(
         io,
         host_id,
         user,
-        history_prefix,
+        shell_prefix,
         expect_user=user,
         marking=marking,
         settle=0.0,

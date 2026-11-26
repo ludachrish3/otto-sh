@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from otto.host import login_proxy
-from otto.host.command_frame import AshFrame, BashFrame, ExecRestore, SessionMarkers
+from otto.host.command_frame import AshFrame, BashFrame, ExecRestore, SessionMarkers, shell_prefix
 from otto.host.login_proxy import LoginProxyError, _identity_pattern, _identity_probe, _resync_shell
 from otto.host.session import typed_line_ceiling
 from otto.host.terminal_mapping import START_VAR, establish_exec_state, saved_into
@@ -31,11 +31,16 @@ from otto.utils import wait_for
 from tests._fixtures.interactive_shell import (
     READY_TIMEOUT,
     RESEND_MARKERS,
+    SHELL_ARGV,
     TAIL_MARKERS,
     interactive_shell,
 )
 from tests.conformance._vocabulary import POSIX
-from tests.unit.host._pty_session import PTY_SHELLS, pty_session
+from tests.unit.host._pty_session import (
+    PTY_SHELLS,
+    pty_session,
+    reads_bang_and_hash_as_a_script_does,
+)
 
 M = SessionMarkers.for_session(session_id="0" * 8)
 
@@ -327,6 +332,19 @@ async def test_a_custom_undo_landing_in_a_fresh_shell_establishes(name):
         await s.send("exec sh\n")  # a custom undo that replaces the shell
         await _resync_shell(s, "h", "fresh")
         assert (await _state(s)).startswith("bet:")
+
+
+@pytest.mark.parametrize("name", PTY_SHELLS)
+@pytest.mark.usefixtures("_fast_resync")
+@pytest.mark.asyncio
+async def test_a_switched_shell_reads_bang_and_hash_as_a_script_does(name):
+    """The resync a user switch types makes the new shell read a typed line as a script (#1346)."""
+    async with pty_session(name) as s:
+        await s.send(
+            " ".join(SHELL_ARGV[name]) + "\n"
+        )  # the switch: a fresh shell of the same kind
+        await _resync_shell(s, "h", "nested", shell_prefix(None, shell_history=True))
+        await reads_bang_and_hash_as_a_script_does(s)
 
 
 # --- A lost record ---------------------------------------------------------------------------

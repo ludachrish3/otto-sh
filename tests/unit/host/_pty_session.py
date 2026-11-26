@@ -167,3 +167,11 @@ async def console_session(
             name, setup=setup, env={"SHELL": program, **(env or {})}, restore=ExecRestore.START
         ) as s:
             yield s
+
+
+async def reads_bang_and_hash_as_a_script_does(s: PtySession) -> None:
+    """The three typed lines an interactive bash or zsh would read otherwise (#1346)."""
+    assert (await s.run_cmd(cmd="echo a !b c", timeout=5)).value == "a !b c"
+    assert (await s.run_cmd(cmd='echo "x!y" "!z"', timeout=5)).value == "x!y !z"
+    r = await s.run_cmd(cmd="echo kept # it's a comment", timeout=5)
+    assert (r.timed_out, r.value, r.retcode) == (False, "kept", 0)

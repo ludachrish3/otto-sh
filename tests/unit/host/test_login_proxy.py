@@ -547,7 +547,7 @@ async def test_resync_probe_opens_with_the_anchor_and_carries_suppression_after_
     # AFTER the anchor, so a probe whose head su flushed prints no marker at
     # all and is sent again whole, suppression included (#761).
     io = RecorderIO(["Password:"])
-    await run_proxy(io, MYSQL, via=ADMIN, host_id="h1", history_prefix=_QUIET)
+    await run_proxy(io, MYSQL, via=ADMIN, host_id="h1", shell_prefix=_QUIET)
     probes = io.resync_probes()
     assert probes
     assert all(_anchored_and_quiet(p) for p in probes), probes
@@ -557,7 +557,7 @@ async def test_resync_probe_opens_with_the_anchor_and_carries_suppression_after_
 async def test_resync_probe_still_ends_in_the_echo_proof_probe():
     # Suppression must not displace the exit-code probe confirm_live matches on.
     io = RecorderIO(["Password:"])
-    await run_proxy(io, MYSQL, via=ADMIN, host_id="h1", history_prefix=_QUIET)
+    await run_proxy(io, MYSQL, via=ADMIN, host_id="h1", shell_prefix=_QUIET)
     # Still echo-proof ($? cannot be faked by an echo of the probe text), and
     # now also identity-bearing -- both must survive the suppression prefix.
     assert all(
@@ -581,7 +581,7 @@ async def test_undo_resync_also_carries_suppression():
     # path shares the resync and the payload is idempotent — so it rides along
     # rather than special-casing direction.
     io = RecorderIO()
-    await run_undo(io, MYSQL, via=ADMIN, host_id="h1", history_prefix=_QUIET)
+    await run_undo(io, MYSQL, via=ADMIN, host_id="h1", shell_prefix=_QUIET)
     assert all(_anchored_and_quiet(p) for p in io.resync_probes())
 
 
@@ -589,7 +589,7 @@ async def test_undo_resync_also_carries_suppression():
 async def test_perform_switch_threads_suppression_through_every_hop():
     # A multi-hop via-chain must quiet each new shell, not just the last.
     io = RecorderIO(["Password:", "Password:"])
-    await perform_switch(io, [ADMIN, MYSQL], "mysql", None, "admin", "h1", history_prefix=_QUIET)
+    await perform_switch(io, [ADMIN, MYSQL], "mysql", None, "admin", "h1", shell_prefix=_QUIET)
     probes = io.resync_probes()
     assert probes
     assert all(_anchored_and_quiet(p) for p in probes)

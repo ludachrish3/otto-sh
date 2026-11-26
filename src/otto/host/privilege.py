@@ -53,7 +53,7 @@ from .command_frame import (
     EXEC_CREDENTIAL_FD,
     SESSION_SHELL,
     frame_or_default,
-    history_prefix,
+    shell_prefix,
 )
 from .errors import PasswordRefusedError, UnsupportedOnUserlandError
 from .host import (
@@ -661,16 +661,20 @@ class PosixPrivilege(UserlandHost):
             )
         return EXEC_CREDENTIAL_FD
 
-    def _history_prefix(self) -> str:
-        """Return this host's history-suppression payload ("" when history is kept).
+    def _shell_prefix(self) -> str:
+        """Return the statements the shell a user switch starts is told first.
 
-        ``getattr`` rather than direct attribute access because this mixin is
-        also inherited by hosts that declare no ``shell_history`` field
+        The same composition as the session manager's
+        (:func:`~otto.host.command_frame.shell_prefix`): the frame's
+        script-line options, then history suppression when the host asked for
+        it. ``getattr`` rather than direct attribute access because this mixin
+        is also inherited by hosts that declare no ``shell_history`` field
         (LocalHost, DockerContainerHost). ``True`` is the right fallback for
-        them — assume history is recorded and leave the shell as we found it.
+        them: assume history is recorded and leave the shell as we found it.
         """
-        return history_prefix(
-            getattr(self, "command_frame", None), getattr(self, "shell_history", True)
+        return shell_prefix(
+            getattr(self, "command_frame", None),
+            shell_history=getattr(self, "shell_history", True),
         )
 
     def _refuse_elevation(self, verb: str, user: str) -> "Never":
@@ -736,7 +740,7 @@ class PosixPrivilege(UserlandHost):
             current_user=mgr.current_user,
             stamp=mgr._set_current_user,  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation
             host_id=getattr(self, "name", ""),
-            history_prefix=self._history_prefix(),
+            shell_prefix=self._shell_prefix(),
             # getattr, not self.term: see _su_cred's note above -- this
             # mixin also backs term-less hosts (LocalHost, DockerContainerHost).
             term=getattr(self, "term", None),
@@ -818,6 +822,6 @@ class PosixPrivilege(UserlandHost):
             # mixin also backs term-less hosts (LocalHost, DockerContainerHost).
             via = cred_for(creds, via_login, getattr(self, "term", None)) or Cred(login=via_login)
             await run_undo(
-                _HostProxyIO(self), hop, via, getattr(self, "name", ""), self._history_prefix()
+                _HostProxyIO(self), hop, via, getattr(self, "name", ""), self._shell_prefix()
             )
         mgr._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user
