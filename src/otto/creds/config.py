@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ConfigDict, ValidationError, ValidationInfo, field_validator
 from typing_extensions import final
 
-from ..models.base import OttoModel
+from ..models.base import OttoModel, compact_validation_error
 from ..utils import anchor_path
 from .errors import CredsError
 from .protocol import CredsStore
@@ -130,7 +130,7 @@ def compile_creds_table(*, table: dict[str, Any], anchor_dir: Path, origin: str)
     try:
         cfg = CredsConfigSpec.model_validate(table)
     except ValidationError as e:
-        raise CredsError(f"{origin}: [creds] {e}") from e
+        raise CredsError(f"{origin}: [creds] {compact_validation_error(e)}") from e
     return compile_creds(cfg=cfg, anchor_dir=anchor_dir, origin=origin)
 
 

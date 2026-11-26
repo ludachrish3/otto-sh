@@ -20,14 +20,10 @@ import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
 from typing_extensions import final
-
-if TYPE_CHECKING:
-    from pydantic import ValidationError
-
 
 version_re = re.compile(
     r"(?P<major>\d+)\."
@@ -86,14 +82,40 @@ def compact_validation_error(error: "ValidationError") -> str:
     error code, e.g. ``extra_forbidden``) still names *why* precisely enough
     to search a fix by. Shared by every boundary reader that re-raises a
     pydantic failure as its own error: the inventory's stage-1 parser, the
+    ``[inventory]``, ``[[inventories]]`` and ``[creds]`` table readers, the
     NetBox backend, the creds store, ``otto init``'s item validator, the
-    lab repository's host-entry wrap, and the user settings file's loader.
+    lab repository's lab, element and host-entry wraps, the reservation
+    file reader, and the user settings file's loader.
     """
     return "; ".join(
         f"{'.'.join(str(part) for part in item['loc']) or '<entry>'}: "
         f"{item['msg']} [type={item['type']}]"
         for item in error.errors(include_input=False)
     )
+
+
+def validation_message(error: BaseException) -> "str | None":
+    """Return the compact form of *error* when it is a ``ValidationError``, else ``None``.
+
+    For a frame that catches any failure of a user file and says something
+    of its own for the rest (a type name, a ``repr``): the one test of "is
+    this the error whose ``str()`` repeats its input", with
+    :func:`compact_validation_error` as the answer.
+    """
+    if isinstance(error, ValidationError):
+        return compact_validation_error(error)
+    return None
+
+
+def failure_reason(error: BaseException) -> str:
+    """Why *error* happened, as one line a user reads: its compact form, or its text.
+
+    :func:`validation_message` for a ``ValidationError``, ``str(error)`` for
+    anything else. Read by the frames that otherwise print the error's text:
+    a skipped host record, a refused lab entry, a refused declared link.
+    """
+    message = validation_message(error)
+    return message if message is not None else str(error)
 
 
 @final

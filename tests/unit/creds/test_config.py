@@ -83,8 +83,16 @@ def test_compile_creds_table_validates_the_raw_table_naming_the_origin(tmp_path)
         table={"backend": "json", "path": "c.json"}, anchor_dir=tmp_path, origin="o"
     )
     assert out.prepared.backend == "json"
-    with pytest.raises(CredsError, match=r"o: \[creds\] [\s\S]*backend\n\s+Field required"):
+    with pytest.raises(
+        CredsError, match=r"^o: \[creds\] backend: Field required \[type=missing\]$"
+    ):
         compile_creds_table(table={"path": "c.json"}, anchor_dir=tmp_path, origin="o")
+    with pytest.raises(CredsError, match=r"^o: \[creds\] backend: ") as e:
+        compile_creds_table(
+            table={"backend": {"token": "hunter2"}}, anchor_dir=tmp_path, origin="o"
+        )
+    assert "hunter2" not in str(e.value)
+    assert "\n" not in str(e.value), "one line, not pydantic's block"
 
 
 def test_construct_builds_the_json_store_on_the_resolved_path_without_io(tmp_path):

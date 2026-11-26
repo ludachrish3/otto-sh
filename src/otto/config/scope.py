@@ -75,9 +75,18 @@ if TYPE_CHECKING:
 class BootstrapError(OttoError):
     """One user file failed to load during bootstrap registration."""
 
-    def __init__(self, root: Any, *, source: str, cause: BaseException) -> None:
-        """Frame *cause* as ``project root <root>: failed to load <source>``."""
-        super().__init__(f"project root {root}: failed to load {source}: {cause!r}")
+    def __init__(
+        self, root: Any, *, source: str, cause: BaseException, reason: "str | None" = None
+    ) -> None:
+        """Frame *cause* as ``project root <root>: failed to load <source>``.
+
+        The frame ends with *reason* when one is given, else with ``repr(cause)``.
+        A caller passes *reason* for a cause whose ``repr`` is not fit to print:
+        a settings file that fails validation, whose error spans several lines
+        and repeats the rejected values.
+        """
+        said = reason if reason is not None else repr(cause)
+        super().__init__(f"project root {root}: failed to load {source}: {said}")
         self.root = root
         self.source = source
         self.__cause__ = cause

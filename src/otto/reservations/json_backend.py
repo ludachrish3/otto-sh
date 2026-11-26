@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 from pydantic import ConfigDict, ValidationError, ValidationInfo, field_validator
 from typing_extensions import final, override
 
-from ..models.base import OttoModel
+from ..models.base import OttoModel, compact_validation_error
 from ..utils import anchor_path
 from .base import ReservationBackendBase
 from .check import ReservationBackendError
@@ -188,7 +188,9 @@ class _JsonReservationBackend(ReservationBackendBase):
         try:
             return ReservationFile.model_validate(data)
         except ValidationError as e:
-            raise ReservationBackendError(f"Invalid reservation file {self._path}: {e}") from e
+            raise ReservationBackendError(
+                f"Invalid reservation file {self._path}: {compact_validation_error(e)}"
+            ) from e
 
 
 def _json_reservations(

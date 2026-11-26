@@ -485,7 +485,9 @@ def test_unknown_backend_and_bad_table_are_inventory_errors(tmp_path):
             ],
             user_settings=None,
         )
-    with pytest.raises(InventoryError, match=r"o: \[inventory\] [\s\S]*backend\n\s+Field required"):
+    with pytest.raises(
+        InventoryError, match=r"^o: \[inventory\] backend: Field required \[type=missing\]$"
+    ):
         build_inventory_from_declarations(
             declarations=[
                 InventoryDeclaration(origin="o", anchor_dir=tmp_path, table={"path": "x"})
@@ -813,3 +815,15 @@ def test_a_creds_construction_failure_stays_a_construction_error(tmp_path):
             declarations=_declare({"backend": "boom-store"}), user_settings=None
         )
     assert isinstance(at_build.value.__cause__, CredsConstructionError)
+
+
+def test_a_refused_inventory_table_never_prints_what_it_holds(tmp_path):
+    """The table is validated whole: pydantic's echo of its input must not reach the error."""
+    table = {"backend": {"token": "hunter2"}, "path": "x"}
+    with pytest.raises(InventoryError, match=r"^o: \[inventory\] backend: ") as e:
+        build_inventory_from_declarations(
+            declarations=[InventoryDeclaration(origin="o", anchor_dir=tmp_path, table=table)],
+            user_settings=None,
+        )
+    assert "hunter2" not in str(e.value)
+    assert "\n" not in str(e.value), "one line, not pydantic's block"

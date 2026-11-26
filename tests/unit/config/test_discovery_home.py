@@ -64,6 +64,21 @@ def test_discovery_imports_no_init_module_and_composes_nothing(tmp_path, monkeyp
     assert "discovery_home_marker" not in sys.modules
 
 
+def test_a_settings_file_that_fails_validation_is_framed_on_one_line(tmp_path, monkeypatch):
+    """The frame states each problem once, never pydantic's block or the rejected values."""
+    project = make_project(
+        tmp_path / "proj", name="proj", extra='[inventory]\npath = "x"\ntoken = "hunter2"\n'
+    )
+    monkeypatch.setenv("OTTOPATH", str(project))
+    bootstrap.invalidate()
+    (error,) = config_project.discover().errors
+    assert str(error) == (
+        f"project root {project}: failed to load .otto/settings.toml: "
+        "inventory.backend: Field required [type=missing]"
+    )
+    bootstrap.invalidate()
+
+
 def test_a_failed_discovery_leaves_the_deadline_unread(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTOPATH", str(tmp_path / "no-such-project"))
     bootstrap.invalidate()

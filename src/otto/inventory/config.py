@@ -43,7 +43,7 @@ from typing_extensions import final, override
 
 from ..errors import describe_refused
 from ..host.inventory_ref import DEFAULT_INVENTORY
-from ..models.base import OttoModel
+from ..models.base import OttoModel, compact_validation_error
 from ..utils import anchor_path, parse_cache_ttl, refuse_empty_entry, resolved_path
 from .creds import CredsOverlay
 from .errors import InventoryConstructionError, InventoryError
@@ -872,7 +872,7 @@ def _file_entries(decl: InventoryDeclaration) -> "dict[str, NamedInventorySpec]"
     try:
         specs = [NamedInventorySpec.model_validate(entry) for entry in decl.inventories]
     except ValidationError as e:
-        raise InventoryError(f"{decl.origin}: [[inventories]] {e}") from e
+        raise InventoryError(f"{decl.origin}: [[inventories]] {compact_validation_error(e)}") from e
     try:
         check_inventory_declarations(
             inventory=bound_table(decl.table),
@@ -984,7 +984,7 @@ def _compile_declaration(
         try:
             cfg = InventoryConfigSpec.model_validate(decl.table)
         except ValidationError as e:
-            raise InventoryError(f"{decl.origin}: [inventory] {e}") from e
+            raise InventoryError(f"{decl.origin}: [inventory] {compact_validation_error(e)}") from e
         return _compile_inventory(
             cfg=cfg,
             anchor_dir=decl.anchor_dir,
