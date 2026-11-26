@@ -7,6 +7,7 @@ import pytest
 
 from otto.host.command_frame import ZephyrFrame
 from otto.host.errors import ConsoleError
+from otto.host.options import ConsoleOptions
 from otto.host.session import HostSession, TelnetSession
 from otto.host.session_setup import SessionSetupError
 from otto.host.telnet import ReadGate
@@ -107,12 +108,12 @@ async def test_console_login_runs_the_client_sequence_on_a_console_session():
     calls = []
 
     class _Client:
-        # TelnetSession.__init__ reads .logged_in unconditionally on any
-        # non-None console_client (to decide _retry_failed_handshake) — the
-        # brief's stub needs it too, or construction itself raises
-        # AttributeError before console_login() is ever reached.
+        # TelnetSession.__init__ reads .logged_in and .options on any
+        # non-None console_client (to decide _retry_failed_handshake), so
+        # the stub carries both. A hook logs in on a ``login: false`` console.
         logged_in = False
         read_gate = ReadGate()
+        options = ConsoleOptions(login=False)
 
         async def login_sequence(self):
             calls.append("login")
@@ -140,6 +141,7 @@ async def test_console_login_disables_the_handshake_retry_after_a_successful_log
     class _Client:
         logged_in = False
         read_gate = ReadGate()
+        options = ConsoleOptions(login=False)
 
         async def login_sequence(self):
             pass

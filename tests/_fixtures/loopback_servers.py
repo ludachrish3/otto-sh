@@ -9,7 +9,9 @@ receive a password and then fail, against a server on ``127.0.0.1`` only.
 The servers refuse every password, so a planted value is never accepted and
 the failure is always the authentication one. :func:`ssh_server` alone can be
 told the one password to accept, for the host-key tests, which need a
-connection that would succeed but for its host key.
+connection that would succeed but for its host key. :class:`TelnetDevice`
+is the one server here with a shell behind its login: a scripted device
+for the tests of how otto opens a session on it.
 """
 
 import asyncio
@@ -193,6 +195,203 @@ async def refusing_telnet_login(offered: Offered) -> AsyncIterator[int]:
     server = _StreamServer()
     try:
         yield await server.start(handle)
+    finally:
+        await server.close()
+
+
+HANGUP_WORDS = b"\r\nsession limit reached\r\n"
+"""What a ``"hangup"`` :class:`TelnetDevice` login says before it closes."""
+
+NOISE = (b"line noise \x01\x02\x07\x08\x0b\x0e\x7f\r\n" * 500)[:10_000]
+"""What a ``"noise"`` :class:`TelnetDevice` login writes before it closes: 10,000 bytes."""
+
+LOGIN_LINE_MAX = 62
+"""The longest user name BusyBox ``login`` reads; it exits on a longer line."""
+
+
+def _typed(line: bytes) -> bytes:
+    """The bytes of *line* after the client's telnet option negotiation, if any."""
+    return line.rsplit(b"\xff", 1)[-1]
+
+
+def _typed_text(data: bytes) -> str:
+    """What a terminal reads from *data*: every telnet line end (CR LF, CR NUL, CR) as LF."""
+    text = _typed(data).decode(errors="replace")
+    return text.replace("\r\n", "\n").replace("\r\x00", "\n").replace("\r", "\n")
+
+
+async def _read_line(reader: asyncio.StreamReader) -> bytes:
+    """One typed line, its end included; the LF or NUL of a CR pair stays for the next read."""
+    return (await reader.readuntil(b"\r")).lstrip(b"\n\x00")
+
+
+def _caret(line: bytes) -> bytes:
+    """*line* as a tty with ``echoctl`` echoes it: a control character but CR as ``^X``."""
+    return b"".join(
+        b"^" + bytes([c ^ 0x40]) if (c < 0x20 or c == 0x7F) and c != 0x0D else bytes([c])
+        for c in line
+    )
+
+
+class TelnetDevice:
+    """A telnet login with a shell behind it, scripted per connection.
+
+    *scripts* names what each connection's login does, in order (the last
+    one repeats): ``"accept"`` logs in; ``"hold"`` logs in to a shell that
+    never answers (``holding`` is set once it is there); ``"refuse"`` refuses the password
+    it reads, as for a wrong one; ``"discard"`` is BusyBox 1.21.1
+    ``login``, which prints ``Password:`` before it flushes pending input,
+    so the password that arrives is thrown away and the next line is read
+    as the password and refused. After a refusal the next line is read as a
+    user name, echoed as a tty echoes it, on which ``login`` exits when it is
+    longer than :data:`LOGIN_LINE_MAX`. ``"hangup"`` writes
+    :data:`HANGUP_WORDS` after the password and closes; ``"noise"`` writes
+    :data:`NOISE` (control characters among text) and closes.
+
+    The shell answers otto's handshake probe (its marker, through
+    :func:`~tests._fixtures.fake_shell.probe_marker`) and every frame:
+    ``echo X`` prints ``X``, anything else prints nothing; both exit 0.
+    ``connections`` counts what was accepted, ``open`` what is still open,
+    ``passwords`` holds every line the login read as a password, and
+    ``discarded`` every password line a ``"discard"`` login threw away.
+    ``"discard-caret"`` is ``"discard"`` on a tty that echoes a control
+    character as ``^X`` (``echoctl``).
+
+    With *one_client*, the device serves one client at a time, as a Zephyr
+    ``shell_telnet`` does: a connection made while another is open is
+    logged in and closed at once (counted, but taking no script).
+    """
+
+    def __init__(self, scripts: list[str], *, one_client: bool = False) -> None:
+        self._scripts = list(scripts)
+        self._one_client = one_client
+        self.connections = 0
+        self.open = 0
+        self.passwords: list[str] = []
+        self.discarded: list[str] = []
+        self.holding = asyncio.Event()
+
+    def _script(self) -> str:
+        index = min(self.connections, len(self._scripts) - 1)
+        self.connections += 1
+        return self._scripts[index]
+
+    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if self._one_client and self.open:
+            self.connections += 1
+            script = "busy"
+        else:
+            script = self._script()
+        self.open += 1
+        try:
+            if not await self._answer_login(script, reader, writer):
+                return
+            if script == "hold":
+                self.holding.set()
+                while await reader.read(4096):
+                    pass
+            else:
+                await self._shell(reader, writer)
+        finally:
+            self.open -= 1
+            writer.close()
+
+    async def _answer_login(
+        self, script: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> bool:
+        writer.write(b"login: ")
+        user = _typed(await _read_line(reader))
+        writer.write(user + b"\nPassword: ")
+        password = _typed(await _read_line(reader))
+        if script in ("accept", "hold"):
+            self.passwords.append(password.decode(errors="replace").strip())
+            writer.write(b"\r\n$ ")
+            return True
+        if script == "busy":
+            return False
+        if script in ("hangup", "noise"):
+            writer.write(HANGUP_WORDS if script == "hangup" else NOISE)
+            return False
+        refused = password
+        if script in ("discard", "discard-caret"):
+            # The password arrived before the flush: echoed, then discarded.
+            writer.write(_caret(password) if script == "discard-caret" else password)
+            self.discarded.append(password.decode(errors="replace").strip())
+            refused = _typed(await _read_line(reader))
+        self.passwords.append(refused.decode(errors="replace").strip())
+        writer.write(b"\r\nLogin incorrect\r\nlogin: ")
+        while True:
+            name = _typed(await _read_line(reader))
+            writer.write(name)
+            if len(name.rstrip(b"\r")) > LOGIN_LINE_MAX:
+                return False
+            writer.write(b"\nPassword: ")
+            await _read_line(reader)
+            writer.write(b"\r\nLogin incorrect\r\nlogin: ")
+
+    async def _shell(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        from tests._fixtures.fake_shell import end_record_for, parse_bash_frame, probe_marker
+        from tests.unit.host._session_feed import identity_handshake_reply
+
+        pending = ""
+        while chunk := await reader.read(4096):
+            pending = (pending + _typed_text(chunk)).lstrip("\n\x00")
+            if (marker := probe_marker(pending)) is not None and pending.endswith("\n"):
+                pending = ""
+                writer.write(identity_handshake_reply(marker).encode())
+                continue
+            if (framed := parse_bash_frame(pending)) is not None:
+                pending = ""
+                words = framed.cmd.split(maxsplit=1)
+                value = words[1] + "\n" if words[:1] == ["echo"] and len(words) > 1 else ""
+                writer.write(f"{framed.begin}\n{value}{end_record_for(framed, 0)}\n".encode())
+
+
+DEVICE_PASSWORD = "the-device-password"
+"""The fake, test-only password every :func:`telnet_host` logs in with."""
+
+
+def telnet_host(
+    port: int,
+    *,
+    init_timeout: float | None = None,
+    password: str = DEVICE_PASSWORD,
+    single_client_console: bool = False,
+) -> Any:
+    """A telnet host on the loopback :class:`TelnetDevice` at *port*; no backoff between opens."""
+    from otto.host.element import Element
+    from otto.host.options import TelnetOptions
+    from otto.host.unix_host import UnixHost
+    from otto.logger.mode import LogMode
+    from otto.models.base import Cred
+
+    host = UnixHost(
+        ip="127.0.0.1",
+        element=Element(name="h1"),
+        term="telnet",
+        creds=[Cred(login="admin", password=password)],
+        telnet_options=TelnetOptions(
+            port=port,
+            echo_negotiation_timeout=0.1,
+            single_client_console=single_client_console,
+            extra={"connect_minwait": 0.0, "connect_maxwait": 0.1},
+        ),
+        log=LogMode.QUIET,
+        init_timeout=init_timeout,
+    )
+    host._session_mgr._retry_backoff = 0.0
+    return host
+
+
+@contextlib.asynccontextmanager
+async def telnet_device(
+    scripts: list[str], *, one_client: bool = False
+) -> AsyncIterator[tuple[int, TelnetDevice]]:
+    """A :class:`TelnetDevice` on loopback: yields its port and the device."""
+    device = TelnetDevice(scripts, one_client=one_client)
+    server = _StreamServer()
+    try:
+        yield await server.start(device.handle), device
     finally:
         await server.close()
 

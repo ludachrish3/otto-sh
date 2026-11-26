@@ -18,6 +18,7 @@ from telnetlib3.stream_reader import TelnetReader
 from otto.host import interact
 from otto.host.command_frame import READY_SUFFIX, BashFrame, SessionMarkers, ZephyrFrame
 from otto.host.login_proxy import Cred
+from otto.host.options import ConsoleOptions
 from otto.host.session import BridgeSetup, LocalSession, SshSession, TelnetSession
 from otto.host.session_setup import SESSION_SETUPS, SessionSetup, register_session_setup
 from otto.host.telnet import ReadGate
@@ -119,7 +120,9 @@ def _console_client(events: list[str] | None = None) -> SimpleNamespace:
         if events is not None:
             events.append("logout")
 
-    return SimpleNamespace(logged_in=False, read_gate=ReadGate(), close=close)
+    return SimpleNamespace(
+        logged_in=False, read_gate=ReadGate(), close=close, options=ConsoleOptions()
+    )
 
 
 def test_only_a_session_on_a_console_client_outlives_its_terminal():

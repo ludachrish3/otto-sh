@@ -99,6 +99,50 @@ def strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+"""A C0 control character, ESC included, or DEL."""
+
+
+def _shown(text: str, password: SecretStr | None) -> str:
+    """*text* as a human sees it: ANSI-stripped, NULs dropped, *password* as ``***``.
+
+    ``""`` when *password* holds a C0 control character, ESC or DEL: ANSI
+    stripping can cut such a password before the scrub sees it, and a tty
+    echoes such a character as ``^X``, so the scrub cannot be proven and
+    every quote of the line shows nothing.
+    """
+    if password and _CONTROL_RE.search(password.get_secret_value()):
+        return ""
+    shown = strip_ansi(text).replace("\x00", "")
+    if password:
+        shown = shown.replace(password.get_secret_value(), "***")
+    return shown
+
+
+def _quote(text: str, password: SecretStr | None) -> str:
+    """Quote the last ``_QUOTE_BYTES`` characters of ``_shown`` *text*, repr'd.
+
+    The bound counts characters before ``repr`` escapes them, so the quote
+    itself can be longer; ``repr`` leaves no raw control character in it.
+    The scrub runs before the tail is cut, so a password straddling the
+    cut is never half shown. It matters once the password has been typed:
+    a line that echoes it (a getty or serial app that leaves echo on, a
+    login that echoes a password it then discards, a prompt that only
+    looked like a password prompt) would otherwise carry it into every
+    message and log line that quotes the line.
+    """
+    return repr(_shown(text, password)[-_QUOTE_BYTES:])
+
+
+def seen_suffix(text: str, password: SecretStr | None) -> str:
+    """Render a trailing ``" Seen: '...'."`` of *text*, or ``""`` when nothing shows.
+
+    Nothing shows when nothing arrived, or when ``_shown`` withholds
+    the line because of the password.
+    """
+    return f" Seen: {_quote(text, password)}." if _shown(text, password).strip() else ""
+
+
 def classify_tail(
     text: str, login_re: "re.Pattern[str]", password_re: "re.Pattern[str]"
 ) -> ConsoleState | None:
@@ -310,26 +354,16 @@ class ConsoleClient(_StreamHolder):
         return ConsoleState.LOGGED_IN, text
 
     def _shown(self, text: str) -> str:
-        """*text* as a human sees it: ANSI-stripped, NULs dropped, the password as ``***``."""
-        shown = strip_ansi(text).replace("\x00", "")
-        if self.password:
-            shown = shown.replace(self.password.get_secret_value(), "***")
-        return shown
+        """*text* as a human sees it, through ``_shown`` with this client's password."""
+        return _shown(text, self.password)
 
     def _quote(self, text: str) -> str:
-        """Quote the line's last ``_QUOTE_BYTES``: ANSI-stripped, password scrubbed, repr'd.
-
-        The scrub runs before the tail is cut, so a password straddling the
-        cut is never half shown. It matters once the password has been typed:
-        a line that echoes it (a getty or serial app that leaves echo on, a
-        prompt that only looked like a password prompt) would otherwise carry
-        it into every message and log line that quotes the line.
-        """
-        return repr(self._shown(text)[-_QUOTE_BYTES:])
+        """Quote the line's tail through ``_quote`` with this client's password."""
+        return _quote(text, self.password)
 
     def _seen_suffix(self, text: str) -> str:
-        """Render a trailing ``" Seen: '...'."`` for BUSY, or ``""`` if nothing arrived."""
-        return f" Seen: {self._quote(text)}." if strip_ansi(text).strip() else ""
+        """Render :func:`seen_suffix` of the line with this client's password."""
+        return seen_suffix(text, self.password)
 
     async def login_sequence(self) -> None:
         """Run steps 4-6 of the spec: nudge, classify, username, password.

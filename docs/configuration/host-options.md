@@ -379,6 +379,9 @@ checks what state the line is in; these fields keep such a device working on
 - ``login_prompt`` (default ``":"`` byte) — byte delimiter that ends the
   login / password prompts.  The default matches ``login:``,
   ``Username:``, ``Password:``, etc.
+
+  A wrong password is offered twice for each session otto opens, because a
+  failed open is retried ({ref}`per-host-init-timeout`).
 - ``single_client_console`` (default ``false``) — set ``true`` when the
   endpoint is a single-client console (e.g. Zephyr ``shell_telnet``).
   otto then waits for the line to go quiet before it closes it (see
@@ -524,7 +527,7 @@ has a different fix:
 | `is stuck at a password prompt` | Someone typed a username and left. | `otto host <id> logout`. |
 | `is busy: the server closed the connection before any prompt — another client holds the port, or the server has no serial device behind it right now (the line is down)` | The console server allows one client and another has it (a colleague's telnet, another otto run, a stale tunnel), or the server accepted and closed at once because its serial device is gone (a USB adapter unplugged; on the bed, the socat link while its far end reboots). During `reboot --wait` this is the down phase and expected. | Find and close the other client, or wait for the device to return. |
 | `is silent: no login prompt within <N>s and no bytes received` | Nothing answered Enter. | Check the port, that a getty runs on the device's serial line, and the cable. |
-| `did not show a login prompt; it is likely already logged in. Seen: '…'` | A shell, or a program in it, was left running. The quote is the last 200 characters the line showed, escape sequences stripped and the password replaced by `***`. During `reboot --wait` an up phase that ends here can mean the reboot did not take: see below. | Read the quote; then `otto host <id> logout` (or `login --force`). |
+| `did not show a login prompt; it is likely already logged in. Seen: '…'` | A shell, or a program in it, was left running. The quote is the last 200 characters the line showed, escape sequences stripped and the password replaced by `***`; it is left out when the password holds a control character, since otto cannot be sure a tty's echo of it is masked. During `reboot --wait` an up phase that ends here can mean the reboot did not take: see below. | Read the quote; then `otto host <id> logout` (or `login --force`). |
 | `login refused for '<user>'` | After the username the line showed `login:` again, or after the password it showed a login or password prompt. | Check the host's cred. |
 
 Rarer ones name their cause the same way: `showed no password prompt after
@@ -685,9 +688,18 @@ otto sends it a command: the session behind `run`, the named sessions of
 `open_session`, the shells `exec` uses, and the landing shell of an
 `otto login` on a host with a `session_setup` hook. If no answer
 comes back in time, the open fails with `shell never became ready after open`.
-The session behind `run` then retries once, on a fresh connection, after a 2 s
-pause (not on a console whose login has already typed the password); the
-others fail at the first deadline.
+
+For the sessions otto opens for its own commands (all of these but the
+`otto login` landing shell), two more things hold. On a telnet host that is
+not a console, the message ends with `Seen: '…'`: the last 200 characters the
+device sent, otto's own probe lines left out, scrubbed as a console's quote
+is ({ref}`console failures <console-failures>`). A `Login incorrect` there means
+the login was refused. And a failed open retries once, on a fresh connection,
+after a 2 s pause, and fails if the second attempt does too. Two opens are
+not retried: one on a console whose login has already typed the password,
+and a named or pooled session's on a line that serves one client
+(`single_client_console`, or any console), whose slot the host's own session
+may hold.
 
 `init_timeout` sets that deadline in seconds, a number greater than 0; leave it
 out for the default, 10. The clock starts once the connection is up: over ssh
@@ -715,7 +727,7 @@ allow a few times that:
 
 A higher value costs nothing when the shell answers quickly. It changes how
 long a telnet login that never yields a shell (a wrong password, for example)
-takes to fail: for the `run` session, two connection attempts, each up to the
+takes to fail: for each open that retries, two connection attempts, each up to the
 deadline plus the time to connect, and the 2 s pause between them.
 `otto host survey` sizes each login check from this, so it still reports such
 a host as `login-failed`. The survey has 90 s for the whole host, though, so a

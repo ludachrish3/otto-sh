@@ -46,6 +46,7 @@ from otto.utils import Status, wait_for_async
 from tests._ambient_env import AMBIENT_OPT_INS
 from tests._fixtures.clock import stepped_loop_clock
 from tests._fixtures.fake_shell import ShellModel, probe_marker
+from tests._fixtures.loopback_servers import DEVICE_PASSWORD, telnet_host
 from tests.unit.host._session_feed import (
     FeedAfterWriteMixin,
     handshake_reply,
@@ -2493,7 +2494,12 @@ class _UnreadConsole:
         return b""
 
 
-def _console_client(output: bytes, *, login: bool = True) -> ConsoleClient:
+def _console_client(
+    output: bytes,
+    *,
+    login: bool = True,
+    password: str = "s3cret",  # noqa: S107 — a fake, test-only password
+) -> ConsoleClient:
     """A real ConsoleClient over a fake line that shows *output*, as if it had just logged in.
 
     With ``login=False`` it is a client that never typed a password (an RTOS
@@ -2503,7 +2509,7 @@ def _console_client(output: bytes, *, login: bool = True) -> ConsoleClient:
         host="localhost",
         port=40001,
         user="test",
-        password="s3cret",
+        password=password,
         options=ConsoleOptions(
             server="test1",
             port=4001,
@@ -2918,28 +2924,52 @@ class TestBridgeSetup:
         assert isinstance(got.target_frame, BashFrame)
 
 
-@pytest.mark.parametrize("login", [True, False])
-def test_the_budgets_retry_rule_agrees_with_the_console_session(login):
-    """``retries_failed_open`` predicts what the built session decides (#732).
+def test_the_budget_and_the_console_session_read_one_retry_rule(monkeypatch):
+    """``retries_failed_open`` (otto.host.telnet) is the one rule (#732, #1359).
 
-    The budget needs the answer before any session exists, so it states the
-    rule statically; the session decides it from its console client. A
-    console that logs in has typed the password, and must not be retried.
+    The budget needs the answer before any session exists; the session
+    starts its own verdict from the same function. A rule that says "never"
+    where the real one says "always" (a console that does not log in) shows
+    in both, so neither restates it.
     """
+    from otto.host import connections
+    from otto.host import session as session_mod
     from otto.host.connections import ConnectionManager
     from otto.host.options import ConsoleOptions
 
+    asked: list[tuple[str, bool]] = []
+
+    def never(term, console_options=None):
+        asked.append((term, console_options.login))
+        return False
+
+    monkeypatch.setattr(connections, "telnet_retries_failed_open", never)
+    monkeypatch.setattr(session_mod, "retries_failed_open", never)
+    options = ConsoleOptions(server="s", port=1, login=False)
     conns = ConnectionManager(
         ip="10.0.0.1",
         creds=[Cred(login="u", password="p")],
         term="console",
         name="h",
         host_id="h",
-        console_options=ConsoleOptions(server="s", port=1, login=login),
+        console_options=options,
     )
-    client = SimpleNamespace(logged_in=login, read_gate=ReadGate())
+    client = SimpleNamespace(logged_in=False, read_gate=ReadGate(), options=options)
     session = TelnetSession(reader=object(), writer=object(), console_client=client)
-    assert conns.retries_failed_open() is session._retry_failed_handshake
+    assert conns.retries_failed_open() is False
+    assert session._retry_failed_handshake is False
+    assert asked == [("console", False), ("console", False)]
+
+
+@pytest.mark.parametrize("login", [True, False])
+def test_a_console_client_that_logged_in_narrows_the_rule(login):
+    """A ``login: false`` console may be retried; not once its client typed a password anyway."""
+    from otto.host.options import ConsoleOptions
+
+    options = ConsoleOptions(server="s", port=1, login=False)
+    client = SimpleNamespace(logged_in=login, read_gate=ReadGate(), options=options)
+    session = TelnetSession(reader=object(), writer=object(), console_client=client)
+    assert session._retry_failed_handshake is (not login)
 
 
 # --- A telnet session closes through its client, and reads through its gate ---
@@ -3064,7 +3094,7 @@ async def test_admitted_read_finishes_on_captured_reader():
 def test_session_requires_exactly_one_client():
     """Every telnet session has exactly one closer: a telnet client or a console client."""
     reader, writer = object(), object()
-    console = SimpleNamespace(logged_in=False, read_gate=ReadGate())
+    console = SimpleNamespace(logged_in=False, read_gate=ReadGate(), options=ConsoleOptions())
     with pytest.raises(ValueError, match="exactly one"):
         TelnetSession(reader, writer)
     with pytest.raises(ValueError, match="exactly one"):
@@ -3110,3 +3140,196 @@ async def test_each_production_session_shares_its_clients_gate(monkeypatch):
         connections=_console_connections(console), name="h"
     )._open_transport_session(named=False)
     assert on_console._read_gate is console._read_gate
+
+
+_GENERIC_OPEN_FAILURE = (
+    "shell never became ready after open — the transport connected but the shell never "
+    "reached a prompt; the shell may never have started, or the login never completed "
+    "(e.g. bad credentials)"
+)
+
+
+async def _failed_telnet_open(
+    scripts: list[str], *, init_timeout: float | None = None, password: str | None = None
+) -> ConnectionError:
+    """Open a pooled session on a scripted telnet device whose every login fails; the error."""
+    from tests._fixtures.loopback_servers import telnet_device
+
+    async with telnet_device(scripts) as (port, _device):
+        kwargs = {} if password is None else {"password": password}
+        host = telnet_host(port, init_timeout=init_timeout, **kwargs)
+        try:
+            with pytest.raises(ConnectionError) as exc_info:
+                await host.exec("echo hi")
+        finally:
+            await host.close()
+    return exc_info.value
+
+
+def _seen(message: str) -> str:
+    """The excerpt a failure message quotes, unescaped."""
+    import ast
+
+    assert " Seen: " in message, message
+    return ast.literal_eval(message.split(" Seen: ", 1)[1].removesuffix("."))
+
+
+class TestTelnetOpenQuote:
+    """A telnet open whose handshake fails says what the device sent."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
+    async def test_a_failed_telnet_open_quotes_what_the_device_sent(self):
+        """The device's ``Login incorrect`` is quoted; otto's own echoed probe lines are not."""
+        message = str(await _failed_telnet_open(["refuse"]))
+        assert message.startswith(_GENERIC_OPEN_FAILURE)
+        assert "Login incorrect" in _seen(message)
+        assert "__otto" not in message.lower(), message
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
+    async def test_the_quote_includes_what_arrived_before_the_far_side_closed(self):
+        """Text the read that met end of stream had gathered is in the excerpt."""
+        message = str(await _failed_telnet_open(["hangup"]))
+        assert "session limit reached" in _seen(message)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
+    async def test_the_quote_never_holds_the_password(self, caplog):
+        """A discarded password is echoed by the device; no message, log or repr shows it."""
+        import logging
+
+        with caplog.at_level(logging.DEBUG):
+            exc = await _failed_telnet_open(["discard"])
+        message = str(exc)
+        # Every check is a bool, so a failure never prints the message or the password.
+        in_message = DEVICE_PASSWORD in message
+        in_repr = DEVICE_PASSWORD in repr(exc)
+        in_log = DEVICE_PASSWORD in caplog.text
+        assert not in_message, "the message shows the password"
+        assert not in_repr, "the exception's repr shows the password"
+        assert not in_log, "a log line shows the password"
+        masked = "***" in message
+        quoted_the_refusal = "Login incorrect" in message
+        assert masked, "the echoed password is not shown as its mask"
+        assert quoted_the_refusal, "the refusal is not quoted"
+        assert "rebuilding" in caplog.text, "the rebuild log line was not captured"
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
+    async def test_a_shell_that_never_answers_is_quoted_from_what_no_read_took(self):
+        """A probe that timed out leaves the device's ``$ `` unread; the quote holds it."""
+        message = str(await _failed_telnet_open(["hold"], init_timeout=1.0))
+        assert _seen(message).endswith("$ "), message
+        assert "__otto" not in message.lower(), message
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
+    async def test_the_quote_is_bounded_and_printable(self):
+        """10,000 bytes with control characters: the console formatter's bound holds.
+
+        The bound is ``_QUOTE_BYTES`` characters of the scrubbed text before
+        ``repr`` escapes it; the escaped quote in the message is longer, and
+        holds no raw control character.
+        """
+        from otto.host.console import _QUOTE_BYTES
+
+        message = str(await _failed_telnet_open(["noise"]))
+        excerpt = _seen(message)
+        assert "line noise" in excerpt
+        assert len(excerpt) <= _QUOTE_BYTES
+        assert message.isprintable(), message
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
+    async def test_a_failed_frame_entry_quotes_nothing_new(self, monkeypatch):
+        """A handshake that fails in ``enter_frame`` keeps today's message, unread text or not."""
+        from tests._fixtures.loopback_servers import telnet_device
+
+        async with telnet_device(["accept"]) as (port, _device):
+            host = telnet_host(port)
+            try:
+                session = await host._session_mgr._ensure_session()
+                take_unread = session._take_unread
+
+                async def unread_refusal() -> str:
+                    return "Login incorrect\r\nlogin: " + await take_unread()
+
+                monkeypatch.setattr(session, "_take_unread", unread_refusal)
+                with pytest.raises(ConnectionError) as exc_info:
+                    await session.enter_frame(frame=ZephyrFrame(), timeout=0.3)
+            finally:
+                await host.close()
+        message = str(exc_info.value)
+        assert message.startswith("shell never became ready after open"), message
+        assert "Seen:" not in message, message
+
+
+_CONTROL_PASSWORDS = [
+    pytest.param("alpha\x1b[31mbeta", id="escape-sequence"),
+    pytest.param("alpha\x01beta", id="control-character"),
+]
+
+
+def _password_forms(password: str) -> list[str]:
+    """Every form a tty may echo *password* in: raw, ANSI-stripped, and ``^X`` (echoctl)."""
+    from otto.host.console import strip_ansi
+
+    caret = "".join(f"^{chr(ord(c) ^ 0x40)}" if ord(c) < 0x20 else c for c in password)
+    return [password, strip_ansi(password), caret, "alphabeta", "beta"]
+
+
+class TestAControlCharacterPasswordIsNeverQuoted:
+    """A password holding a control character: the scrub cannot be proven, so nothing is quoted."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
+    @pytest.mark.parametrize("script", ["discard", "discard-caret"])
+    @pytest.mark.parametrize("password", _CONTROL_PASSWORDS)
+    async def test_a_telnet_open_quotes_nothing(self, caplog, script, password):
+        import logging
+
+        with caplog.at_level(logging.DEBUG):
+            exc = await _failed_telnet_open([script], password=password)
+        texts = [str(exc), repr(exc), caplog.text]
+        # Bools only, so a failure never prints a password form.
+        leaked = any(form in text for form in _password_forms(password) for text in texts)
+        quoted = "Seen:" in str(exc)
+        rebuilt = "rebuilding" in caplog.text
+        assert not leaked, "a form of the password reached the message, its repr or the log"
+        assert not quoted, "a quote was made for a password the scrub cannot prove"
+        assert rebuilt, "the rebuild log line was not captured"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("password", _CONTROL_PASSWORDS)
+    async def test_a_console_failure_quotes_nothing(self, monkeypatch, password):
+        """The console client's quote of the line follows the same rule."""
+        from otto.host.console import strip_ansi
+
+        caret = "".join(f"^{chr(ord(c) ^ 0x40)}" if ord(c) < 0x20 else c for c in password)
+        line = f"{password}\r\n{caret}\r\nbash: {strip_ansi(password)}: command not found\r\n$ "
+        client = _console_client(line.encode(), password=password)
+        monkeypatch.setattr(client, "logout", AsyncMock())
+        session = _console_session(client)
+
+        with pytest.raises(ConnectionError) as exc_info:
+            await session._ensure_initialized()
+
+        texts = [str(exc_info.value), repr(exc_info.value)]
+        leaked = any(form in text for form in _password_forms(password) for text in texts)
+        quoted = "Seen:" in str(exc_info.value)
+        assert not leaked, "a form of the password reached the message or its repr"
+        assert not quoted, "a quote was made for a password the scrub cannot prove"
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(60)
+    async def test_an_ordinary_password_is_still_quoted_and_masked(self):
+        from tests._fixtures.loopback_servers import DEVICE_PASSWORD
+
+        message = str(await _failed_telnet_open(["discard"]))
+        leaked = DEVICE_PASSWORD in message
+        quoted = "Seen:" in message
+        masked = "***" in message
+        assert not leaked, "the message shows the password"
+        assert quoted, "an ordinary password's failure is no longer quoted"
+        assert masked, "the echoed password is not shown as its mask"
