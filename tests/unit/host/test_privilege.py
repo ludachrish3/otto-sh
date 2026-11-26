@@ -1696,3 +1696,54 @@ async def test_the_undo_of_a_switch_whose_session_a_cancel_left_dead_types_nothi
         await cancelled_block()
     assert typed == []
     assert shell.current_user == "user"
+
+
+# --- The shell a host-level switch starts reads a typed line as a script line (#1346) ---
+
+
+def _resyncs(sent: list) -> list[str]:
+    """The resync probes among *sent*: the lines the switched shell is told first."""
+    wire = [reveal(s) for s in sent]
+    return [s for s in wire if (probe_marker(s) or "").endswith(RECOVER_SUFFIX)]
+
+
+@pytest.mark.parametrize("shell_history", [True, False])
+@pytest.mark.asyncio
+async def test_a_host_switch_and_its_undo_tell_the_new_shell_the_session_s_prefix(shell_history):
+    """``switch_user``'s resync and ``as_user``'s undo resync carry the session's own prefix.
+
+    No fixture runs a real shell behind a ``UnixHost``'s switch (the switch is
+    typed through a :class:`ShellModel` here), so this pins the prefix the
+    host hands to ``switch_and_stamp`` and the undo; the pty tests prove the
+    prefix itself on real shells.
+    """
+    from otto.host.command_frame import BashFrame
+    from otto.host.unix_host import UnixHost
+
+    host = UnixHost(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
+        shell_history=shell_history,
+    )
+    host._session_mgr = _mock_session_mgr()
+    async with host.as_user(user="root"):
+        pass
+    await host.switch_user(user="root")
+    probes = _resyncs([c.args[0] for c in host._session_mgr.send.await_args_list])
+    assert len(probes) == 3, probes  # as_user's switch, its undo, switch_user
+    assert all(BashFrame().script_parsing() in p for p in probes), probes
+
+
+@pytest.mark.parametrize("shell_history", [True, False])
+def test_the_host_and_its_session_manager_give_a_new_shell_one_prefix(shell_history):
+    """The host-level and the session-level prefix are the same string (#1346)."""
+    from otto.host.unix_host import UnixHost
+
+    host = UnixHost(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="admin", password="secret")],
+        shell_history=shell_history,
+    )
+    assert host._shell_prefix() == host._live_session_mgr()._shell_prefix()

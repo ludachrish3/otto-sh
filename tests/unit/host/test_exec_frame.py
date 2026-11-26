@@ -42,7 +42,12 @@ from tests._fixtures import exec_frame_payloads
 from tests._fixtures.fake_shell import end_record, parse_bash_frame
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 from tests.conformance._vocabulary import POSIX
-from tests.unit.host._pty_session import PTY_SHELLS, PtySession, pty_session
+from tests.unit.host._pty_session import (
+    PTY_SHELLS,
+    PtySession,
+    pty_session,
+    reads_bang_and_hash_as_a_script_does,
+)
 from tests.unit.host._session_feed import scripted_shell, scripted_shell_unopened
 from tests.unit.host.test_frame_shell_portability import FRAME_EDGE_CASES
 from tests.unit.host.test_session_exec_pooled import _exec, _mgr
@@ -500,19 +505,13 @@ def test_a_ksh_signal_death_in_the_exec_frame_parses_as_143():
     assert BashFrame().extract_retcode(out, m=M) == 271
 
 
-_ZSH_INTERACTIVE = {"echo hi # a note": "hi # a note"}
-"""What interactive zsh prints where another shell differs: without ``interactivecomments``
-(off by default) a ``#`` is an ordinary word there, so the command's own output keeps it."""
-
-
 @pytest.mark.parametrize("case", FRAME_EDGE_CASES)
 @pytest.mark.parametrize("name", PTY_SHELLS)
 @pytest.mark.asyncio
 async def test_frame_exec_keeps_every_frame_edge_case(case, name):
-    expected = _ZSH_INTERACTIVE.get(case.text, case.expected) if name == "zsh" else case.expected
     async with pty_session(name) as s:
         r = await s.exec_(case.text, timeout=5)
-    assert (r.timed_out, r.value, r.retcode) == (False, expected, case.code)
+    assert (r.timed_out, r.value, r.retcode) == (False, case.expected, case.code)
 
 
 @pytest.mark.parametrize("name", PTY_SHELLS)
@@ -747,3 +746,11 @@ def test_establishing_the_exec_state_never_aborts(options):
     script = "\n".join(f"{options}; {line}" if options else line for line in (kept, fresh, unset))
     out = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False).stdout
     assert out.splitlines() == ["kept=OUTER", "fresh=.", "set=x"]
+
+
+@pytest.mark.parametrize("name", PTY_SHELLS)
+@pytest.mark.asyncio
+async def test_a_typed_run_reads_bang_and_hash_as_a_script_does(name):
+    """``!word`` is literal and ``#`` starts a comment on every shell, as in a script (#1346)."""
+    async with pty_session(name) as s:
+        await reads_bang_and_hash_as_a_script_does(s)

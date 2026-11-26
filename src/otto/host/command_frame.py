@@ -525,6 +525,23 @@ class CommandFrame(ABC):
         """
         return ""
 
+    def script_parsing(self) -> str:
+        """Statement prefix making this dialect's shell read a typed line as a script line.
+
+        A session on a terminal types into an interactive shell, which may
+        parse a line differently from a script (bash and zsh expand ``!word``
+        from history; zsh reads ``#`` as a word, not a comment). The result
+        turns those differences off. Empty (the default) for a dialect with
+        no such options, which is how Zephyr and raw frames are left alone.
+
+        It rides the same first lines as :meth:`quiet_history`, whatever the
+        host's ``shell_history`` says, and keeps that payload's rules: no
+        output of its own, idempotent, and :func:`whole_line_echo`'s cut
+        rules. The interactive ``login`` bridge never sends it: the shell
+        there is a person's.
+        """
+        return ""
+
     def restore_interactive(self) -> str | None:
         """Line that undoes what :meth:`handshake` did to the terminal, for a human.
 
@@ -1109,6 +1126,24 @@ class BashFrame(CommandFrame):
         )
 
     @override
+    def script_parsing(self) -> str:
+        # Each clause names its shell by the version variable only that shell
+        # sets, so every other shell skips it (`${…:-}` is `set -u` safe).
+        # `set +H` turns bash's history expansion off; `setopt` turns zsh's
+        # off and its comments on. Neither statement can fail where it runs,
+        # so no redirection guards them: `bash --restricted` refuses a
+        # redirection to /dev/null and would skip a guarded `set +H` with it.
+        # The zsh option names are upper case: zsh ignores case there, and a
+        # tail cut inside them (whole_line_echo's cut rules) starts with no
+        # word naming a program on PATH (`interactivecomments` ends in `ts`).
+        # A typed line is read before its statements run, so the options
+        # hold from the next line on: the handshake's line itself has no `!`.
+        return (
+            "case ${BASH_VERSION:-} in ?*) set +H;; esac; "
+            "case ${ZSH_VERSION:-} in ?*) setopt NOBANGHIST INTERACTIVECOMMENTS;; esac; "
+        )
+
+    @override
     def restore_interactive(self) -> str | None:
         # Mirrors the handshake's `2>/dev/null stty -echo` (ECHO_OFF_COMMAND); silent on a
         # pty-less channel, where there is nothing to restore either, and
@@ -1637,19 +1672,39 @@ def history_prefix(frame: CommandFrame | None, shell_history: bool) -> str:
     return frame_or_default(frame).quiet_history()
 
 
+def shell_prefix(
+    frame: CommandFrame | None, *, shell_history: bool, script_lines: bool = True
+) -> str:
+    """Return the statements every fresh shell otto drives starts with.
+
+    The frame's :meth:`~CommandFrame.script_parsing` when *script_lines*,
+    then :func:`history_prefix`. *script_lines* is false only for a shell
+    handed to a person (the interactive ``login`` bridge). The handshake,
+    the resync after a user switch and a login-proxy hop all type this.
+    """
+    resolved = frame_or_default(frame)
+    script = resolved.script_parsing() if script_lines else ""
+    return script + history_prefix(resolved, shell_history)
+
+
 def handshake_prefix(
-    frame: CommandFrame, m: SessionMarkers, *, shell_history: bool, save_terminal: bool
+    frame: CommandFrame,
+    m: SessionMarkers,
+    *,
+    shell_history: bool,
+    save_terminal: bool,
+    script_lines: bool = True,
 ) -> str:
     """Return the prefix a session's readiness handshake carries after its anchor.
 
     The frame's :meth:`~CommandFrame.save_terminal` first when
     *save_terminal* (the first handshake on a terminal that outlives the
     session), so it reads the settings before anything changes them; then
-    :func:`history_prefix`. The one composition, for the session and the
+    :func:`shell_prefix`. The one composition, for the session and the
     tests that type the session's line into real shells.
     """
     save = frame.save_terminal(m) if save_terminal else ""
-    return save + history_prefix(frame, shell_history)
+    return save + shell_prefix(frame, shell_history=shell_history, script_lines=script_lines)
 
 
 def _check_frame_class(type_name: str, cls: object) -> None:

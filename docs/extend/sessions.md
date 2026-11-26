@@ -124,6 +124,10 @@ has one keeps it. How such a command ends, times out or is stopped is on
 (exec-frame-shell-state)=
 #### Shell state
 
+Every session's handshake makes its shell read a typed command as a script
+line, on bash and zsh as on every other shell: `!` is literal and `#` starts
+a comment.
+
 Where an `exec` starts, and what it can leave behind:
 
 - **A pooled shell** runs nothing but `exec`s, each in a subshell. Each one
@@ -141,11 +145,7 @@ Where an `exec` starts, and what it can leave behind:
   the session, from `exec` as from `run`. On otto's pty test fixture that
   call returns an error result with `retcode` `-1` and a `value` beginning
   `Session died unexpectedly`; a real console line need not close when the
-  device's shell dies. On an interactive zsh console without
-  `interactivecomments`, `#` does not start a comment, as for `run`. On an
-  interactive bash or zsh console an unquoted `!` before a word is history
-  expansion, as for `run`: `echo a !b c` finds no event `b`, the shell drops
-  the line, and the call times out. What the console promises is on
+  device's shell dies. What the console promises is on
   {ref}`the console's promise <command-contracts-narrower>`.
 
 The subshell inherits its shell's `set -e`: under it, the command stops at

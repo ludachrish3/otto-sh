@@ -499,7 +499,14 @@ class _BridgeShellSession(_PatternReaderTransport, ShellSession):
     sequence exactly as it would on the session otto drives. The session
     never closes it: the host's login verb owns the client and closes it
     (logout, then release) when the bridge ends.
+
+    For the same reason the handshake does not make the shell read a typed
+    line as a script line (:meth:`~otto.host.command_frame.CommandFrame.script_parsing`):
+    the person keeps their shell's ``!`` history expansion and its reading
+    of ``#``.
     """
+
+    _script_lines = False
 
     def __init__(
         self,
@@ -621,9 +628,9 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
         init_timeout=bridge.init_timeout,
     )
     await session._ensure_initialized()  # noqa: SLF001 — the bridge is this session's manager
-    # Empty, always: nothing this function writes may suppress the history of
-    # the shell it is about to hand over. The hops' resync probes and the
-    # hook's handle both take their prefix from here.
+    # Empty, always: nothing this function writes may suppress the history of the shell
+    # it is about to hand over, nor change how it reads `!` and `#`. The hops' resync
+    # probes and the hook's handle both take their prefix from here.
     prefix = ""
     # Seed the identity before the hops and stamp it after them, mirroring
     # SessionManager._seed_user / _apply_login_proxy. A hand copy of that
@@ -643,7 +650,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     if proxy_hops:
         _print_stderr(f"[otto] proxying to {proxy_hops[-1].login}...")
     for hop in proxy_hops:
-        await run_proxy(io, hop, via=Cred(login=via), host_id=host_id, history_prefix=prefix)
+        await run_proxy(io, hop, via=Cred(login=via), host_id=host_id, shell_prefix=prefix)
         via = hop.login
     session.current_user = via
     # The session's one restore step, in the landing frame's dialect: on a
@@ -665,7 +672,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
         deregister=lambda _n: None,
         creds=creds,
         host_id=host_id,
-        history_prefix=prefix,
+        shell_prefix=prefix,
         target_frame=target_frame,
         establishing=True,
         term=term,

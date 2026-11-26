@@ -729,7 +729,9 @@ By default otto suppresses this: on each shell it opens it neutralizes
 ``HISTFILE`` before running anything, so nothing it does reaches
 ``~/.bash_history``. Set ``shell_history`` to ``true`` on a host where otto's
 commands *should* stay visible in the shell's own history (e.g. an audited
-box where the history file is the record of what touched it):
+box where the history file is the record of what touched it). History
+expansion (`!word`) is off on every session otto drives, whatever this field
+says.
 
 ```json
 {

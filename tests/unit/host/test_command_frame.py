@@ -27,8 +27,10 @@ from otto.host.command_frame import (
     ZephyrFrame,
     ZephyrSerialFrame,
     build_command_frame,
+    handshake_prefix,
     history_prefix,
     register_command_frame,
+    shell_prefix,
     whole_line_echo,
 )
 from otto.host.errors import RawLandingError
@@ -491,6 +493,28 @@ class TestHistoryPrefix:
 
     def test_suppressed_zephyr_still_yields_nothing(self):
         assert history_prefix(ZephyrFrame(), shell_history=False) == ""
+
+
+class TestShellPrefix:
+    """The statements every fresh shell otto drives starts with (#1346)."""
+
+    def test_script_parsing_comes_first_whatever_shell_history_says(self):
+        script = BashFrame().script_parsing()
+        assert script.endswith("; ")
+        assert shell_prefix(BashFrame(), shell_history=True) == script
+        assert shell_prefix(None, shell_history=False) == script + BashFrame().quiet_history()
+
+    def test_a_shell_for_a_person_gets_no_script_parsing(self):
+        assert shell_prefix(BashFrame(), shell_history=True, script_lines=False) == ""
+
+    def test_the_handshake_carries_it(self):
+        prefix = handshake_prefix(BashFrame(), M, shell_history=True, save_terminal=False)
+        assert prefix == BashFrame().script_parsing()
+
+    def test_frames_with_no_such_options_render_nothing(self):
+        assert ZephyrFrame().script_parsing() == ""
+        assert RawFrame().script_parsing() == ""
+        assert AshFrame().script_parsing() == BashFrame().script_parsing()
 
 
 class TestRegistry:
