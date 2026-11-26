@@ -72,6 +72,14 @@ _ENTRY_POINTS = [
 
 
 @pytest.mark.parametrize("entry_point", _ENTRY_POINTS)
+def test_an_unresolved_malformed_reference_never_prints_what_it_holds(entry_point):
+    bad = {"name": "physical", "key": "far", "password": "hunter2"}
+    with pytest.raises(ValueError, match="references inventory key a table with keys") as exc:
+        entry_point({**_ENTRY, "inventory": bad})
+    assert "hunter2" not in str(exc.value)
+
+
+@pytest.mark.parametrize("entry_point", _ENTRY_POINTS)
 def test_an_unresolved_reference_is_refused_loudly(entry_point):
     with pytest.raises(ValueError, match=r"references inventory key 'k'.*resolve_host_entry"):
         entry_point({**_ENTRY, "inventory": "k"})

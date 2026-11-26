@@ -87,6 +87,8 @@ seam should catch ``BaseException`` and re-raise what :func:`is_containable`
 rejects.
 """
 
+from collections.abc import Mapping
+
 from typing_extensions import override
 
 __all__ = ["EnsureStateError", "OttoError"]
@@ -129,6 +131,34 @@ UNCONTAINABLE: tuple[type[BaseException], ...] = (
     SystemExit,
     GeneratorExit,
 )
+
+
+def describe_refused(value: object, *, secret: bool = False) -> str:
+    """Say what a refused value is without repeating what it holds.
+
+    A refusal that prints the value it refused prints whatever was written
+    beside the mistake: a password in a host record, a token in a settings
+    table. Every refusal of a value that may be a container reads this, so
+    the rule is stated once:
+
+    * a string, a number, a boolean or ``None`` is its ``repr`` (``7``, ``''``);
+    * a mapping is its keys, never its values (``a table with keys 'key',
+      'password'``), since a key is what names the mistake; a key that is
+      not a string is its type alone;
+    * anything else is its type alone (``list``).
+
+    *secret* says the value itself may be a secret (an entry of a creds
+    list, where a bare string is as likely a password as a login): a string
+    or a number is then its type alone too.
+    """
+    if value is None or (not secret and isinstance(value, (str, int, float))):
+        return repr(value)
+    if isinstance(value, Mapping):
+        if not value:
+            return "an empty table"
+        keys = sorted(repr(key) if isinstance(key, str) else type(key).__name__ for key in value)
+        return f"a table with keys {', '.join(keys)}"
+    return type(value).__name__
 
 
 def is_containable(exc: BaseException) -> bool:

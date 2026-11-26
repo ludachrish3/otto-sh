@@ -21,13 +21,14 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import final
 
-from ..registry import Ref, Registry, registration_boundary, resolved
-from .command_frame import CommandFrame
+from ..errors import describe_refused
 
 # The error MOVED to `errors` -- `session.py` names it in an `except` arm at
 # module level and must not import THIS module there (it is off the CLI startup
 # import graph; see `SessionManager._apply_session_setup`). Re-exported so
 # `from otto.host.session_setup import SessionSetupError` keeps working.
+from ..registry import Ref, Registry, registration_boundary, resolved
+from .command_frame import CommandFrame
 from .errors import SessionSetupError as SessionSetupError  # noqa: PLC0414 — explicit re-export
 
 if TYPE_CHECKING:
@@ -151,11 +152,11 @@ def session_setup_from_spec(value: Any) -> SessionSetup | None:
         if not isinstance(name, str):
             raise ValueError(  # noqa: TRY004 — existing API contract; test suite expects ValueError
                 f"session_setup table must carry a string 'type' naming a registered "
-                f"session setup; got {value!r}"
+                f"session setup; got {describe_refused(value)}"
             )
         SESSION_SETUPS.get(name)
         return SessionSetup(name=name, params=cfg)
-    raise ValueError(f"cannot build a SessionSetup from {value!r}")
+    raise ValueError(f"cannot build a SessionSetup from {describe_refused(value)}")
 
 
 async def apply_session_setup(

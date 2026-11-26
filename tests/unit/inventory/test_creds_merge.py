@@ -80,14 +80,15 @@ def test_a_login_repeated_within_the_lower_layer_also_names_the_layer_and_the_ke
 
 def test_an_entry_without_a_login_names_its_fields_never_its_values():
     with pytest.raises(
-        InventoryError, match=r"without a 'login' string in the creds store layer.*\['password'\]"
+        InventoryError, match=r"without a 'login' string in the creds store layer.*keys 'password'$"
     ) as exc:
         merge_creds(lower=[{"password": "hunter2"}], higher=[], lower_name="creds store")
     assert "hunter2" not in str(exc.value)
     with pytest.raises(InventoryError, match=r"without a 'login' string"):
         merge_creds(lower=[], higher=[{"login": ""}])
-    with pytest.raises(InventoryError, match=r"without a 'login' string.*str"):
-        merge_creds(lower=[], higher=["not-a-dict"])
+    with pytest.raises(InventoryError, match=r"without a 'login' string.*: str$") as bare:
+        merge_creds(lower=[], higher=["hunter2"])
+    assert "hunter2" not in str(bare.value)
 
 
 def test_inputs_are_not_mutated():

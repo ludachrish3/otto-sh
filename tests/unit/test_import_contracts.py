@@ -314,8 +314,9 @@ IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
     "otto.link.params": [],
     # The leaf otto.host and otto.models share: OttoModel, CredSpec, Cred. The
     # json sources' fingerprint classifies a stat through corpus_snapshot when
-    # called.
-    "otto.models.base": ["otto.config.corpus_snapshot"],
+    # called, and a refused cred entry is described through otto.errors when
+    # refused.
+    "otto.models.base": ["otto.config.corpus_snapshot", "otto.errors"],
     # The scope predicate, the composition root's error types and the runtime
     # settings types, below every layer; it normalizes project names inside its
     # functions.

@@ -74,7 +74,7 @@ from otto.env import (
     EnvUninstallableProjectError,
 )
 from otto.env.backends import UvNotFoundError
-from otto.errors import EnsureStateError, FieldError, OttoError
+from otto.errors import EnsureStateError, FieldError, OttoError, describe_refused
 from otto.host.app_shell import AppShellActiveError, AppShellTimeoutError, ParseMismatch
 from otto.host.connections import TermBackendError, TermConstructionError
 from otto.host.construction import HostValidationError
@@ -705,4 +705,36 @@ def test_the_taxonomy_counts_in_errors_py_match_the_measured_split():
     )
     assert f"{covered} of the {named} named classes" in doc, (
         f"errors.py's coverage sentence is not '{covered} of the {named} named classes'"
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "described"),
+    [
+        (7, "7"),
+        ("", "''"),
+        (None, "None"),
+        (True, "True"),
+        ({}, "an empty table"),
+        ({"key": "far", "password": "hunter2"}, "a table with keys 'key', 'password'"),
+        ([{"password": "hunter2"}], "list"),
+        (("far", "hunter2"), "tuple"),
+        (b"hunter2", "bytes"),
+    ],
+)
+def test_a_refused_value_is_described_without_what_it_holds(value, described):
+    assert describe_refused(value) == described
+
+
+def test_a_refused_value_names_a_key_that_is_not_a_string_by_its_type():
+    assert describe_refused({("password", "hunter2"): 1, "key": 2}) == (
+        "a table with keys 'key', tuple"
+    )
+
+
+def test_a_refused_value_that_may_itself_be_a_secret_is_its_type_alone():
+    assert describe_refused("hunter2", secret=True) == "str"
+    assert describe_refused(7, secret=True) == "int"
+    assert describe_refused({"password": "hunter2"}, secret=True) == (
+        "a table with keys 'password'"
     )

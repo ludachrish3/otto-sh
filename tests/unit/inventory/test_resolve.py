@@ -153,7 +153,8 @@ def test_inventory_key_must_be_a_nonempty_string(bad):
     """
     with pytest.raises(InventoryError, match="'inventory' must name a key") as exc:
         resolve_host_entry({"inventory": bad}, inventory=FakeInventory({}), element=_DUT)
-    assert repr(bad) in str(exc.value)
+    given = "list" if isinstance(bad, list) else repr(bad)  # a container by its type alone
+    assert str(exc.value).endswith(f", got {given}")
 
 
 def test_element_id_is_cross_checked_never_filled():

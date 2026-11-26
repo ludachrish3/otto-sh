@@ -673,6 +673,22 @@ def test_a_malformed_table_is_a_value_error(toml):
     assert key in str(e.value)
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"inventory": [{"token": "hunter2"}]},
+        {"creds": ["hunter2"]},
+        {"inventories": [["netbox", "hunter2"]]},
+    ],
+    ids=["inventory", "creds", "inventories-entry"],
+)
+def test_a_malformed_table_never_prints_what_it_holds(data):
+    """A table of the wrong shape is refused by its type, never by its contents."""
+    with pytest.raises(ValueError, match="must be a table") as e:
+        inventory_declaration(data=data, root=Path("/p"), origin="/p/.otto/settings.toml")
+    assert "hunter2" not in str(e.value)
+
+
 def test_a_declaration_is_kept_for_any_inventory_table():
     root = Path("/p")
     origin = "/p/.otto/settings.toml"

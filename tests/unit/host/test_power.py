@@ -241,6 +241,12 @@ def test_a_bare_type_name_builds_from_an_empty_table():
         power_control_from_spec(value="command", host_id="h")
 
 
+def test_power_control_from_spec_never_prints_what_a_refused_container_holds():
+    with pytest.raises(ValueError, match="cannot build a PowerController from") as exc:
+        power_control_from_spec(value=[{"password": "hunter2"}], host_id="h")
+    assert "hunter2" not in str(exc.value)
+
+
 def test_power_control_from_spec_passthrough_and_none():
     pc = _CommandPowerController(CommandPowerConfig(on_cmd="o", off_cmd="f"))
     assert power_control_from_spec(value=pc, host_id="h") is pc

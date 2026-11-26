@@ -9,7 +9,8 @@ duplicate check uses, and :func:`cred_layer_by_identity`, the one keying of a
 cred layer; and :func:`resources_nonempty`, the one rule for a usable
 reservation identifier. It imports no other otto module at import time (spec
 2026-10-11 placement-and-phases §3.3); :meth:`JsonFileSource.fingerprint`
-classifies a stat through ``otto.config.corpus_snapshot`` when called.
+classifies a stat through ``otto.config.corpus_snapshot`` when called, and a
+refused cred entry is described through ``otto.errors`` when refused.
 ``Cred`` keeps its public path,
 ``otto.host.login_proxy.Cred``, and ``CredSpec`` its, ``otto.models.CredSpec``.
 """
@@ -386,9 +387,11 @@ def cred_layer_by_identity(
     for entry in layer:
         login = entry.get("login") if isinstance(entry, dict) else None
         if not isinstance(login, str) or not login:
-            fields = sorted(entry) if isinstance(entry, dict) else type(entry).__name__
+            from ..errors import describe_refused  # lazy: refusal path only
+
             raise ValueError(
-                f"cred entry without a 'login' string in the {name} layer{where}: {fields}"
+                f"cred entry without a 'login' string in the {name} layer{where}: "
+                f"{describe_refused(entry, secret=True)}"
             )
         protocols = entry.get("protocols")
         if protocols is None:

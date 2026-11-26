@@ -20,6 +20,7 @@ from otto.host.inventory_ref import (
 from otto.host.specs import UnixHostSpec
 from otto.inventory import InventoryError, resolve_host_entry
 from otto.inventory.doctor import referenced_references
+from otto.models.base import compact_validation_error
 from otto.models.inventory import FILLABLE_INVENTORY_FIELDS
 from otto.models.jsonschema import build_schemas
 from otto.models.lab import ElementSpec
@@ -113,7 +114,27 @@ def test_a_misspelled_qualified_ref_is_refused_naming_kye():
     with pytest.raises(ValueError, match="'kye'") as exc:
         normalize_reference(value={"name": "p", "kye": "k"})
     assert str(exc.value).startswith("'inventory' must name a key (a non-empty string)")
-    assert str(exc.value).endswith(", got {'name': 'p', 'kye': 'k'}")
+    assert str(exc.value).endswith(", got a table with keys 'kye', 'name'")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"name": "physical", "key": "far", "password": "hunter2"},
+        {"name": "physical", "key": {"password": "hunter2"}},
+        [{"password": "hunter2"}],
+        ("far", "hunter2"),
+    ],
+    ids=["extra-key", "nested", "list", "tuple"],
+)
+def test_a_refused_reference_never_prints_what_a_container_holds(value):
+    """A reference written with a secret beside it is refused without repeating the secret."""
+    with pytest.raises(ValueError, match="'inventory' must name a key") as exc:
+        normalize_reference(value=value)
+    assert "hunter2" not in str(exc.value)
+    with pytest.raises(ValidationError, match="'inventory' must name a key") as spec_exc:
+        UnixHostSpec.model_validate({**_INLINE, "inventory": value})
+    assert "hunter2" not in compact_validation_error(spec_exc.value)
 
 
 def test_the_schema_constant_is_the_non_null_form():
