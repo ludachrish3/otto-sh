@@ -41,6 +41,7 @@ from pydantic import (
 )
 from typing_extensions import final, override
 
+from ..errors import describe_refused
 from ..host.inventory_ref import DEFAULT_INVENTORY
 from ..models.base import OttoModel
 from ..utils import anchor_path, parse_cache_ttl, refuse_empty_entry, resolved_path
@@ -751,7 +752,7 @@ def _shaped_table(data: "Mapping[str, Any]", key: str, origin: str) -> "Mapping[
         # A ValueError, not TypeError: a malformed settings file, which every
         # caller already reports as a configuration problem.
         raise ValueError(  # noqa: TRY004 — a settings-file error, as the doctor reports it
-            f"{origin}: [{key}] must be a table, got {type(value).__name__} {value!r}"
+            f"{origin}: [{key}] must be a table, got {describe_refused(value)}"
         )
     return value
 
@@ -793,7 +794,7 @@ def inventory_declaration(
         if not isinstance(entry, Mapping):
             raise ValueError(  # noqa: TRY004 — a settings-file error, as the doctor reports it
                 f"{origin}: inventories[{index}] must be a table ([[inventories]] with name "
-                f"and backend), got {type(entry).__name__} {entry!r}"
+                f"and backend), got {describe_refused(entry)}"
             )
     if not table and not creds and not raw:
         return None

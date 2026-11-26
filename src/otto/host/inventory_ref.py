@@ -33,6 +33,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..errors import describe_refused
+
 FIELD_RECORDING: "ContextVar[Any]" = ContextVar("otto_field_recording", default=None)
 """The :class:`~otto.host.provenance.FieldTrace` of the live recording, or ``None``.
 
@@ -64,7 +66,7 @@ _QUALIFIED_KEYS = frozenset({"name", "key"})
 """Exactly the keys of a qualified reference."""
 
 _REFUSAL = "'inventory' must name a key (a non-empty string)"
-"""How every refused reference begins; the value follows at the end."""
+"""How every refused reference begins; what was given is described at the end."""
 
 
 @dataclass(frozen=True, kw_only=True, order=True)
@@ -87,7 +89,7 @@ class InventoryReference:
 
 def _qualified_problem(value: Mapping[Any, Any]) -> "str | None":
     """Say what is wrong with a mapping meant as a qualified reference, or ``None``."""
-    unknown = sorted(repr(k) for k in value if k not in _QUALIFIED_KEYS)
+    unknown = sorted(describe_refused(k) for k in value if k not in _QUALIFIED_KEYS)
     if unknown:
         return f"unknown key {', '.join(unknown)}"
     missing = sorted(_QUALIFIED_KEYS - set(value))
@@ -110,7 +112,9 @@ def normalize_reference(*, value: object) -> "InventoryReference | None":
     Raises:
         ValueError: For any other value, the empty string included. The message
             begins ``'inventory' must name a key (a non-empty string)`` and ends
-            ``, got <the value's repr>``.
+            ``, got <the value>``, the value described by
+            ``otto.errors.describe_refused``: a mapping by its keys and
+            any other container by its type, never by what it holds.
     """
     if value is None:
         return None
@@ -122,7 +126,7 @@ def normalize_reference(*, value: object) -> "InventoryReference | None":
     detail = ' or an inventory and a key, {"name": "<inventory>", "key": "<key>"}'
     if problem is not None:
         detail += f" ({problem})"
-    raise ValueError(f"{_REFUSAL}{detail}, got {value!r}")
+    raise ValueError(f"{_REFUSAL}{detail}, got {describe_refused(value)}")
 
 
 def inventory_reference_schema(*, nullable: bool) -> dict[str, Any]:

@@ -75,6 +75,17 @@ def test_a_link_to_a_skipped_host_names_the_record_and_the_reason(tmp_path: Path
     assert "no such host in any lab file" not in message
 
 
+def test_a_skipped_record_is_logged_by_its_keys_never_its_values(tmp_path: Path, caplog):
+    bad = {"inventory": {"name": "physical", "key": "far", "password": "hunter2"}}
+    lab_file = _write(tmp_path / "lab.json", **_sections(links=[_link("dut", "peer")], bad=bad))
+    caplog.set_level("DEBUG", logger="otto")
+    built_json_source(tmp_path, "p", lab_file).repository.load_lab(LAB)
+    skipped = [r.getMessage() for r in caplog.records if "Skipping unresolvable" in r.getMessage()]
+    assert skipped, "the skipped record is logged"
+    assert all("'inventory'" in line for line in skipped)
+    assert "hunter2" not in caplog.text
+
+
 def test_a_skipped_record_no_link_names_stays_quiet(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ):

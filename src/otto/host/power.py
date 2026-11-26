@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from pydantic import ConfigDict
 from typing_extensions import final, override
 
-from ..errors import OttoError
+from ..errors import OttoError, describe_refused
 from ..models.base import OttoModel
 from ..registry import (
     BackendRegistry,
@@ -376,4 +376,4 @@ def power_control_from_spec(*, value: object, host_id: str) -> PowerController |
             )
         type_name = table.pop("type")
         return build_power_controller(type_name=type_name, config=table, host_id=host_id)
-    raise ValueError(f"cannot build a PowerController from {value!r}")
+    raise ValueError(f"cannot build a PowerController from {describe_refused(value)}")

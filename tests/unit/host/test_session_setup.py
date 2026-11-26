@@ -75,6 +75,17 @@ def test_from_spec_table_without_type_is_refused():
         session_setup_from_spec({"db": "x"})
 
 
+@pytest.mark.parametrize(
+    "value",
+    [{"env": {"TOKEN": "hunter2"}}, [{"TOKEN": "hunter2"}]],
+    ids=["table-without-type", "list"],
+)
+def test_from_spec_never_prints_what_a_refused_container_holds(value):
+    with pytest.raises(ValueError, match=r"[Ss]ession ?[Ss]etup") as exc:
+        session_setup_from_spec(value)
+    assert "hunter2" not in str(exc.value)
+
+
 def test_from_spec_table_unknown_name_is_refused_at_coercion():
     with pytest.raises(ValueError, match="t1-nope"):
         session_setup_from_spec({"type": "t1-nope"})

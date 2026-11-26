@@ -263,6 +263,7 @@ def reject_unresolved_reference(host_data: dict[str, Any]) -> None:
     value = host_data.get("inventory")
     if value is None:
         return
+    from ..errors import describe_refused  # lazy: refusal path only
     from .inventory_ref import normalize_reference  # lazy: refusal path only
 
     try:
@@ -274,7 +275,7 @@ def reject_unresolved_reference(host_data: dict[str, Any]) -> None:
         named = f"inventory reference {reference.name}/{reference.key}"
         call = view_resolver
     else:
-        named = f"inventory key {value!r}"
+        named = f"inventory key {describe_refused(value)}"
         call = f"otto.inventory.resolve_host_entry(entry, inventory) (or {view_resolver})"
     raise ValueError(
         f"host entry references {named} but was not resolved; call {call} first "

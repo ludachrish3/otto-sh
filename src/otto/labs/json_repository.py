@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 from typing_extensions import final, override
 
+from ..errors import describe_refused
 from ..host.factory import (
     HostIdentity,
     create_host_from_dict,
@@ -941,8 +942,8 @@ def _addressing(
             # whose os_profile / command_frame is registered by init modules
             # this process never loaded, and the downstream symptom is a
             # confusing "unknown host" for a host that is right there.
-            logger.debug(f"Skipping unresolvable host record {h!r}: {e}")
             reason = compact_validation_error(e) if isinstance(e, ValidationError) else str(e)
+            logger.debug(f"Skipping unresolvable host record ({describe_refused(h)}): {reason}")
             skipped.append(SkippedHostRecord(element=runtime.name, origin=origin, reason=reason))
             continue
         held = addressing.get(host_id)

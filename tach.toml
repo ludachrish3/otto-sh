@@ -846,8 +846,10 @@ layer = "foundation"
 # dataclass, with cred_identity) and resources_nonempty. pydantic and the
 # standard library only; it imports no other otto module at import time (spec
 # 2026-10-11 placement-and-phases §3.3). JsonFileSource.fingerprint classifies
-# its file's stat through otto.config.corpus_snapshot, inside the function.
-depends_on = ["otto.config.corpus_snapshot"]
+# its file's stat through otto.config.corpus_snapshot, inside the function, and
+# cred_layer_by_identity describes a refused entry through otto.errors (a
+# zero-import leaf), inside the function too.
+depends_on = ["otto.config.corpus_snapshot", "otto.errors"]
 
 [[modules]]
 path = "otto.models.dependencies"
