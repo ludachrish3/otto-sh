@@ -9,9 +9,12 @@ listeners are the same before and after a survey, and check that a survey
 cancelled while its listener is open leaves no netcat listener behind.
 
 The guest is opened by the bed's netcat opener (``nc_bed_cell``), which
-resolves its hop through ``test4``. Every test here runs in one xdist group,
-so one worker runs them one after another and no other test opens a listener
-on the guest between a test's two reads.
+resolves its hop through ``test4``. Every test here is ``serial_timing``, so
+a lane runs them one after another with no other test beside them: no other
+test opens a listener on the guest between a test's two reads, and none takes
+CPU from the emulated guest while the product's elapsed-time bounds run. The
+xdist group is for a test added here without that mark: it would stay on one
+worker with its neighbours.
 """
 
 import pytest
@@ -59,6 +62,7 @@ async def _warm(host) -> None:
     await host.exec("true")
 
 
+@pytest.mark.serial_timing
 @pytest.mark.asyncio
 @pytest.mark.parametrize("nc_impl", _GUEST_IMPLEMENTATIONS, ids=nc_implementation_id)
 async def test_the_probe_measures_the_listener_ladder_with_each_netcat(nc_impl):
@@ -70,6 +74,12 @@ async def test_the_probe_measures_the_listener_ladder_with_each_netcat(nc_impl):
     The guest's listeners, read with the survey's own inventory, are the same
     before and after, and the survey reports that it confirmed its listener
     ended.
+
+    It runs alone (``serial_timing``): the survey and the two reads carry the
+    product's own elapsed-time bounds, five seconds for an inventory read
+    among them. Tests on other workers that go through ``test4`` take CPU from
+    the emulated guest that VM hosts, and a read on an open session then passes
+    five seconds, against 0.4 seconds with nothing beside it.
     """
     element, exec_name = nc_impl
     label = nc_implementation_id(nc_impl)
