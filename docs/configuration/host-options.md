@@ -501,6 +501,17 @@ operator's decision: {doc}`../cli/host/login` covers `otto host <id> logout`
 and `login --force`. The one reset otto makes on its own is after a
 `reboot --wait` that did not take ({ref}`below <console-failures>`).
 
+(console-shell-outlives-session)=
+
+**A shell that outlives otto's session.** With `login: false` or
+`logout: false`, the shell otto drove stays alive on the line after its
+session closes, and it keeps what otto's handshake line set
+({ref}`per-host-session-setup`). Whoever uses that console next sees TAB do
+nothing and `!!` not recalled, and no history is recorded unless
+`shell_history` is on. {doc}`../cli/host/login` (`otto host <id> login`)
+bridges that same shell on such a console. Start a new shell there, for
+example `exec bash`, to get your own settings back.
+
 (console-failures)=
 
 **The failures.** Every console error starts with the words
@@ -730,8 +741,8 @@ By default otto suppresses this: on each shell it opens it neutralizes
 ``~/.bash_history``. Set ``shell_history`` to ``true`` on a host where otto's
 commands *should* stay visible in the shell's own history (e.g. an audited
 box where the history file is the record of what touched it). History
-expansion (`!word`) is off on every session otto drives, whatever this field
-says.
+expansion (`!word`) is off whatever this field says
+({ref}`what otto sets in a shell it drives <per-host-session-setup>`).
 
 ```json
 {
@@ -756,6 +767,7 @@ What suppression covers, and what it doesn't:
 | `host.exec(...)` on a session without a terminal | not needed — its shell reads a pipe, is not interactive, and keeps no history at all; an `exec` on a session with a terminal is covered by the first row |
 | Local host commands | not needed — non-interactive |
 | `otto login` | **no** — see the note below |
+| A console shell that stays alive after otto's session closes | stays suppressed, with `!` expansion and TAB completion off, until a new shell starts there ({ref}`a console shell otto leaves behind <console-shell-outlives-session>`) |
 | Embedded / Zephyr targets | not applicable — their shell history is a RAM ring buffer, never a file |
 
 ```{note}
@@ -765,6 +777,9 @@ login goes through a login proxy (`--user`), otto's own
 appears in *its* history; on a host with a `session_setup`, the hook's own
 commands land in yours the same way. There is no way to suppress the probe
 alone.
+
+A session opened for you gets none of otto's script-line settings either: `!`
+recall and TAB completion stay ({ref}`what otto sets <per-host-session-setup>`).
 ```
 
 Suppression is best-effort and silent: a shell that refuses it keeps working,
@@ -776,12 +791,15 @@ the history file at exit.
 
 ## Session setup
 
-otto runs two commands of its own on every shell it opens — the readiness
+otto types one line of its own into every shell it opens, the readiness
 handshake (`__otto_probe=READY__; __otto_echo=; stty -echo || __otto_echo=E; stty tab0 || :;
 echo; printf %sX\\r\\nY\\nZ\\rW\\tT\\012 $__otto_echo || :; unset __otto_echo;
 __otto_base=$(stty -g) || __otto_base=; __otto_e=; __otto_tty=;
-echo __OTTO_<id>_$__otto_probe` on bash, every `stty` silenced with `2>/dev/null`)
-and, on Unix hosts, history suppression — and then, by default, nothing else.
+echo __OTTO_<id>_$__otto_probe` on bash, every `stty` silenced with `2>/dev/null`),
+and by default nothing else. On a bash-family shell the same line sets how
+the shell reads a command otto types: `!` is literal, `#` starts a comment,
+and on bash, zsh and mksh a TAB is a character, never completion. On Unix
+hosts it also suppresses history ({ref}`per-host-shell-history`).
 `__otto_base` keeps the terminal's settings as otto left them, which a pooled
 `exec` puts back after its command ({ref}`the exec frame <named-sessions-vs-exec>`);
 it is empty where `stty -g` cannot read them, and then nothing is put back.
@@ -795,7 +813,8 @@ round trip, and a target without `printf` or `stty` still completes the
 handshake, `set -e` included. The line holds the end of its marker in a
 variable that its first statement sets, so a line cut short by a login that
 flushes a console's input prints only half the marker, and otto sends it
-again whole. History suppression rides behind that statement. A host that
+again whole. The statements that set how the shell reads a line, and history
+suppression, ride behind that statement. A host that
 needs more before its shell is fit to use names a **session setup**: a registered
 async callable that runs once per shell session, after the handshake and
 after every login-proxy hop, with a real session handle.

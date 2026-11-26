@@ -11,7 +11,6 @@ import pytest
 from pydantic import SecretStr
 
 from otto.host import host as host_module
-from otto.host.command_frame import RECOVER_SUFFIX
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.host import CredentialExpect, ElevatedCommand
@@ -23,7 +22,7 @@ from otto.host.userland import Userland
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
-from tests._fixtures.fake_shell import ShellModel, probe_marker
+from tests._fixtures.fake_shell import ShellModel, is_resync
 from tests.unit.host._sessions import host_session
 
 _SUDO_LINE = re.compile(r"SUDO_PROMPT='(otto-sudo-[A-Za-z0-9]{16}:)' sudo -S (.*)", re.DOTALL)
@@ -101,11 +100,10 @@ def _without_resync(sent: list[str]) -> list[str]:
     ``otto.host.login_proxy._resync_shell``) — filter its noise out before
     asserting on the exact send sequence a test cares about.
 
-    Read through :func:`~tests._fixtures.fake_shell.probe_marker`, the one
-    double that knows how the product spells an anchored probe.
+    Read through :func:`~tests._fixtures.fake_shell.is_resync`.
     """
     wire = [reveal(s) for s in sent]  # a password send arrives as SecretStr
-    return [s for s in wire if not (probe_marker(s) or "").endswith(RECOVER_SUFFIX)]
+    return [s for s in wire if not is_resync(s)]
 
 
 def _model_io(*, prompts: bool = True, user: str = "admin", **model_kw):
@@ -1703,8 +1701,7 @@ async def test_the_undo_of_a_switch_whose_session_a_cancel_left_dead_types_nothi
 
 def _resyncs(sent: list) -> list[str]:
     """The resync probes among *sent*: the lines the switched shell is told first."""
-    wire = [reveal(s) for s in sent]
-    return [s for s in wire if (probe_marker(s) or "").endswith(RECOVER_SUFFIX)]
+    return [s for s in (reveal(t) for t in sent) if is_resync(s)]
 
 
 @pytest.mark.parametrize("shell_history", [True, False])
@@ -1735,15 +1732,31 @@ async def test_a_host_switch_and_its_undo_tell_the_new_shell_the_session_s_prefi
     assert all(BashFrame().script_parsing() in p for p in probes), probes
 
 
+@pytest.mark.parametrize("frames", ["none", "raw-landing"])
 @pytest.mark.parametrize("shell_history", [True, False])
-def test_the_host_and_its_session_manager_give_a_new_shell_one_prefix(shell_history):
-    """The host-level and the session-level prefix are the same string (#1346)."""
-    from otto.host.unix_host import UnixHost
+def test_the_host_and_its_session_manager_give_a_new_shell_one_prefix(shell_history, frames):
+    """The host-level switch and a session's switch tell the new shell one prefix (#1346).
 
+    The session is in the frame the manager's sessions are in once open; on
+    a raw-landing host that is the bash command frame, so both must give
+    bash's statements, never the raw landing's empty prefix.
+    """
+    from otto.host.command_frame import BashFrame, RawFrame, shell_prefix
+    from otto.host.unix_host import UnixHost
+    from tests._fixtures.dialect_shell import DialectSession, DialectShell
+
+    kw = {"landing_frame": RawFrame(), "command_frame": BashFrame()} if frames != "none" else {}
     host = UnixHost(
         ip="10.0.0.1",
         element=Element(name="box"),
         creds=[Cred(login="admin", password="secret")],
         shell_history=shell_history,
+        **kw,
     )
-    assert host._shell_prefix() == host._live_session_mgr()._shell_prefix()
+    session = DialectSession(
+        DialectShell(),
+        command_frame=host._live_session_mgr()._target_frame(),
+        shell_history=shell_history,
+    )
+    assert host._shell_prefix() == session._new_shell_prefix()
+    assert host._shell_prefix() == shell_prefix(BashFrame(), shell_history=shell_history)

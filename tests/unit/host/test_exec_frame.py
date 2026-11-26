@@ -15,6 +15,7 @@ module mark on a sync test is a warning, which is an error here.
 """
 
 import asyncio
+import hashlib
 import re
 import shutil
 import subprocess
@@ -40,6 +41,7 @@ from otto.host.terminal_mapping import establish_exec_state
 from otto.logger.mode import LogMode
 from tests._fixtures import exec_frame_payloads
 from tests._fixtures.fake_shell import end_record, parse_bash_frame
+from tests._fixtures.interactive_shell import RC_EDITING
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 from tests.conformance._vocabulary import POSIX
 from tests.unit.host._pty_session import (
@@ -754,3 +756,32 @@ async def test_a_typed_run_reads_bang_and_hash_as_a_script_does(name):
     """``!word`` is literal and ``#`` starts a comment on every shell, as in a script (#1346)."""
     async with pty_session(name) as s:
         await reads_bang_and_hash_as_a_script_does(s)
+
+
+@pytest.mark.parametrize(
+    ("name", "rc"),
+    [(name, "") for name in PTY_SHELLS] + [(n, rc) for n, rc in RC_EDITING if n in PTY_SHELLS],
+)
+@pytest.mark.asyncio
+async def test_a_tab_typed_while_the_previous_command_runs_arrives_as_a_tab(name, rc, tmp_path):
+    """A TAB typed while the terminal is in cooked mode is not taken as completion (#1356).
+
+    The first line blocks on a flag file, so the second is typed while it
+    runs: the terminal's line discipline, not the editor, sees its Ctrl-V.
+    Whatever the user's rc file bound to TAB, in emacs or vi mode.
+    """
+    flag = tmp_path / "flag"
+    arg = "a\tb\tc"
+    async with pty_session(name, rc=rc) as s:
+        await s.write_transport(
+            data=f"echo started; until [ -e {flag} ]; do sleep 0.05; done; echo released\n"
+        )
+        await s.read_transport_until(pattern=re.compile(r"started\r?\n"))
+        typed = s._frame.typed(cmd=f"printf '%s' '{arg}' | md5sum; echo ty''ped")
+        await s.write_transport(data=typed + "\n")
+        flag.touch()
+        out = await asyncio.wait_for(
+            s.read_transport_until(pattern=re.compile(r"typed\r?\n")), timeout=10
+        )
+    assert "released" in out
+    assert hashlib.md5(arg.encode(), usedforsecurity=False).hexdigest() in out, out

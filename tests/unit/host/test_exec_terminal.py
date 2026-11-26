@@ -244,7 +244,8 @@ def test_establishing_on_replace_snapshots_the_terminal():
 @pytest.mark.parametrize("name", PTY_SHELLS)
 @pytest.mark.parametrize("options", ["set -u", "set -e", "set -eu"])
 def test_a_fresh_nounset_shell_establishes_and_a_cut_resend_does_not_confirm(name, options):
-    history = BashFrame().quiet_history()
+    # The prefix a host with history suppressed gives the probe (PosixPrivilege._shell_prefix).
+    history = shell_prefix(BashFrame(), shell_history=False)
     with interactive_shell(name, setup=options) as shell:
         shell.type_line(
             _identity_probe(TAIL_MARKERS, history), _identity_pattern(TAIL_MARKERS), READY_TIMEOUT
@@ -280,7 +281,7 @@ def test_the_whole_resync_keeps_a_seeded_outer_record(name, options):
     seed = "__otto_base=OUTER; __otto_e=e; __otto_tty=T"
     with interactive_shell(name, setup="; ".join(p for p in (options, seed) if p)) as shell:
         shell.type_line(
-            _identity_probe(TAIL_MARKERS, BashFrame().quiet_history()),
+            _identity_probe(TAIL_MARKERS, shell_prefix(BashFrame(), shell_history=False)),
             _identity_pattern(TAIL_MARKERS),
             READY_TIMEOUT,
         )

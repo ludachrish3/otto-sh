@@ -1198,3 +1198,35 @@ def test_a_console_exec_types_a_command_as_a_pooled_exec_does():
     commands = ("aaa", "a'a", "'''\"'\"'''")
     assert len({room(cmd, pooled) - room(cmd, start) for cmd in commands}) == 1
     assert room("aaa", start) == room("a'a", start)
+
+
+# --- The first line of a new shell fits an echoing ash's line ---------------------
+
+
+def _first_lines() -> "list[tuple[str, str]]":
+    """Every line otto types as the first line of a new shell, named, with a session's markers.
+
+    The handshake of each bash-family frame, with and without the console's
+    settings save, and the resync probe a user switch and a login-proxy hop
+    type; each with history suppression on and off.
+    """
+    from otto.host.command_frame import AshFrame, BashFrame, SessionMarkers, handshake_prefix
+    from otto.host.session import _SESSION_ID_LEN
+    from tests._fixtures.interactive_shell import render_probe
+
+    m = SessionMarkers.for_session(session_id="f" * _SESSION_ID_LEN)
+    lines = []
+    for quiet in (False, True):
+        for frame in (BashFrame(), AshFrame()):
+            for save in (False, True):
+                prefix = handshake_prefix(frame, m, shell_history=not quiet, save_terminal=save)
+                name = f"{type(frame).__name__} handshake save={save} quiet={quiet}"
+                lines.append((name, frame.handshake(m, prefix=prefix)))
+        lines.append((f"resync quiet={quiet}", render_probe("resync", m, history=quiet)))
+    return lines
+
+
+@pytest.mark.parametrize(("name", "line"), _first_lines(), ids=[n for n, _ in _first_lines()])
+def test_the_first_line_of_a_new_shell_fits_an_echoing_ash(name: str, line: str):
+    """A first line longer than an echoing ash's line editor would be cut there."""
+    assert len(line) <= ASH_ECHOING_LINE_MAX, f"{name}: {len(line)} characters"

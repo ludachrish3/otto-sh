@@ -135,6 +135,14 @@ def probe_marker(text: str) -> str | None:
     return echo.group(1) + assign.group(1)
 
 
+def is_resync(text: str) -> bool:
+    """Whether *text* is the login-proxy engine's post-transition resync probe.
+
+    Read through :func:`probe_marker`, so it never restates the spelling.
+    """
+    return (probe_marker(text) or "").endswith(RECOVER_SUFFIX)
+
+
 class ShellModel:
     """A shell that switches users, may challenge, and answers probes once.
 

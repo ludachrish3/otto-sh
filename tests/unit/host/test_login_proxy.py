@@ -24,7 +24,7 @@ from otto.host.secret_wire import reveal
 from otto.host.terminal_mapping import establish_exec_state
 from otto.logger.mode import LogMode
 from otto.utils import wait_for_async
-from tests._fixtures.fake_shell import ModelIO, ShellModel, probe_marker
+from tests._fixtures.fake_shell import ModelIO, ShellModel, is_resync, probe_marker
 
 
 @pytest.fixture(autouse=True)
@@ -54,20 +54,11 @@ _REAL_SETTLE = login_proxy._RESYNC_SETTLE
 _RESYNC_ANCHOR = f"__otto_probe={RECOVER_SUFFIX}; "
 
 
-def _is_resync(text: str) -> bool:
-    """Whether *text* is the engine's post-transition resync probe.
-
-    Read through :func:`probe_marker`, the one double that knows how the
-    product spells an anchored probe, so this never restates the spelling.
-    """
-    return (probe_marker(text) or "").endswith(RECOVER_SUFFIX)
-
-
 def _without_resync(
     sent: list[tuple[str, LogMode]],
 ) -> list[tuple[str, LogMode]]:
     """Drop the engine's post-transition resync echo probes from a `sent` log."""
-    return [s for s in sent if not _is_resync(s[0])]
+    return [s for s in sent if not is_resync(s[0])]
 
 
 class RecorderIO:
@@ -102,14 +93,14 @@ class RecorderIO:
         self.shell.wrote(text)
 
     async def expect(self, pattern, timeout: float = 10.0) -> str:
-        if self.sent and _is_resync(self.sent[-1][0]):
+        if self.sent and is_resync(self.sent[-1][0]):
             reply = self.shell.reply()
             return reply if reply is not None else ""
         return self._replies.pop(0) if self._replies else ""
 
     def resync_probes(self) -> list[str]:
         """Just the post-transition resync probes, in send order."""
-        return [t for t, _ in self.sent if _is_resync(t)]
+        return [t for t, _ in self.sent if is_resync(t)]
 
 
 ADMIN = Cred(login="admin", password="hunter2")
@@ -244,7 +235,7 @@ async def test_a_rejected_password_is_not_reported_as_success():
     assert io.shell.auth_failures == 1, "exactly one attempt, never a retry loop"
     # The probe the outer shell answered establishes only what is missing, so it
     # keeps the outer shell's terminal record (test_exec_terminal.py, on a pty).
-    probes = [t for t, _mode in io.sent if _is_resync(t)]
+    probes = [t for t, _mode in io.sent if is_resync(t)]
     assert probes
     assert all(establish_exec_state(replace=False) in t for t in probes)
 
@@ -645,7 +636,7 @@ async def test_a_prompt_slower_than_the_settle_is_still_waited_for(monkeypatch):
     assert io.shell.auth_failures == 0
 
     written = [t for t, _ in io.sent]
-    first_probe = next((i for i, t in enumerate(written) if _is_resync(t)), len(written))
+    first_probe = next((i for i, t in enumerate(written) if is_resync(t)), len(written))
     assert written.index("sqlpw\n") < first_probe, (
         f"a probe was typed at the password prompt: {written}"
     )
@@ -757,7 +748,7 @@ class _SlowPromptIO:
         if not any(t.strip() == "sqlpw" for t in self.sent):
             return None
         for text in reversed(self.sent):
-            if _is_resync(text):
+            if is_resync(text):
                 reply = f"{probe_marker(text)}0__{self.target}__"
                 return reply if pattern.search(reply) else None
         return None

@@ -520,6 +520,10 @@ async def test_the_default_bridge_leaves_shell_history_alone(hook):
     assert BashFrame().quiet_history() not in console.sent[0].decode()
     # The person keeps their shell's `!` recall and `#` reading (#1346).
     assert all(BashFrame().script_parsing() not in line.decode() for line in console.sent)
+    # ...and TAB completion: no editor is told TAB is a character (#1356).
+    statements = [st for st in BashFrame().script_parsing().split("; ") if "bind" in st]
+    assert len(statements) == 3, statements
+    assert all(st not in line.decode() for st in statements for line in console.sent)
 
 
 @pytest.mark.asyncio

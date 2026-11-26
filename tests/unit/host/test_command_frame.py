@@ -12,6 +12,7 @@ and test_zephyr.py (Zephyr).
 
 import dataclasses
 import re
+import subprocess
 
 import pytest
 
@@ -38,6 +39,7 @@ from otto.host.login_proxy import _identity_probe
 from otto.host.session import ready_pattern
 from otto.host.terminal_mapping import CALIBRATION_COMMAND
 from tests._fixtures.fake_shell import probe_marker
+from tests._fixtures.interactive_shell import SHELLS
 
 M = SessionMarkers.for_session(session_id="cafef00d")
 
@@ -510,6 +512,27 @@ class TestShellPrefix:
     def test_the_handshake_carries_it(self):
         prefix = handshake_prefix(BashFrame(), M, shell_history=True, save_terminal=False)
         assert prefix == BashFrame().script_parsing()
+
+    def test_it_makes_tab_a_plain_character_in_each_line_editor(self):
+        """bash, zsh and mksh read a TAB the line discipline left bare as a character (#1356)."""
+        script = BashFrame().script_parsing()
+        assert "bind TAB:self-insert" in script
+        assert "bindkey \\^I self-insert" in script
+        assert "case $- in *i*) set +o vi-tabcomplete; bind \\^I=auto-insert;;" in script
+        assert ">" not in script  # a restricted bash refuses any redirection
+
+    def test_it_holds_no_quote_a_cut_could_leave_open(self):
+        """A tail cut inside a quote would open one the line never closes (whole_line_echo)."""
+        script = BashFrame().script_parsing()
+        assert [q for q in ("'", '"', "`", "$(") if q in script] == []
+
+    @pytest.mark.parametrize("shell", [*dict(SHELLS), "rbash"])
+    @pytest.mark.parametrize("options", ["", "set -e; ", "set -u; "])
+    def test_it_is_silent_off_a_terminal(self, shell, options):
+        argv = ["bash", "--restricted"] if shell == "rbash" else dict(SHELLS)[shell]
+        script = f"{options}{BashFrame().script_parsing()}echo S=$?\n"
+        done = subprocess.run(argv, input=script, capture_output=True, text=True, check=False)
+        assert (done.stdout, done.stderr) == ("S=0\n", "")
 
     def test_frames_with_no_such_options_render_nothing(self):
         assert ZephyrFrame().script_parsing() == ""

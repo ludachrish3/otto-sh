@@ -502,8 +502,10 @@ class _BridgeShellSession(_PatternReaderTransport, ShellSession):
 
     For the same reason the handshake does not make the shell read a typed
     line as a script line (:meth:`~otto.host.command_frame.CommandFrame.script_parsing`):
-    the person keeps their shell's ``!`` history expansion and its reading
-    of ``#``.
+    a session otto opens for a person gets none of those statements, so the
+    person keeps their shell's ``!`` history expansion, its reading of ``#``
+    and TAB completion. A console shell that outlived otto's own session
+    still has them (#1358).
     """
 
     _script_lines = False
@@ -630,7 +632,8 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     await session._ensure_initialized()  # noqa: SLF001 — the bridge is this session's manager
     # Empty, always: nothing this function writes may suppress the history of the shell
     # it is about to hand over, nor change how it reads `!` and `#`. The hops' resync
-    # probes and the hook's handle both take their prefix from here.
+    # probes take it from here; the hook's handle asks the session, which gives the
+    # same empty prefix (_BridgeShellSession sets none of the statements).
     prefix = ""
     # Seed the identity before the hops and stamp it after them, mirroring
     # SessionManager._seed_user / _apply_login_proxy. A hand copy of that
@@ -672,7 +675,6 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
         deregister=lambda _n: None,
         creds=creds,
         host_id=host_id,
-        shell_prefix=prefix,
         target_frame=target_frame,
         establishing=True,
         term=term,
