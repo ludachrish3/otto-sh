@@ -1611,6 +1611,7 @@ async def test_a_listener_command_that_raised_leaves_the_ladder_unmeasured_with_
         into.ended_early = True
         into.ending = "the 'nc' command failed: channel closed"
 
+    nc_backend.capped = False
     rungs = await _measured(scripted, nc_backend, fill)
     assert rungs.listener.state == "unmeasured"
     assert rungs.listener.note == (
@@ -1889,7 +1890,7 @@ async def test_a_replacement_backend_with_neither_method_does_the_same(scripted,
 async def test_the_budget_running_out_mid_measurement_reports_budget_spent_and_the_port(
     scripted, monkeypatch, nc_backend, way, capped
 ):
-    """Ended once the listener was typed: its own wording, and the line about the listener left."""
+    """Ended once the listener was typed: its own wording, and a line only for no lifetime cap."""
     nc_backend.capped = capped
     answers, _ran = scripted
     answers[_AVAILABILITY] = _ok("ss")
@@ -1920,10 +1921,10 @@ async def test_the_budget_running_out_mid_measurement_reports_budget_spent_and_t
     ), note
     assert note != engine._NC_BUDGET_SPENT
     left = s.nc_rungs.listener_left
-    assert left.startswith(f"otto could not confirm the listener it opened on :{_FREE}"), left
     if capped:
-        assert f"within {int(engine.SURVEY_BUDGET_S)} seconds" in left, left
+        assert left == "", left
     else:
+        assert left.startswith(f"otto could not confirm the listener it opened on :{_FREE}"), left
         assert "No lifetime cap could be installed" in left, left
 
 
@@ -1994,6 +1995,7 @@ async def test_a_listener_lost_while_otto_closed_it_leaves_the_ladder_unmeasured
         into.was_up = True
         into.ending = "the 'nc' command failed: channel closed"
 
+    nc_backend.capped = False
     rungs = await _measured(scripted, nc_backend, fill)
     assert rungs.listener.state == "unmeasured"
     assert rungs.listener.note == (
@@ -2008,20 +2010,31 @@ async def test_a_listener_lost_while_otto_closed_it_leaves_the_ladder_unmeasured
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("capped", [True, False], ids=["capped", "uncapped"])
 async def test_a_listener_still_running_after_the_close_keeps_the_checks_answers(
-    scripted, nc_backend
+    scripted, nc_backend, capped
 ):
-    """No end within the close's bound: the checks' answers stand and the listener line is added."""
+    """No end within the close's bound: the checks' answers stand.
+
+    A listener that carries the lifetime cap ends by itself, so nothing more
+    is said: this is every probe of a host whose high ports the controller
+    cannot reach. One with no cap may stay, and the listener line names it.
+    """
 
     async def fill(run, checks, into):
         into.answers.update(ss=1, netstat=1)
         into.was_up = True
 
+    nc_backend.capped = capped
     rungs = await _measured(scripted, nc_backend, fill)
     assert rungs.listener == engine.NcLadderResult("measured", "ss")
-    assert rungs.listener_left.startswith(
-        f"otto could not confirm the listener it opened on :{_FREE}"
-    )
+    if capped:
+        assert rungs.listener_left == ""
+    else:
+        assert rungs.listener_left == (
+            f"otto could not confirm the listener it opened on :{_FREE} ended. No lifetime cap"
+            " could be installed, so it may stay until it is ended on the host"
+        )
 
 
 @pytest.mark.asyncio
