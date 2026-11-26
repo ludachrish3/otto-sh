@@ -35,6 +35,7 @@ from otto.host.login_proxy import Cred
 from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from otto.utils import Status
+from tests._fixtures._gc_freeze import frozen_outer_heap
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.fd_watermark import open_fd_count
 from tests._fixtures.labdata import element_for
@@ -518,6 +519,38 @@ class TestTwoHopChain:
         await two_hop_ssh.run(f"rm -f {remote_path}")
 
 
+@pytest.fixture
+def _frozen_worker_heap() -> "Iterator[None]":
+    """Freeze the worker's heap for the test, so its own ``gc.collect()`` walks only its objects.
+
+    The descriptor tests below collect before each count, so a forward held
+    only by a reference cycle is not miscounted as stranded. A full collection
+    walks every object the process holds, and an xdist worker of a bed lane,
+    which has collected the whole suite (about 122 thousand items), holds
+    about 3.25 million objects, against about 130 thousand in a solo run.
+    Measured (#1233): each of the bulk test's two collections took 3.3 to
+    3.9 s of CPU in ``make coverage-bed``, 0.03 s alone. The reds the issue records all
+    came after both puts had finished, inside a collection's weakref callback,
+    which is where heavier load (four CPUs, swap in use) stretches that walk
+    past the 30 s limit.
+
+    :func:`~tests._fixtures._gc_freeze.frozen_outer_heap` moves that heap into
+    the permanent generation, so the test's collections walk only what the
+    test made, the forwards and sockets it measures included. It is a
+    fixture, not a block in the test, so the window's closing full collection
+    runs in teardown, outside the timed call (``timeout_func_only``); inside
+    an outer window it does nothing and the outer window's owner collects.
+
+    What a window cannot reclaim is a descriptor held only through an object
+    that existed before setup and became garbage during the test. That would
+    count as growth and fail the test loudly; it can never hide a stranded
+    forward, which the live host keeps reachable either way. The tests build
+    their host, its pool and its forwards after the freeze.
+    """
+    with frozen_outer_heap():
+        yield
+
+
 def _nc_hop_host() -> UnixHost:
     """A ``test2``-via-``test1`` host on the netcat backend.
 
@@ -542,7 +575,7 @@ def _nc_hop_host() -> UnixHost:
 @pytest.mark.asyncio
 @pytest.mark.hops
 @_NC_SERIAL_GROUP
-@pytest.mark.usefixtures("_test2_nc_lease")
+@pytest.mark.usefixtures("_test2_nc_lease", "_frozen_worker_heap")
 async def test_hop_transfers_do_not_accumulate_port_forwards(tmp_path: Path):
     """Repeated transfers on ONE hop host must not grow the descriptor count.
 
@@ -617,7 +650,7 @@ async def test_hop_transfers_do_not_accumulate_port_forwards(tmp_path: Path):
 @pytest.mark.asyncio
 @pytest.mark.hops
 @_NC_SERIAL_GROUP
-@pytest.mark.usefixtures("_test2_nc_lease")
+@pytest.mark.usefixtures("_test2_nc_lease", "_frozen_worker_heap")
 async def test_a_bulk_hop_put_does_not_strand_a_forward_per_file(tmp_path: Path):
     """ONE put of N files must not leave N forwards behind either.
 

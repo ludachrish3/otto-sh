@@ -63,6 +63,17 @@ is why the freeze is a window that ends in a collection. Everything the
 nested session creates and drops on its own is collected inside it exactly as
 before, so its own unraisable and leak reporting is unchanged.
 
+**The other user: a test that collects inside its timed body.** A test that
+counts descriptors runs ``gc.collect()`` before each count and pays the same
+walk for it, on a heap that grows with the size of the lane. The hop
+descriptor tests in ``tests/integration/host/test_hop_integration.py`` open a
+window from a fixture (``_frozen_worker_heap``, whose docstring has the
+measurements), so their collections walk only what the test made and the
+closing collection runs in teardown, outside the timed call. A test whose
+collection exists to surface a dropped object's ``ResourceWarning`` must not
+take one: inside a window, a pre-existing object's warning waits for the
+closing collection.
+
 Kept as an importable helper, not inlined in ``conftest.py``, so
 ``tests/unit/test_gc_freeze.py`` can drive it with a recording double.
 """
