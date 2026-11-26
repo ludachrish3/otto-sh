@@ -2764,7 +2764,13 @@ class BaseHost(ABC):
             )
 
     async def _exec_spawned(
-        self, cmd: str, *, timeout: float, user: str | None = None
+        self,
+        cmd: str,
+        *,
+        timeout: float,
+        user: str | None = None,
+        log: LogMode = LogMode.NORMAL,
+        on_typed: "Callable[[], None] | None" = None,
     ) -> "asyncio.Task[CommandResult]":
         """Start *cmd* as :meth:`exec` does; return its task once the command has been typed.
 
@@ -2776,8 +2782,23 @@ class BaseHost(ABC):
         open is bounded by the session's deadlines. A caller cancelled while
         it waits cancels the call and waits for it to end, so no exec is left
         running behind it.
+
+        Args:
+            cmd: The command to start.
+            timeout: Its timeout, as :meth:`exec` takes it.
+            user: The user to run it as, as :meth:`exec` takes it.
+            log: How it is logged, as :meth:`exec` takes it.
+            on_typed: Called once the command has been written to its
+                session, and not when the call ends without that. A caller
+                cancelled while it waits gets no task back, and this is how it
+                knows whether a remote command may have been started.
         """
         typed = asyncio.Event()
+
+        def _typed() -> None:
+            typed.set()
+            if on_typed is not None:
+                on_typed()
 
         async def _call() -> CommandResult:
             async with self._host_entry("exec"):
@@ -2785,10 +2806,10 @@ class BaseHost(ABC):
                     cmd,
                     expects=None,
                     timeout=timeout,
-                    log=LogMode.NORMAL,
+                    log=log,
                     sudo=False,
                     user=user,
-                    on_typed=typed.set,
+                    on_typed=_typed,
                 )
 
         task = asyncio.create_task(_call())

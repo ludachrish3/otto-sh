@@ -1758,7 +1758,7 @@ class TestNcGetTunneledCancellation:
         assert reap_cancelled == [True], (
             "the abandoned reap was left running instead of being cancelled with the bound"
         )
-        assert any("nc get listener reap" in r.message for r in caplog.records), (
+        assert any("nc get listener reap (port " in r.message for r in caplog.records), (
             "the abandonment was never announced: the bound is compensate's, and compensate "
             f"names what it gave up on -- got {[r.message for r in caplog.records]}"
         )

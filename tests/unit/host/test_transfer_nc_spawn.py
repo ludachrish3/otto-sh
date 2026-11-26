@@ -7,6 +7,7 @@ is counted, which is what the control cases pin.
 """
 
 import asyncio
+import contextlib
 import re
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import otto.host.transfer.nc as transfer_mod
+from otto.host import UnixHost
+from otto.host.element import Element
+from otto.host.login_proxy import Cred
 from otto.host.transfer import NcFileTransfer
+from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
 from tests.unit.host.nc_spawn_support import spawn_once_typed
@@ -165,3 +170,74 @@ async def test_a_cancel_while_the_spawn_is_pending_propagates_and_frees_the_port
         await running
     assert cancelled == ["9000"]
     assert not made[0]._reserved_ports, "the reserved port is released"
+
+
+@pytest.mark.asyncio
+async def test_the_hosts_spawn_says_when_the_command_was_typed(piped: Any) -> None:
+    host, conn = piped
+    typed: list[int] = []
+    real = conn.create_process
+
+    async def refused(*_a: Any, **_kw: Any) -> Any:
+        raise OSError("the session could not be opened")
+
+    # First with no session open yet, so the refused open is the one this call needs.
+    conn.create_process = refused
+    task = await host._exec_spawned("echo never", timeout=30.0, on_typed=lambda: typed.append(0))
+    await asyncio.wait({task})
+    assert isinstance(task.exception(), OSError), "the open failed"
+    assert typed == [], "nothing was typed"
+
+    conn.create_process = real
+    task = await host._exec_spawned(
+        "echo typed", timeout=30.0, on_typed=lambda: typed.append(len(conn.processes))
+    )
+    assert (await task).status is Status.Success
+    assert typed == [1], "once, with the command's session open"
+
+
+class _ExecOverridden(UnixHost):
+    """A host whose project overrides ``exec``, so the listener goes through ``exec_cmd``."""
+
+    seen_logs: list[LogMode]
+
+    async def exec(self, cmd: Any, **kw: Any) -> CommandResult:  # type: ignore[override]
+        self.seen_logs.append(kw.get("log", LogMode.NORMAL))
+        return CommandResult(command=str(cmd), value="", status=Status.Success, retcode=0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["spawn", "exec"])
+async def test_a_listener_spawned_unlogged_reaches_the_hosts_exec_unlogged(route: str) -> None:
+    from tests.unit.host.test_terminal_switch import _unix
+
+    seen: list[LogMode] = []
+    if route == "spawn":
+        host = _unix(transfer="nc")
+
+        async def in_turn(cmd: Any, **kw: Any) -> CommandResult:
+            seen.append(kw["log"])
+            kw["on_typed"]()
+            return CommandResult(command=str(cmd), value="", status=Status.Success, retcode=0)
+
+        patcher: Any = patch.object(host, "_exec_in_turn", new=in_turn)
+    else:
+        host = _ExecOverridden(
+            ip="10.0.0.1",
+            element=Element(name="box"),
+            creds=[Cred(login="user", password="pass")],
+            transfer="nc",
+            log=LogMode.QUIET,
+        )
+        host.seen_logs = seen
+        patcher = contextlib.nullcontext()
+    try:
+        ft = host._file_transfer
+        assert isinstance(ft, NcFileTransfer)
+        assert (ft._spawn_cmd is not None) is (route == "spawn")
+        with patcher:
+            task = await ft._spawn_listener("nc -l -p 4000 < /dev/null", log=LogMode.QUIET)
+            await task
+        assert seen == [LogMode.QUIET]
+    finally:
+        await host.close()

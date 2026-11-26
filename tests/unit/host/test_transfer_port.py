@@ -1188,3 +1188,69 @@ class TestPortFinderTriesEveryOtherRungAfterTheCachedOne:
             await ft._find_free_port()
         assert "x" * 200 in str(info.value)
         assert "x" * 201 not in str(info.value)
+
+
+class TestPortByStrategy:
+    """One pinned strategy asked through a runner the caller supplies."""
+
+    def test_the_module_scan_start_is_what_the_backend_scans_from(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        ft = make_ft(nc_port=9000)
+        assert 9000 <= nc_module.scan_start(9000) < 9000 + nc_module._NC_PORT_SCAN_SPREAD
+        assert nc_module.scan_start(65535) == 65535
+        monkeypatch.setattr(nc_module, "scan_start", lambda base: base + 77)
+        assert ft._scan_start() == 9077
+
+    @pytest.mark.asyncio
+    async def test_a_pinned_strategy_is_asked_through_the_given_runner(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(nc_module, "scan_start", lambda base: 9123)
+        control = AsyncMock()
+        ft = make_ft(exec_cmd=control)
+        ft._reserved_ports.add(9500)
+        asked: list[str] = []
+
+        async def run(cmd: str) -> CommandResult:
+            asked.append(cmd)
+            return _ok("9124\n")
+
+        assert await ft._port_by_strategy("ss", run) == 9124
+        assert len(asked) == 1
+        assert "9123" in asked[0]
+        assert "9500" in asked[0], "a running transfer's reservation is still excluded"
+        control.assert_not_awaited()
+        assert ft._reserved_ports == {9500}, "the port is looked at, never reserved"
+
+    @pytest.mark.asyncio
+    async def test_a_custom_port_cmd_is_asked_through_the_given_runner(self):
+        control = AsyncMock()
+        ft = make_ft(nc_port_cmd="find-a-port", exec_cmd=control)
+        asked: list[str] = []
+
+        async def run(cmd: str) -> CommandResult:
+            asked.append(cmd)
+            return _ok("9300\n")
+
+        assert await ft._port_by_strategy("custom", run) == 9300
+        assert asked == ["find-a-port"]
+        control.assert_not_awaited()
+        assert ft._reserved_ports == set()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_strategy_raises_what_a_transfer_would_raise(self):
+        async def run(cmd: str) -> CommandResult:
+            return _fail("boom")
+
+        ft = make_ft(nc_port_cmd="find-a-port", exec_cmd=AsyncMock(return_value=_fail("boom")))
+        with pytest.raises(HostCommandError) as via_run:
+            await ft._port_by_strategy("custom", run)
+        with pytest.raises(HostCommandError) as via_transfer:
+            await ft._find_free_port_with("custom")
+        assert str(via_run.value) == str(via_transfer.value)
+
+        with pytest.raises(ValueError, match="nc_port_cmd is None"):
+            await make_ft()._port_by_strategy("custom", run)
+        with pytest.raises(ValueError, match="Unknown port strategy"):
+            await make_ft()._port_by_strategy("nope", run)  # type: ignore[arg-type]

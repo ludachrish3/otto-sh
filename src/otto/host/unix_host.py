@@ -582,8 +582,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         )
         return build_term_backend(name=self.term, ctx=term_ctx)
 
-    def _build_file_transfer(self, user: "str | None" = None) -> UnixFileTransfer:
-        """Construct the transfer backend for the current ``transfer`` via the registry seam.
+    def _build_file_transfer(
+        self, user: "str | None" = None, *, name: "str | None" = None
+    ) -> UnixFileTransfer:
+        """Construct the transfer backend for *name* (default ``transfer``) via the registry seam.
 
         Uses ``self._connections``. Shared by ``__post_init__`` / ``rebuild_connections``
         (and the override-copy seam, via ``dataclasses.replace``) so a custom
@@ -602,8 +604,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         and one for that user needs no switch at all. So is
         ``transfer="nc"`` on a console.
         """
+        name = self.transfer if name is None else name
         if self.term == "console":
-            self._refuse_console_transfer(user)
+            self._refuse_console_transfer(user, name)
             user = None
         connections = (
             self._connections
@@ -618,9 +621,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return cast(
             "UnixFileTransfer",
             build_transfer_backend(
-                name=self.transfer,
+                name=name,
                 ctx=TransferContext(
-                    transfer=self.transfer,
+                    transfer=name,
                     host_name=self.name,
                     connections=connections,
                     nc_options=self.nc_options,
@@ -663,7 +666,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             plain=self._exec_plain(user=user, needs_shell=False),
         )
 
-    def _refuse_console_transfer(self, user: "str | None") -> None:
+    def _refuse_console_transfer(self, user: "str | None", name: str) -> None:
         """Refuse a console-term transfer that would need a second session.
 
         A console serves ONE client, so ``exec`` — and with it a transfer's
@@ -680,7 +683,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         scp, sftp, ftp and shell move their bytes without a listener in the
         shell and only type single commands, so they are allowed.
         """
-        if self.transfer == "nc":
+        if name == "nc":
             raise ConsoleError(
                 f"{self.name}: console is single-client; transfer='nc' runs a remote "
                 f"listener alongside its control commands, which needs a second "
@@ -716,6 +719,22 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             ft = self._build_file_transfer(user=user)
             self._user_transfers[user] = ft
         return ft
+
+    def _nc_backend_for(self, user: "str | None") -> UnixFileTransfer:
+        """Return a netcat transfer backend for *user*, whatever ``transfer`` is.
+
+        A host whose transfer is ``nc`` hands out its cached backend
+        (:meth:`_transfer_for`). Any other host builds one for this call over
+        its own connections: not cached, and never warmed up, so the host's own
+        transfer and its per-user cache are untouched. The backend is not
+        isolated from the host otherwise: it shares the host's connections
+        and its resolved userland. What the build raises
+        (a console, invalid ``nc_options``) is raised.
+        """
+        if self.transfer == "nc":
+            return self._transfer_for(user)
+        self._claim_loop()
+        return self._build_file_transfer(user, name="nc")
 
     def _get_local_ip(self) -> str:
         """Return the local IP address used to reach this host, via OS routing lookup.

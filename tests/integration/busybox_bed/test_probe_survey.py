@@ -14,15 +14,18 @@ measurement leaves the host's listeners as they were is made here, not on
 the shared ``test1``.
 """
 
-from functools import partial
-
 import pytest
 
 from otto.host.survey import run_survey
-from otto.host.survey.engine import _run_only, dial_for
-from otto.host.survey.inventory import INVENTORY_SCRIPT, parse_inventory, run_inventory
+from otto.host.survey.engine import dial_for
+from otto.host.survey.inventory import INVENTORY_SCRIPT, parse_inventory
 from otto.host.survey.verdict import DIAL_TIMEOUT_S
 from scripts.build_busybox_guest_images import GUEST_TABLE
+from tests.integration._probe_listener import (
+    assert_an_interrupted_survey_leaves_no_listener,
+    listeners_of,
+)
+from tests.integration.busybox_bed.conftest import _build_guest
 
 pytestmark = pytest.mark.timeout(120)
 
@@ -134,11 +137,11 @@ async def test_the_survey_reports_telnet_supported_and_ssh_as_the_drift_true_neg
 async def test_measuring_the_netcat_strategies_leaves_the_guests_listeners_as_they_were(
     hop_on_this_loop, guest
 ):
-    """The probe opens no listening port and leaves nothing behind on the host.
+    """The probe opens one netcat listener, closes it, and leaves the host's listeners as they were.
 
     The guest's listeners are read with the survey's own inventory before and
     after a survey that measured both netcat strategies, and the two lists are
-    the same.
+    the same. The survey also reports that it confirmed its listener ended.
 
     The comparison is of every listener on the host, so it is made on a guest
     and not on ``test1``. Every test that touches the guests runs in one xdist
@@ -149,13 +152,35 @@ async def test_measuring_the_netcat_strategies_leaves_the_guests_listeners_as_th
     comparison failed whenever one did so in between.
     """
     host, version = guest
-    run = partial(_run_only, host)
-    before = await run_inventory(run, elevate=False)
+    before = await listeners_of(host, version)
     s = await run_survey(host)
-    after = await run_inventory(run, elevate=False)
+    after = await listeners_of(host, version)
     assert s.nc_rungs is not None, version
     assert s.nc_rungs.port.state == s.nc_rungs.listener.state == "measured", (version, s.nc_rungs)
-    assert not before.error, (version, before)
-    assert not after.error, (version, after)
-    assert before.listeners, (version, before)
-    assert sorted(after.listeners, key=repr) == sorted(before.listeners, key=repr), version
+    assert s.nc_rungs.listener_left == "", (version, s.nc_rungs)
+    assert before, version
+    assert after == before, version
+
+
+@pytest.mark.serial_timing
+@pytest.mark.asyncio
+@pytest.mark.parametrize("guest", ["bb1350"], indirect=True)
+async def test_an_interrupted_probe_leaves_no_listener_on_a_busybox_guest(hop_on_this_loop, guest):
+    """A probe cancelled while its netcat listener is open leaves no netcat listener on the guest.
+
+    The survey is held once its listener has been counted, the guest is seen
+    to list its netcat listener, and the survey is then cancelled. It returns
+    within the backend's reap bound, and the guest then lists no netcat
+    listener within a few seconds. The observations run on a second host
+    object for the same guest.
+
+    It runs alone (``serial_timing``): its assertions reject a slow teardown by
+    elapsed time, which load from other workers lengthens on an emulated guest.
+    """
+    host, version = guest
+    assert host.element is not None, version
+    observer, _ = _build_guest(host.element.name)
+    try:
+        await assert_an_interrupted_survey_leaves_no_listener(host, observer, version)
+    finally:
+        await observer.close()

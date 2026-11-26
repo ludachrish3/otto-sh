@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from ...errors import OttoError
 from ...logger.mode import LogMode
@@ -21,8 +21,14 @@ from ...result import CommandResult
 from ...utils import Status
 from ..connections import TERM_BACKENDS, TermMetadata
 from ..login_proxy import cred_for
-from ..options import SnmpOptions
-from ..transfer.nc import available_rungs, run_listener_rung, run_port_rung
+from ..options import NcOptions, SnmpOptions
+from ..transfer.nc import (
+    NcListenerMeasurement,
+    available_rungs,
+    run_port_rung,
+    scan_start,
+    what_the_count_says,
+)
 from ..transfer.nc_scripts import (
     CONTROL_AUTO,
     CONTROL_CUSTOM,
@@ -30,6 +36,7 @@ from ..transfer.nc_scripts import (
     LISTENER_OPTION,
     PORT_LADDER,
     PORT_OPTION,
+    ListenerRung,
 )
 from ..transfer.registry import TRANSFER_BACKENDS, connection_protocol
 from ..transfer.sftp import open_sftp_or_attribute
@@ -134,11 +141,14 @@ class NcRungs:
         listener: The listener check (``nc_options.listener_check``).
         failed: Each strategy met on the way whose tool is on the host and
             whose script failed, in the order they were tried.
+        listener_left: One sentence when the probe opened a listener and
+            could not confirm it ended; empty otherwise.
     """
 
     port: NcLadderResult
     listener: NcLadderResult
     failed: list[NcFailedStrategy] = field(default_factory=list)
+    listener_left: str = ""
 
 
 @dataclass(slots=True)
@@ -281,14 +291,128 @@ _NC_NO_TOOL_REMEDY = {
 }
 """What a user can do when no strategy's tool is on the host: the ``custom`` contract."""
 
-_NC_NO_LISTENER = (
-    "the inventory found no TCP listener to check;"
-    " this is not a fault, and a transfer picks its listener check when it runs"
-)
-_NC_NO_INVENTORY = (
-    "the inventory of listeners did not run;"
-    " this is not a fault, and a transfer picks its listener check when it runs"
-)
+_NC_NO_MEASUREMENT = "the nc transfer registered for this host cannot open a listener for the probe"
+
+
+def _nc_no_backend(exc: Exception) -> str:
+    """Word why the listener checks were not measured: the netcat backend could not be had."""
+    return f"otto could not set up netcat for this host: {_nc_error(exc)}"
+
+
+def _nc_no_port(why: str) -> str:
+    """Word why the listener checks were not measured: no free port to open a listener on."""
+    return f"there was no free port to open a listener on: {why}"
+
+
+def _nc_not_counted(into: NcListenerMeasurement, *, counted_late: bool) -> str:
+    """Word no check counting the probe's listener within the readiness wait.
+
+    *counted_late* is whether a check counted it after the wait, in the
+    complete round: the listener then started late, which is known, and
+    every check being blind is not.
+    """
+    port = into.port
+    said = (
+        f"no listener check counted the listener otto opened on :{port} within {into.waited_s:g} s"
+    )
+    if counted_late:
+        return (
+            f"{said}, but a check counted it after that, so it took longer than that to start."
+            " A transfer waits the same time for its listener, so it would fail the same way."
+            " Run the probe again to see whether it starts in time"
+        )
+    if into.was_up:
+        return (
+            f"{said}, and it was up when otto closed it. Either every check is blind to this"
+            " netcat, or the listener took longer than that to start. Run the probe again; if"
+            f" no check counts it again, {_NC_NO_TOOL_REMEDY[LISTENER_OPTION]}"
+        )
+    return (
+        f"{said}, and otto could not tell whether it started. Run '{into.bare_command}' on"
+        " the host to see whether it starts, or run the probe again"
+    )
+
+
+def _nc_ended_early(into: NcListenerMeasurement) -> str:
+    """Word a probe listener that ended before otto closed it; *into*'s words say how."""
+    port = into.port
+    if not into.spawned:
+        return f"otto could not start a listener on :{port}: {into.ending}. Run the probe again"
+    if into.lost:
+        return (
+            f"otto lost the listener it opened on :{port} before it closed it: {into.ending}."
+            " Run the probe again"
+        )
+    said = f"the listener otto opened on :{port} ended before otto closed it: {into.ending}"
+    if into.netcat_could_not_run:
+        return said
+    if into.exit_status == 0:
+        return (
+            f"{said}. Either another process connected to it before otto did, or this netcat"
+            " does not stay listening when its input is empty. Run"
+            f" '{into.bare_command} < /dev/null' on the host to see whether it stays"
+            " listening, or run the probe again"
+        )
+    return (
+        f"{said}. Either this netcat refuses that command, or another process took the port"
+        f" in the same moment. Run '{into.bare_command}' on the host to see its message,"
+        " or run the probe again"
+    )
+
+
+def _nc_lost_in_the_close(into: NcListenerMeasurement) -> str:
+    """Word a probe listener whose command raised or gave no exit status while otto closed it."""
+    return (
+        f"otto lost the listener it opened on :{into.port} while it closed it: {into.ending}."
+        " Run the probe again"
+    )
+
+
+def _nc_budget_spent_measuring(port: int) -> str:
+    """Word the survey's budget ending while the probe's listener was open."""
+    return (
+        f"the survey budget ran out while otto measured the listener it opened on :{port}."
+        " Run the probe again"
+    )
+
+
+def _nc_runner_failed(exc: Exception) -> str:
+    """Word a runner error that ended the listener measurement."""
+    cause = _nc_error(exc).rstrip(".")
+    return f"the listener checks could not be run: {cause}. Run the probe again"
+
+
+def _nc_not_seen(port: int) -> str:
+    """Word a listener check that counted none on the port the probe's listener held."""
+    return f"did not see the listener otto opened on :{port}"
+
+
+def _nc_no_answer(port: int) -> str:
+    """Word a listener check that gave no answer to read."""
+    return f"no answer about :{port}; it timed out or printed nothing"
+
+
+def _nc_counted_many(count: int, port: int) -> str:
+    """Word a listener check that counted more than the one listener the probe opened."""
+    return (
+        f"counted {count} listeners on :{port}, where otto opened one. Either the check"
+        " miscounts this netcat, so a transfer would refuse the port as shared, or another"
+        " process holds the same port. Running the probe again may tell them apart; a"
+        " repeated result is not proof of either"
+    )
+
+
+def _nc_listener_left(port: int, *, capped: bool, cap_s: int) -> str:
+    """Word an unconfirmed end of the probe's listener on *port*, and what bounds it."""
+    if capped:
+        return (
+            f"otto could not confirm the listener it opened on :{port} ended. It ends by"
+            f" itself within {cap_s} seconds of its start"
+        )
+    return (
+        f"otto could not confirm the listener it opened on :{port} ended. No lifetime cap"
+        " could be installed, so it may stay until it is ended on the host"
+    )
 
 
 def _no_rung_note(available: frozenset[str], ladder: "tuple[Any, ...]", option: str) -> str:
@@ -296,6 +420,61 @@ def _no_rung_note(available: frozenset[str], ladder: "tuple[Any, ...]", option: 
     if any(rung.name in available for rung in ladder):
         return "every strategy whose tool is on the host failed"
     return f"no strategy's tool is on the host; {_NC_NO_TOOL_REMEDY[option]}"
+
+
+async def _finished(step: "Callable[[], Coroutine[Any, Any, None]]") -> bool:
+    """Run *step* and return True, so a bounded caller tells a finished step from a cut one.
+
+    *step* makes its coroutine only once this one runs, so a caller that
+    closes this one unstarted leaves no coroutine of the step unawaited.
+    """
+    await step()
+    return True
+
+
+def _listener_verdict(
+    checks: "list[ListenerRung]",
+    into: NcListenerMeasurement,
+    failed: list[NcFailedStrategy],
+) -> NcLadderResult:
+    """Turn what one listener measurement recorded into the listener ladder's result.
+
+    Read in this order, each leaving the ladder unmeasured whatever
+    ``answers`` hold: ``ended_early`` (an exit status is the most specific
+    fact), then ``timed_out``, then :attr:`NcListenerMeasurement.lost` (the
+    command raised or gave no exit status during the close). When none is
+    set, the backend guarantees ``answers`` is a complete round, one per
+    check. Then the first check in ladder order whose count reads as one is
+    measured, the ones before it are named in *failed*, and the ones after it
+    are not reported.
+    """
+    port = into.port
+    if into.ended_early:
+        return NcLadderResult("unmeasured", note=_nc_ended_early(into))
+    if into.timed_out:
+        late = any(
+            isinstance(n, int) and what_the_count_says(n) == "one" for n in into.answers.values()
+        )
+        return NcLadderResult("unmeasured", note=_nc_not_counted(into, counted_late=late))
+    if into.lost:
+        return NcLadderResult("unmeasured", note=_nc_lost_in_the_close(into))
+    for rung in checks:
+        answer = into.answers.get(rung.name)
+        if isinstance(answer, Exception):
+            failed.append(NcFailedStrategy("listener", rung.name, _nc_error(answer)))
+            continue
+        says = what_the_count_says(answer)
+        if says == "one":
+            return NcLadderResult("measured", rung.name)
+        if says == "no answer":
+            reason = _nc_no_answer(port)
+        elif says == "none":
+            reason = _nc_not_seen(port)
+        else:
+            reason = _nc_counted_many(cast("int", answer), port)
+        failed.append(NcFailedStrategy("listener", rung.name, reason))
+    note = _no_rung_note(frozenset(r.name for r in checks), LISTENER_LADDER, LISTENER_OPTION)
+    return NcLadderResult("unmeasured", note=note)
 
 
 def dialling_terms() -> dict[str, TermMetadata]:
@@ -524,9 +703,10 @@ class _UnixSurvey:
         await self.snmp_tier()
         await self.extra_dials()
         if self.own_ok:
-            # Last: it reads only the nc row and the inventory, and a host
-            # whose exec hangs must not starve the older tiers of the budget.
-            self.survey.nc_rungs = await self.nc_rung_tier(inventory)
+            # Last: it reads only the nc row, and a host whose exec hangs, or
+            # whose listener is slow to end, must not starve the older tiers
+            # of the budget.
+            self.survey.nc_rungs = await self.nc_rung_tier()
         self.survey.verdicts = merge_verdicts(self.rows)
         _resolve(self.survey)
         return self.survey
@@ -872,25 +1052,29 @@ class _UnixSurvey:
         self._declared_inventory_rows(inv)
         return inv
 
-    async def nc_rung_tier(self, inventory: "Inventory | None") -> NcRungs:
+    async def nc_rung_tier(self) -> NcRungs:
         """Measure which netcat strategies work on the host, by running the ladders' own scripts.
 
-        Runs only when the session tier found ``nc`` supported and the session
-        is not a console. A strategy the entry pins is reported ``declared``
+        Runs only when the session is not a console and, while
+        ``nc_options.exec_name`` is the default, when the session tier found
+        ``nc`` supported. A strategy the entry pins is reported ``declared``
         and not run, whatever fails afterwards; with both pinned no command
-        runs. Each ``auto`` ladder is walked in its table order and stops at
-        the first strategy that works; one whose tool is present and whose
+        runs. The ``auto`` port ladder is walked in its table order and stops
+        at the first strategy that works; one whose tool is present and whose
         script failed, by any error of the runner, is named in ``failed``.
-        Nothing listens and nothing is left on the host: the only scripts run
-        are the table's.
 
-        Args:
-            inventory: The host's listeners, for the listener check to count.
+        The listener checks are measured against a listener the probe opens:
+        one netcat listener on a free port, counted by each check whose tool
+        is on the host and then closed (:meth:`_listener_ladder`). When the
+        probe could not confirm that listener ended, ``listener_left`` says so.
         """
         host = self.host
         if host.term == "console":
             return _nc_unmeasured("the session is a console, where netcat cannot be used")
-        if not any(v.protocol == "nc" and v.state == "supported" for v in self.rows):
+        opts = host.nc_options
+        if opts.exec_name == NcOptions().exec_name and not any(
+            v.protocol == "nc" and v.state == "supported" for v in self.rows
+        ):
             return _nc_unmeasured("nc is not supported on this host")
 
         async def run(cmd: str) -> "CommandResult":
@@ -910,7 +1094,6 @@ class _UnixSurvey:
                 timed_out=True,
             )
 
-        opts = host.nc_options
         declared_port = _nc_declared(opts.port_strategy)
         declared_listener = _nc_declared(opts.listener_check)
         if declared_port is not None and declared_listener is not None:
@@ -928,85 +1111,136 @@ class _UnixSurvey:
         except Exception as exc:  # noqa: BLE001 — a raw runner error must not lose the survey's rows
             return unmeasured(f"the check for each strategy's tool failed: {_nc_error(exc)}")
         failed: list[NcFailedStrategy] = []
-        try:
-            port = declared_port or await self._port_ladder(run, available, failed)
-        except _BudgetSpent:
-            return unmeasured(_NC_BUDGET_SPENT, failed)
-        try:
-            listener = declared_listener or await self._listener_ladder(
-                run, available, failed, inventory
-            )
-        except _BudgetSpent:
-            listener = NcLadderResult("unmeasured", note=_NC_BUDGET_SPENT)
-        return NcRungs(port, listener, failed)
+        found: "int | None" = None
+        if declared_port is None:
+            try:
+                port, found = await self._port_ladder(run, available, failed)
+            except _BudgetSpent:
+                return unmeasured(_NC_BUDGET_SPENT, failed)
+        else:
+            port = declared_port
+        if declared_listener is not None:
+            return NcRungs(port, declared_listener, failed)
+        listener, left = await self._listener_ladder(run, available, failed, port, found)
+        return NcRungs(port, listener, failed, left)
 
     async def _port_ladder(
         self, run: "_NcRunner", available: frozenset[str], failed: list[NcFailedStrategy]
-    ) -> NcLadderResult:
-        """Walk the port ladder in its order; the first strategy that works is measured."""
-        opts = self.host.nc_options
+    ) -> "tuple[NcLadderResult, int | None]":
+        """Walk the port ladder in its order; the first strategy that works is measured.
+
+        The scan starts where a transfer's does (:func:`scan_start`), so two
+        probes of one host rarely open their listeners on the same port.
+
+        Returns:
+            What the ladder found, and the port the measured strategy returned
+            (``None`` when none worked).
+        """
+        base_port = scan_start(self.host.nc_options.port)
         for rung in PORT_LADDER:
             if rung.name not in available:
                 continue
             try:
-                await run_port_rung(rung, run, base_port=opts.port, reserved="")
+                found = await run_port_rung(rung, run, base_port=base_port, reserved="")
             except _BudgetSpent:
                 raise
             except Exception as exc:  # noqa: BLE001 — any runner error fails this strategy only
                 failed.append(NcFailedStrategy("port", rung.name, _nc_error(exc)))
                 continue
-            return NcLadderResult("measured", rung.name)
-        return NcLadderResult("unmeasured", note=_no_rung_note(available, PORT_LADDER, PORT_OPTION))
+            return NcLadderResult("measured", rung.name), found
+        note = _no_rung_note(available, PORT_LADDER, PORT_OPTION)
+        return NcLadderResult("unmeasured", note=note), None
 
     async def _listener_ladder(
         self,
         run: "_NcRunner",
         available: frozenset[str],
         failed: list[NcFailedStrategy],
-        inventory: "Inventory | None",
-    ) -> NcLadderResult:
-        """Walk the listener ladder in its order, each strategy asked about one inventory port.
+        port: NcLadderResult,
+        found: "int | None",
+    ) -> "tuple[NcLadderResult, str]":
+        """Measure the listener checks against one listener the probe opens, counts and closes.
 
-        The port is a TCP listener the inventory lists other than the
-        session's own (behind a forward the declared port may be the
-        forwarder's); when the session's port is the only one, it is used,
-        since a port the inventory lists is on the host.
+        The listener's port is *found* when the port ladder was walked; with
+        a pinned port strategy, that strategy is asked once for one. The
+        backend's ``_measure_listener_checks`` runs as one step bounded by what
+        is left of the survey's budget, and what it recorded is the verdict
+        (:meth:`_listener_verdict`).
+
+        Args:
+            run: The survey's runner for each control command.
+            available: The strategies whose tool is on the host.
+            failed: Where a failed check is named.
+            port: What the port ladder found, or the declared pin.
+            found: The port the port ladder's measured strategy returned.
+
+        Returns:
+            The listener ladder's result, and ``NcRungs.listener_left``.
         """
-        if inventory is None:
-            return NcLadderResult("unmeasured", note=_NC_NO_INVENTORY)
-        own = _declared_port_unix(self.host, "shell", "transfer")
-        tcp = [lis.port for lis in inventory.listeners if lis.transport == "tcp"]
-        port = next((p for p in tcp if p != own), tcp[0] if tcp else None)
-        if port is None:
-            return NcLadderResult("unmeasured", note=_NC_NO_LISTENER)
-        for rung in LISTENER_LADDER:
-            if rung.name not in available:
-                continue
-            try:
-                count = await run_listener_rung(rung, run, port)
-            except _BudgetSpent:
-                raise
-            except Exception as exc:  # noqa: BLE001 — any runner error fails this strategy only
-                failed.append(NcFailedStrategy("listener", rung.name, _nc_error(exc)))
-                continue
-            if count is None:
-                failed.append(
-                    NcFailedStrategy(
-                        "listener",
-                        rung.name,
-                        f"no answer about :{port}; it timed out or printed nothing",
-                    )
-                )
-                continue
-            if count < 1:
-                failed.append(
-                    NcFailedStrategy("listener", rung.name, f"counted no listener on :{port}")
-                )
-                continue
-            return NcLadderResult("measured", rung.name)
-        return NcLadderResult(
-            "unmeasured", note=_no_rung_note(available, LISTENER_LADDER, LISTENER_OPTION)
-        )
+        checks = [rung for rung in LISTENER_LADDER if rung.name in available]
+        if not checks:
+            note = _no_rung_note(available, LISTENER_LADDER, LISTENER_OPTION)
+            return NcLadderResult("unmeasured", note=note), ""
+        if port.state == "unmeasured":
+            return NcLadderResult("unmeasured", note=_nc_no_port(port.note)), ""
+        try:
+            backend: Any = self.host._nc_backend_for(self.user)  # noqa: SLF001 — the survey's own host
+        except Exception as exc:  # noqa: BLE001 — a backend that cannot be built must not lose the survey's rows
+            return NcLadderResult("unmeasured", note=_nc_no_backend(exc)), ""
+        measure = getattr(backend, "_measure_listener_checks", None)
+        if measure is None:
+            return NcLadderResult("unmeasured", note=_NC_NO_MEASUREMENT), ""
+        if found is None:
+            found, why = await self._pinned_port(backend, run)
+            if found is None:
+                return NcLadderResult("unmeasured", note=why), ""
+        cap_s = int(SURVEY_BUDGET_S)
+        into = NcListenerMeasurement(found)
+        cut = await self._measure(_finished(partial(measure, run, checks, into, cap_s=cap_s)), into)
+        left = ""
+        if into.spawned and not into.end_confirmed:
+            left = _nc_listener_left(found, capped=into.capped, cap_s=cap_s)
+        if cut is not None:
+            return NcLadderResult("unmeasured", note=cut), left
+        return _listener_verdict(checks, into, failed), left
+
+    async def _pinned_port(self, backend: Any, run: "_NcRunner") -> "tuple[int | None, str]":
+        """Ask the pinned port strategy once, through *backend*, for the probe's port.
+
+        Returns:
+            The port and ``""``; or ``None`` and the note that says why there is none.
+        """
+        by_strategy = getattr(backend, "_port_by_strategy", None)
+        if by_strategy is None:
+            return None, _NC_NO_MEASUREMENT
+        try:
+            return int(await by_strategy(self.host.nc_options.port_strategy, run)), ""
+        except _BudgetSpent:
+            return None, _NC_BUDGET_SPENT
+        except Exception as exc:  # noqa: BLE001 — the pinned strategy's error is the note
+            return None, _nc_no_port(_nc_error(exc))
+
+    async def _measure(
+        self, step: "Coroutine[Any, Any, bool]", into: NcListenerMeasurement
+    ) -> "str | None":
+        """Run the measurement *step*, which fills *into*, bounded by what is left of the budget.
+
+        Returns:
+            ``None`` when the step finished; otherwise the note that says why
+            the listener checks were not measured. A budget that ran out once
+            the listener command was typed is worded as such, not as one that
+            ran out before the step ran.
+        """
+        try:
+            finished = await _bounded(self.deadline, self.deadline.remaining(), step)
+        except _BudgetSpent:
+            finished = False
+        except Exception as exc:  # noqa: BLE001 — a raw runner error must not lose the survey's rows
+            return _nc_runner_failed(exc)
+        if finished:
+            return None
+        # Only a finished step returns True; with this grant, None is the budget.
+        return _nc_budget_spent_measuring(into.port) if into.spawned else _NC_BUDGET_SPENT
 
     def _inventory_footnotes(self, inv: Inventory, *, elevation_refused: bool) -> None:
         """In the Interfaces order: owners-incomplete, loopback-dropped, then the failures."""

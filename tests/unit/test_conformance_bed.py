@@ -36,6 +36,7 @@ from otto.host.command_frame import FRAME_CLASSES
 from otto.host.element import Element
 from otto.host.embedded_filesystem import build_filesystem
 from otto.host.embedded_host import EmbeddedHost
+from otto.host.host import BaseHost
 from otto.host.options import UNESCAPED_IAC, ConsoleOptions
 from otto.host.remote_host import RemoteHost
 from otto.result import CommandResult, Result, Results, Status
@@ -660,6 +661,44 @@ async def test_a_failed_probe_still_closes_the_hosts_transports(monkeypatch):
         async with _resolved(DEFAULT_CELL).open_host():
             pass
     assert fake.closed, "the probe failed and the host was never closed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body_raises", [False, True], ids=["body-ends", "body-raises"])
+async def test_the_opener_closes_every_host_of_the_lab_it_installed(monkeypatch, body_raises):
+    """A session the body opens on one of the lab's hosts, a hop say, is closed by the open's end.
+
+    The closes are recorded on the host class, so the lab's real host objects
+    are what is counted; one that raises does not stop the others, and a body
+    that raised keeps its own error.
+    """
+    fake = _FakeProbeHost(_answer(Status.Success, "Connection successful"))
+    monkeypatch.setattr(_bed, "build_bed_host", lambda cell, **_: fake)
+    closed: list[str] = []
+
+    async def close(self) -> None:
+        closed.append(self.id)
+        if len(closed) == 1:
+            raise OSError("the first close failed")
+
+    monkeypatch.setattr(BaseHost, "close", close)
+    lab_ids: list[str] = []
+    expect = (
+        pytest.raises(LookupError, match="the body failed")
+        if body_raises
+        else contextlib.nullcontext()
+    )
+    with expect:
+        async with _resolved(DEFAULT_CELL).open_host():
+            context = try_get_context()
+            assert context is not None
+            assert context.lab is not None
+            lab_ids[:] = [h.id for h in context.lab.hosts.values()]
+            if body_raises:
+                raise LookupError("the body failed")
+    assert lab_ids, "the opener installed a lab with no hosts"
+    assert sorted(closed) == sorted(lab_ids)
+    assert fake.closed
 
 
 def test_the_openers_reuse_ottos_factory_rather_than_constructing_a_host(monkeypatch):

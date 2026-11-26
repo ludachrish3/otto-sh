@@ -1,6 +1,8 @@
 """The engine: tiers in order, nothing guessed, budgets injected, resolution by the spec's rule."""
 
 import asyncio
+import gc
+import warnings
 from pathlib import Path
 
 import pytest
@@ -26,6 +28,7 @@ from otto.host.survey.report import menu_pin
 from otto.host.survey.sweep import SweepRow
 from otto.host.survey.verdict import ProtocolVerdict
 from otto.host.transfer import nc_scripts
+from otto.host.transfer.nc import NcRungToolError, _ask_listener_check, run_port_rung
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
@@ -1339,13 +1342,15 @@ _PORTS = {r.name: r for r in nc_scripts.PORT_LADDER}
 _LISTENERS = {r.name: r for r in nc_scripts.LISTENER_LADDER}
 _AVAILABILITY = nc_scripts.availability_probe()
 _BASE = NcOptions().port
+_FREE = 9100
+"""The port every scripted port strategy answers, so the probe's listener is opened on it."""
 
 
-def _port_script(name: str) -> str:
-    return _PORTS[name].scripts(_BASE, "")[0]
+def _port_script(name: str, base: int = _BASE) -> str:
+    return _PORTS[name].scripts(base, "")[0]
 
 
-def _listener_script(name: str, port: int = 22) -> str:
+def _listener_script(name: str, port: int = _FREE) -> str:
     return _LISTENERS[name].script(port)
 
 
@@ -1357,13 +1362,74 @@ def _sentinel() -> CommandResult:
     return CommandResult(status=Status.Failed, value=nc_scripts.TOOL_FAILED, retcode=1)
 
 
+class _FakeNc:
+    """The host's netcat backend, as the survey sees it.
+
+    ``_measure_listener_checks`` types the listener, then asks each check once
+    through the survey's runner and the backend's own ``_ask_listener_check``,
+    so the scripts the test answered are what it counts, and records a
+    listener that was up and ended with status 0; a test that needs another
+    ending sets ``fill``, which then fills ``into`` in its place.
+    ``_port_by_strategy`` runs the pinned strategy's first script from the
+    default base, through the survey's runner.
+    """
+
+    def __init__(self) -> None:
+        self.users: list = []
+        self.measured: list[tuple[int, list[str], int]] = []
+        self.strategies: list[str] = []
+        self.fill = None
+        self.made = 0
+        self.capped = True
+
+    async def _port_by_strategy(self, strategy, run):
+        self.strategies.append(strategy)
+        if strategy == "custom":
+            return _FREE
+        return await run_port_rung(_PORTS[strategy], run, base_port=_BASE, reserved="")
+
+    def _measure_listener_checks(self, run, checks, into, *, cap_s):
+        # Recorded when the survey makes the step, not when it runs it.
+        self.made += 1
+        return self._measure(run, checks, into, cap_s)
+
+    async def _measure(self, run, checks, into, cap_s):
+        self.measured.append((into.port, [c.name for c in checks], cap_s))
+        into.capped = self.capped
+        into.bare_command = f"nc -l -p {into.port}"
+        into.spawned = True
+        if self.fill is not None:
+            await self.fill(run, checks, into)
+            return
+        for check in checks:
+            into.answers[check.name] = await _ask_listener_check(check, run, into.port)
+        counts = [n for n in into.answers.values() if isinstance(n, int)]
+        into.timed_out = not any(n >= 1 for n in counts)
+        into.was_up = into.end_confirmed = True
+        into.exit_status, into.ending = 0, "the listener command exited with status 0"
+
+
 @pytest.fixture
-def scripted(seams, monkeypatch):
+def nc_backend(monkeypatch):
+    """The fake netcat backend ``_nc_backend_for`` hands the survey; it records the user."""
+    backend = _FakeNc()
+
+    def backend_for(self, user):
+        backend.users.append(user)
+        return backend
+
+    monkeypatch.setattr(UnixHost, "_nc_backend_for", backend_for)
+    return backend
+
+
+@pytest.fixture
+def scripted(seams, nc_backend, monkeypatch):
     """A host whose ``exec`` answers only the table's scripts; ``run`` must never see one.
 
     Yields the answer map (script -> result) the test fills and the list of
     every script ``exec`` received, in order. A script nobody answered fails
-    the test: the probe runs nothing the table did not build.
+    the test: the probe runs nothing the table did not build. The port scan
+    starts at ``nc_options.port`` exactly, so each port script is known.
     """
     answers: dict[str, CommandResult] = {}
     ran: list[str] = []
@@ -1380,6 +1446,7 @@ def scripted(seams, monkeypatch):
 
     monkeypatch.setattr(UnixHost, "exec", exec_)
     monkeypatch.setattr(UnixHost, "run", run)
+    monkeypatch.setattr(engine, "scan_start", lambda base: base)
     yield answers, ran
     assert run_cmds == []
 
@@ -1388,14 +1455,15 @@ def scripted(seams, monkeypatch):
 async def test_ss_works_for_both_ladders(scripted):
     answers, ran = scripted
     answers[_AVAILABILITY] = _ok("ss netstat python proc")
-    answers[_port_script("ss")] = _ok("9100")
-    answers[_listener_script("ss")] = _ok("1")
+    answers[_port_script("ss")] = _ok(str(_FREE))
+    for name in _LISTENERS:
+        answers[_listener_script(name)] = _ok("1")
     s = await engine.run_survey(_unix())
     assert s.nc_rungs == engine.NcRungs(
         port=engine.NcLadderResult("measured", "ss"),
         listener=engine.NcLadderResult("measured", "ss"),
     )
-    assert ran == [_AVAILABILITY, _port_script("ss"), _listener_script("ss")]
+    assert ran == [_AVAILABILITY, _port_script("ss"), *map(_listener_script, _LISTENERS)]
 
 
 @pytest.mark.asyncio
@@ -1403,8 +1471,9 @@ async def test_a_present_rung_that_fails_is_named_and_the_next_one_measured(scri
     answers, _ran = scripted
     answers[_AVAILABILITY] = _ok("ss netstat proc")
     answers[_port_script("ss")] = _sentinel()
-    answers[_port_script("netstat")] = _ok("9100")
-    answers[_listener_script("ss")] = _ok("1")
+    answers[_port_script("netstat")] = _ok(str(_FREE))
+    for name in _LISTENERS:
+        answers[_listener_script(name)] = _ok("1")
     s = await engine.run_survey(_unix())
     assert s.nc_rungs is not None
     assert s.nc_rungs.port == engine.NcLadderResult("measured", "netstat")
@@ -1413,10 +1482,10 @@ async def test_a_present_rung_that_fails_is_named_and_the_next_one_measured(scri
 
 
 @pytest.mark.asyncio
-async def test_a_rung_that_is_not_available_is_passed_over_in_silence(scripted):
+async def test_a_rung_that_is_not_available_is_passed_over_in_silence(scripted, nc_backend):
     answers, ran = scripted
     answers[_AVAILABILITY] = _ok("python proc")
-    answers[_port_script("python")] = _ok("41000")
+    answers[_port_script("python")] = _ok(str(_FREE))
     answers[_listener_script("proc")] = _ok("1")
     s = await engine.run_survey(_unix())
     assert s.nc_rungs == engine.NcRungs(
@@ -1424,25 +1493,611 @@ async def test_a_rung_that_is_not_available_is_passed_over_in_silence(scripted):
         listener=engine.NcLadderResult("measured", "proc"),
     )
     assert ran == [_AVAILABILITY, _port_script("python"), _listener_script("proc")]
+    assert [checks for _port, checks, _cap in nc_backend.measured] == [["proc"]]
+
+
+async def _measured(scripted, nc_backend, fill, *, available="ss netstat"):
+    """Survey a host whose port ladder finds :data:`_FREE` and whose measurement *fill* fills."""
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok(available)
+    answers[_port_script("ss")] = _ok(str(_FREE))
+    nc_backend.fill = fill
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    return s.nc_rungs
+
+
+def _answering(**answers):
+    """A fill whose complete round gave *answers*, with a confirmed end."""
+
+    async def fill(run, checks, into):
+        into.answers.update(answers)
+        into.was_up = into.end_confirmed = True
+        into.exit_status = 0
+
+    return fill
+
+
+def _failed(rungs) -> list[tuple[str, str]]:
+    return [(f.ladder, f.strategy) for f in rungs.failed]
 
 
 @pytest.mark.asyncio
-async def test_a_listener_rung_that_counts_none_is_a_failed_rung(scripted):
-    answers, _ran = scripted
-    answers[_AVAILABILITY] = _ok("ss netstat")
-    answers[_port_script("ss")] = _ok("9100")
-    answers[_listener_script("ss")] = _ok("0")
-    answers[_listener_script("netstat")] = _ok("2")
-    s = await engine.run_survey(_unix())
-    assert s.nc_rungs is not None
-    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "netstat")
-    assert [f"{f.ladder} {f.strategy}" for f in s.nc_rungs.failed] == ["listener ss"], (
-        s.nc_rungs.failed
+async def test_a_check_that_counts_one_is_measured(scripted, nc_backend):
+    rungs = await _measured(scripted, nc_backend, _answering(ss=1, netstat=0))
+    assert rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert rungs.failed == []
+    assert rungs.listener_left == ""
+
+
+@pytest.mark.asyncio
+async def test_a_check_that_counts_none_while_another_counts_it_did_not_see_the_listener(
+    scripted, nc_backend
+):
+    rungs = await _measured(scripted, nc_backend, _answering(ss=0, netstat=1))
+    assert rungs.listener == engine.NcLadderResult("measured", "netstat")
+    assert _failed(rungs) == [("listener", "ss")]
+    assert rungs.failed[0].reason.startswith(f"did not see the listener otto opened on :{_FREE}")
+
+
+@pytest.mark.asyncio
+async def test_a_check_that_counts_two_or_more_names_both_causes(scripted, nc_backend):
+    rungs = await _measured(scripted, nc_backend, _answering(ss=2, netstat=1))
+    assert rungs.listener == engine.NcLadderResult("measured", "netstat")
+    assert _failed(rungs) == [("listener", "ss")]
+    reason = rungs.failed[0].reason
+    assert reason.startswith(f"counted 2 listeners on :{_FREE}, where otto opened one."), reason
+    assert "Either the check miscounts this netcat" in reason
+
+
+@pytest.mark.asyncio
+async def test_a_check_whose_tool_failed_or_gave_no_answer_is_failed_as_before(
+    scripted, nc_backend
+):
+    tool = NcRungToolError("ss: the tool is missing or failed")
+    rungs = await _measured(
+        scripted, nc_backend, _answering(ss=tool, netstat=None, proc=1), available="ss netstat proc"
+    )
+    assert rungs.listener == engine.NcLadderResult("measured", "proc")
+    assert _failed(rungs) == [("listener", "ss"), ("listener", "netstat")]
+    assert rungs.failed[0].reason == "ss: the tool is missing or failed"
+    assert rungs.failed[1].reason.startswith(f"no answer about :{_FREE}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("was_up", "late", "opening"),
+    [
+        (True, False, "and it was up when otto closed it."),
+        (False, False, "and otto could not tell whether it started."),
+        (True, True, "but a check counted it after that, so it took longer than that to start."),
+    ],
+    ids=["was-up", "unknown", "late"],
+)
+async def test_no_check_counting_before_the_readiness_timeout_leaves_the_ladder_unmeasured(
+    scripted, nc_backend, was_up, late, opening
+):
+    """Each case says what was seen and what to do; a late count is not called blindness."""
+
+    async def fill(run, checks, into):
+        # The complete round still ran; it is not the verdict.
+        into.answers.update(ss=1 if late else 0, netstat=0)
+        into.timed_out, into.was_up, into.end_confirmed, into.exit_status = True, was_up, True, 0
+        into.waited_s = 5.0
+
+    rungs = await _measured(scripted, nc_backend, fill)
+    assert rungs.listener.state == "unmeasured"
+    note = rungs.listener.note
+    said = f"no listener check counted the listener otto opened on :{_FREE} within 5 s"
+    assert note.startswith(f"{said}, "), note
+    assert opening in note, note
+    if late:
+        action = "Run the probe again to see whether it starts in time"
+        assert "blind" not in note, note
+    elif was_up:
+        action = "Run the probe again; if no check counts it again, set nc_options.listener_check"
+    else:
+        action = f"Run 'nc -l -p {_FREE}' on the host to see whether it starts, or run the probe"
+    assert action in note, note
+    assert rungs.failed == []
+
+
+@pytest.mark.asyncio
+async def test_a_listener_command_that_raised_leaves_the_ladder_unmeasured_with_its_cause(
+    scripted, nc_backend
+):
+    async def fill(run, checks, into):
+        into.answers["ss"] = 0  # a partial round: never a failed check
+        into.ended_early = True
+        into.ending = "the 'nc' command failed: channel closed"
+
+    rungs = await _measured(scripted, nc_backend, fill)
+    assert rungs.listener.state == "unmeasured"
+    assert rungs.listener.note == (
+        f"otto lost the listener it opened on :{_FREE} before it closed it:"
+        " the 'nc' command failed: channel closed. Run the probe again"
+    )
+    assert "status" not in rungs.listener.note
+    assert rungs.failed == []
+    assert rungs.listener_left.startswith(
+        f"otto could not confirm the listener it opened on :{_FREE}"
     )
 
 
 @pytest.mark.asyncio
-async def test_a_console_session_measures_nothing(scripted):
+@pytest.mark.parametrize(
+    "status", [127, 126, 1, 0], ids=["not-found", "not-runnable", "other", "zero"]
+)
+async def test_a_listener_that_ended_before_the_close_names_its_exit_status(
+    scripted, nc_backend, status
+):
+    ending = {
+        127: "'nc' exited with status 127, so it was not found on the host"
+        " (nc_options.exec_name names the netcat to run)",
+        126: "'nc' exited with status 126, so it was found but could not be run"
+        " (nc_options.exec_name names the netcat to run)",
+        1: "the listener command exited with status 1",
+        0: "the listener command exited with status 0",
+    }[status]
+
+    async def fill(run, checks, into):
+        into.answers["ss"] = 0
+        into.ended_early = into.end_confirmed = True
+        into.exit_status, into.ending = status, ending
+
+    rungs = await _measured(scripted, nc_backend, fill)
+    assert rungs.listener.state == "unmeasured"
+    note = rungs.listener.note
+    assert note.startswith(
+        f"the listener otto opened on :{_FREE} ended before otto closed it: {ending}"
+    ), note
+    refused = f"{ending}. Either this netcat refuses that command"
+    empty_input = f"{ending}. Either another process connected to it before otto did"
+    assert (refused in note) == (status == 1), note
+    assert (empty_input in note) == (status == 0), note
+    if status == 0:
+        assert f"Run 'nc -l -p {_FREE} < /dev/null' on the host" in note, note
+    if status == 1:
+        assert f"Run 'nc -l -p {_FREE}' on the host to see its message" in note, note
+    assert "-l -p PORT" not in note, note
+    if status in (126, 127):
+        assert note.endswith(ending), note
+    assert rungs.failed == []
+    assert rungs.listener_left == ""
+
+
+@pytest.mark.asyncio
+async def test_two_or_more_is_not_measured_again_on_another_port(scripted, nc_backend):
+    rungs = await _measured(scripted, nc_backend, _answering(ss=2), available="ss")
+    assert len(nc_backend.measured) == 1
+    assert rungs.listener.state == "unmeasured"
+    assert _failed(rungs) == [("listener", "ss")]
+    assert rungs.failed[0].reason.startswith("counted 2 listeners")
+
+
+@pytest.mark.asyncio
+async def test_auto_auto_measures_on_the_port_the_ladder_found(scripted, nc_backend):
+    """The listener is opened on the port the measured strategy printed."""
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_port_script("ss")] = _ok("41000")
+    answers[_listener_script("ss", 41000)] = _ok("1")
+    answers[_listener_script("netstat", 41000)] = _ok("0")
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert nc_backend.measured == [(41000, ["ss", "netstat"], int(engine.SURVEY_BUDGET_S))]
+    assert nc_backend.strategies == []
+    assert ran == [
+        _AVAILABILITY,
+        _port_script("ss"),
+        _listener_script("ss", 41000),
+        _listener_script("netstat", 41000),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_port_strategy_is_run_once_for_the_port_and_reported_as_declared(
+    scripted, nc_backend
+):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_port_script("netstat")] = _ok(str(_FREE))
+    answers[_listener_script("ss")] = _ok("1")
+    answers[_listener_script("netstat")] = _ok("1")
+    host = _unix(nc_options=NcOptions(port_strategy="netstat"))
+    s = await engine.run_survey(host)
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("declared", "netstat")
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert nc_backend.strategies == ["netstat"]
+    assert ran == [
+        _AVAILABILITY,
+        _port_script("netstat"),
+        _listener_script("ss"),
+        _listener_script("netstat"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_custom_port_strategy_is_asked_once_for_the_port(scripted, nc_backend):
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_listener_script("ss")] = _ok("1")
+    host = _unix(nc_options=NcOptions(port_strategy="custom", port_cmd="echo 9100"))
+    s = await engine.run_survey(host)
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("declared", "custom")
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert nc_backend.strategies == ["custom"]
+    assert [port for port, _checks, _cap in nc_backend.measured] == [_FREE]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_listener_check_opens_no_listener(scripted, nc_backend):
+    answers, ran = scripted
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_port_script("ss")] = _ok(str(_FREE))
+    host = _unix(nc_options=NcOptions(listener_check="custom", listener_cmd="true"))
+    s = await engine.run_survey(host)
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
+    assert s.nc_rungs.listener == engine.NcLadderResult("declared", "custom")
+    assert ran == [_AVAILABILITY, _port_script("ss")]
+    assert nc_backend.users == nc_backend.measured == []
+
+
+@pytest.mark.asyncio
+async def test_both_pinned_runs_nothing(scripted, nc_backend):
+    _answers, ran = scripted
+    host = _unix(nc_options=NcOptions(port_strategy="netstat", listener_check="proc"))
+    s = await engine.run_survey(host)
+    assert s.nc_rungs == engine.NcRungs(
+        port=engine.NcLadderResult("declared", "netstat"),
+        listener=engine.NcLadderResult("declared", "proc"),
+    )
+    assert ran == []
+    assert nc_backend.users == []
+
+
+@pytest.mark.asyncio
+async def test_the_port_ladder_scans_from_the_random_start(scripted, monkeypatch, nc_backend):
+    answers, ran = scripted
+    starts: list[int] = []
+
+    def start(base):
+        starts.append(base)
+        return base + 7
+
+    monkeypatch.setattr(engine, "scan_start", start)
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_port_script("ss", _BASE + 7)] = _ok(str(_FREE))
+    answers[_listener_script("ss")] = _ok("1")
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
+    assert starts == [_BASE]
+    assert ran[1] == _port_script("ss", _BASE + 7)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pinned", [False, True], ids=["ladder-found-none", "pinned-raised"])
+async def test_no_port_leaves_the_listener_ladder_unmeasured_quoting_the_error(
+    scripted, nc_backend, pinned
+):
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_port_script("ss")] = _sentinel()
+    answers[_port_script("netstat")] = _sentinel()
+    opts = NcOptions(port_strategy="netstat") if pinned else NcOptions()
+    s = await engine.run_survey(_unix(nc_options=opts))
+    assert s.nc_rungs is not None
+    note = s.nc_rungs.listener.note
+    assert s.nc_rungs.listener.state == "unmeasured"
+    assert note.startswith("there was no free port to open a listener on: "), note
+    if pinned:
+        assert s.nc_rungs.port == engine.NcLadderResult("declared", "netstat")
+        assert "netstat" in note, note
+    else:
+        assert s.nc_rungs.port.state == "unmeasured"
+        assert note.endswith(s.nc_rungs.port.note), note
+    assert nc_backend.measured == []
+
+
+@pytest.mark.asyncio
+async def test_another_exec_name_is_measured_when_the_nc_row_is_not_supported(
+    scripted, monkeypatch, nc_backend
+):
+    answers, _ran = scripted
+    monkeypatch.setattr(UnixHost, "userland", lambda self: _Userland(nc="absent"))
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_port_script("ss")] = _ok(str(_FREE))
+    answers[_listener_script("ss")] = _ok("1")
+    s = await engine.run_survey(_unix(nc_options=NcOptions(exec_name="ncat")))
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert len(nc_backend.measured) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_default_exec_name_still_needs_the_nc_row(scripted, monkeypatch, nc_backend):
+    _answers, ran = scripted
+    monkeypatch.setattr(UnixHost, "userland", lambda self: _Userland(nc="absent"))
+    s = await engine.run_survey(_unix())
+    assert ran == []
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port.state == s.nc_rungs.listener.state == "unmeasured"
+    assert s.nc_rungs.port.note == "nc is not supported on this host"
+    assert nc_backend.users == []
+
+
+async def _survey_with_backend(scripted, monkeypatch, backend_for, opts):
+    """Survey a host whose ss port script fails and netstat's works, with *backend_for* patched."""
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_port_script("ss")] = _sentinel()
+    answers[_port_script("netstat")] = _ok(str(_FREE))
+    answers[_listener_script("ss")] = _ok("1")
+    answers[_listener_script("netstat")] = _ok("1")
+    if backend_for is not None:
+        monkeypatch.setattr(UnixHost, "_nc_backend_for", backend_for)
+    s = await engine.run_survey(_unix(nc_options=opts))
+    assert s.nc_rungs is not None
+    return s
+
+
+def _raise_build(self, user):
+    raise ValueError("max_concurrent_transfers must be at least 1")
+
+
+@pytest.mark.asyncio
+async def test_a_backend_build_that_raises_leaves_the_port_result_and_every_row_alone(
+    scripted, monkeypatch
+):
+    works = await _survey_with_backend(scripted, monkeypatch, None, NcOptions())
+    broken = await _survey_with_backend(scripted, monkeypatch, _raise_build, NcOptions())
+    assert works.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert _failed(works.nc_rungs) == [("port", "ss")]
+    assert broken.nc_rungs.port == works.nc_rungs.port
+    assert broken.nc_rungs.failed == works.nc_rungs.failed
+    assert broken.verdicts == works.verdicts
+    assert broken.nc_rungs.listener.state == "unmeasured"
+    assert broken.nc_rungs.listener.note.startswith(
+        "otto could not set up netcat for this host: ValueError: max_concurrent"
+    ), broken.nc_rungs.listener.note
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "opts", [NcOptions(), NcOptions(port_strategy="netstat")], ids=["auto-port", "pinned-port"]
+)
+async def test_a_replacement_backend_with_neither_method_does_the_same(scripted, monkeypatch, opts):
+    works = await _survey_with_backend(scripted, monkeypatch, None, opts)
+    neither = lambda self, user: object()  # noqa: E731 — a registered backend with no method
+    broken = await _survey_with_backend(scripted, monkeypatch, neither, opts)
+    assert works.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert broken.nc_rungs.port == works.nc_rungs.port
+    assert broken.nc_rungs.failed == works.nc_rungs.failed
+    assert broken.verdicts == works.verdicts
+    assert broken.nc_rungs.listener.state == "unmeasured"
+    assert broken.nc_rungs.listener.note.startswith("the nc transfer registered for this host")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("capped", [True, False], ids=["capped", "uncapped"])
+@pytest.mark.parametrize("way", ["bounded-none", "budget-raised"])
+async def test_the_budget_running_out_mid_measurement_reports_budget_spent_and_the_port(
+    scripted, monkeypatch, nc_backend, way, capped
+):
+    """Ended once the listener was typed: its own wording, and the line about the listener left."""
+    nc_backend.capped = capped
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss")
+    answers[_port_script("ss")] = _ok(str(_FREE))
+    if way == "bounded-none":
+        # How ``asyncio.wait_for`` ends a step whose grant ran out, with no clock.
+        async def fill(run, checks, into):
+            raise asyncio.TimeoutError
+
+        nc_backend.fill = fill
+    else:
+        real_exec = UnixHost.exec
+
+        async def exec_(self, cmd, **kw):
+            if cmd == _listener_script("ss"):
+                raise engine._BudgetSpent
+            return await real_exec(self, cmd, **kw)
+
+        monkeypatch.setattr(UnixHost, "exec", exec_)
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
+    note = s.nc_rungs.listener.note
+    assert s.nc_rungs.listener.state == "unmeasured"
+    assert note == engine._nc_budget_spent_measuring(_FREE), note
+    assert note.startswith(
+        f"the survey budget ran out while otto measured the listener it opened on :{_FREE}."
+    ), note
+    assert note != engine._NC_BUDGET_SPENT
+    left = s.nc_rungs.listener_left
+    assert left.startswith(f"otto could not confirm the listener it opened on :{_FREE}"), left
+    if capped:
+        assert f"within {int(engine.SURVEY_BUDGET_S)} seconds" in left, left
+    else:
+        assert "No lifetime cap could be installed" in left, left
+
+
+@pytest.mark.asyncio
+async def test_a_measurement_that_finishes_as_the_deadline_reads_spent_is_judged_by_its_result(
+    scripted, monkeypatch, nc_backend
+):
+    spent: list[bool] = []
+    real_remaining = engine._Deadline.remaining
+    monkeypatch.setattr(
+        engine._Deadline, "remaining", lambda self: 0.0 if spent else real_remaining(self)
+    )
+    answering = _answering(ss=1)
+
+    async def fill(run, checks, into):
+        await answering(run, checks, into)
+        spent.append(True)  # the clock reads spent from here on
+
+    rungs = await _measured(scripted, nc_backend, fill)
+    assert rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert rungs.listener_left == ""
+
+
+@pytest.mark.asyncio
+async def test_a_runner_error_from_the_measurement_is_reported_and_the_port_ladder_kept(
+    scripted, monkeypatch
+):
+    """An error that is not the check's own ends the measurement, so no further check is asked.
+
+    It is the session failing while otto's listener is up, so the listener is
+    closed at once rather than asking the next check through a runner that
+    just failed; the port ladder still fails one strategy per runner error.
+    """
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_port_script("ss")] = _ok(str(_FREE))
+    answers[_listener_script("netstat")] = _ok("1")
+    _raising_exec(scripted, monkeypatch, _listener_script("ss"), OSError("Connection refused"))
+    s = await engine.run_survey(_unix())
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
+    assert s.nc_rungs.listener.state == "unmeasured"
+    assert s.nc_rungs.listener.note.startswith(
+        "the listener checks could not be run: OSError: Connection refused."
+    ), s.nc_rungs.listener.note
+    assert s.nc_rungs.failed == []
+    assert _row(s, "ssh", 1).state == "supported"
+
+
+@pytest.mark.asyncio
+async def test_a_cancellation_from_outside_the_measurement_is_not_caught(scripted, nc_backend):
+    async def fill(run, checks, into):
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _measured(scripted, nc_backend, fill)
+
+
+@pytest.mark.asyncio
+async def test_a_listener_lost_while_otto_closed_it_leaves_the_ladder_unmeasured_with_its_cause(
+    scripted, nc_backend
+):
+    """Counted, then the command raised during the close: no verdict, and the end is unconfirmed."""
+
+    async def fill(run, checks, into):
+        into.answers.update(ss=1, netstat=1)
+        into.counted_early["ss"] = 1
+        into.was_up = True
+        into.ending = "the 'nc' command failed: channel closed"
+
+    rungs = await _measured(scripted, nc_backend, fill)
+    assert rungs.listener.state == "unmeasured"
+    assert rungs.listener.note == (
+        f"otto lost the listener it opened on :{_FREE} while it closed it:"
+        " the 'nc' command failed: channel closed. Run the probe again"
+    )
+    assert "status" not in rungs.listener.note
+    assert rungs.failed == []
+    assert rungs.listener_left.startswith(
+        f"otto could not confirm the listener it opened on :{_FREE}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_listener_still_running_after_the_close_keeps_the_checks_answers(
+    scripted, nc_backend
+):
+    """No end within the close's bound: the checks' answers stand and the listener line is added."""
+
+    async def fill(run, checks, into):
+        into.answers.update(ss=1, netstat=1)
+        into.was_up = True
+
+    rungs = await _measured(scripted, nc_backend, fill)
+    assert rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert rungs.listener_left.startswith(
+        f"otto could not confirm the listener it opened on :{_FREE}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_listener_never_typed_is_not_called_opened_or_left(scripted, nc_backend):
+    """A session that never opened: otto started nothing, so nothing is said to be left."""
+
+    async def fill(run, checks, into):
+        into.spawned = False
+        into.ended_early = True
+        into.ending = "the 'nc' command failed: the session did not open"
+
+    rungs = await _measured(scripted, nc_backend, fill)
+    assert rungs.listener.note == (
+        f"otto could not start a listener on :{_FREE}:"
+        " the 'nc' command failed: the session did not open. Run the probe again"
+    )
+    assert rungs.listener_left == ""
+
+
+@pytest.mark.asyncio
+async def test_an_exit_status_outranks_a_timed_out_count(scripted, nc_backend):
+    """Both recorded: the exit status is the more specific fact, so it is the note."""
+
+    async def fill(run, checks, into):
+        into.timed_out = into.ended_early = into.end_confirmed = True
+        into.exit_status, into.ending = 127, "'nc' exited with status 127"
+
+    rungs = await _measured(scripted, nc_backend, fill)
+    assert rungs.listener.note.startswith(
+        f"the listener otto opened on :{_FREE} ended before otto closed it: 'nc' exited"
+    ), rungs.listener.note
+
+
+@pytest.mark.asyncio
+async def test_no_budget_left_for_the_measurement_never_makes_its_step(
+    scripted, monkeypatch, nc_backend
+):
+    """The step is made only once it runs, so a spent budget leaves no coroutine unawaited."""
+    spent: list[bool] = []
+    real_remaining = engine._Deadline.remaining
+    monkeypatch.setattr(
+        engine._Deadline, "remaining", lambda self: 0.0 if spent else real_remaining(self)
+    )
+    real_port = nc_backend._port_by_strategy
+
+    async def port_then_spent(strategy, run):
+        port = await real_port(strategy, run)
+        spent.append(True)  # the clock reads spent from here on
+        return port
+
+    nc_backend._port_by_strategy = port_then_spent
+    answers, _ran = scripted
+    answers[_AVAILABILITY] = _ok("ss netstat")
+    answers[_port_script("netstat")] = _ok(str(_FREE))
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        s = await engine.run_survey(_unix(nc_options=NcOptions(port_strategy="netstat")))
+        gc.collect()
+    assert nc_backend.made == 0
+    assert s.nc_rungs is not None
+    assert s.nc_rungs.listener == engine.NcLadderResult("unmeasured", note=engine._NC_BUDGET_SPENT)
+    assert not [w for w in seen if "never awaited" in str(w.message)], [
+        str(w.message) for w in seen
+    ]
+
+
+def test_a_runner_error_that_ends_in_a_period_is_not_doubled():
+    note = engine._nc_runner_failed(OSError("Connection refused."))
+    assert (
+        note
+        == "the listener checks could not be run: OSError: Connection refused. Run the probe again"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_console_session_measures_nothing(scripted, nc_backend):
     _answers, ran = scripted
     host = _unix(
         term="console",
@@ -1455,17 +2110,7 @@ async def test_a_console_session_measures_nothing(scripted):
     assert s.nc_rungs is not None
     assert s.nc_rungs.port.state == s.nc_rungs.listener.state == "unmeasured"
     assert "console" in s.nc_rungs.port.note
-
-
-@pytest.mark.asyncio
-async def test_nc_not_supported_measures_nothing(scripted, monkeypatch):
-    _answers, ran = scripted
-    monkeypatch.setattr(UnixHost, "userland", lambda self: _Userland(nc="absent"))
-    s = await engine.run_survey(_unix())
-    assert ran == []
-    assert s.nc_rungs is not None
-    assert s.nc_rungs.port.state == s.nc_rungs.listener.state == "unmeasured"
-    assert "nc" in s.nc_rungs.port.note
+    assert nc_backend.users == nc_backend.measured == []
 
 
 @pytest.mark.asyncio
@@ -1474,12 +2119,13 @@ async def test_nc_not_supported_measures_nothing(scripted, monkeypatch):
     [None, [Listener("udp", "0.0.0.0", 161, "snmpd")]],
     ids=["no-inventory", "no-tcp-listener"],
 )
-async def test_without_a_listener_to_ask_about_only_the_port_ladder_is_measured(
+async def test_the_listener_checks_are_measured_whatever_the_inventory_found(
     scripted, monkeypatch, listeners
 ):
     answers, ran = scripted
     answers[_AVAILABILITY] = _ok("ss")
-    answers[_port_script("ss")] = _ok("9100")
+    answers[_port_script("ss")] = _ok(str(_FREE))
+    answers[_listener_script("ss")] = _ok("1")
 
     async def inventory(run, *, elevate):
         if listeners is None:
@@ -1490,35 +2136,31 @@ async def test_without_a_listener_to_ask_about_only_the_port_ladder_is_measured(
     s = await engine.run_survey(_unix())
     assert s.nc_rungs is not None
     assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
-    assert s.nc_rungs.listener.state == "unmeasured"
-    assert s.nc_rungs.listener.note
-    assert ran == [_AVAILABILITY, _port_script("ss")]
-
-
-@pytest.mark.asyncio
-async def test_a_pinned_port_strategy_is_declared_and_not_run(scripted):
-    answers, ran = scripted
-    answers[_AVAILABILITY] = _ok("ss netstat")
-    answers[_listener_script("ss")] = _ok("1")
-    host = _unix(nc_options=NcOptions(port_strategy="netstat"))
-    s = await engine.run_survey(host)
-    assert s.nc_rungs is not None
-    assert s.nc_rungs.port == engine.NcLadderResult("declared", "netstat")
     assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
-    assert ran == [_AVAILABILITY, _listener_script("ss")]
+    assert ran == [_AVAILABILITY, _port_script("ss"), _listener_script("ss")]
 
 
 @pytest.mark.asyncio
-async def test_a_pinned_custom_listener_check_is_declared_and_not_run(scripted):
+@pytest.mark.parametrize("ports", [[1], [1, 8080]], ids=["own-port-only", "another-listener"])
+async def test_no_inventory_listener_is_the_port_asked_about(scripted, monkeypatch, ports):
+    """A dropbear host lists only its sshd, another lists more: no inventory port is asked."""
     answers, ran = scripted
     answers[_AVAILABILITY] = _ok("ss")
-    answers[_port_script("ss")] = _ok("9100")
-    host = _unix(nc_options=NcOptions(listener_check="custom", listener_cmd="true"))
-    s = await engine.run_survey(host)
+    answers[_port_script("ss")] = _ok(str(_FREE))
+    answers[_listener_script("ss")] = _ok("1")
+
+    async def inventory(run, *, elevate):
+        return Inventory(
+            tool="ss",
+            elevated=elevate,
+            listeners=[Listener("tcp", "0.0.0.0", p, "") for p in ports],
+        )
+
+    monkeypatch.setattr(engine, "run_inventory", inventory)
+    s = await engine.run_survey(_unix())
     assert s.nc_rungs is not None
-    assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
-    assert s.nc_rungs.listener == engine.NcLadderResult("declared", "custom")
-    assert ran == [_AVAILABILITY, _port_script("ss")]
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert ran[-1] == _listener_script("ss")
 
 
 @pytest.mark.asyncio
@@ -1544,7 +2186,7 @@ async def test_every_script_the_probe_runs_is_one_the_table_built(scripted):
     answers[_AVAILABILITY] = _ok("ss netstat python proc")
     for name, rung in _PORTS.items():
         for script in rung.scripts(_BASE, ""):
-            answers[script] = _ok("9100") if name == "proc" else _sentinel()
+            answers[script] = _ok(str(_FREE)) if name == "proc" else _sentinel()
     for name in _LISTENERS:
         answers[_listener_script(name)] = _ok("1") if name == "proc" else _ok("0")
     built = set(answers)
@@ -1574,8 +2216,9 @@ async def test_a_strategy_that_hangs_is_one_failed_strategy_and_the_walk_goes_on
     answers, ran = scripted
     monkeypatch.setattr(engine, "INVENTORY_TIMEOUT_S", 0.05)
     answers[_AVAILABILITY] = _ok("ss netstat")
-    answers[_port_script("netstat")] = _ok("9100")
+    answers[_port_script("netstat")] = _ok(str(_FREE))
     answers[_listener_script("ss")] = _ok("1")
+    answers[_listener_script("netstat")] = _ok("0")
     hang = _port_script("ss")
     answers[hang] = _ok("never read")
     real_exec = UnixHost.exec
@@ -1593,11 +2236,17 @@ async def test_a_strategy_that_hangs_is_one_failed_strategy_and_the_walk_goes_on
     assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
     assert [(f.ladder, f.strategy) for f in s.nc_rungs.failed] == [("port", "ss")]
     assert "timed out" in s.nc_rungs.failed[0].reason, s.nc_rungs.failed
-    assert ran == [_AVAILABILITY, hang, _port_script("netstat"), _listener_script("ss")]
+    assert ran == [
+        _AVAILABILITY,
+        hang,
+        _port_script("netstat"),
+        _listener_script("ss"),
+        _listener_script("netstat"),
+    ]
 
 
 @pytest.mark.asyncio
-async def test_with_no_strategys_tool_each_ladder_says_how_to_pin_custom(scripted):
+async def test_with_no_strategys_tool_each_ladder_says_how_to_pin_custom(scripted, nc_backend):
     answers, ran = scripted
     answers[_AVAILABILITY] = _ok("")
     s = await engine.run_survey(_unix())
@@ -1611,6 +2260,7 @@ async def test_with_no_strategys_tool_each_ladder_says_how_to_pin_custom(scripte
         ' "custom" with a listener_cmd that exits 0 when {port} is listening'
     )
     assert ran == [_AVAILABILITY]
+    assert nc_backend.measured == []
 
 
 def _raising_exec(scripted, monkeypatch, failing: str, error: BaseException) -> None:
@@ -1646,8 +2296,9 @@ async def test_a_runner_error_in_the_availability_probe_leaves_the_ladders_unmea
 async def test_a_runner_error_in_a_port_script_is_one_failed_strategy(scripted, monkeypatch):
     answers, _ran = scripted
     answers[_AVAILABILITY] = _ok("ss netstat")
-    answers[_port_script("netstat")] = _ok("9100")
+    answers[_port_script("netstat")] = _ok(str(_FREE))
     answers[_listener_script("ss")] = _ok("1")
+    answers[_listener_script("netstat")] = _ok("1")
     _raising_exec(scripted, monkeypatch, _port_script("ss"), OSError("Connection refused"))
     s = await engine.run_survey(_unix())
     assert s.nc_rungs is not None
@@ -1656,34 +2307,6 @@ async def test_a_runner_error_in_a_port_script_is_one_failed_strategy(scripted, 
     assert [(f.ladder, f.strategy) for f in s.nc_rungs.failed] == [("port", "ss")]
     assert "OSError" in s.nc_rungs.failed[0].reason, s.nc_rungs.failed
     assert _row(s, "ssh", 1).state == "supported"
-
-
-@pytest.mark.asyncio
-async def test_a_runner_error_in_a_listener_script_is_one_failed_strategy(scripted, monkeypatch):
-    answers, _ran = scripted
-    answers[_AVAILABILITY] = _ok("ss netstat")
-    answers[_port_script("ss")] = _ok("9100")
-    answers[_listener_script("netstat")] = _ok("1")
-    _raising_exec(scripted, monkeypatch, _listener_script("ss"), OSError("Connection refused"))
-    s = await engine.run_survey(_unix())
-    assert s.nc_rungs is not None
-    assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
-    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "netstat")
-    assert [(f.ladder, f.strategy) for f in s.nc_rungs.failed] == [("listener", "ss")]
-    assert "OSError" in s.nc_rungs.failed[0].reason, s.nc_rungs.failed
-    assert _row(s, "ssh", 1).state == "supported"
-
-
-@pytest.mark.asyncio
-async def test_two_declared_ladders_run_no_command(scripted):
-    _answers, ran = scripted
-    host = _unix(nc_options=NcOptions(port_strategy="netstat", listener_check="proc"))
-    s = await engine.run_survey(host)
-    assert s.nc_rungs == engine.NcRungs(
-        port=engine.NcLadderResult("declared", "netstat"),
-        listener=engine.NcLadderResult("declared", "proc"),
-    )
-    assert ran == []
 
 
 @pytest.mark.asyncio
@@ -1725,7 +2348,7 @@ async def test_the_strategy_tier_runs_after_every_older_tier(scripted, monkeypat
     """Discovery, the SNMP tier and the extra dials all finish before the first strategy script."""
     answers, _ran = scripted
     answers[_AVAILABILITY] = _ok("ss")
-    answers[_port_script("ss")] = _ok("9100")
+    answers[_port_script("ss")] = _ok(str(_FREE))
     answers[_listener_script("ss")] = _ok("1")
     order: list[str] = []
     real_exec, real_dial, real_snmp = UnixHost.exec, engine.dial_direct, engine.check_snmp
@@ -1752,55 +2375,12 @@ async def test_the_strategy_tier_runs_after_every_older_tier(scripted, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_the_sessions_own_port_is_asked_about_when_it_is_the_only_tcp_listener(
-    scripted, monkeypatch
+async def test_under_user_the_backend_asked_for_is_that_users_and_no_pin_is_offered(
+    scripted, monkeypatch, nc_backend
 ):
-    """A stock dropbear host lists only its sshd: that listener is on the host, so it is used."""
-    answers, ran = scripted
-    answers[_AVAILABILITY] = _ok("ss")
-    answers[_port_script("ss")] = _ok("9100")
-    answers[_listener_script("ss", 1)] = _ok("1")
-
-    async def inventory(run, *, elevate):
-        return Inventory(
-            tool="ss",
-            elevated=elevate,
-            listeners=[Listener("tcp", "0.0.0.0", 1, "sshd"), Listener("udp", "0.0.0.0", 161, "")],
-        )
-
-    monkeypatch.setattr(engine, "run_inventory", inventory)
-    s = await engine.run_survey(_unix())
-    assert s.nc_rungs is not None
-    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
-    assert ran == [_AVAILABILITY, _port_script("ss"), _listener_script("ss", 1)]
-
-
-@pytest.mark.asyncio
-async def test_another_tcp_listener_is_preferred_over_the_sessions_own_port(scripted, monkeypatch):
-    answers, ran = scripted
-    answers[_AVAILABILITY] = _ok("ss")
-    answers[_port_script("ss")] = _ok("9100")
-    answers[_listener_script("ss", 8080)] = _ok("1")
-
-    async def inventory(run, *, elevate):
-        return Inventory(
-            tool="ss",
-            elevated=elevate,
-            listeners=[Listener("tcp", "0.0.0.0", 1, "sshd"), Listener("tcp", "0.0.0.0", 8080, "")],
-        )
-
-    monkeypatch.setattr(engine, "run_inventory", inventory)
-    s = await engine.run_survey(_unix())
-    assert s.nc_rungs is not None
-    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
-    assert ran[-1] == _listener_script("ss", 8080)
-
-
-@pytest.mark.asyncio
-async def test_under_user_the_strategies_are_measured_and_offered_as_no_pin(scripted, monkeypatch):
     answers, _ran = scripted
     answers[_AVAILABILITY] = _ok("ss")
-    answers[_port_script("ss")] = _ok("9100")
+    answers[_port_script("ss")] = _ok(str(_FREE))
     answers[_listener_script("ss")] = _ok("1")
 
     class _AsUser:
@@ -1819,5 +2399,7 @@ async def test_under_user_the_strategies_are_measured_and_offered_as_no_pin(scri
     assert s.user == "root"
     assert s.nc_rungs is not None
     assert s.nc_rungs.port == engine.NcLadderResult("measured", "ss")
+    assert s.nc_rungs.listener == engine.NcLadderResult("measured", "ss")
+    assert nc_backend.users == ["root"]
     pin = menu_pin(host.valid_terms, host.valid_transfers, s)
     assert not any("port_strategy" in line or "listener_check" in line for line in pin), pin

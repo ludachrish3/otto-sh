@@ -16,13 +16,16 @@ by these spellings (the nc universal-spelling spec).
 
 import asyncio
 import random
-from collections.abc import Awaitable, Callable, Coroutine
-from contextlib import suppress
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine
+from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ..connections import ConnectionManager
     from ..options import NcOptions
     from ..userland import Userland
@@ -32,6 +35,7 @@ import logging
 from typing_extensions import final, override
 
 from ...errors import OttoError
+from ...logger.mode import LogMode
 from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
 from ..errors import CommandValueError, HostCommandError, HostUnreachableError
@@ -67,6 +71,8 @@ _NC_BLOCK_SIZE = 8192
 _NC_LISTENER_FAST_POLL_ITERS = (
     5  # number of fast-interval poll iterations before switching to slow interval
 )
+_NC_LISTENER_FAST_POLL_S = 0.05
+"""The listener checks' poll interval for the first ``_NC_LISTENER_FAST_POLL_ITERS`` polls."""
 
 # Drain the nc writer every N blocks so `bytes_done` reported to the progress
 # handler tracks bytes that have actually left the process, not bytes buffered
@@ -130,10 +136,13 @@ connecting"; a transfer that works never starts the timer.
 _INTERRUPTED_REAP_TIMEOUT = 5.0
 """Seconds an INTERRUPTED transfer may spend reaping its remote listener.
 
-Passed as :func:`otto.lifecycle.compensate`'s opt-in ``timeout=`` at the two
-cancellation handlers below, and nowhere else. Same argument the shell
-backend's :data:`~otto.host.transfer.shell._INTERRUPTED_CLEANUP_TIMEOUT`
-makes, with nc's numbers: comfortably above the reap's healthy cost, and a
+Passed as :func:`otto.lifecycle.compensate`'s opt-in ``timeout=`` where a
+cancellation has been caught (``NcFileTransfer._remote_listener`` and the
+direct get's sender join), and as its ``deadline=`` on the listener's ordinary
+teardown, so a cancellation landing during that reap leaves it this long.
+Same argument the shell backend's
+:data:`~otto.host.transfer.shell._INTERRUPTED_CLEANUP_TIMEOUT` makes, with
+nc's numbers: comfortably above the reap's healthy cost, and a
 fraction of the window the interrupt promised.
 
 A HEALTHY REAP IS MILLISECONDS -- joining a cancelled local task, then a
@@ -153,15 +162,16 @@ this reap exists to close is measured in the todo as a listener outliving the
 """
 
 # Hard lifetime cap for a remote `nc -l`, applied via `timeout` (see
-# `_nc_listener_prefix`). One hour, not `listener_timeout`: this is the backstop
+# `_listener_prefix_for`). One hour, not `listener_timeout`: this is the backstop
 # for otto dying with a listener up, so it only needs to beat "unnoticed for
 # days" — and capping an ESTABLISHED transfer would truncate large files.
 _NC_LISTENER_HARD_CAP_S = 3600
 
 # The cap's spelling per `timeout` calling convention, keyed by
-# `Userland.timeout_style`. Measured against real BusyBox binaries: `-t SECS
-# PROG` works up to 1.28.1, bare `SECS PROG` from 1.31.0, and the two are
-# mutually exclusive on every build tested.
+# `Userland.timeout_style`, with the cap's seconds left as `{cap}`. Measured
+# against real BusyBox binaries: `-t SECS PROG` works up to 1.28.1, bare
+# `SECS PROG` from 1.31.0, and the two are mutually exclusive on every build
+# tested.
 #
 # `absent` is deliberately NOT a key, and neither is any style this table has
 # not been taught: both degrade to no prefix at all, which is exactly the
@@ -170,9 +180,9 @@ _NC_LISTENER_HARD_CAP_S = 3600
 # the listener with it. Which styles exist is fixed by the `Literal` on
 # `UserlandOptionsSpec.timeout_style`, and the coverage of this table against
 # that vocabulary is pinned in tests/unit/host/test_transfer_nc_listener_reap.py.
-_TIMEOUT_STYLE_PREFIXES = {
-    "coreutils": f"timeout {_NC_LISTENER_HARD_CAP_S} ",
-    "dash-t": f"timeout -t {_NC_LISTENER_HARD_CAP_S} ",
+_TIMEOUT_STYLE_PREFIXES: dict[str, str] = {
+    "coreutils": "timeout {cap} ",
+    "dash-t": "timeout -t {cap} ",
 }
 
 # How many per-file transfers may be in flight at once, derived from a channel
@@ -404,6 +414,19 @@ async def available_rungs(run: Runner) -> frozenset[str]:
     return names
 
 
+def scan_start(base_port: int) -> int:
+    """Where a port scan starts: *base_port* plus a random offset.
+
+    See ``_NC_PORT_SCAN_SPREAD``. Not a security boundary, so the module
+    ``random`` is the right tool; the property it needs is only that two
+    processes scanning at once rarely pick the same start.
+    """
+    ceiling = 65535 - base_port
+    if ceiling <= 0:
+        return base_port
+    return base_port + random.randrange(min(_NC_PORT_SCAN_SPREAD, ceiling))  # noqa: S311 — collision spreading, not a secret
+
+
 async def run_port_rung(rung: PortRung, run: Runner, *, base_port: int, reserved: str) -> int:
     """Run a port-finder *rung* and read the port it printed.
 
@@ -472,6 +495,49 @@ async def run_listener_rung(rung: ListenerRung, run: Runner, port: int) -> int |
     )
 
 
+_CHECK_OWN_ERRORS = (NcRungToolError, CommandValueError)
+"""A listener check's own errors: its tool failed, or its answer is not a count.
+
+Every other error from a check's runner is the runner's, not the check's.
+"""
+
+ListenerCount = Literal["no answer", "none", "one", "more than one"]
+"""What one listener check's count says about a port otto opened one listener on."""
+
+
+def what_the_count_says(count: "int | None") -> ListenerCount:
+    """Read one listener check's *count* of the holders of a port otto opened one listener on.
+
+    The one reading of a count. ``None`` is no answer (the check timed out,
+    never ran or printed nothing); fewer than one is none; exactly one is
+    otto's listener alone; more than one means another process holds the
+    port too, or the check miscounts this netcat.
+    """
+    if count is None:
+        return "no answer"
+    if count < 1:
+        return "none"
+    return "one" if count == 1 else "more than one"
+
+
+_COUNTED: "frozenset[ListenerCount]" = frozenset({"one", "more than one"})
+"""The readings that say a check saw a listener on the port."""
+
+
+async def _ask_listener_check(
+    rung: ListenerRung, run: Runner, port: int
+) -> "int | NcRungToolError | CommandValueError | None":
+    """Ask one listener check through *run*; its count, no answer, or its own error.
+
+    Only the check's own errors (:data:`_CHECK_OWN_ERRORS`) are returned;
+    anything else *run* raises propagates.
+    """
+    try:
+        return await run_listener_rung(rung, run, port)
+    except _CHECK_OWN_ERRORS as e:
+        return e
+
+
 _NC_LISTENER_READY_TIMEOUT = 5.0
 """How long the put and tunnelled-get paths wait for the remote listener.
 
@@ -479,6 +545,99 @@ Counted from the listener command being typed, where the host's exec says when
 that is (``TransferContext.spawn_cmd``): the session it opens first is not
 timed here.
 """
+
+
+def _listener_poll_interval(interval: float) -> Callable[[int], float]:
+    """Return the listener checks' poll interval schedule, for ``wait_for_async``.
+
+    The one schedule of every wait that polls the listener checks: fast for
+    the first ``_NC_LISTENER_FAST_POLL_ITERS`` polls (when a netcat on a warm
+    session is usually bound already), then *interval*, so a listener that is
+    quick to bind does not pay the full *interval* on the first miss.
+
+    Args:
+        interval: The poll interval after the first fast polls.
+    """
+    fast = min(_NC_LISTENER_FAST_POLL_S, interval)
+    return lambda i: fast if i < _NC_LISTENER_FAST_POLL_ITERS else interval
+
+
+_LISTENER_POLL_INTERVAL = 0.1
+"""The listener checks' poll interval after the first fast polls."""
+
+
+_ALL_STREAMS_DROPPED = "< /dev/null > /dev/null 2> /dev/null"
+"""The redirect of a listener whose data nobody reads (the measured one)."""
+
+
+@dataclass
+class NcListenerMeasurement:
+    """What one measurement of the listener checks saw.
+
+    The caller creates it and :meth:`NcFileTransfer._measure_listener_checks`
+    fills it as its steps run, so a cancelled measurement still leaves what it
+    had: the port, whether the command carried a cap, and what was counted.
+
+    The listener ends one of three ways, told apart by ``end_confirmed`` and
+    :attr:`lost`: with an exit status otto received (``end_confirmed``); by
+    raising or with no exit status (``lost``: the measurement has no result,
+    and the end is unconfirmed); or not at all within the close's bound
+    (neither: the checks' answers stand, and the end is unconfirmed).
+
+    Attributes:
+        port: The port the listener was opened on.
+        spawned: The listener command was typed on the host, so a listener
+            may be up. Set the moment it is typed, before the measurement's
+            steps, so a cancellation that lands in between still says so.
+        capped: The command carried a remote lifetime cap.
+        bare_command: The listener command for the port with no cap and no
+            redirect, as a user would type it on the host to try it.
+        answers: Per check name, from the complete round only: a count,
+            ``None`` (no answer), or the check's own error
+            (:class:`NcRungToolError`, ``CommandValueError``). The round is
+            partial exactly when ``ended_early`` is True: the answers given
+            before the command ended stay, and no check is asked after it, so
+            a reader gives ``ended_early`` precedence.
+        counted_early: Counts of one or more seen in the rounds that only
+            established the listener was up.
+        timed_out: No check counted the listener within the readiness timeout.
+        waited_s: The readiness timeout the counting used, in seconds.
+        was_up: The listener was up, by evidence: a check counted it; or its
+            command ended with status 0 only after otto's connect and close;
+            or, on a direct route, that connect succeeded.
+        end_confirmed: The command ended with an exit status otto received.
+        ended_early: The command ended before otto's close.
+        exit_status: The command's exit status, when it gave one.
+        ending: How the command ended, in words, when it ended.
+    """
+
+    port: int
+    spawned: bool = False
+    capped: bool = False
+    bare_command: str = ""
+    answers: "dict[str, int | Exception | None]" = field(default_factory=dict)
+    counted_early: "dict[str, int]" = field(default_factory=dict)
+    timed_out: bool = False
+    waited_s: float = 0.0
+    was_up: bool = False
+    end_confirmed: bool = False
+    ended_early: bool = False
+    exit_status: "int | None" = None
+    ending: str = ""
+
+    @property
+    def netcat_could_not_run(self) -> bool:
+        """Whether the exit status says the netcat itself was not found or could not be run."""
+        return self.exit_status in _NC_STATUSES_A_RETRY_MEETS_AGAIN
+
+    @property
+    def lost(self) -> bool:
+        """Whether the listener command ended by raising or with no exit status.
+
+        Then ``ending`` holds the cause, never an exit status, and the end is
+        unconfirmed: the remote listener may still be up.
+        """
+        return bool(self.ending) and self.exit_status is None
 
 
 def _how_netcat_ended(
@@ -516,6 +675,18 @@ def _how_netcat_ended(
         return status, f"the {role} command exited with status {status}"
     words = f"'{exec_name}' exited with status {status}, {because}"
     return status, f"{words} (nc_options.exec_name names the netcat to run)"
+
+
+def _listener_gave_status(task: "asyncio.Task[CommandResult]") -> bool:
+    """Whether a listener's *task* has ended with an exit status, so its end is confirmed.
+
+    The one test for a listener that needs no reap. A task still running,
+    cancelled, raised or ended with no exit status may have left the remote
+    netcat listening.
+    """
+    if not task.done() or task.cancelled():
+        return False
+    return _how_netcat_ended(task, "nc", "listener")[0] is not None
 
 
 def _cancelled_before_start(label: str, role: str, where: str) -> str:
@@ -795,7 +966,7 @@ class NcFileTransfer(UnixFileTransfer):
         userland: "Userland | None",
         spawn_cmd: "Callable[..., Coroutine[Any, Any, asyncio.Task[CommandResult]]] | None" = None,
     ) -> None:
-        """Build an nc backend. See :meth:`_nc_listener_prefix` for *userland*.
+        """Build an nc backend. See :meth:`_listener_prefix_for` for *userland*.
 
         *userland* is the host's shared capability resolver, and it is the only
         thing that decides which ``timeout`` calling convention the hard cap is
@@ -939,7 +1110,14 @@ class NcFileTransfer(UnixFileTransfer):
 
     @property
     def _nc_listener_prefix(self) -> str:
-        """Shell prefix giving the remote listener a hard lifetime cap.
+        """Return the hard-cap prefix at :data:`_NC_LISTENER_HARD_CAP_S`.
+
+        See :meth:`_listener_prefix_for`.
+        """
+        return self._listener_prefix_for(_NC_LISTENER_HARD_CAP_S)
+
+    def _listener_prefix_for(self, cap_s: int) -> str:
+        """Shell prefix giving the remote listener a hard lifetime cap of *cap_s* seconds.
 
         The reap on otto's error paths is the primary defence, and it handles
         every case where otto is alive to run it. This covers the one case it
@@ -1056,7 +1234,31 @@ class NcFileTransfer(UnixFileTransfer):
         """
         if self._userland is None:
             return ""
-        return _TIMEOUT_STYLE_PREFIXES.get(self._userland.timeout_style, "")
+        style = _TIMEOUT_STYLE_PREFIXES.get(self._userland.timeout_style)
+        return "" if style is None else style.format(cap=cap_s)
+
+    def _listener_command(
+        self, port: int, redirect: str, *, cap_s: int = _NC_LISTENER_HARD_CAP_S
+    ) -> str:
+        """Spell the remote listener on *port*, its streams as *redirect* says, capped at *cap_s*.
+
+        The one place a listener is spelled. ``-l -p PORT`` is the one
+        listener form every measured netcat accepts (OpenBSD 1.226 and every
+        BusyBox matrix row); :doc:`/cli/host/netcat-compatibility` lists every
+        netcat the bed runs it with. It carries no ``-w``: once a client has
+        connected, an inter-chunk gap longer than ``-w`` ends the connection
+        on most netcats with status 0 and a partial file, so ``-w`` would cut
+        exactly a stalled transfer. The command is a plain foreground job,
+        which the cap's prefix needs (see :meth:`_listener_prefix_for`).
+        """
+        return f"{self._listener_prefix_for(cap_s)}{self._bare_listener_command(port)} {redirect}"
+
+    def _bare_listener_command(self, port: int) -> str:
+        """Spell the listener on *port* as :meth:`_listener_command` does, uncapped and bare.
+
+        What a user types on the host to try the listener otto runs.
+        """
+        return f"{self._nc_exec} -l -p {port}"
 
     # ------------------------------------------------------------------
     # Protocol dispatch (implements BaseFileTransfer's abstract methods)
@@ -1111,7 +1313,7 @@ class NcFileTransfer(UnixFileTransfer):
         The userland resolves FIRST, and that position is load-bearing rather
         than stylistic: everything below it is skipped whenever both strategies
         are declared, so a resolution placed after the early return would
-        happen only on hosts that use `auto` — and `_nc_listener_prefix`, which
+        happen only on hosts that use `auto` — and `_listener_prefix_for`, which
         is synchronous and cannot resolve on demand, would then raise on a
         perfectly legitimate configuration. `Userland.resolve()` is idempotent,
         concurrency-safe, and never raises for a failed probe, so calling it on
@@ -1274,42 +1476,62 @@ class NcFileTransfer(UnixFileTransfer):
             f"{next_step} Set nc_options.port_strategy to pin another."
         )
 
-    async def _find_free_port_with(self, strategy: NcPortStrategy) -> int:
-        """Run one port-finding strategy: a rung of ``PORT_LADDER``, or ``custom``."""
+    async def _port_by_strategy(self, strategy: NcPortStrategy, run: Runner) -> int:
+        """Ask ONE pinned port strategy for a free port, through *run*.
+
+        For a caller that measures a strategy on its own connection and budget
+        (the survey). The command and the reader are the transfer's own
+        (:meth:`_find_free_port_with`), and the scan starts where a transfer's
+        would (:func:`scan_start`), but nothing is reserved and
+        ``_control_lock`` is not taken: the port is only looked at, the caller
+        binds it or not. A reservation made by a running transfer is still
+        excluded from the scan.
+
+        Args:
+            strategy: A rung's name, or ``custom`` (which needs ``port_cmd``).
+            run: Runs one command and returns its result.
+
+        Returns:
+            One port the strategy reports free.
+
+        Raises:
+            ValueError: *strategy* is unknown, or ``custom`` without a ``port_cmd``.
+            HostCommandError: The strategy's command failed or answered nothing readable.
+        """
+        return await self._find_free_port_with(strategy, run)
+
+    async def _find_free_port_with(
+        self, strategy: NcPortStrategy, run: "Runner | None" = None
+    ) -> int:
+        """Run one port-finding strategy: a rung of ``PORT_LADDER``, or ``custom``.
+
+        *run* defaults to ``_control_run``, which is what a transfer wants.
+        """
+        run = run or self._control_run
         if strategy == CONTROL_CUSTOM:
-            return await self._find_free_port_custom()
+            return await self._find_free_port_custom(run)
         rung = _PORT_RUNGS.get(strategy)
         if rung is None:
             raise ValueError(f"Unknown port strategy: {strategy}")
         if not rung.scans:
             # The kernel picks the port: no scan start is drawn, no reservation read.
-            return await run_port_rung(
-                rung, self._control_run, base_port=self._nc_port, reserved=""
-            )
+            return await run_port_rung(rung, run, base_port=self._nc_port, reserved="")
         return await run_port_rung(
-            rung, self._control_run, base_port=self._scan_start(), reserved=self._reserved_str()
+            rung, run, base_port=self._scan_start(), reserved=self._reserved_str()
         )
 
     def _reserved_str(self) -> str:
         return " ".join(str(p) for p in self._reserved_ports)
 
     def _scan_start(self) -> int:
-        """Where this scan starts: the base port plus a random offset.
+        """Where this backend's scan starts (see :func:`scan_start`)."""
+        return scan_start(self._nc_port)
 
-        See ``_NC_PORT_SCAN_SPREAD``. Not a security boundary, so the module
-        ``random`` is the right tool; the property it needs is only that two
-        processes scanning at once rarely pick the same start.
-        """
-        ceiling = 65535 - self._nc_port
-        if ceiling <= 0:
-            return self._nc_port
-        return self._nc_port + random.randrange(min(_NC_PORT_SCAN_SPREAD, ceiling))  # noqa: S311 — collision spreading, not a secret
-
-    async def _find_free_port_custom(self) -> int:
+    async def _find_free_port_custom(self, run: "Runner | None" = None) -> int:
         """Run the user's ``port_cmd``; its stdout must be one port (no sentinel is asked of it)."""
         if self._nc_port_cmd is None:
             raise ValueError("nc_port_strategy is 'custom' but nc_port_cmd is None")
-        result = await self._control_run(self._nc_port_cmd)
+        result = await (run or self._control_run)(self._nc_port_cmd)
         if result.retcode != 0:
             raise _probe_failure(result.timed_out, f"Custom port command failed: {result.value}")
         return read_value(result.value, _PORT, what="custom port command's port")
@@ -1326,7 +1548,7 @@ class NcFileTransfer(UnixFileTransfer):
         self,
         port: int,
         timeout: float = _NC_LISTENER_READY_TIMEOUT,
-        interval: float = 0.1,
+        interval: float = _LISTENER_POLL_INTERVAL,
         *,
         listener: "asyncio.Task[Any] | None" = None,
     ) -> None:
@@ -1340,10 +1562,7 @@ class NcFileTransfer(UnixFileTransfer):
         serializes control ops onto a single warm pooled session instead of
         opening a login shell session per call.
 
-        The poll interval starts at 0.05 s for the first handful of
-        iterations (when nc usually becomes ready on a warm session) and
-        ramps up to *interval* afterward, so fast-ready listeners don't
-        pay the full *interval* tax on the very first miss.
+        The poll interval follows :func:`_listener_poll_interval`.
 
         AN OWNERSHIP CHECK, NOT A PRESENCE CHECK. The built-in strategies
         print how many listeners hold *port* (see ``nc_scripts``);
@@ -1381,7 +1600,6 @@ class NcFileTransfer(UnixFileTransfer):
             strategy = await self._resolve_listener_strategy()
         rung = self._listener_rung(strategy)
         custom = self._custom_listener_cmd(port) if rung is None else ""
-        fast_interval = min(0.05, interval)
         counts = rung is not None
         answered = False
 
@@ -1394,25 +1612,26 @@ class NcFileTransfer(UnixFileTransfer):
                 return (await self._control_run(custom)).retcode == 0
             try:
                 holders = await run_listener_rung(rung, self._control_run, port)
-            except NcRungToolError as e:
-                raise NcListenerToolError(
-                    f"The netcat listener check's '{strategy}' rung failed on {self._name}: {e}. "
-                    "Set nc_options.listener_check to pin another."
-                ) from e
-            except CommandValueError as e:
+            except _CHECK_OWN_ERRORS as e:
+                if isinstance(e, NcRungToolError):
+                    raise NcListenerToolError(
+                        f"The netcat listener check's '{strategy}' rung failed on "
+                        f"{self._name}: {e}. Set nc_options.listener_check to pin another."
+                    ) from e
                 raise NcListenerAnswerError(
                     f"The netcat listener check's '{strategy}' rung on {self._name} answered "
                     f"with text that is not a count: {e}"
                 ) from e
-            if holders is None:
+            says = what_the_count_says(holders)
+            if says == "no answer":
                 return False
             answered = True
-            if holders > 1:
+            if says == "more than one":
                 raise NcPortSharedError(
                     f"Remote port {port} is shared: {holders} listeners hold it, so another "
                     f"process chose it too and the kernel would pick which one gets the stream"
                 )
-            return holders == 1
+            return says == "one"
 
         def not_ready() -> str:
             detail = f"not ready within {timeout}s"
@@ -1431,7 +1650,7 @@ class NcFileTransfer(UnixFileTransfer):
             await wait_for_async(
                 listening,
                 timeout,
-                interval=lambda i: fast_interval if i < _NC_LISTENER_FAST_POLL_ITERS else interval,
+                interval=_listener_poll_interval(interval),
                 on_timeout=not_ready,
             )
         except WaitTimeoutError as expiry:
@@ -2036,50 +2255,14 @@ class NcFileTransfer(UnixFileTransfer):
             handler = progress_factory() if progress_factory is not None else None
 
             port = await self._find_free_port()
-            listen_task: asyncio.Task[CommandResult] | None = None
-            try:
-                # Remote listener sends file data to the first connecting
-                # client.
-                #
-                # `-l -p PORT` is the ONE listener spelling every measured
-                # netcat accepts: OpenBSD 1.226 and all five BusyBox matrix
-                # rows (2026-08-25); docs/cli/host/netcat-compatibility.md
-                # lists every netcat the bed runs it with. What stood here
-                # was `-Nl`, which stacked two rejections into a single
-                # option string — the applet has no `-N` at all, and reads the
-                # lone port of the OpenBSD `-l PORT` as the HOST — and the
-                # spawn sends both complaints to
-                # /dev/null, so they arrived as a forward onto a listener that
-                # had already exited.
-                #
-                # `-w` goes with it, and this comment used to argue FOR it: it
-                # read OpenBSD's "the -w flag has no effect on the -l option"
-                # as "such a listener waits forever" and passed `-w` anyway, a
-                # free bonus for the variants that honour it. Measured
-                # 2026-08-25: that sentence covers only the ACCEPT wait. Once a
-                # client HAS connected, an inter-chunk gap longer than `-w`
-                # kills the DATA connection on five of the six userlands —
-                # OpenBSD 1.226 among them — with rc 0 and a partial file.
-                # Continuous data never trips it, so `-w` punished exactly a
-                # stall; and on THIS direction otto is the receiver, so the kill
-                # arrived as a clean EOF that the leniency below the read loop
-                # used to hand back as Success.
-                #
-                # A listener nobody connects to is bounded by what always
-                # really bounded it: `_cancel_and_reap` on every path out of
-                # this block, and -- where the userland HAS a `timeout` (see
-                # `_nc_listener_prefix`, which degrades to `""` for the
-                # `absent` and untaught styles) -- the remote prefix at
-                # `_NC_LISTENER_HARD_CAP_S`. On a host without one the reap is
-                # the only bound there is. Measured on the bed 2026-08-10,
-                # listeners spawned with `-w 30` were still alive after three
-                # days, so `-w` was never the mechanism here either. Both kill
-                # the process; neither can hand back a short file as success.
-                listen_task = await self._spawn_listener(
-                    f"{self._nc_listener_prefix}{self._nc_exec} -l -p {port} "
-                    f"< {path_operand(src)} 2>/dev/null",
-                )
-
+            # The remote listener sends the file to the first client that
+            # connects; how long it may live, and how it is ended on every way
+            # out, is `_remote_listener`'s.
+            async with self._remote_listener(
+                port,
+                self._listener_command(port, f"< {path_operand(src)} 2>/dev/null"),
+                label="nc get listener reap",
+            ) as listen_task:
                 not_ready = await self._await_remote_listener(port, listen_task, f"get of {src}")
                 if not_ready is not None:
                     return not_ready
@@ -2162,8 +2345,8 @@ class NcFileTransfer(UnixFileTransfer):
                 # file delivers the N bytes that were measured and the close
                 # discards the rest, so what remains below N is a transfer that
                 # ended early — a listener reaped, a hop that dropped, the `-w`
-                # idle-kill removed above — and each of those used to arrive as
-                # Success over a partial file.
+                # idle-kill `_listener_command` leaves out — and each of those
+                # used to arrive as Success over a partial file.
                 if bytes_done < total:
                     return Result(
                         status=Status.Error,
@@ -2176,9 +2359,9 @@ class NcFileTransfer(UnixFileTransfer):
                 # The reader took its `total` bytes and closed, which is
                 # what ends the listener, so it should exit now. Bound the wait
                 # so one that does not cannot hang us. This is the only bound
-                # on that exit — the spawn carries nothing that ends a listener
-                # (see its comment above) — so the timeout branch below must
-                # reap rather than merely report.
+                # on that exit — the command carries nothing that ends a
+                # listener (see `_listener_command`) — and leaving the block
+                # on the timeout branch below reaps it.
                 try:
                     await asyncio.wait_for(
                         listen_task,
@@ -2194,63 +2377,6 @@ class NcFileTransfer(UnixFileTransfer):
                         ),
                     )
                 return Result(status=Status.Success, value=dst)
-            except asyncio.CancelledError as exc:
-                # External cancellation mid-transfer skips listen_task's
-                # normal join points (the ConnectionError / timeout / success
-                # branches above). Cancel it and reap the remote `nc -l`: the
-                # reap IS the bound here, since the spawn carries no option
-                # that ends a listener and the remote `timeout` prefix (where
-                # the userland has one; see `_nc_listener_prefix`) is only
-                # the backstop for otto dying outright, at
-                # `_NC_LISTENER_HARD_CAP_S` rather than at teardown speed —
-                # mirrors the put
-                # path's `_attempt` handler (todo/chaos-teardown-followups.md
-                # §1: pre-fix this listener outlived the 10s teardown
-                # deadline by up to 20s). compensate() holds any FURTHER
-                # cancellation until the reap resolves (chaos spec: shielded
-                # compensating actions) — without it a second Ctrl+C tears
-                # the reap and strands the listener after all — and bounds the
-                # reap itself at `_INTERRUPTED_REAP_TIMEOUT`, armed at the
-                # call, so a reap that cannot finish cannot become the very
-                # teardown overrun it exists to prevent. The caught cancellation
-                # is passed as held=, so a reap that fails cannot replace it:
-                # the handler re-raises the cancellation either way.
-                if listen_task is not None and not listen_task.done():
-                    # Imported here, not at module scope: otto.lifecycle is
-                    # only needed once a compensating action actually runs,
-                    # and a top-level import drags it onto every CLI --help
-                    # path (import-budget guard).
-                    from ...lifecycle import compensate
-
-                    await compensate(
-                        self._cancel_and_reap(listen_task, port),
-                        timeout=_INTERRUPTED_REAP_TIMEOUT,
-                        what=f"{self._name}: nc get listener reap (port {port})",
-                        held=exc,
-                    )
-                raise
-            finally:
-                # Reap here, not per-branch. The ten error branches that used to
-                # be patched individually were found by grepping
-                # `listen_task.cancel()`, and an ELEVENTH path had no cancel to
-                # find: PUT's bare `await self._wait_for_remote_listener(port)`
-                # raises ConnectionError straight past every handler except
-                # CancelledError, stranding both the remote listener and the
-                # local task. A guard built from the same enumeration inherited
-                # the same blind spot and reported clean. One exit covers every
-                # branch, including ones nobody has written yet, and it runs
-                # BEFORE `_release_port` so the port is never handed out while a
-                # listener still holds it.
-                if listen_task is not None and not listen_task.done():
-                    await self._cancel_and_reap(listen_task, port)
-                # Release the local forward with the remote port, for the same
-                # reason and in the same place. Caching in the transport only
-                # bounds the leak where the destination repeats; these files
-                # transfer concurrently on distinct ports, so without this each
-                # one strands a listening socket until the host closes. After
-                # the reap, which needs the forward to reach the listener.
-                self._connections.unforward_port(dest_port=port)
-                self._release_port(port)
 
         async def _get_one(src: Path) -> Result:
             # Before the retry, as on the direct arm: a stat refusal is
@@ -2264,8 +2390,8 @@ class NcFileTransfer(UnixFileTransfer):
 
         return await self.dispatch_per_file(src_files, transfer_one=_get_one, concurrent=concurrent)
 
-    async def _reap_nc_listener(self, port: int) -> None:
-        """Best-effort: make a lingering remote ``nc -l`` exit immediately.
+    async def _reap_nc_listener(self, port: int) -> bool:
+        """Best-effort: make a lingering remote ``nc -l`` exit now; whether it connected.
 
         ``nc -l ... < /dev/null`` exits as soon as a TCP peer connects and
         then disconnects. When a transfer is cancelled before its real
@@ -2276,13 +2402,17 @@ class NcFileTransfer(UnixFileTransfer):
         it is the only thing that ends the process at teardown speed, the
         remote ``timeout`` prefix (``_NC_LISTENER_HARD_CAP_S``, an hour, and
         only where the userland has a ``timeout`` -- see
-        ``_nc_listener_prefix``) being a backstop for otto dying rather
+        ``_listener_prefix_for``) being a backstop for otto dying rather
         than a bound anyone waits on.
 
         Fully best-effort: a cancellation can land while the listener is
         still launching, so ``_connect_with_retry`` is given a short budget
         to catch a not-yet-bound port; if it never appears we simply give up
         (there was nothing to reap).
+
+        Returns:
+            ``True`` when the connect succeeded (the close stays best effort),
+            ``False`` when no listener could be reached.
         """
         if self._connections.has_tunnel:
             try:
@@ -2301,7 +2431,7 @@ class NcFileTransfer(UnixFileTransfer):
                     timeout=_NC_FORWARD_SETUP_TIMEOUT,
                 )
             except Exception:  # noqa: BLE001 — port-forward setup failed or stalled; nothing to reap, silently return
-                return
+                return False
         else:
             host = self._connections.ip
             target_port = port
@@ -2309,30 +2439,169 @@ class NcFileTransfer(UnixFileTransfer):
         try:
             _, writer = await _connect_with_retry(host, target_port, timeout=2.0)
         except (ConnectionError, OSError):
-            return  # listener never came up — nothing to reap
+            return False  # listener never came up — nothing to reap
         writer.close()
         with suppress(asyncio.TimeoutError, OSError):
             await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+        return True
 
-    async def _spawn_listener(self, cmd: str) -> "asyncio.Task[CommandResult]":
+    async def _spawn_listener(
+        self,
+        cmd: str,
+        *,
+        on_typed: "Callable[[], None] | None" = None,
+        **exec_kwargs: Any,
+    ) -> "asyncio.Task[CommandResult]":
         """Start the remote listener *cmd*; its task, once the command has been typed.
 
         No otto-side timeout: a healthy transfer of any size must not be cut
         off mid-flight, and this task is the only thing that observes the
-        transfer finishing. The orphan case is bounded by `_cancel_and_reap`
-        on every error path instead, and — where the userland has a
-        `timeout` (see `_nc_listener_prefix`) — by the remote prefix as well;
-        never by a netcat option. Through the host's `spawn_cmd` the task is
-        returned once the command is typed, so the readiness wait that
+        transfer finishing. The orphan case is bounded by
+        :meth:`_remote_listener`'s teardown instead, and — where the userland
+        has a `timeout` (see `_listener_prefix_for`) — by the remote prefix as
+        well; never by a netcat option. Through the host's `spawn_cmd` the
+        task is returned once the command is typed, so the readiness wait that
         follows does not time the session's open; without one it is spawned
         at once.
+
+        Args:
+            cmd: The listener command, from :meth:`_listener_command`.
+            on_typed: Passed to the host's spawn, which calls it once the
+                command has been written to its session. Without a host spawn
+                the task starts at once, so it is called as the task is made.
+            **exec_kwargs: Passed to the host's exec on either path (``log``).
         """
         if self._spawn_cmd is not None:
-            return await self._spawn_cmd(cmd, timeout=float("inf"))
-        return asyncio.create_task(self._exec_cmd(cmd, timeout=float("inf")))
+            return await self._spawn_cmd(
+                cmd, timeout=float("inf"), on_typed=on_typed, **exec_kwargs
+            )
+        task = asyncio.create_task(self._exec_cmd(cmd, timeout=float("inf"), **exec_kwargs))
+        if on_typed is not None:
+            on_typed()
+        return task
+
+    @asynccontextmanager
+    async def _remote_listener(
+        self,
+        port: int,
+        cmd: str,
+        *,
+        owns_reservation: bool = True,
+        label: str = "nc listener reap",
+        on_typed: "Callable[[], None] | None" = None,
+        **exec_kwargs: Any,
+    ) -> "AsyncGenerator[asyncio.Task[CommandResult], None]":
+        """Run the remote listener *cmd* on *port* for the body; end it once on the way out.
+
+        The one listener lifetime: the spawn, one teardown attempt whatever
+        the exit, the unforward, and the port's release. The body gets the
+        listener's task.
+
+        The teardown is :meth:`_cancel_and_reap`, skipped when the listener
+        has given its exit status (:func:`_listener_gave_status`). It is an
+        exit, not a step of each branch: a list of branches that reap misses
+        the path nobody enumerated, which is how a listener once leaked past a
+        bare readiness wait that raised. A cancelled body reaps under
+        :data:`_INTERRUPTED_REAP_TIMEOUT`, counted from the call, and
+        ``compensate`` re-raises the held cancellation. Any other exit reaps
+        with the reap's own bounds, and a cancellation that lands during it is
+        held: from then the reap has :data:`_INTERRUPTED_REAP_TIMEOUT` left, so
+        a second interrupt neither tears it (stranding the listener) nor waits
+        on it without end.
+
+        A cancellation while the host's spawn is awaited hands back no task.
+        The spawn has then cancelled its exec, and the exec's stop is best
+        effort, so a command already typed gets one bounded reap by port; one
+        never typed has nothing to reap.
+
+        The unforward, then the release, run last whatever happened before:
+        after the reap, which reaches the listener through the forward, and
+        before the port can be handed to another transfer. The port's
+        reservation says who owns its forward: a caller that reserved nothing
+        leaves the forward alone while a transfer holds the port's
+        reservation, since that transfer's data may be flowing through it, and
+        the transfer releases it when it ends.
+
+        Args:
+            port: The remote port the listener binds.
+            cmd: The listener command, from :meth:`_listener_command`.
+            owns_reservation: Whether the caller reserved *port* with
+                :meth:`_find_free_port`, so it is released here. A caller that
+                reserved nothing passes ``False``, so it cannot discard a
+                reservation another transfer on this backend holds, nor that
+                transfer's forward.
+            label: What the reap is called in the warning printed when it is
+                abandoned, so the warning says which transfer it was for.
+            on_typed: Called once the listener command has been typed on the
+                host (see :meth:`_spawn_listener`), so a caller knows a
+                listener may be up even when no task is handed back.
+            **exec_kwargs: Passed to the host's exec (see :meth:`_spawn_listener`).
+
+        Yields:
+            The listener's task.
+        """
+        # Imported here, not at module scope: a top-level import drags
+        # otto.lifecycle onto every CLI --help path (import-budget guard).
+        from ...lifecycle import compensate
+
+        what = f"{self._name}: {label} (port {port})"
+        typed = False
+
+        def _on_typed() -> None:
+            nonlocal typed
+            typed = True
+            if on_typed is not None:
+                on_typed()
+
+        try:
+            try:
+                listen_task = await self._spawn_listener(cmd, on_typed=_on_typed, **exec_kwargs)
+            except asyncio.CancelledError as exc:
+                if typed:
+                    await compensate(
+                        self._reap_nc_listener(port),
+                        timeout=_INTERRUPTED_REAP_TIMEOUT,
+                        what=what,
+                        held=exc,
+                    )
+                raise
+            # Set before the teardown starts, so nothing starts it twice.
+            torn_down = False
+            try:
+                yield listen_task
+            except asyncio.CancelledError as exc:
+                if not _listener_gave_status(listen_task):
+                    torn_down = True
+                    await compensate(
+                        self._cancel_and_reap(listen_task, port),
+                        timeout=_INTERRUPTED_REAP_TIMEOUT,
+                        what=what,
+                        held=exc,
+                    )
+                raise
+            finally:
+                if not torn_down and not _listener_gave_status(listen_task):
+                    torn_down = True
+                    await compensate(
+                        self._cancel_and_reap(listen_task, port),
+                        deadline=_INTERRUPTED_REAP_TIMEOUT,
+                        what=what,
+                    )
+        finally:
+            # Caching in the transport bounds a forward's leak only where the
+            # destination repeats; these transfers run concurrently on
+            # distinct ports, so each hands its own forward back. A caller that
+            # reserved nothing leaves the forward while this backend holds a
+            # reservation for the port: a transfer on this backend owns it then.
+            # A transfer on another backend over the same connections (another
+            # user's) keeps its reservations elsewhere, so it is not seen here.
+            if owns_reservation or port not in self._reserved_ports:
+                self._connections.unforward_port(dest_port=port)
+            if owns_reservation:
+                self._release_port(port)
 
     async def _cancel_and_reap(self, listen_task: "asyncio.Task[CommandResult]", port: int) -> None:
-        """Join a cancelled listener task (get or put path), then reap the remote ``nc -l``.
+        """Cancel and join a listener task (get or put path), then reap the remote ``nc -l``.
 
         ``suppress(Exception)``, not ``BaseException``: this runs inside
         ``compensate()``'s shield, so a genuine ``CancelledError`` landing
@@ -2346,16 +2615,147 @@ class NcFileTransfer(UnixFileTransfer):
         listener-join failure ``_reap_nc_listener`` doesn't already
         best-effort internally.
         """
-        if listen_task.done():
+        if _listener_gave_status(listen_task):
             # Nothing to reap: our nc already accepted and exited. Matters on
             # the GET empty-transfer branch, the DESIGNED recovery for the
             # accept-window race — without this it burns a full
-            # `_connect_with_retry` against a closed port on every retry.
+            # `_connect_with_retry` against a closed port on every retry. A
+            # task that was cancelled, raised or gave no exit status says
+            # nothing about the remote netcat, so it is still reaped.
             return
         listen_task.cancel()
         await _join_cancelled(listen_task)
         with suppress(Exception):
             await self._reap_nc_listener(port)
+
+    async def _measure_listener_checks(
+        self,
+        run: Runner,
+        checks: "Sequence[ListenerRung]",
+        into: NcListenerMeasurement,
+        *,
+        cap_s: int,
+    ) -> None:
+        """Open a listener on ``into.port``, ask *checks* how many hold it, and close it.
+
+        Three steps, each filling *into* as it runs. *Open*: the listener
+        command a put uses, with every stream dropped and capped at *cap_s*,
+        spawned unlogged through :meth:`_remote_listener`. *Count*: rounds of
+        *checks*, in order, on the readiness wait's timeout and interval
+        schedule, until one counts at least one, the command has ended or
+        the timeout passes; those rounds only establish that the listener is
+        up. Unless the command has ended, one more complete round is asked,
+        and its answers are the result, so a check that answered zero a
+        moment before the bind is not called blind. That round is asked after
+        a timeout too; its answers then sit beside ``into.timed_out``, which
+        still says no check counted the listener in time. *Close*: connect to the
+        port and close, which ends a ``nc -l``, then wait for the command,
+        bounded by :data:`_INTERRUPTED_REAP_TIMEOUT`. Nothing is cancelled
+        first: this is the normal path. An end the close could not confirm
+        (the command raised, gave no exit status or did not end in time) is
+        followed by :meth:`_remote_listener`'s own teardown, which reaps again:
+        such an end may be a lost transport with the remote listener still up.
+        A close that could not connect on a direct route waits for nothing:
+        no connection reached the listener, so nothing would end it.
+
+        No check is asked once the command has ended, in either step.
+
+        No transfer permit is held and nothing is reserved: the caller chose
+        the port and no transfer runs here.
+
+        Args:
+            run: The runner for each check (the caller bounds each one).
+            checks: The listener checks to ask, in ladder order.
+            into: Filled as the steps run; ``into.port`` is the port.
+            cap_s: The listener's remote lifetime cap, in seconds.
+
+        Raises:
+            Exception: Whatever *run* raises other than a check's own error
+                (:class:`NcRungToolError`, ``CommandValueError``), after the
+                listener's teardown.
+        """
+        if self._userland is not None:
+            # The lifetime cap's spelling needs it; a transfer's warm-up
+            # otherwise provides it.
+            await self._userland.resolve()
+        into.capped = bool(self._listener_prefix_for(cap_s))
+        into.bare_command = self._bare_listener_command(into.port)
+
+        def typed() -> None:
+            into.spawned = True
+
+        async with self._remote_listener(
+            into.port,
+            self._listener_command(into.port, _ALL_STREAMS_DROPPED, cap_s=cap_s),
+            owns_reservation=False,
+            label="nc listener measurement reap",
+            on_typed=typed,
+            log=LogMode.NEVER,
+        ) as listener:
+            await self._count_until_up(run, checks, into, listener)
+            for check in checks:
+                if listener.done():
+                    break
+                into.answers[check.name] = await _ask_listener_check(check, run, into.port)
+            if listener.done():
+                into.ended_early = True
+            else:
+                connected = await self._reap_nc_listener(into.port)
+                if connected or self._connections.has_tunnel:
+                    await asyncio.wait({listener}, timeout=_INTERRUPTED_REAP_TIMEOUT)
+                if connected and not self._connections.has_tunnel:
+                    # Through a hop the connect reaches a local forward
+                    # before anything remote answers, so it proves nothing.
+                    into.was_up = True
+            into.end_confirmed = _listener_gave_status(listener)
+            if listener.done() and not listener.cancelled():
+                into.exit_status, into.ending = _how_netcat_ended(
+                    listener, self._nc_exec, "listener"
+                )
+            if into.counted_early or any(
+                isinstance(n, int) and what_the_count_says(n) in _COUNTED
+                for n in into.answers.values()
+            ):
+                into.was_up = True
+            if not into.ended_early and into.exit_status == 0:
+                # It ended with status 0 only after the close: it served that connection.
+                into.was_up = True
+
+    async def _count_until_up(
+        self,
+        run: Runner,
+        checks: "Sequence[ListenerRung]",
+        into: NcListenerMeasurement,
+        listener: "asyncio.Task[CommandResult]",
+    ) -> None:
+        """Ask rounds of *checks* until one counts the listener, it has ended, or time is up.
+
+        Counts of one or more go to ``into.counted_early``; a timeout sets
+        ``into.timed_out``. A check's own error is no count here and is not
+        kept: only the complete round's answers are the result. No check is
+        asked once the command has ended.
+        """
+
+        async def up() -> bool:
+            for check in checks:
+                if listener.done():
+                    return True
+                count = await _ask_listener_check(check, run, into.port)
+                if isinstance(count, int) and what_the_count_says(count) in _COUNTED:
+                    into.counted_early[check.name] = count
+            return bool(into.counted_early) or listener.done()
+
+        into.waited_s = _NC_LISTENER_READY_TIMEOUT
+        try:
+            await wait_for_async(
+                up,
+                into.waited_s,
+                interval=_listener_poll_interval(_LISTENER_POLL_INTERVAL),
+                # Required by wait_for_async; the timeout is recorded, never raised.
+                on_timeout="",
+            )
+        except WaitTimeoutError:
+            into.timed_out = True
 
     async def _put_files_nc(
         self,
@@ -2377,46 +2777,15 @@ class NcFileTransfer(UnixFileTransfer):
             # targeting the same IP don't collide.  `_find_free_port` holds a
             # lock so concurrent callers can't both reserve the same port.
             port = await self._find_free_port()
-            listen_task: asyncio.Task[CommandResult] | None = None
-            try:
-                # If a racing process bound the same port first, our sender's
-                # bytes go to *its* listener and ours never gets a connection.
-                #
-                # `-l -p PORT` is the ONE listener spelling every measured
-                # netcat accepts: OpenBSD 1.226 and all five BusyBox matrix
-                # rows (2026-08-25); docs/cli/host/netcat-compatibility.md
-                # lists every netcat the bed runs it with. The bare `-l PORT`
-                # emitted before was an OpenBSD-ism — BusyBox reads the lone
-                # port as the HOST and dies with `bad address`, which is why
-                # every nc-transfer cell on the BusyBox profiles was
-                # measured-broken.
-                #
-                # `-w` is deliberately absent, and its removal is not a
-                # simplification. This comment used to read OpenBSD's "the -w
-                # flag has no effect on the -l option" as "such a listener
-                # waits forever" and pass `-w` anyway, free bonus for variants
-                # that honour it. Measured 2026-08-25: that sentence covers
-                # only the ACCEPT wait. Once a client HAS connected, an
-                # inter-chunk gap longer than `-w` kills the connection on five
-                # of the six userlands — OpenBSD 1.226 among them — with rc 0
-                # and a partial file, a truncation wearing a success code.
-                # Continuous data never trips it, so `-w` punishes exactly the
-                # stall and nothing else, the precise inverse of this module's
-                # rule that a healthy transfer of any size is never cut off
-                # mid-flight.
-                #
-                # A listener nobody connects to is bounded by what always
-                # really bounded it: `_cancel_and_reap` on every error path
-                # otto-side, and -- where the userland HAS a `timeout` (see
-                # `_nc_listener_prefix`, `""` for the `absent` and untaught
-                # styles) -- the remote prefix at `_NC_LISTENER_HARD_CAP_S`.
-                # Both kill the process; neither can hand back a short file as
-                # success.
-                listen_task = await self._spawn_listener(
-                    f"{self._nc_listener_prefix}{self._nc_exec} -l -p {port} "
-                    f"< /dev/null > {path_operand(dst)} 2>/dev/null",
-                )
-
+            # If a racing process bound the same port first, our sender's
+            # bytes go to *its* listener and ours never gets a connection.
+            # How long ours may live, and how it is ended on every way out, is
+            # `_remote_listener`'s.
+            async with self._remote_listener(
+                port,
+                self._listener_command(port, f"< /dev/null > {path_operand(dst)} 2>/dev/null"),
+                label="nc put listener reap",
+            ) as listen_task:
                 # Confirm the remote nc is actually listening before we try to
                 # connect. Launching nc over SSH (or telnet) can exceed
                 # `_connect_with_retry`'s budget on a loaded system; for tunnel
@@ -2516,66 +2885,7 @@ class NcFileTransfer(UnixFileTransfer):
                 verify_error = await self._verify_nc_dest_size(dst, total)
                 if verify_error is not None:
                     return verify_error
-            except asyncio.CancelledError as exc:
-                # External cancellation mid-transfer skips listen_task's
-                # normal join points (the success / ConnectionError / timeout
-                # branches below the spawn). Cancel it and reap the
-                # remote `nc -l`: the reap IS the bound here, since the spawn
-                # carries no option that ends a listener and the remote
-                # `timeout` prefix (where the userland has one; see
-                # `_nc_listener_prefix`) is only the backstop for otto dying
-                # outright, at `_NC_LISTENER_HARD_CAP_S` rather than at
-                # teardown speed.
-                # A writer opened in the send loop is already closed by that
-                # loop's own `finally` — which makes nc exit on its own — so
-                # this matters mainly for a cancel landing before the sender
-                # ever connects. compensate() holds any FURTHER cancellation
-                # until the reap resolves (chaos spec: shielded compensating
-                # actions) — without it a second Ctrl+C tears the reap and
-                # strands the listener after all — and bounds the reap itself
-                # at `_INTERRUPTED_REAP_TIMEOUT`, armed at the call, so a reap
-                # that cannot finish cannot become the very teardown overrun
-                # it exists to prevent. The caught cancellation is passed as
-                # held=, so a reap that fails cannot replace it: the handler
-                # re-raises the cancellation either way.
-                if listen_task is not None and not listen_task.done():
-                    # Imported here, not at module scope: otto.lifecycle is only
-                    # needed once a compensating action actually runs, and a
-                    # top-level import drags it onto every CLI --help path
-                    # (import-budget guard).
-                    from ...lifecycle import compensate
-
-                    await compensate(
-                        self._cancel_and_reap(listen_task, port),
-                        timeout=_INTERRUPTED_REAP_TIMEOUT,
-                        what=f"{self._name}: nc listener reap (port {port})",
-                        held=exc,
-                    )
-                raise
-            else:
-                return Result(status=Status.Success, value=dst)
-            finally:
-                # Reap here, not per-branch. The ten error branches that used to
-                # be patched individually were found by grepping
-                # `listen_task.cancel()`, and an ELEVENTH path had no cancel to
-                # find: PUT's bare `await self._wait_for_remote_listener(port)`
-                # raises ConnectionError straight past every handler except
-                # CancelledError, stranding both the remote listener and the
-                # local task. A guard built from the same enumeration inherited
-                # the same blind spot and reported clean. One exit covers every
-                # branch, including ones nobody has written yet, and it runs
-                # BEFORE `_release_port` so the port is never handed out while a
-                # listener still holds it.
-                if listen_task is not None and not listen_task.done():
-                    await self._cancel_and_reap(listen_task, port)
-                # Release the local forward with the remote port, for the same
-                # reason and in the same place. Caching in the transport only
-                # bounds the leak where the destination repeats; these files
-                # transfer concurrently on distinct ports, so without this each
-                # one strands a listening socket until the host closes. After
-                # the reap, which needs the forward to reach the listener.
-                self._connections.unforward_port(dest_port=port)
-                self._release_port(port)
+            return Result(status=Status.Success, value=dst)
 
         async def _put_one(src: Path) -> Result:
             dst = dest_dir / src.name

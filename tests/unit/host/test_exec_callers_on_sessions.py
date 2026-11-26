@@ -217,11 +217,11 @@ def _listener_ports(record: "list[int]") -> Any:
     """A ``_spawn_listener`` that records the port of each listener it starts in *record*."""
     real = nc_mod.NcFileTransfer._spawn_listener
 
-    async def spawn(self: Any, cmd: str) -> Any:
+    async def spawn(self: Any, cmd: str, **kw: Any) -> Any:
         found = re.search(r"nc -l -p (\d+)", cmd)
         assert found, cmd
         record.append(int(found.group(1)))
-        return await real(self, cmd)
+        return await real(self, cmd, **kw)
 
     return spawn
 

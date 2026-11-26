@@ -629,7 +629,7 @@ class TestReapNcListener:
 
     @pytest.mark.asyncio
     async def test_connect_failure_is_silent(self) -> None:
-        """ConnectionError from _connect_with_retry is swallowed — returns None."""
+        """ConnectionError from _connect_with_retry is swallowed — returns False."""
         ft = _make_ft(AsyncMock(), has_tunnel=False)
 
         with patch.object(
@@ -637,18 +637,18 @@ class TestReapNcListener:
         ):
             result = await ft._reap_nc_listener(9000)
 
-        assert result is None
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_tunnel_forward_port_exception_is_silent(self) -> None:
-        """If forward_port raises, _reap_nc_listener returns silently without connecting."""
+        """If forward_port raises, _reap_nc_listener returns False without connecting."""
         ft = _make_ft(AsyncMock(), has_tunnel=True)
         ft._connections.forward_port = AsyncMock(side_effect=OSError("tunnel broken"))
 
         with patch.object(transfer_mod, "_connect_with_retry", AsyncMock()) as mock_connect:
             result = await ft._reap_nc_listener(9000)
 
-        assert result is None
+        assert result is False
         mock_connect.assert_not_awaited()
 
 
@@ -839,7 +839,7 @@ class TestNcPutCancellationReap:
         assert reap_cancelled == [True], (
             "the abandoned reap was left running instead of being cancelled with the bound"
         )
-        assert any("nc listener reap" in r.message for r in caplog.records), (
+        assert any("nc put listener reap" in r.message for r in caplog.records), (
             "the abandonment was never announced: the bound is compensate's, and compensate "
             f"names what it gave up on -- got {[r.message for r in caplog.records]}"
         )
