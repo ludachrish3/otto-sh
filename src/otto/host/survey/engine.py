@@ -141,8 +141,8 @@ class NcRungs:
         listener: The listener check (``nc_options.listener_check``).
         failed: Each strategy met on the way whose tool is on the host and
             whose script failed, in the order they were tried.
-        listener_left: One sentence when the probe opened a listener and
-            could not confirm it ended; empty otherwise.
+        listener_left: One sentence when the probe opened a listener with
+            no lifetime cap and could not confirm it ended; empty otherwise.
     """
 
     port: NcLadderResult
@@ -402,13 +402,8 @@ def _nc_counted_many(count: int, port: int) -> str:
     )
 
 
-def _nc_listener_left(port: int, *, capped: bool, cap_s: int) -> str:
-    """Word an unconfirmed end of the probe's listener on *port*, and what bounds it."""
-    if capped:
-        return (
-            f"otto could not confirm the listener it opened on :{port} ended. It ends by"
-            f" itself within {cap_s} seconds of its start"
-        )
+def _nc_listener_left(port: int) -> str:
+    """Word an unconfirmed end of the probe's listener on *port* that no lifetime cap bounds."""
     return (
         f"otto could not confirm the listener it opened on :{port} ended. No lifetime cap"
         " could be installed, so it may stay until it is ended on the host"
@@ -1066,7 +1061,8 @@ class _UnixSurvey:
         The listener checks are measured against a listener the probe opens:
         one netcat listener on a free port, counted by each check whose tool
         is on the host and then closed (:meth:`_listener_ladder`). When the
-        probe could not confirm that listener ended, ``listener_left`` says so.
+        probe could not confirm that listener ended and no lifetime cap ends
+        it, ``listener_left`` says so.
         """
         host = self.host
         if host.term == "console":
@@ -1198,8 +1194,10 @@ class _UnixSurvey:
         into = NcListenerMeasurement(found)
         cut = await self._measure(_finished(partial(measure, run, checks, into, cap_s=cap_s)), into)
         left = ""
-        if into.spawned and not into.end_confirmed:
-            left = _nc_listener_left(found, capped=into.capped, cap_s=cap_s)
+        # A capped listener ends by itself within the cap, so there is nothing
+        # for the user to do and nothing is said. Only one that may stay is named.
+        if into.spawned and not into.end_confirmed and not into.capped:
+            left = _nc_listener_left(found)
         if cut is not None:
             return NcLadderResult("unmeasured", note=cut), left
         return _listener_verdict(checks, into, failed), left

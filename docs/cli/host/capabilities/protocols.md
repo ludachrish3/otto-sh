@@ -238,8 +238,13 @@ the one the host has. For any other status, including 0, the reason gives
 the likely causes and a command to run on the host to see how the netcat
 behaves, or says to run the probe again.
 
-When otto could not confirm that its listener ended, one more line names the
-port; it also says when no lifetime cap could be installed. If it ends `It ends by itself within 90 seconds of its start`,
-nothing needs doing. If it ends `No lifetime cap could be installed, so it
-may stay until it is ended on the host`, look for the netcat on that port
-and end it.
+otto ends its listener by connecting to the port and closing. Where that
+connection cannot reach the port (only SSH is open between the controller
+and the host, for example), otto stops the listener's command and the
+lifetime cap ends anything that is left. Nothing needs doing and nothing is
+printed.
+
+Only when otto could not confirm that its listener ended and no lifetime cap
+could be installed, one more line names the port and ends `No lifetime cap
+could be installed, so it may stay until it is ended on the host`. Look for
+the netcat on that port and end it.

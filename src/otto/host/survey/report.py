@@ -236,7 +236,8 @@ def nc_strategy_lines(survey: "Survey") -> list[Text]:
     A measured strategy prints no line here: it is in the pin. Under
     ``--user`` it is not, so it prints its line, and one more says why it is
     not offered as a pin. Two ladders not measured for one reason share a line.
-    When the probe could not confirm its own listener ended, that line is last.
+    When the probe could not confirm its own listener ended and no lifetime
+    cap ends it, that line is last.
     """
     ladders = _nc_ladders(survey)
     unmeasured = [got for _opt, got in ladders if got.state == "unmeasured"]

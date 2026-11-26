@@ -436,11 +436,10 @@ def test_under_user_the_measured_strategies_are_printed_and_not_offered_as_a_pin
     ]
 
 
-@pytest.mark.parametrize("capped", [True, False], ids=["capped", "no-cap"])
-def test_an_unconfirmed_listener_end_prints_one_line_last(capped):
-    from otto.host.survey.engine import SURVEY_BUDGET_S, _nc_listener_left
+def test_an_unconfirmed_listener_end_prints_one_line_last():
+    from otto.host.survey.engine import _nc_listener_left
 
-    left = _nc_listener_left(9100, capped=capped, cap_s=int(SURVEY_BUDGET_S))
+    left = _nc_listener_left(9100)
     s = _survey(
         nc_rungs=_rungs(
             ("measured", "ss"),
@@ -453,10 +452,7 @@ def test_an_unconfirmed_listener_end_prints_one_line_last(capped):
     assert [ln for ln in lines if ln.startswith("nc: ")] == [f"nc: {left}"]
     assert lines[-1] == f"nc: {left}"
     assert left.startswith("otto could not confirm the listener it opened on :9100 ended.")
-    if capped:
-        assert f"It ends by itself within {int(SURVEY_BUDGET_S)} seconds of its start" in left
-    else:
-        assert "No lifetime cap could be installed" in left
+    assert "No lifetime cap could be installed" in left
 
 
 def test_a_confirmed_end_prints_nothing_more():
