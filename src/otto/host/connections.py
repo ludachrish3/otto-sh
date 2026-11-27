@@ -957,7 +957,9 @@ class ConnectionManager:
         client is not retried (the rule's *named*).
         """
         term = self._term if term is None else term
-        return telnet_retries_failed_open(term, self._console_options)
+        return telnet_retries_failed_open(
+            term, self._console_options, telnet_options=self._telnet_options
+        )
 
     @property
     def connected(self) -> bool:
