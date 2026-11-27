@@ -64,15 +64,10 @@ nested session creates and drops on its own is collected inside it exactly as
 before, so its own unraisable and leak reporting is unchanged.
 
 **The other user: a test that collects inside its timed body.** A test that
-counts descriptors runs ``gc.collect()`` before each count and pays the same
-walk for it, on a heap that grows with the size of the lane. The hop
-descriptor tests in ``tests/integration/host/test_hop_integration.py`` open a
-window from a fixture (``_frozen_worker_heap``, whose docstring has the
-measurements), so their collections walk only what the test made and the
-closing collection runs in teardown, outside the timed call. A test whose
-collection exists to surface a dropped object's ``ResourceWarning`` must not
-take one: inside a window, a pre-existing object's warning waits for the
-closing collection.
+runs ``gc.collect()`` in its body pays the same walk for every call, on a heap
+that grows with the lane: :func:`frozen_worker_heap` (a fixture, so the closing
+collection runs in teardown, outside the timed call) is the window for it, and
+its docstring has the measurements.
 
 Kept as an importable helper, not inlined in ``conftest.py``, so
 ``tests/unit/test_gc_freeze.py`` can drive it with a recording double.
@@ -133,6 +128,40 @@ def frozen_outer_heap(collector: GcControl = gc) -> Iterator[bool]:
         raise
     _thaw(collector)
     collector.collect()
+
+
+@pytest.fixture
+def frozen_worker_heap() -> Iterator[None]:
+    """Freeze the worker's heap for the test, so its own ``gc.collect()`` walks only its objects.
+
+    For a test that runs ``gc.collect()`` inside its timed body: to count
+    descriptors without miscounting one held only by a reference cycle, or to
+    make a dropped object's ``__del__`` fire at a known point. A full
+    collection walks every object the process holds, and a test worker holds
+    the whole collected item tree before any test runs, so the cost of each
+    call grows with the lane, not with the test. Measured: in a
+    ``make coverage-bed`` worker (122 thousand items) about 3.25 million
+    objects, 3.3 to 3.9 s of CPU per collection against 0.03 s alone; a red
+    gate's log timestamps put each at about 15 s on a loaded VM, which ran a
+    2 s hop test past its 30 s limit (#1233). On the whole unit tree in one
+    process, a test with thirty collections spent 34 s in its body against
+    0.05 s frozen; the nightly unit matrix repeats every item five times in
+    one session (``--count=5 --repeat-scope=session``), and that test ran
+    past its 180 s limit.
+
+    The window (:func:`frozen_outer_heap`) moves that heap into the permanent
+    generation, so the test's collections walk only what the test made. The
+    window's closing full collection runs in this fixture's teardown, outside
+    the timed call (``timeout_func_only``); inside an outer window it does
+    nothing and the outer window's owner collects.
+
+    What a window cannot reclaim during the test is an object held only
+    through one that existed before setup and became garbage during the test,
+    and its finalizer waits for the closing collection. A test that relies on
+    such a finalizer firing in its body must not take this fixture.
+    """
+    with frozen_outer_heap():
+        yield
 
 
 def _thaw(collector: GcControl) -> None:
