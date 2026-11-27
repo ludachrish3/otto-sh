@@ -3,7 +3,7 @@
 import pytest
 
 from tests._fixtures.paths import CHECKOUT_ROOT
-from tests.unit.host.test_probe_line_cut_sweep import all_cuts, shard
+from tests.cut_sweep.test_probe_line_cut_sweep import all_cuts, shard
 
 NIGHTLY_SHARDS = 4
 """The shard count of nightly's ``probe-cut-sweep`` matrix (``.github/workflows/nightly.yml``)."""

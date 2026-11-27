@@ -4,7 +4,7 @@ A console server that delivers input in pieces lets login(1) or su flush the
 head of otto's first line, so the shell on the pty runs only a tail. The
 session then resends the line whole, once, and that resend must answer: no
 tail may leave the shell inside an open quote, an open brace or a ``cat``
-that eats the resend. ``test_history_suppression_portability.py`` cuts at
+that eats the resend. ``tests/unit/host/test_history_suppression_portability.py`` cuts at
 each known hazard on every push; this sweep cuts at EVERY offset, so a
 hazard nobody has named yet is found too.
 

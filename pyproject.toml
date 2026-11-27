@@ -373,6 +373,12 @@ testpaths = [
     # what makes the marker do its job, and it is also what puts the tree in
     # front of every catch-all lane: see the `conformance` marker below.
     "tests/conformance",
+    # The every-offset probe-line cut sweep (#853), a top-level tree so that a
+    # `tests/unit` run never builds its ~88 thousand cases only to deselect them
+    # (#1399: they doubled every unit run's heap and every collection's cost).
+    # Listed here for the same trap as the two above: the census and
+    # `make collect-check` are path-less.
+    "tests/cut_sweep",
 ]
 pythonpath = ["src", "."]
 log_cli = true

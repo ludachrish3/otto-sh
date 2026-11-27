@@ -964,7 +964,9 @@ def test_every_lane_root_is_answered_by_one_child_collection() -> None:
     roots = {leg.roots for leg in lane_legs() if not _is_parametric(leg)}
     assert len(roots) > 1, "the legs must name several root sets, or this pins nothing"
     paths = {path for root in roots for path in root}
-    reached = ("tests/unit", "tests/integration", "tests/e2e", "tests/elsewhere")
+    # What the real memo is handed (the `collect_marker_sets` fixture): testpaths,
+    # plus a sentinel root the fake tree holds and no lane names.
+    reached = (*pyproject_testpaths(_REPO), "tests/elsewhere")
     sentinels = ("tests/elsewhere", "tests/_fixtures", "tests/unit/test_named_only.py")
     assert not paths & set(sentinels), "a lane names a sentinel root; pick another one"
     assert all(any(_within(p, (r,)) for r in reached) for p in paths), "a lane root moved"
@@ -2057,7 +2059,7 @@ def test_the_evidence_map_is_exactly_the_legs_the_release_stopped_running() -> N
 # row to two facts: it covers tests the release rows do not, and no release
 # stage reaches it (an exemption the release runs anyway is a stale lie).
 # Never add a row here without the owner.
-_CUT_SWEEP_MODULE = "tests/unit/host/test_probe_line_cut_sweep.py"
+_CUT_SWEEP_TREE = "tests/cut_sweep"
 _RELEASE_EXEMPT_LANES: "tuple[_Leg, ...]" = (
     # Chris, 2026-10-15: the chaos lanes are on demand only. They are
     # bed-hostile by construction (warm reboots, SIGKILL mid-impair, SSH
@@ -2075,7 +2077,7 @@ _RELEASE_EXEMPT_LANES: "tuple[_Leg, ...]" = (
     _Leg(
         "Makefile:stability-cut-sweep",
         "stability",
-        (_CUT_SWEEP_MODULE,),
+        (_CUT_SWEEP_TREE,),
     ),
 )
 
@@ -2424,7 +2426,7 @@ def test_the_exempt_rows_are_exactly_the_chaos_and_cut_sweep_targets_legs(
     narrowed `-m` in the noxfile, or a chaos session moved elsewhere, reds
     here instead of silently leaving tests in no lane. And what the exempt
     rows add to the release's selection is every item collected under
-    tests/e2e/chaos plus the cut sweep's module, no more and no fewer.
+    tests/e2e/chaos plus the cut sweep's tree, no more and no fewer.
     """
     exempt_targets = ("chaos", "chaos-embedded", "stability-cut-sweep")
     text = (_REPO / _MAKEFILE).read_text()
@@ -2442,7 +2444,7 @@ def test_the_exempt_rows_are_exactly_the_chaos_and_cut_sweep_targets_legs(
     )
     covered = release_only - with_exempt
     exempt_items = {
-        item.nodeid for item in collect_marker_sets(("tests/e2e/chaos", _CUT_SWEEP_MODULE))
+        item.nodeid for item in collect_marker_sets(("tests/e2e/chaos", _CUT_SWEEP_TREE))
     }
     assert covered == exempt_items, sorted(covered ^ exempt_items)[:10]
 
@@ -2929,8 +2931,8 @@ def test_the_coverage_bed_lane_is_the_bed_half_of_the_coverage_selection() -> No
     test `make coverage` would, once. The roots differ — the bed lane runs over
     `testpaths`, the hostless slice over `tests/unit tests/e2e` — and the
     partition still holds because every `tests/integration` item is
-    integration-marked by its conftest (the bed's) and `tests/busybox` and
-    `tests/conformance` are excluded by marker on both sides. The three legs
+    integration-marked by its conftest (the bed's) and `tests/busybox`,
+    `tests/conformance` and `tests/cut_sweep` are excluded by marker on both sides. The three legs
     together select what the former single primary pair did — pinned by
     `test_the_three_primary_legs_select_what_the_former_primary_pair_did`. The bed lane is
     uninstrumented on both legs (`--no-cov`: a floor-less pass/fail lane that

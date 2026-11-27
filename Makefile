@@ -1666,7 +1666,7 @@ CUT_SWEEP_WORKERS ?= 4
 stability-cut-sweep: ## Run the nightly every-offset probe-line cut sweep (#853, `stability`-marked; hostless, no lease) over every installed shell. CUT_SWEEP_WORKERS=N sets xdist workers (default 4; nightly passes 16); CUT_SWEEP_SHARD=i/n runs one shard of a round-robin split (nightly runs four, each inside the default LANE_TIMEOUT); unset, every case runs, about two hours on the dev VM at the default, so a full local pass needs LANE_TIMEOUT=9000s. JUnit XML lands in reports/junit/stability-cut-sweep/.
 	@$(SAY) "pytest sweep: every tail of the probe lines into each interactive shell (-n $(CUT_SWEEP_WORKERS))"
 	@$(TIMEOUT_CMD) uv run pytest \
-	    tests/unit/host/test_probe_line_cut_sweep.py \
+	    tests/cut_sweep \
 	    -m "stability" \
 	    -p no:randomly \
 	    -p no:cacheprovider \

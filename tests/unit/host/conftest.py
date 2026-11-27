@@ -72,7 +72,11 @@ if TYPE_CHECKING:
 # so importing it here — even aliased — would silently bring the bed lanes'
 # tolerance of 4 and eager gc policy with it. The generator body is the shared
 # part, and that is what gets imported.
-from tests._fixtures.fd_watermark import fd_watermark_bracket
+from tests._fixtures.fd_watermark import (
+    SPAWN_LANE_GC_POLICY,
+    SPAWN_LANE_TOLERANCE,
+    fd_watermark_bracket,
+)
 from tests._fixtures.private_root import trusted_container_staging  # noqa: F401 — fixture
 from tests.unit.host._session_feed import identity_handshake_reply
 from tests.unit.host.test_session import MockSession
@@ -147,7 +151,7 @@ def _fd_watermark() -> Iterator[None]:
     point of the authority is that the baseline-verdict shape lives in exactly
     one place.
     """
-    yield from fd_watermark_bracket(tolerance=0, gc_policy="on-suspicion")
+    yield from fd_watermark_bracket(tolerance=SPAWN_LANE_TOLERANCE, gc_policy=SPAWN_LANE_GC_POLICY)
 
 
 class RecordingHost(BaseHost):

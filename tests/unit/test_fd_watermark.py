@@ -387,6 +387,9 @@ _CONSUMERS = (
     # Marker-scoped rather than module-scoped: the hop tests are the ones that
     # open port forwards on a tunnel transport. Adopted 2026-08-10.
     "tests/integration/host/conftest.py",
+    # The cut sweep's tree (#1399): its cases spawn a shell on a pty, as
+    # tests/unit/host's do, and it brackets at the same measured settings.
+    "tests/cut_sweep/conftest.py",
 )
 
 
