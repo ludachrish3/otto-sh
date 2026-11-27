@@ -38,7 +38,7 @@ from otto.config.project import Project
 from otto.docker import build_images, compose_down, compose_up, composed
 from otto.docker.staging import cleanup_project, compose_staging_root
 from otto.host.docker_host import DockerContainerHost, parent_staging_root
-from otto.host.host import Host
+from otto.host.host import Host, exec_own
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.utils import Status, wait_for_async
@@ -391,7 +391,7 @@ def test_exec_never_returns_then_interrupt(api_host, chaos_rng):
         # after the interrupt is unfalsifiable (it would also read as a pass
         # if `ps` itself failed or came back empty in this busybox image).
         ps_probe = "ps -o args= 2>/dev/null || ps"
-        before = await api_host.exec(ps_probe, timeout=30)
+        before = await exec_own(api_host, ps_probe, timeout=30)
         assert before.status == Status.Success, before.value
         assert "sleep 400" in before.value, "positive control: sleep 400 not observed running"
         run_task.cancel()
@@ -400,7 +400,7 @@ def test_exec_never_returns_then_interrupt(api_host, chaos_rng):
         after = await api_host.run("echo recovered", timeout=30)
         assert after.status == Status.Success, after.only.value
         assert "recovered" in after.only.value
-        table = await api_host.exec(ps_probe, timeout=30)
+        table = await exec_own(api_host, ps_probe, timeout=30)
         assert table.status == Status.Success, table.value
         assert "sleep 400" not in table.value, (
             "interrupted in-container command must not survive as a zombie"
@@ -424,8 +424,8 @@ def test_daemon_restart_under_open_session(api_host, docker_parent):
         assert bounce.status == Status.Success, bounce.value
 
         async def _daemon_ready() -> bool:
-            info = await docker_parent.exec(
-                "docker info >/dev/null 2>&1 && echo ready || true", timeout=15
+            info = await exec_own(
+                docker_parent, "docker info >/dev/null 2>&1 && echo ready || true", timeout=15
             )
             return "ready" in info.value
 
@@ -475,8 +475,8 @@ def test_composed_pileup_leaves_zero_accumulation(
             await asyncio.sleep(8.0)  # body window; most cancels land before this expires
 
     async def scenario() -> None:
-        baseline_ps = await docker_parent.exec(_DOCKER_PS_PROBE, timeout=30)
-        baseline_net = await docker_parent.exec(_DOCKER_NET_PROBE, timeout=30)
+        baseline_ps = await exec_own(docker_parent, _DOCKER_PS_PROBE, timeout=30)
+        baseline_net = await exec_own(docker_parent, _DOCKER_NET_PROBE, timeout=30)
         # Oracle honesty: _DOCKER_PS_PROBE/_DOCKER_NET_PROBE end in `|| true`
         # so a docker-less host degrades to empty output rather than a shell
         # error -- but the exec ITSELF (the ssh channel running that probe)
@@ -510,8 +510,8 @@ def test_composed_pileup_leaves_zero_accumulation(
             assert down.is_ok, f"round {round_no}: recovery compose_down failed (status={down})"
         logger.info(f"[pileup] cancel landings: {'; '.join(landings)}")
         await cleanup_project(docker_parent, proj, stack=True)
-        end_ps = await docker_parent.exec(_DOCKER_PS_PROBE, timeout=30)
-        end_net = await docker_parent.exec(_DOCKER_NET_PROBE, timeout=30)
+        end_ps = await exec_own(docker_parent, _DOCKER_PS_PROBE, timeout=30)
+        end_net = await exec_own(docker_parent, _DOCKER_NET_PROBE, timeout=30)
         assert end_ps.is_ok, f"end docker ps probe failed: {end_ps.value!r}"
         assert end_net.is_ok, f"end docker network probe failed: {end_net.value!r}"
         assert set(probe_lines(end_ps.value)) <= set(probe_lines(baseline_ps.value)), (
@@ -521,7 +521,7 @@ def test_composed_pileup_leaves_zero_accumulation(
             f"network accumulation after {rounds} interrupted flows: {end_net.value!r}"
         )
         tree = compose_staging_root(parent_staging_root(docker_parent), proj)
-        staging = await docker_parent.exec(f"ls -d {tree} 2>/dev/null || true", timeout=30)
+        staging = await exec_own(docker_parent, f"ls -d {tree} 2>/dev/null || true", timeout=30)
         assert staging.value == "", f"staging survived cleanup: {staging.value!r}"
 
     _run(scenario())

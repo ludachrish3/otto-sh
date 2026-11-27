@@ -75,6 +75,7 @@ from otto.config.scope import DockerCompose, DockerImage, DockerSettings
 from otto.docker.compose import compose_down, compose_up
 from otto.host.daemon import kill_command
 from otto.host.docker_host import DockerContainerHost
+from otto.host.host import exec_own
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
@@ -400,8 +401,8 @@ async def _wait_for_container_udp_bound(
     needle = _proc_net_udp_needle(ip, port)
 
     async def _bound() -> bool:
-        result = await container.exec(
-            "cat /proc/net/udp 2>/dev/null || true", timeout=15, log=LogMode.QUIET
+        result = await exec_own(
+            container, "cat /proc/net/udp 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
         return needle in result.value
 
@@ -427,8 +428,8 @@ async def _wait_for_container_file(
 
     async def _file_has_content() -> bool:
         nonlocal last
-        result = await container.exec(
-            f"cat {shlex.quote(path)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
+        result = await exec_own(
+            container, f"cat {shlex.quote(path)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
         last = result.value
         return bool(last)
@@ -796,9 +797,9 @@ async def test_udp_flow_resumes_after_an_opted_in_idle_timeout(tunnel_lab, reap_
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as c:
             c.settimeout(5)
             assert _round_trip(c, ingress, b"before-idle") == b"before-idle"
-            busy = int((await test2.exec(count, timeout=15, log=LogMode.QUIET)).value or 0)
+            busy = int((await exec_own(test2, count, timeout=15, log=LogMode.QUIET)).value or 0)
             await asyncio.sleep(_IDLE_S + 10)
-            idle = int((await test2.exec(count, timeout=15, log=LogMode.QUIET)).value or 0)
+            idle = int((await exec_own(test2, count, timeout=15, log=LogMode.QUIET)).value or 0)
             # test2 (the relay hop) always holds the fwd and rev relay
             # PARENTS -- this test's traffic is one-directional (client to
             # echo and its reply both ride the fwd flow's own connected
@@ -848,7 +849,7 @@ async def test_tcp_idle_timeout_never_takes_down_the_listeners(tunnel_lab, reap_
     count = f"pgrep -fc {shlex.quote(argv_pattern(tid))} || true"
 
     async def _tunnel_process_count(host: UnixHost) -> int:
-        result = await host.exec(count, timeout=15, log=LogMode.QUIET)
+        result = await exec_own(host, count, timeout=15, log=LogMode.QUIET)
         return int(result.value or 0)
 
     # Both hosts are ENDPOINTS of this 2-hop tunnel (no relay hop in between),

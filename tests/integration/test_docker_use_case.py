@@ -41,6 +41,7 @@ from otto.docker.compose import compose_command, compose_down_project, use_case_
 from otto.docker.deployment import deploy, teardown
 from otto.docker.staging import cleanup_project, stage_image_context, use_case_launcher
 from otto.host.docker_host import parent_staging_root
+from otto.host.host import exec_own
 from otto.host.login_proxy import Cred
 from otto.host.shell_quote import shell_operand
 from otto.host.unix_host import UnixHost
@@ -172,10 +173,11 @@ async def _container_of(
     ``UseCaseStack``: the stack is what otto believes it registered, and half
     of what these tests exist to check is whether that belief is true.
     """
-    result = await parent.exec(
+    result = await exec_own(
+        parent,
         f"docker ps -q{' -a' if all_states else ''} "
         f"--filter label=com.docker.compose.project={shlex.quote(project_name)} "
-        f"--filter label=com.docker.compose.service={shlex.quote(service)}"
+        f"--filter label=com.docker.compose.service={shlex.quote(service)}",
     )
     assert result.is_ok, f"docker ps failed on {parent.id}: {result.value}"
     return result.value
@@ -183,8 +185,8 @@ async def _container_of(
 
 async def _image_of(parent, container_id: str) -> str:
     """The image a running container was created from."""
-    result = await parent.exec(
-        f"docker inspect -f '{{{{.Config.Image}}}}' {shlex.quote(container_id)}"
+    result = await exec_own(
+        parent, f"docker inspect -f '{{{{.Config.Image}}}}' {shlex.quote(container_id)}"
     )
     assert result.is_ok, f"docker inspect failed on {parent.id}: {result.value}"
     return result.value
@@ -192,7 +194,7 @@ async def _image_of(parent, container_id: str) -> str:
 
 async def _env_of(parent, container_id: str) -> dict[str, str]:
     """The process environment INSIDE a running container."""
-    result = await parent.exec(f"docker exec {shlex.quote(container_id)} env")
+    result = await exec_own(parent, f"docker exec {shlex.quote(container_id)} env")
     assert result.is_ok, f"docker exec env failed on {parent.id}: {result.value}"
     pairs = (line.partition("=") for line in result.value.splitlines() if "=" in line)
     return {key: value for key, _sep, value in pairs}
@@ -231,7 +233,9 @@ async def test_merged_stack_displaces_mock(parent, project):
         # Belt and braces, from inside the container: the two images differ
         # only by the marker they bake in, so this is the same claim made
         # without trusting the image tag the daemon reports.
-        marker = await parent.exec(f"docker exec {shlex.quote(edge)} cat /etc/project1-marker.txt")
+        marker = await exec_own(
+            parent, f"docker exec {shlex.quote(edge)} cat /etc/project1-marker.txt"
+        )
         assert marker.is_ok, marker.value
         assert "project1-fixture" in marker.value, marker.value
 
@@ -323,8 +327,9 @@ async def test_teardown_removes_stack_and_hosts(parent, lab, project):
 
         await teardown(USE_CASE, parent=parent.id)
 
-        remaining = await parent.exec(
-            f"docker ps -aq --filter label=com.docker.compose.project={shlex.quote(project)}"
+        remaining = await exec_own(
+            parent,
+            f"docker ps -aq --filter label=com.docker.compose.project={shlex.quote(project)}",
         )
         assert remaining.is_ok, remaining.value
         assert remaining.value == "", (
@@ -436,8 +441,9 @@ async def test_teardown_with_the_staged_files_gone_goes_by_the_label_and_says_so
         with caplog.at_level(logging.INFO, logger="otto.docker.deployment"):
             await teardown(USE_CASE, parent=parent.id)
 
-        remaining = await parent.exec(
-            f"docker ps -aq --filter label=com.docker.compose.project={shlex.quote(project)}"
+        remaining = await exec_own(
+            parent,
+            f"docker ps -aq --filter label=com.docker.compose.project={shlex.quote(project)}",
         )
         assert remaining.is_ok, remaining.value
         assert remaining.value == "", f"containers survived: {remaining.value!r}"
@@ -518,11 +524,12 @@ async def test_the_launcher_hands_compose_every_value_as_written_over_the_parent
         assert wrote.is_ok, wrote.value
 
         # The parent's own exports, set in front of the command the deployment runs.
-        config = await parent.exec(
+        config = await exec_own(
+            parent,
             "IMAGE= HASH=from-the-parent "
             + compose_command(
                 project, "config", "--format", "json", files=[compose_file], launcher=launcher
-            )
+            ),
         )
 
         assert config.is_ok, config.value
@@ -538,7 +545,7 @@ async def test_the_launcher_hands_compose_every_value_as_written_over_the_parent
 
 async def _mode_and_owner(parent, path) -> str:
     """``<octal mode> <owner name>`` of *path* on the parent, as ``stat`` prints them."""
-    result = await parent.exec(f"stat -c '%a %U' {shell_operand(str(path))}")
+    result = await exec_own(parent, f"stat -c '%a %U' {shell_operand(str(path))}")
     assert result.is_ok, f"stat {path} failed on {parent.id}: {result.value}"
     return result.value
 

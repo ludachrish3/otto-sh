@@ -31,6 +31,7 @@ from rich.console import Console
 
 from otto.check import Verdict, render_sections
 from otto.host.daemon import kill_command
+from otto.host.host import exec_own
 from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
@@ -96,7 +97,7 @@ async def _check_echoes() -> list[tuple[str, int, str]]:
     found: list[tuple[str, int, str]] = []
     try:
         for host in hosts:
-            result = await host.exec(SWEEP_COMMAND, timeout=15, log=LogMode.QUIET)
+            result = await exec_own(host, SWEEP_COMMAND, timeout=15, log=LogMode.QUIET)
             assert result.is_ok, f"sweep scan failed on {host.id}: {result.value!r}"
             found.extend(
                 (host.id, pid, token) for pid, token in check_echo_procs(result.value, host.id)
@@ -163,7 +164,7 @@ async def _assert_nothing_tagged_left(lab: Lab) -> None:
     echoes = await _check_echoes()
     assert not echoes, _echo_report(echoes, "check echoes survived the check:")
     for host in lab.hosts.values():
-        result = await host.exec(DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
+        result = await exec_own(host, DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
         assert result.is_ok, f"tunnel scan failed on {host.id}: {result.value!r}"
         left = parse_process_discovery(result.value)
         assert not left, f"tunnel processes survived on {host.id}: " + ", ".join(

@@ -19,6 +19,7 @@ from tests._fixtures.docker_reap import (
     remove_labelled_images_command,
 )
 from tests._fixtures.labdata import lab_data_path
+from tests._fixtures.own_exec_fakes import StockOwnHost, patch_public_exec
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -125,3 +126,23 @@ def test_the_hygiene_oracle_probes_the_same_label_and_fragments() -> None:
     assert bed_hygiene.E2E_IMAGE_LABEL is docker_reap.E2E_IMAGE_LABEL
     assert bed_hygiene.ORPHAN_FRAGMENTS is docker_reap.ORPHAN_FRAGMENTS
     assert image_ids_command(f"label={E2E_IMAGE_LABEL}") in bed_hygiene._DOCKER_IMAGES_PROBE
+
+
+@pytest.mark.asyncio
+async def test_a_probe_asks_for_no_terminal_where_the_host_offers_one(monkeypatch) -> None:
+    """Pins: the reap's probes take an otto host's private entry, never the public one."""
+    patch_public_exec(monkeypatch)
+    host = StockOwnHost(plain={"docker ps -aq --filter 'name=-e2e-'": "c1"})
+    assert await reap_docker(host) == ["container c1"]
+    await remove_labelled_images(host, E2E_IMAGE_LABEL)
+    assert host.public_calls == []
+    assert len(host.own_calls) > 3
+    assert all(set(kw) <= {"timeout", "log"} for _c, kw in host.own_calls)
+
+
+@pytest.mark.asyncio
+async def test_a_probe_on_a_terminal_only_host_leaves_the_terminal_unset() -> None:
+    """Pins: a host whose exec is not otto's own gets no `terminal` keyword from the reap."""
+    host = _Host()
+    await reap_docker(host)
+    assert host.commands

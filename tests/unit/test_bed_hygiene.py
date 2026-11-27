@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from otto.link.netem import NetEmImpairer
+from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.bed_hygiene import (
@@ -28,12 +29,14 @@ from tests._fixtures.bed_hygiene import (
     format_hygiene_report,
     format_residual_report,
     listener_pids,
+    netcat_listeners,
     netdevs_listed,
     probe_lines,
     residual_dirt,
     snapshot_host,
     tunnel_ids,
 )
+from tests._fixtures.own_exec_fakes import StockOwnHost, patch_public_exec
 from tests.unit.link.test_manage_impair import FILTER_SCOPED_ONE, QDISC_SCOPED_ONE
 
 CLEAN_ROOT = "qdisc noqueue 0: root refcnt 2"
@@ -235,6 +238,56 @@ async def test_snapshot_host_reads_every_listed_netdev_as_a_qdisc_and_filter_pai
     assert snap.qdiscs["eth1.100"] == QdiscReads(QDISC_SCOPED_ONE, FILTER_SCOPED_ONE)
     assert snap.qdiscs["lo"] == QdiscReads("", "")
     assert snap.docker_images == frozenset({"sha256:a", ""})
+
+
+@pytest.mark.asyncio
+async def test_a_probe_asks_for_no_terminal_where_the_host_offers_one(monkeypatch):
+    """Pins: a probe reaches an otto host through its private entry (no terminal), never the
+    public ``exec`` (a terminal where offered), and keeps the probe's own keywords."""
+    patch_public_exec(monkeypatch)
+    host = StockOwnHost()
+    await snapshot_host(host)
+    await netcat_listeners(host, "own1")
+    assert host.public_calls == []
+    assert len(host.own_calls) > 5
+    assert host.own_calls[0][1] == {"timeout": 30, "log": LogMode.QUIET}
+    assert host.own_calls[-1][1] == {}, "netcat_listeners passes no keyword of its own"
+
+
+@dataclass
+class _TerminalOnlyHost:
+    """A telnet-like stand-in whose own ``exec`` refuses ``terminal=...`` by name."""
+
+    id: str = "tel1"
+    calls: list = field(default_factory=list)
+
+    async def exec(self, cmd: str, **kw: object) -> CommandResult:
+        assert "terminal" not in kw, f"a terminal-only host refuses terminal=..., got {kw}"
+        self.calls.append((cmd, kw))
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
+
+
+@pytest.mark.asyncio
+async def test_a_probe_on_a_terminal_only_host_leaves_the_terminal_unset():
+    """Pins: a host whose exec is not otto's own gets the call with no `terminal` keyword."""
+    host = _TerminalOnlyHost()
+    snap = await snapshot_host(host)
+    await netcat_listeners(host, "tel1")
+    assert snap.nc_listeners == frozenset()
+    assert len(host.calls) > 5
+
+
+@pytest.mark.asyncio
+async def test_netdevs_from_a_coloured_listing_are_never_typed(monkeypatch):
+    """Pins #1398 end to end: a listing coloured on a terminal must not reach the next command."""
+    patch_public_exec(monkeypatch)
+    host = StockOwnHost(
+        plain={_NETDEV_PROBE: "qdisc noqueue 0: dev lo root refcnt 2"},
+        coloured={_NETDEV_PROBE: "qdisc noqueue 0: dev \x1b[1;36mlo\x1b[0m root refcnt 2"},
+    )
+    snap = await snapshot_host(host)
+    assert sorted(snap.qdiscs) == ["lo"]
+    assert not [c for c in host.commands if "\x1b" in c], host.commands
 
 
 def test_tunnel_ids_and_listener_pids_read_the_snapshots_own_lines():

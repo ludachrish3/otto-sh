@@ -79,6 +79,7 @@ import contextlib
 import pytest
 import pytest_asyncio
 
+from otto.host.host import exec_own
 from otto.host.interface import Interface
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
@@ -216,8 +217,8 @@ async def _add_vlan(host: UnixHost, dev: str, vlan_id: int, ip_cidr: str) -> Non
 
 async def _avg_rtt_ms(host: UnixHost, target_ip: str) -> float:
     """Ping *target_ip* from *host* three times and return the average RTT in ms."""
-    result = await host.exec(
-        f"ping -c 3 -i 0.3 -W 2 {target_ip}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+    result = await exec_own(
+        host, f"ping -c 3 -i 0.3 -W 2 {target_ip}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
     )
     assert result.is_ok, f"ping {target_ip} from {host.id!r} failed: {result.value!r}"
     marker = "rtt min/avg/max/mdev"
@@ -266,8 +267,8 @@ async def impair_lab():
         await _add_vlan(test3, _VLAN200_DEV, _VLAN200_ID, f"{_TEST3_VLAN200_IP}/24")
 
         prior_ip_forward = (
-            await test3.exec(
-                "sysctl -n net.ipv4.ip_forward", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+            await exec_own(
+                test3, "sysctl -n net.ipv4.ip_forward", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
         ).value
         await _root(test3, "sysctl -w net.ipv4.ip_forward=1")
@@ -329,15 +330,15 @@ async def _assert_bed_hygiene() -> None:
     try:
         leaks: list[str] = []
         for host in hosts:
-            ps_result = await host.exec(
-                IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+            ps_result = await exec_own(
+                host, IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
             timers = parse_impair_ps(ps_result.value)
             if timers:
                 leaks.append(f"{host.id}: leftover otto-impair timers {timers!r}")
 
-            qdisc_result = await host.exec(
-                "tc qdisc show dev eth1", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+            qdisc_result = await exec_own(
+                host, "tc qdisc show dev eth1", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
             if parse_qdisc_show(qdisc_result.value) is not None:
                 leaks.append(
@@ -348,13 +349,15 @@ async def _assert_bed_hygiene() -> None:
             # Two separate commands: a pgrep pattern must not appear literally
             # anywhere in its own command line, or it matches its own shell.
             for probe in ("ip netns list 2>/dev/null || true", "pgrep -af '[o]tto-check-' || true"):
-                check_result = await host.exec(probe, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET)
+                check_result = await exec_own(
+                    host, probe, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+                )
                 left = [ln for ln in check_result.value.splitlines() if "otto-check-" in ln]
                 if left:
                     leaks.append(f"{host.id}: otto link check left behind: {left!r}")
 
-            link_result = await host.exec(
-                "ip -o link show", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+            link_result = await exec_own(
+                host, "ip -o link show", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
             link_text = link_result.value
             leaks.extend(
@@ -472,8 +475,8 @@ async def test_inpath_placements_and_endpoint_purity(impair_lab: Lab) -> None:
 
         # purity: the in-path target's own facing netdev stays pure -- the whole
         # point of in-path mode is that the impairment lives on the middlebox.
-        purity = await test1.exec(
-            f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+        purity = await exec_own(
+            test1, f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
         assert parse_qdisc_show(purity.value) is None, (
             f"test1's {_VLAN100_DEV} must stay pure in in-path mode, got: {purity.value!r}"
@@ -528,8 +531,8 @@ async def test_expire_self_heals(impair_lab: Lab) -> None:
             ),
         )
 
-        ps_result = await test1.exec(
-            IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+        ps_result = await exec_own(
+            test1, IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
         timers = [t for t in parse_impair_ps(ps_result.value) if t.link_id == "edge"]
         assert not timers, f"expire timer for 'edge' still running on test1: {timers!r}"
@@ -667,8 +670,8 @@ async def test_scoped_impair_readback_and_pristine_repair(impair_lab: Lab) -> No
         assert not a.foreign
     finally:
         await repair_link(impair_lab, ident="edge")
-    qdisc = await test1.exec(
-        f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+    qdisc = await exec_own(
+        test1, f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
     )
     line = qdisc.value.splitlines()[0] if qdisc.value else ""
     assert "prio 1:" not in line, f"expected pristine root after bare repair, got: {qdisc.value!r}"
@@ -694,7 +697,7 @@ async def _tcp_rtt_ms(host: UnixHost, target_ip: str, port: int) -> float:
         "print((time.monotonic() - t0) * 1000)\n"
         "EOF"
     )
-    result = await host.exec(cmd, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET)
+    result = await exec_own(host, cmd, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET)
     assert result.is_ok, f"tcp echo to {target_ip}:{port} failed: {result.value!r}"
     return float(result.value)
 
@@ -821,8 +824,8 @@ async def test_range_dst_selector_live(impair_lab: Lab) -> None:
             assert set(a.scoped) == {sel}, "a refused collision must leave the tree untouched"
         finally:
             await repair_link(impair_lab, ident="edge", selector=sel)
-        qdisc = await test1.exec(
-            f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+        qdisc = await exec_own(
+            test1, f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
         first = qdisc.value.splitlines()[0] if qdisc.value else ""
         assert "prio 1:" not in first, qdisc.value
@@ -886,8 +889,8 @@ async def test_scoped_expire_clears_only_its_selector(impair_lab: Lab) -> None:
                 f"{sorted(s.describe() for s in remaining)!r}"
             ),
         )
-        ps_result = await test1.exec(
-            IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+        ps_result = await exec_own(
+            test1, IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
         stale = [
             t
@@ -984,8 +987,8 @@ async def test_narrower_nested_selector_outranks_its_wide_parent(impair_lab: Lab
                 await repair_link(impair_lab, ident="edge", selector=narrow)
         finally:
             await repair_link(impair_lab, ident="edge", selector=wide)
-        qdisc = await test1.exec(
-            f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+        qdisc = await exec_own(
+            test1, f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
         first = qdisc.value.splitlines()[0] if qdisc.value else ""
         assert "prio 1:" not in first, qdisc.value
@@ -1011,8 +1014,11 @@ def _show(report: LinkCheckReport) -> None:
 
 async def _check_netns_left(host: UnixHost) -> str:
     """``otto-check-*`` namespaces still on *host* (empty when the check cleaned up)."""
-    result = await host.exec(
-        "ip netns list | grep otto-check- || true", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+    result = await exec_own(
+        host,
+        "ip netns list | grep otto-check- || true",
+        timeout=_HOST_CMD_TIMEOUT,
+        log=LogMode.QUIET,
     )
     return result.value
 

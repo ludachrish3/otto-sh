@@ -16,6 +16,7 @@ cannot drift apart.
 from collections.abc import Iterable
 
 from otto.host.docker_cli import sweep_stale_scans  # noqa: F401 — re-exported for the bed reap
+from otto.host.host import exec_own
 from otto.logger.mode import LogMode
 
 ORPHAN_FRAGMENTS = ("-e2e-", "-noexist-")
@@ -82,7 +83,7 @@ async def _lines(host: object, command: str, timeout: float) -> list[str]:
     # status check and line splitter are bound here at call time, not at import.
     from tests._fixtures.bed_hygiene import check_probe_result, probe_lines
 
-    result = await host.exec(command, timeout=timeout, log=LogMode.QUIET)  # type: ignore[attr-defined]
+    result = await exec_own(host, command, timeout=timeout, log=LogMode.QUIET)
     check_probe_result(getattr(host, "id", "<unknown host>"), result)
     return [line for line in probe_lines(result.value) if line]
 

@@ -20,6 +20,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from otto.host.host import exec_own
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
@@ -181,7 +182,7 @@ async def observe_tunnel_processes(hosts: tuple[str, ...] = UNIX) -> list:
     found: list = []
     try:
         for host in bed_hosts:
-            result = await host.exec(DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
+            result = await exec_own(host, DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
             # A timed-out or errored discovery raises, never reads as "clean".
             check_probe_result(host.id, result)
             found.extend((host.id, o) for o in parse_process_discovery(result.value))
@@ -245,8 +246,8 @@ async def wait_for_udp_bound(
     needle = f"{ip}:{port}"
 
     async def _bound() -> bool:
-        result = await host.exec(
-            "ss -H -u -a -n 2>/dev/null || true", timeout=15, log=LogMode.QUIET
+        result = await exec_own(
+            host, "ss -H -u -a -n 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
         return needle in result.value
 
@@ -308,7 +309,7 @@ async def wait_for_tcp_bound(
     needle = f"{ip}:{port}"
 
     async def _bound() -> bool:
-        result = await host.exec("ss -Htln 2>/dev/null || true", timeout=15, log=LogMode.QUIET)
+        result = await exec_own(host, "ss -Htln 2>/dev/null || true", timeout=15, log=LogMode.QUIET)
         return needle in result.value
 
     await wait_for_async(
@@ -376,8 +377,8 @@ async def wait_for_listener_output(
 
     async def _outfile_has_content() -> bool:
         nonlocal last
-        result = await host.exec(
-            f"cat {shlex.quote(outfile)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
+        result = await exec_own(
+            host, f"cat {shlex.quote(outfile)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
         last = result.value
         return bool(last)

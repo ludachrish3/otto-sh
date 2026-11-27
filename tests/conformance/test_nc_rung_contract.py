@@ -57,12 +57,16 @@ from pathlib import Path
 import pytest
 
 import otto.host.transfer.nc as nc_module
-from otto.host.host import BaseHost
+from otto.host.host import BaseHost, exec_own
 from otto.host.transfer.nc import available_rungs
 from otto.host.transfer.nc_scripts import ListenerRung
 from otto.result import Result, Status
 from otto.utils import WaitTimeoutError, wait_for_async
-from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE, netcat_listeners, probe_lines
+from tests._fixtures.bed_hygiene import (
+    _NC_LISTENER_PROBE,
+    netcat_listeners,
+    probe_lines,
+)
 from tests._fixtures.busybox import BUSYBOX_BANNER_COMMAND, reports_busybox_version
 from tests._fixtures.netcat_names import NETCAT_EXEC_NAMES
 from tests.conformance._bed import BedCell, bed_scratch_dir, nc_bed_cell
@@ -257,12 +261,12 @@ def assert_ran_only(record: dict[str, list[str]], label: str, ladder: str, rung:
 
 
 async def _read_remote(host: BaseHost, path: Path) -> str:
-    answered = await host.exec(f"cat {path}")
+    answered = await exec_own(host, f"cat {path}")
     return answered.value if answered.retcode == 0 else f"<cat exited {answered.retcode}>"
 
 
 async def _resolved_path(host: BaseHost, exec_name: str) -> str:
-    answered = await host.exec(f'readlink -f "$(command -v {exec_name})"')
+    answered = await exec_own(host, f'readlink -f "$(command -v {exec_name})"')
     return answered.value if answered.retcode == 0 else f"<exit {answered.retcode}>"
 
 
@@ -373,7 +377,7 @@ async def test_each_netcat_name_resolves_to_the_recorded_implementation(
     version = BUSYBOX_GUEST_VERSIONS.get(element)
     async with bed_cell.open_host_with(_options(element, exec_name)) as host:
         resolved = await _resolved_path(host, exec_name)
-        banner = (await host.exec(BUSYBOX_BANNER_COMMAND)).value if version else ""
+        banner = (await exec_own(host, BUSYBOX_BANNER_COMMAND)).value if version else ""
     assert_identity(implementation(element, exec_name), element, resolved)
     if version is not None:
         assert reports_busybox_version(banner, version), (
@@ -530,8 +534,9 @@ async def test_the_orphan_probe_sees_a_listener_of_each_implementation(
             # sessions included: the pid is the last non-empty line. The
             # listener carries the product's own lifetime cap, so a kill
             # that misses it still leaves it finite.
-            planted = await host.exec(
-                f"sh -c '{cap}{exec_name} -l -p {port} < /dev/null > /dev/null 2>&1 & echo $!'"
+            planted = await exec_own(
+                host,
+                f"sh -c '{cap}{exec_name} -l -p {port} < /dev/null > /dev/null 2>&1 & echo $!'",
             )
             lines = [line for line in planted.value.splitlines() if line]
             pid = lines[-1] if lines else ""
@@ -610,7 +615,7 @@ async def _kill_port_listeners(host: BaseHost, port: int, planted: str) -> list[
     left: list[str] = []
 
     async def look() -> list[str]:
-        answered = await host.exec(_NC_LISTENER_PROBE)
+        answered = await exec_own(host, _NC_LISTENER_PROBE)
         if answered.retcode != 0:
             # A failed probe is never "nothing left": its value is the tool's text.
             return [f"<probe exited {answered.retcode}: {answered.value!r}>"]

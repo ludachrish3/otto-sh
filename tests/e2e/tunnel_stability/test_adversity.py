@@ -17,6 +17,7 @@ import pytest
 import pytest_asyncio
 
 from otto.host.daemon import kill_command
+from otto.host.host import exec_own
 from otto.host.interface import Interface
 from otto.labs.loader import Lab
 from otto.link import ImpairmentParams, Link, LinkEndpoint, Selector, impair_link, repair_link
@@ -63,7 +64,8 @@ _PROBE_COUNT = 30  # â‰¥1 of 30 must arrive; at 10% loss/direction P(all lost) â
 
 async def _assert_dataplane_provisioned(host, ip: str) -> None:
     """Fail LOUD (with redeploy instructions) if the bed predates the eth2 NIC."""
-    result = await host.exec(
+    result = await exec_own(
+        host,
         f"ip -o addr show dev {_DP_DEV} 2>/dev/null || true",
         timeout=_HOST_CMD_TIMEOUT,
         log=LogMode.QUIET,
@@ -110,8 +112,11 @@ async def dataplane_lab():
         leftovers: list[str] = []
         try:
             for host in (test1, test2):
-                qdisc = await host.exec(
-                    f"tc qdisc show dev {_DP_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+                qdisc = await exec_own(
+                    host,
+                    f"tc qdisc show dev {_DP_DEV}",
+                    timeout=_HOST_CMD_TIMEOUT,
+                    log=LogMode.QUIET,
                 )
                 if "netem" in qdisc.value:
                     leftovers.append(f"{host.id}: {qdisc.value!r}")
