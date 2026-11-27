@@ -140,7 +140,7 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
     patch_bootstrap(monkeypatch, projects)
     token = set_context(ctx)
     try:
-        dry = DispatchRunner().invoke(run_app, ["install"], async_leaves=True)
+        dry = DispatchRunner().invoke(run_app, ["install"], async_leaves=True, accepts_options=True)
     finally:
         reset_context(token)
     assert dry.exit_code == 0, dry.output
@@ -188,7 +188,7 @@ def test_a_dry_run_cleanup_previews_every_removal_host_by_host(monkeypatch, tmp_
     patch_bootstrap(monkeypatch, [fake_project("r1", project_scope=None, root=tmp_path)])
     token = set_context(ctx)
     try:
-        dry = DispatchRunner().invoke(run_app, ["cleanup"], async_leaves=True)
+        dry = DispatchRunner().invoke(run_app, ["cleanup"], async_leaves=True, accepts_options=True)
     finally:
         reset_context(token)
     assert dry.exit_code == 0, dry.output

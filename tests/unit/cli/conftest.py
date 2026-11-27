@@ -325,7 +325,8 @@ def run_cli():
 
     Takes the whole argv as a user types it after ``otto`` (``["run", ...]``)
     and drives ``run_app`` through :class:`~tests._fixtures.dispatch.DispatchRunner`
-    with the ``run`` lane's async-leaf rule. A bare context is installed for
+    with the ``run`` lane's async-leaf rule, accepting registered options as
+    the shipped ``run`` registration does. A bare context is installed for
     the invocation, standing in for the one the lab slice installs on the
     real path, so a leaf can inject ``OttoContext`` and bind verb options.
 
@@ -347,7 +348,7 @@ def run_cli():
         assert verb == "run", f"run_cli drives `otto run` only, not {verb!r}"
         token = set_context(OttoContext(lab=Lab(name="run-cli"), policy=RunPolicy(dry_run=dry_run)))
         try:
-            return runner.invoke(run_app, rest, async_leaves=True)
+            return runner.invoke(run_app, rest, async_leaves=True, accepts_options=True)
         finally:
             reset_context(token)
 
@@ -361,7 +362,8 @@ def otto_test_cli(tmp_path):
     Takes the argv as a user types it after ``otto`` (``["test", ...]``, or
     ``["-n", "test", ...]`` for a dry run) and drives ``otto.cli.test``'s
     ``test_app`` through :class:`~tests._fixtures.dispatch.DispatchRunner`,
-    under a bare ``otto`` root group as on the real CLI.
+    under a bare ``otto`` root group as on the real CLI, accepting registered
+    options as the shipped ``test`` registration does.
     The app is read off the module at call time, so it carries whatever the
     test registered for the ``test`` verb.
 
@@ -395,7 +397,9 @@ def otto_test_cli(tmp_path):
                 OttoContext(lab=Lab(name=lab), policy=RunPolicy(output_dir=out, dry_run=dry_run))
             )
         try:
-            return runner.invoke(cli_test.test_app, args, spec_name="test", under_root=True)
+            return runner.invoke(
+                cli_test.test_app, args, spec_name="test", under_root=True, accepts_options=True
+            )
         finally:
             if token is not None:
                 reset_context(token)

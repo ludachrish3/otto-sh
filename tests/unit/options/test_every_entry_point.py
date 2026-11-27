@@ -173,7 +173,11 @@ def _otto_test(ctx: OttoContext, tmp_path, args: "list[str]") -> Any:
     token = set_context(ctx)
     try:
         return dispatch.invoke(
-            cli_test.test_app, ["test", *args], spec_name="test", under_root=True
+            cli_test.test_app,
+            ["test", *args],
+            spec_name="test",
+            under_root=True,
+            accepts_options=True,
         )
     finally:
         reset_context(token)
@@ -206,7 +210,9 @@ def test_the_install_hook_reads_the_given_value(
     if entry == "otto run install":
         token = set_context(ctx)
         try:
-            result = dispatch.invoke(run_app, ["install", "--debug-level", "3"], async_leaves=True)
+            result = dispatch.invoke(
+                run_app, ["install", "--debug-level", "3"], async_leaves=True, accepts_options=True
+            )
         finally:
             reset_context(token)
         assert result.exit_code == 0, result.output
@@ -230,6 +236,33 @@ def test_the_install_hook_reads_the_given_value(
                 return await host.install()
 
         assert asyncio.run(installed()).is_ok
+    assert seen == [3]
+
+
+def test_a_plugin_command_reads_the_given_value_too(acme, monkeypatch) -> None:
+    """A plugin command covered by ``Acme`` reads the typed value, by the same preparation.
+
+    Its body is the library's ``otto.project.install``, so the hook is reached
+    as from any other entry point.
+    """
+    ctx, seen = acme
+    _register_project()
+    _wire_project(monkeypatch)
+    register_options(Acme, verbs=["run", "test", "zdeploy"], overwrite=True)
+
+    async def zdeploy() -> None:
+        from otto import project
+
+        assert (await project.install()).is_ok
+
+    token = set_context(ctx)
+    try:
+        result = dispatch.invoke(
+            zdeploy, ["--debug-level", "3"], spec_name="zdeploy", accepts_options=True
+        )
+    finally:
+        reset_context(token)
+    assert result.exit_code == 0, result.output
     assert seen == [3]
 
 
@@ -321,7 +354,7 @@ def test_a_project_bodys_options_are_built_once_and_the_validated_object_runs(
     if entry == "otto run":
         token = set_context(ctx)
         try:
-            result = dispatch.invoke(run_app, ["install"], async_leaves=True)
+            result = dispatch.invoke(run_app, ["install"], async_leaves=True, accepts_options=True)
         finally:
             reset_context(token)
         assert result.exit_code == 0, result.output

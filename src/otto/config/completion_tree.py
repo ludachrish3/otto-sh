@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
 from ..errors import OttoError
-from ._typer import built_spellings, own_params
+from ._typer import attached_position, built_spellings, own_params
 from .cache_sections import SHIM_SECTION as SHIM_SECTION  # noqa: PLC0414 — explicit re-export
 from .corpus_snapshot import Unreadable
 from .corpus_snapshot import observe as _snapshot_observe
@@ -188,13 +188,16 @@ def _node(
     A node's ``params`` are the command's own (``otto.config._typer.own_params``):
     never a flag the command takes only for one invocation. A leaf that
     *leaf_candidates* says is covered also carries ``candidates``, the
-    indexes of the uses that cover it (absent when none do); a node holds no
-    candidate row.
+    indexes of the uses that cover it (absent when none do), and
+    ``candidates_at``, the index in ``params`` where their rows go
+    (``otto.config._typer.attached_position``); a node holds no candidate
+    row.
     """
     # The command's own parameters: a flag attached for one invocation is not
     # the command's, and is never stored as one.
     own = own_params(cmd, ctx)
-    params = [p for p in (_param(x, ctx, where, unregistered) for x in own) if p]
+    stored = [_param(x, ctx, where, unregistered) for x in own]
+    params = [p for p in stored if p]
     commands: dict[str, Any] = {}
     if isinstance(cmd, TyperGroup):  # the test typer._click's _resolve_context descends by
         for sub_name in cmd.list_commands(ctx):
@@ -243,6 +246,10 @@ def _node(
         covered = leaf_candidates(cmd, ctx)
         if covered:
             node["candidates"] = covered
+            # Where the rows go among the stored params: after those the
+            # command's function declares, as the attached flags do.
+            cut = attached_position(cmd, ctx, own)
+            node["candidates_at"] = sum(1 for p in stored[:cut] if p)
     return node
 
 

@@ -160,7 +160,8 @@ host method, a test. No override is involved; the example is
 [An option for one instruction](../../setup/options-classes.md#an-option-for-one-instruction).
 
 A project changes what one of the seven does by declaring that method on its
-`ProjectActions` subclass, with an options class of its own:
+`ProjectActions` subclass, with otto's options class for it or one that
+inherits it:
 
 ```{literalinclude} ../../examples/getting-started/libs/gs_example/actions.py
 :language: python
@@ -169,11 +170,12 @@ A project changes what one of the seven does by declaring that method on its
 ```
 
 `otto run install` now carries `--ensure`, `--recover-partial` **and**
-`--variant`, and the body above receives all three on its own class.
+`--variant`. The body above receives the first two on its own class and reads
+the third from `BedVariant`, the class registered for `"run install"`.
 
 Three rules govern that:
 
-- **The options class must inherit the first-party class for that name.**
+- **The options class must be, or inherit, the first-party class for that name.**
   `InstallOptions`,
   `UninstallOptions`,
   `CleanupOptions`,

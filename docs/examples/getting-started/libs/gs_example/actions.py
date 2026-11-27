@@ -1,15 +1,14 @@
 """Customizing the defaults: a flag of our own on ``otto run install``.
 
 ``install`` is a project instruction — one name, one walk shape, and one body
-per project. This project overrides the body, and its options class inherits the
-first-party ``InstallOptions``, so ``--ensure`` and ``--recover-partial`` stay
-on the command and ``--variant`` joins them.
+per project. This project overrides the body to record which build variant goes
+on every host before it installs as otto would.
 
-``--variant`` itself lives on a small class of its own, ``BedVariant``, which is
-registered for ``otto run`` and ``otto test``: a registration reaches every
-command of a verb, so only the flag every command should carry is registered.
-``otto test --variant`` then steers the install an ``ensure`` marker runs, and
-``--ensure`` stays on ``install`` alone.
+``--variant`` lives on a small class of its own, ``BedVariant``, registered for
+``"run install"`` alone, so it joins ``--ensure`` and ``--recover-partial`` on
+that one command and on no other. The body reads it with ``otto.get_options``;
+under a command that does not offer it (``otto test`` with an ``ensure``
+marker) the read gives the class's default.
 """
 
 # doc: begin actions
@@ -17,38 +16,31 @@ from typing import Annotated
 
 import typer
 
+import otto
 from otto import options
 from otto.instructions import instruction
 from otto.project import InstallOptions, ProjectActions, register_project_actions
 from otto.result import Result
 
 
-# Registered for both verbs: every `otto run` command and `otto test` take
-# --variant, and under `otto test` it reaches the install body an
-# `@pytest.mark.ensure("installed")` test converges through.
-@options(verbs=["run", "test"])
+# Registered for one command: `otto run install --variant debug`.
+@options(verbs=["run install"])
 class BedVariant:
-    """The one flag this project adds, shared by ``otto run`` and ``otto test``."""
+    """The one flag this project adds to ``otto run install``."""
 
     variant: Annotated[str, typer.Option(help="Agent build variant to install.")] = "field"
-
-
-# install's own options, never registered: that would put --ensure on every
-# command of both verbs.
-@options
-class BedInstall(BedVariant, InstallOptions):  # inherits --ensure / --recover-partial
-    """``otto run install``'s flags, plus the one this project adds."""
 
 
 @register_project_actions
 class BedActions(ProjectActions):
     """This project's lab lifecycle: otto's defaults, plus the variant we pin."""
 
-    @instruction(options=BedInstall)
-    async def install(self, opts: BedInstall) -> Result:
+    @instruction(options=InstallOptions)  # otto's own class: --ensure / --recover-partial
+    async def install(self, opts: InstallOptions) -> Result:
         """Record the variant on every fleet host, then install as otto would."""
+        variant = otto.get_options(BedVariant).variant
         for host in self.ctx.all_hosts():
-            await host.run(f"echo variant={opts.variant} > /opt/agent/variant")
+            await host.run(f"echo variant={variant} > /opt/agent/variant")
         return await super().install(opts)
 
 

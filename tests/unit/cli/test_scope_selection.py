@@ -219,7 +219,7 @@ def test_both_preamble_gates_read_the_selection_the_root_parsed_not_the_record(m
     monkeypatch.setattr(
         invoke, "validate_project_switches", lambda sel: checked.append(sel) or validate(sel)
     )
-    monkeypatch.setattr(invoke, "settle_options", lambda ctx: None)
+    monkeypatch.setattr(invoke, "settle_options", lambda: None)
     monkeypatch.setattr(invoke, "stop_at_dry_run_seam", lambda ctx, spec: None)
 
     invoke.command_preamble(ctx)  # does not exit: the error is demoted, not fatal

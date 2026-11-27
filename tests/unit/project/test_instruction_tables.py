@@ -246,9 +246,10 @@ def test_a_project_claiming_install_through_the_decorator_gets_today_s_message(m
 
 
 def test_otto_run_install_names_both_projects_on_a_clash(capsys):
-    from typer.testing import CliRunner
-
+    """The clash is found when ``otto run install`` is parsed: it is dispatched, as shipped."""
     from otto.cli.run import run_app
+    from otto.params import OptionsCollisionError
+    from tests._fixtures.dispatch import DispatchRunner
 
     @options
     class AInstall(InstallOptions):
@@ -272,9 +273,13 @@ def test_otto_run_install_names_both_projects_on_a_clash(capsys):
         register_project_actions(A)
     with registering_project("b"):
         register_project_actions(B)
-    result = CliRunner().invoke(run_app, ["install", "--help"])
-    message = " ".join((result.output + capsys.readouterr().err).split())
+    result = DispatchRunner().invoke(
+        run_app, ["install", "--help"], async_leaves=True, accepts_options=True
+    )
+    shown = result.output + capsys.readouterr().err + str(result.exception or "")
+    message = " ".join(shown.split())
     assert result.exit_code == 1, message
+    assert isinstance(result.exception, OptionsCollisionError), message
     assert "'lab_env'" in message
     assert "project 'a'" in message
     assert "project 'b'" in message
@@ -303,10 +308,10 @@ class {cls}(ProjectActions):
 
 
 def test_otto_run_builds_a_two_project_command_twice(tmp_path, monkeypatch):
-    from typer.testing import CliRunner
-
+    """Each body's flags are attached to the dispatched command, every time it is built."""
     from otto import bootstrap as bs
     from otto.cli.run import run_app
+    from tests._fixtures.dispatch import DispatchRunner
 
     dirs = []
     for project, cls, field in (("tables-a", "TablesA", "alpha"), ("tables-b", "TablesB", "beta")):
@@ -326,7 +331,9 @@ def test_otto_run_builds_a_two_project_command_twice(tmp_path, monkeypatch):
         assert result.errors == []
         assert sorted(PROJECT_ACTIONS.names()) == ["tables-a", "tables-b"]
         for _ in range(2):
-            result = CliRunner().invoke(run_app, ["tables-smoke", "--help"])
+            result = DispatchRunner().invoke(
+                run_app, ["tables-smoke", "--help"], async_leaves=True, accepts_options=True
+            )
             assert result.exit_code == 0, result.output
             assert "--alpha" in result.output
             assert "--beta" in result.output

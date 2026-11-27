@@ -908,6 +908,18 @@ def registrations() -> list[Registration]:
     ]
 
 
+def closed_to_options(command: str) -> bool:
+    """Whether the top-level *command*'s commands take no registered flags yet.
+
+    ``host`` is closed: nothing covers a path under it (:func:`covering`),
+    and an entry under it is accepted without being judged
+    (``otto.cli.registry.entry_error``; its resolved group is not judged
+    either), so a class may name it before its commands take the flags.
+    The one place that says so.
+    """
+    return command == "host"
+
+
 def covering(
     path: "Sequence[str]",
     *,
@@ -923,10 +935,10 @@ def covering(
     imported, so a caller can tell which classes a command takes before it
     pays for any of them.
 
-    A path under ``host`` is covered by nothing yet: host commands do not
-    take registered flags.
+    A path under a command closed to registered options
+    (:func:`closed_to_options`) is covered by nothing.
     """
-    if path and path[0] == "host":
+    if path and closed_to_options(path[0]):
         return []
     pool = registrations() if among is None else among
     return [

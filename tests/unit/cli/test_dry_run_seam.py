@@ -680,7 +680,7 @@ class TestTestPreview:
     def test_the_opt_in_is_on_the_leaf_and_not_on_the_test_command_spec(self) -> None:
         """The structural half, pinned so the drift is named and not inferred."""
         from otto.cli import test as cli_test
-        from otto.cli.invoke import DRY_RUN_PREVIEW_ATTR, DRY_RUN_SELF_FINISHING_ATTR
+        from otto.cli.invoke import DRY_RUN_PREVIEW_ATTR, OWN_OPTIONS_ATTR
 
         assert _shipped("test").dry_run_preview is False
         # POSITIVE CONTROL: the opt-in DOES exist — one level down, on the leaf.
@@ -688,7 +688,7 @@ class TestTestPreview:
         # with no preview at all.
         leaf = cli_test.test_app.registered_commands[0].callback
         assert getattr(leaf, DRY_RUN_PREVIEW_ATTR) is True
-        assert getattr(leaf, DRY_RUN_SELF_FINISHING_ATTR) is True
+        assert getattr(leaf, OWN_OPTIONS_ATTR).finishes_dry_run is True
 
 
 # ---------------------------------------------------------------------------

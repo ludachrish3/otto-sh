@@ -33,13 +33,13 @@ no test file.
 
 Adding a further cached item normally needs just ONE ``Section(...)`` entry
 in :data:`SECTIONS` — no new digest function, no reader branch, no schema
-bump, and no writer keyword: a plain new section is read and written through
-:func:`read_section` / :func:`write_section`, never through
-:func:`completion_cache.write_cache <otto.config.completion_cache.write_cache>`.
-``shim`` is the one exception so far: ``entry()`` needs it written in the SAME
-atomic update as ``names``, which is why ``write_cache`` grew a ``shim=``
-keyword solely for that ordering guarantee — a section that does not need
-atomicity with ``names`` should not assume it needs one too.
+bump, and no writer keyword: ``entry()``'s writer
+(``otto.cli.main.write_completion_cache``) collects every registered section
+with its own collector and writes them all in one atomic update, and a
+section is read through :func:`read_section` (or written alone through
+:func:`write_section`). The keyword writer
+:func:`completion_cache.write_cache <otto.config.completion_cache.write_cache>`
+is not how a new section is written.
 
 Digest contributions that are not stat-able files — the literal
 ``unresolved:<name>`` token for an init module that resolves under no
@@ -169,16 +169,14 @@ class CliCollectors:
 
     ``otto.config`` sits below ``otto.cli`` and never imports it, so the CLI
     hands these in. ``otto.cli.main._completion_collectors`` builds the one
-    instance that ``otto.cli.main.entry``, the cache's writer, uses, and that
-    the :data:`SECTIONS` collectors take as the writer's parity reference
-    (``tests/unit/cli/test_cache_writer_parity.py``), so the two cannot drift.
+    instance that ``otto.cli.main.entry``, the cache's writer, hands to every
+    :data:`SECTIONS` collector, so each payload is collected one way
+    (``tests/unit/cli/test_cache_writer_parity.py`` holds the stored cache
+    to it).
     """
 
     instructions: Callable[[], list[dict[str, Any]]]
-    """Each registered instruction with its ``run`` options."""
-
-    test_options: Callable[[], list[dict[str, Any]]]
-    """The ``test`` verb's registered options."""
+    """Each registered instruction with its own options."""
 
     commands: Callable[[], list[dict[str, Any]]]
     """The third-party top-level commands."""
@@ -213,7 +211,6 @@ def _collect_names(projects: list[Project], cli: CliCollectors) -> dict[str, Any
     backends = _cc.collect_backend_names()
     return {
         "instructions": cli.instructions(),
-        "test_options": cli.test_options(),
         "hosts": _cc.collect_host_ids(projects),
         "hosts_by_lab": _cc.collect_host_ids_by_lab(projects),
         "host_drops": _cc.collect_host_drops(projects),
@@ -261,9 +258,9 @@ class Section:
     collect: Callable[[list[Project], CliCollectors], dict[str, Any]]
     """Build this section's payload from live state and the CLI's walks.
 
-    ``otto.cli.main.entry`` writes the cache without calling this; it is the
-    parity reference ``tests/unit/cli/test_cache_writer_parity.py`` holds that
-    write to.
+    ``otto.cli.main.write_completion_cache``, ``entry``'s writer, calls it for
+    every section and stores what it returns;
+    ``tests/unit/cli/test_cache_writer_parity.py`` holds that write to it.
     """
 
     key_paths: Callable[[list[Project]], list[Path]] | None = None

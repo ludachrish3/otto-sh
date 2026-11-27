@@ -85,28 +85,68 @@ def test_nothing_bound_converges_from_defaults(pytester, otto_plugins, monkeypat
 def test_the_getting_started_variant_reaches_the_ensured_install(
     pytester, otto_plugins, monkeypatch
 ) -> None:
-    """The worked example's shape: ``BedVariant`` is registered, ``BedInstall`` is not.
+    """The worked example's shape: ``BedVariant`` covers ``otto run install`` alone.
 
-    ``otto test --variant lab`` binds ``BedVariant`` for ``test``; the ensure
-    converge builds ``BedInstall`` (install's own options, which inherits
-    ``BedVariant``) from those flags, so the body sees ``lab``.
+    ``otto test`` offers no ``--variant``, so the install an ``ensure`` marker
+    converges through reads the class's default, as the guide says
+    (``docs/setup/options-classes.md``, "An option for one instruction").
     """
     import importlib
 
+    from otto.params import covering, get_options, options_key
     from tests._fixtures.gs_example import import_gs_example
 
     import_gs_example()
-    # Only its options classes and its register_options call are under test:
-    # outside a project's init import, register_project_actions refuses the
-    # class, so it is stood in for by the identity.
+    # Only its options class and its registration are under test: outside a
+    # project's init import, register_project_actions refuses the class, so it
+    # is stood in for by the identity.
     monkeypatch.setattr(actions_module, "register_project_actions", lambda cls: cls)
     actions = importlib.import_module("gs_example.actions")
-    get_context().bind_verb_options(verb="test", kwargs={"variant": "lab"})
-    assert get_context().options(actions.BedVariant).variant == "lab"
-    built = []
+    key = options_key(actions.BedVariant)
+    assert key in {r.key for r in covering(["run", "install"])}
+    assert key not in {r.key for path in (["run", "status"], ["test"]) for r in covering(path)}
+    get_context().bind_verb_options(verb="test", kwargs={})
+    seen = []
 
     async def fake_ensure_installed(*, opts):
-        built.append(opts.build(actions.BedInstall))
+        seen.append(get_options(actions.BedVariant).variant)
+        return Result(status=Status.Success)
+
+    monkeypatch.setattr(orchestrator, "ensure_installed", fake_ensure_installed)
+    run_inner(pytester, otto_plugins, test_e=_ENSURED_TEST).assert_outcomes(passed=1)
+    assert seen == ["field"]
+
+
+@options
+class TutorialVariant:
+    """0.20.0's tutorial ``BedVariant``: registered for ``run`` and ``test`` in the test."""
+
+    variant: str = "field"
+
+
+@options
+class TutorialInstall(TutorialVariant, InstallOptions):
+    """0.20.0's tutorial ``BedInstall``: the install body's own class, inheriting the flag."""
+
+
+def test_the_0_20_0_tutorial_shape_still_reaches_the_ensured_install(
+    pytester, otto_plugins, monkeypatch
+) -> None:
+    """A 0.20.0 project's input the move keeps: ``otto test --variant lab`` reaches the body.
+
+    The class carrying ``--variant`` is registered for ``run`` and ``test``,
+    and the install body's class inherits it (the tutorial's shape before it
+    registered its flag for ``"run install"``). The ensure converge builds
+    the body's class from ``otto test``'s recorded flags, so it reads
+    ``lab``; the CLI half (one ``--variant`` on each command) is
+    ``tests/unit/cli/test_run_verb_options.py``.
+    """
+    register_options(TutorialVariant, verbs=["run", "test"])
+    get_context().bind_verb_options(verb="test", kwargs={"variant": "lab"})
+    built: list[TutorialInstall] = []
+
+    async def fake_ensure_installed(*, opts):
+        built.append(opts.build(TutorialInstall))
         return Result(status=Status.Success)
 
     monkeypatch.setattr(orchestrator, "ensure_installed", fake_ensure_installed)

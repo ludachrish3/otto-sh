@@ -403,7 +403,7 @@ _EXTERNAL_DOC_LINKS = {
     # is the return type of ``otto.cli.invoke.usage_error_from``.
     "typer._click.exceptions.BadParameter": "https://click.palletsprojects.com/en/stable/api/#click.BadParameter",
     # The same vendored click: the parameters a command's ``get_params`` returns,
-    # in the signatures of ``otto.cli.invoke.attached_params`` and ``own_params``.
+    # in the signature of ``otto.cli.invoke.attached_params``.
     "typer._click.core.Parameter": "https://click.palletsprojects.com/en/stable/api/#click.Parameter",
     # typing_extensions.Self backport (used pre-3.11): intersphinx's python
     # inventory does carry typing.Self, but as a py:data object, while the

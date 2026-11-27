@@ -386,7 +386,8 @@ def test_a_command_covered_by_no_class_resolves_nothing(monkeypatch, plugins):
     assert carried == []
 
 
-def test_a_stage_1_leaf_is_left_alone(monkeypatch, plugins):
+def test_run_and_test_are_offered_like_every_command(monkeypatch, plugins):
+    """``otto run <name>`` and ``otto test`` take a covering class's flag from the one offer."""
     from otto.instruction_catalog import instruction
 
     answers: dict[str, Any] = {}
@@ -406,7 +407,8 @@ def test_a_stage_1_leaf_is_left_alone(monkeypatch, plugins):
     _register(Acme, ["run", "test"])
     assert _ok(["run", "cool", "--help"]).output.count("--debug-level") == 1
     assert _ok(["test", "--help"]).output.count("--debug-level") == 1
-    assert answers == {"run cool": None, "test": None}
+    offered = {path: [p.name for p in answer.params] for path, answer in answers.items()}
+    assert offered == {"run cool": ["debug_level"], "test": ["debug_level"]}
 
 
 # --- the candidate union (D12): a completion parse cannot fail --------------------
@@ -464,7 +466,7 @@ def test_root_help_rebuilds_the_cache_where_the_live_command_would_stop(
     # result is not stored (the fake projects have no workspace on disk).
     monkeypatch.setattr("otto.cli.main._cache_is_writable", lambda projects: True)
     monkeypatch.setattr("otto.config.completion_cache.cache_is_stale", lambda *a, **k: True)
-    monkeypatch.setattr("otto.config.completion_cache.write_cache", lambda *a, **k: None)
+    monkeypatch.setattr("otto.config.completion_cache.write_sections", lambda *a, **k: None)
     _broken(broken)
     run = otto_cli(["--help"])
     assert run.code == 0, run

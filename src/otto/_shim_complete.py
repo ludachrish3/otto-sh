@@ -271,27 +271,28 @@ def _params(node: dict[str, Any], candidates: "dict[str, Any] | None") -> list[d
     under ``"candidates"``, the rows recorded under that use's ``key`` in
     *candidates* (the ``names`` payload's ``option_candidates``), a row
     whose name or any spelling is already taken left out (the first name and
-    the first spelling win). The rows go before the node's trailing help
-    option, where the offer attaches them. The writer named the uses: this
-    decides no coverage.
+    the first spelling win). The rows go at the node's ``candidates_at``,
+    the place the writer recorded for them (``otto.config._typer.attached_position``,
+    where the offer attaches them). The writer named the uses: this decides
+    no coverage.
     """
     own = node["params"]
     picked = node.get("candidates")
     if not picked or not candidates:
         return own
-    help_option = own[-1:] if own and own[-1]["name"] == "help" else []
-    params = own[: len(own) - len(help_option)]
+    at = node.get("candidates_at", len(own))
     names = {p["name"] for p in own}
     words = {flag for p in own for flag in p["flags"]}
     uses, rows = candidates["uses"], candidates["rows"]
+    added: list[dict[str, Any]] = []
     for index in picked:
         for row in rows.get(uses[index]["key"], []):
             if row["name"] in names or any(flag in words for flag in row["flags"]):
                 continue
             names.add(row["name"])
             words.update(row["flags"])
-            params.append(row)
-    return [*params, *help_option]
+            added.append(row)
+    return [*own[:at], *added, *own[at:]]
 
 
 def _options(node: dict[str, Any], candidates: "dict[str, Any] | None") -> list[dict[str, Any]]:

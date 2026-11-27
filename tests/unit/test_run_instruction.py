@@ -338,3 +338,80 @@ async def test_run_instruction_validates_project_bodies_before_any_runs(ctx, mon
     with pytest.raises(OptionsValidationError, match="target"):
         await run_instruction(ctx, name="status")
     assert ran == []
+
+
+# --- which parameter is injected: a class that covers the instruction (§13 item 27) ---
+
+
+_LAZY_MODULE = "tests_unit_lazily_covering"
+_LAZY_SOURCE = '''\
+"""A class registered for ``run`` by its import path."""
+
+import otto
+
+
+@otto.options
+class Lazy:
+    level: int = 4
+'''
+
+
+def test_a_parameter_annotated_with_a_lazily_registered_covering_class_is_recognised_without_importing_it(  # noqa: E501 — a name that says the rule
+    ctx, tmp_path, monkeypatch
+):
+    """Coverage is read from the entries: the registration is never resolved to decide it."""
+    import importlib
+    import inspect
+    import sys
+
+    from otto.cli.invoke import prepare_command_target
+
+    (tmp_path / f"{_LAZY_MODULE}.py").write_text(_LAZY_SOURCE)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, _LAZY_MODULE, raising=False)
+    register_options(f"{_LAZY_MODULE}:Lazy", verbs=["run"])
+    lazy = importlib.import_module(_LAZY_MODULE).Lazy
+
+    async def handler(knobs: lazy, extra: int = 0) -> None: ...  # ty: ignore[invalid-type-form]
+
+    resolved = []
+    monkeypatch.setattr("otto.params.resolve_registration", resolved.append)
+    monkeypatch.setattr("otto.cli.invoke.resolve_registration", resolved.append)
+    entry = InstructionEntry(name="h", module=__name__, handler=handler)
+    bound = bind_handler_kwargs(ctx, entry, {"knobs": "typed", "extra": 1})
+    assert isinstance(bound["knobs"], lazy)
+    assert bound["extra"] == 1
+    wrapped = prepare_command_target(handler, path=["run", "h"])
+    assert list(inspect.signature(wrapped).parameters) == ["extra"]
+    assert resolved == []
+
+
+@otto.options
+class _TestOnly:
+    level: int = 0
+
+
+def test_a_class_registered_for_another_command_only_is_an_ordinary_parameter(ctx):
+    import inspect
+
+    from otto.cli.invoke import prepare_command_target
+
+    register_options(_TestOnly, verbs=["test", "run other"])
+
+    async def handler(knobs: _TestOnly) -> None: ...
+
+    entry = InstructionEntry(name="h", module=__name__, handler=handler)
+    handed = _TestOnly(level=9)
+    assert bind_handler_kwargs(ctx, entry, {"knobs": handed})["knobs"] is handed
+    wrapped = prepare_command_target(handler, path=["run", "h"])
+    assert list(inspect.signature(wrapped).parameters) == ["knobs"]
+
+
+def test_a_class_registered_for_the_instruction_by_name_is_injected(ctx):
+    """The new input: an entry that names the instruction covers it."""
+    register_options(_TestOnly, verbs=["run h"])
+
+    async def handler(knobs: _TestOnly) -> None: ...
+
+    entry = InstructionEntry(name="h", module=__name__, handler=handler)
+    assert isinstance(bind_handler_kwargs(ctx, entry, {})["knobs"], _TestOnly)

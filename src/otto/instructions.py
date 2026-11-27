@@ -1,9 +1,11 @@
 """Run an ``otto run`` instruction from Python.
 
 :func:`run_instruction` runs a registered instruction on a context as
-``otto run <name>`` would, and :func:`bind_handler_kwargs` is the one rule that
-turns parsed values into a standalone handler's arguments, shared with the
-CLI's leaf wrapper. :func:`instruction`, the decorator that registers an
+``otto run <name>`` would. ``otto.instructions.bind_arguments`` is the one rule that turns
+the values in force into a handler's arguments, called by the CLI's leaf
+wrapper and by :func:`bind_handler_kwargs`, which binds a standalone handler on
+a context; which parameters receive an options class's values is
+``otto.instructions.covered_parameters``. :func:`instruction`, the decorator that registers an
 instruction, is served here at its public path. It and the instruction tables
 live in :mod:`otto.instruction_catalog`, which reads nothing above the
 foundation layer; running an instruction reaches the context, the options and
@@ -11,10 +13,16 @@ the project layer, so it lives here, above them.
 """
 
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from .instruction_catalog import INSTRUCTIONS, InstructionEntry, instruction, options_parameter
+from .instruction_catalog import (
+    INSTRUCTIONS,
+    InstructionEntry,
+    instruction,
+    instruction_path,
+    options_parameter,
+)
 
 if TYPE_CHECKING:
     from .run_context import OttoContext
@@ -33,21 +41,84 @@ def _handler_of(entry: InstructionEntry) -> "Callable[..., Awaitable[Any]]":
     return entry.handler
 
 
+def covered_parameters(handler: "Callable[..., Any]", path: Sequence[str]) -> "dict[str, type]":
+    """Name each parameter of *handler* annotated with a class that covers the command *path*.
+
+    The one rule for which of an instruction's parameters receive an options
+    class's values, read by :func:`bind_handler_kwargs` and by the CLI's
+    leaf wrapper alike: the parameter's annotation is a class whose registry
+    key (``otto.params.options_key``) is that of a registration covering
+    *path* (``otto.params.covering``, every project kept). A class
+    registered for other commands only is an ordinary parameter. Coverage
+    is read from the entries, so nothing is resolved or imported. Maps each
+    such parameter's name to its class, in signature order.
+    """
+    from typing import get_type_hints
+
+    from .params import covering, options_key
+
+    keys = {registration.key for registration in covering(path)}
+    if not keys:
+        return {}
+    hints = get_type_hints(handler)
+    covered: dict[str, type] = {}
+    for name in inspect.signature(handler).parameters:
+        hint = hints.get(name)
+        if isinstance(hint, type) and options_key(hint) in keys:
+            covered[name] = hint
+    return covered
+
+
+def bind_arguments(
+    handler: "Callable[..., Any]",
+    *,
+    own_cls: "type | None",
+    path: "Sequence[str] | None",
+    kwargs: "Mapping[str, Any]",
+    read: "Callable[[type], Any]",
+) -> dict[str, Any]:
+    """Bind *handler*'s arguments: the one rule ``otto run <name>`` and a library call share.
+
+    The parameter that takes the own class *own_cls*
+    (``otto.instruction_catalog.options_parameter``) and each parameter
+    annotated with a class covering the command *path*
+    (``otto.instructions.covered_parameters``; none without a path) receive ``read(cls)``,
+    the values in force for that class; every other parameter named in
+    *kwargs* passes through, and a parameter named nowhere is left to its
+    default. The CLI's leaf wrapper (``otto.cli.invoke``) and
+    :func:`bind_handler_kwargs` both bind through it, so the two cannot bind
+    an instruction's arguments differently.
+    """
+    own_param = options_parameter(handler, own_cls)
+    covered = covered_parameters(handler, path) if path is not None else {}
+    bound: dict[str, Any] = {}
+    for name in inspect.signature(handler).parameters:
+        if own_cls is not None and name == own_param:
+            bound[name] = read(own_cls)
+        elif name in covered:
+            bound[name] = read(covered[name])
+        elif name in kwargs:
+            bound[name] = kwargs[name]
+    return bound
+
+
 def bind_handler_kwargs(
     ctx: "OttoContext", entry: InstructionEntry, kwargs: dict[str, Any]
 ) -> dict[str, Any]:
     """Turn a standalone handler's parameters into keyword arguments, by the one rule.
 
     Injects only: the own-class parameter and one annotated with a class
-    registered for ``run`` receive ``ctx.options(cls)`` (the values in
-    force, so the parameter and ``ctx.options`` hold one object), a
-    parameter annotated ``OttoContext`` receives *ctx*, and every other
-    parameter named in *kwargs* passes through. It binds nothing on *ctx*:
-    the command's preparation (``otto.cli.invoke.prepare_leaf_options``)
-    recorded the values, and :func:`run_instruction` lays its own. It
-    validates nothing either: validation happens in that preparation, which
-    builds the command's classes before the body. Used by the CLI leaf
-    wrapper and by :func:`run_instruction`, so the two cannot drift.
+    that covers the instruction (``otto.instructions.covered_parameters`` over its command
+    path, ``otto.instruction_catalog.instruction_path``) receive
+    ``ctx.options(cls)`` (the values in force, so the parameter and
+    ``ctx.options`` hold one object), a parameter annotated ``OttoContext``
+    receives *ctx*, and every other parameter named in *kwargs* passes
+    through. It resolves nothing and binds nothing on *ctx*: the command's
+    preparation (``otto.cli.invoke.prepare_leaf_options``) recorded the
+    values, and :func:`run_instruction` lays its own. It validates nothing
+    either: validation happens in that preparation, which builds the
+    command's classes before the body. The binding is ``otto.instructions.bind_arguments``,
+    the one the CLI's leaf wrapper calls, so the two cannot drift.
 
     Raises:
         otto.params.OptionsValidationError: the first read of a class the
@@ -56,25 +127,19 @@ def bind_handler_kwargs(
     """
     from typing import get_type_hints
 
-    from .params import verb_option_classes
     from .run_context import OttoContext
 
     handler = _handler_of(entry)
-    own_param = options_parameter(handler, entry.options_cls)
-    registered = {origin.cls for origin in verb_option_classes("run")}
     hints = get_type_hints(handler)
-    bound: dict[str, Any] = {}
-    for name in inspect.signature(handler).parameters:
-        hint = hints.get(name)
-        if name == own_param and entry.options_cls is not None:
-            bound[name] = ctx.options(entry.options_cls)
-        elif hint is OttoContext:
-            bound[name] = ctx
-        elif hint is not None and any(hint is cls for cls in registered):
-            bound[name] = ctx.options(hint)
-        elif name in kwargs:
-            bound[name] = kwargs[name]
-    return bound
+    takes_ctx = [n for n in inspect.signature(handler).parameters if hints.get(n) is OttoContext]
+    given = {**kwargs, **dict.fromkeys(takes_ctx, ctx)}
+    return bind_arguments(
+        handler,
+        own_cls=entry.options_cls,
+        path=instruction_path(entry.name),
+        kwargs=given,
+        read=ctx.options,
+    )
 
 
 async def run_instruction(

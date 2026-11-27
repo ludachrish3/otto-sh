@@ -324,12 +324,12 @@ def test_write_cache_preserves_reserved_namespaces_and_drops_old_entries(project
 
 
 def test_write_cache_keys_match_the_names_collector(projects):
-    """write_cache's keywords and the ``names`` collector cannot drift.
+    """The test-only keyword writer's key set and the ``names`` collector cannot drift.
 
-    The registry's collect callable is the section-shaped rebuild path; the
-    legacy write_cache keywords are the entry() path. If a new key lands in
-    one and not the other, a consumer reading the section payload would
-    silently lose it.
+    ``entry()``'s writer stores the ``names`` collector's payload itself;
+    ``write_cache``, the keyword writer tests use to build a cache, must
+    still write every key that collector does, or a test cache would lack
+    a key a consumer reads.
     """
     from otto.cli.main import _completion_collectors
     from otto.config import completion_cache as cc

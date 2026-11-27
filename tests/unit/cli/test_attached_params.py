@@ -29,6 +29,7 @@ import otto
 from otto.cli import invoke
 from otto.cli.invoke import (
     ACCEPTS_OPTIONS_ATTR,
+    OWN_OPTIONS_ATTR,
     command_path,
     leaf_accepts_options,
     own_params,
@@ -348,15 +349,34 @@ def _leaves(cmd: Any, ctx: Any) -> "list[tuple[Any, Any]]":
 
 
 def test_with_nothing_attached_get_params_returns_the_commands_own_list(plugins):
+    """With no class registered, a command parses its own parameters and nothing more.
+
+    A project instruction is the one exception: its flags are its bodies'
+    classes, which the invocation attaches (``OwnOptions.bodies``). Its
+    function declares nothing, so it parses exactly those flags, then its
+    own list (whatever Typer appends, and the help option).
+    """
+    from otto.params import options_params
+
     root = typer.main.get_command(app)
     root_ctx = root.make_context("otto", [], resilient_parsing=True)
     leaves = _leaves(root, root_ctx)
     assert len(leaves) > 20, "the walk found too few commands to say anything"
+    with_bodies = []
     for leaf, ctx in leaves:
         assert "get_params" in vars(leaf), f"{ctx.command_path}: get_params is not wrapped"
         got = leaf.get_params(ctx)
+        own = getattr(leaf.callback, OWN_OPTIONS_ATTR, None)
+        if own is not None and own.bodies is not None:
+            with_bodies.append(ctx.command_path)
+            flags = dict.fromkeys(p.name for o in own.bodies() for p in options_params(o.cls))
+            mine = own_params(leaf, ctx)
+            assert [p.name for p in got] == [*flags, *(p.name for p in mine)], ctx.command_path
+            assert got[len(flags) :] == mine, ctx.command_path
+            continue
         assert got == type(leaf).get_params(leaf, ctx), ctx.command_path
         assert got == own_params(leaf, ctx), ctx.command_path
+    assert "otto run install" in with_bodies
 
 
 def test_a_leafs_accepts_marker_survives_the_wrapping():

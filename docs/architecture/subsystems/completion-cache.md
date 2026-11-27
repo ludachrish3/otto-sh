@@ -98,34 +98,33 @@ section is rebuilt from what bootstrap registered, so nothing in one comes
 from a test file.
 
 **`names`** holds everything whose source is bounded by the files that can
-register something. Its payload keys are `instructions`, `test_options`, `option_candidates`,
+register something. Its payload keys are `instructions`, `option_candidates`,
 `hosts`, `hosts_by_lab`, `host_drops`, `docker_hosts`, `docker_use_cases`,
 `docker_images`, `docker_services_by_use_case`, `active_projects`, `term_backends`, `transfer_backends`, `usernames`, `commands`, `labs`,
 `host_classes_by_id`, `projects`, `links`, `logins_by_host` and
 `docker_default_parent_by_lab` (each lab to the parent the docker verbs default to by the one rule;
 a lab the rule refuses is absent, and the container ids in `hosts` and `hosts_by_lab` sit under that parent only).
 
-- `test_options` is the `test` verb's merged flags, the options classes
-  registered for `test` serialised as plain data, so the Typer fast path in
-  `entry()` offers them on `otto test --<TAB>` without importing an options
-  module. A
-  verb whose flags cannot be merged (a collision) caches `[]`; `otto test`
-  itself is where the collision is reported.
 - `option_candidates` is every options class a command may offer, described
   at the rebuild so that a TAB imports none of them: `rows`, each class's
   flags as completion rows under its registry key, and `uses`, one per
   registration and per project-instruction body, each with its key, its
   project and its entries. A class that cannot be imported or described is
   left out, alone. Each leaf of the `shim` tree that a use covers carries
-  `candidates`, the indexes of those uses, which the rebuild computes with
+  `candidates`, the indexes of those uses, and `candidates_at`, the index in
+  its `params` where their rows go: after the parameters the command's
+  function declares and before what Typer appends (its completion options
+  and the help option), the place `otto.config._typer.attached_position`
+  decides for the live command too. The rebuild computes `candidates` with
   `otto.cli.invoke.covering_uses`: the live offer's own gate
   (`offer_gate`, which asks `leaf_accepts_options`) and then
   `otto.params.covering`, so the cache and a dispatch agree on which
   classes cover a command. Two readers union the candidates with the node's
-  own parameters, a name or spelling already taken skipped: the shim
-  (`otto._shim_complete`), and the Typer fast path in `entry()`
+  own parameters, a name or spelling already taken skipped, and insert the
+  rows at that place: the shim (`otto._shim_complete`), at
+  `candidates_at`, and the Typer fast path in `entry()`
   (`otto.cli.invoke.completion_candidates`, which rebuilds each row with
-  `stub_param_from_row`). They union and never merge, so a collision that
+  `stub_param_from_row`), through the command's attached parameters. They union and never merge, so a collision that
   stops the live command cannot fail a TAB. The fast path rebuilds no value
   completer for a row; the shim answers a row's declared source as it
   answers any other site. TAB does not yet follow the selection: every
@@ -655,7 +654,7 @@ change a cached flag. The schema history is in the comments above
 payload when `otto test` became a single command, 22 added `test_options`,
 and 23 removed the `tests` section, whose static scan of the test files was
 the last thing in a rebuild that read one. 26 added
-`docker_default_parent_by_lab`, and 34 added `option_candidates`.
+`docker_default_parent_by_lab`, and 34 added `option_candidates`, whose rows replace `test_options`.
 
 ## What it costs, and the guards that hold it
 
@@ -738,13 +737,14 @@ ceilings are. The counters are described in {doc}`../startup-performance`
   projects and the registries, the reserved namespaces, and the collect
   child's lock, cooldown and spawn.
 - `otto.cli.registry` — the collectors that walk the CLI's own command
-  tree (`collect_current_commands`, `collect_test_verb_options`,
+  tree (`collect_current_commands`,
   `collect_cli_commands`, `collect_option_candidates`). `otto.config` sits below the CLI and never
   imports it: `otto.cli.main._completion_collectors` hands these walkers,
-  the root app and the dispatch key as a `CliCollectors` to the one
-  writer, `otto.cli.main.entry`, and to the sections' collectors, which
-  nothing in `src` calls: they are the parity reference that
-  `tests/unit/cli/test_cache_writer_parity.py` holds the writer to.
+  the root app and the dispatch key as a `CliCollectors` to `entry()`'s
+  writer, `otto.cli.main.write_completion_cache`. It collects every
+  section through that section's own collector and writes them all in one
+  `write_sections` update; `tests/unit/cli/test_cache_writer_parity.py`
+  holds the stored cache to what the sections collect.
 - `otto.config.cache_sections` — the `Section` registry (`names`, `shim`),
   `CliCollectors`, the key-set functions, the shared tail and the composed
   digest.
@@ -763,5 +763,4 @@ ceilings are. The counters are described in {doc}`../startup-performance`
 - {func}`otto.cli.main.entry` — who reads and who rebuilds.
 - `otto._shim` / `otto._shim_complete` — the bash TAB reader, the
   `Handover.stale` flag, the check window and the detached spawn.
-- {mod}`otto.cli.test` — `test_verb_params`, the merged `otto test` flags
-  that `test_options` serialises, and the test-name and `-m` completers.
+- {mod}`otto.cli.test` — the test-name and `-m` completers.

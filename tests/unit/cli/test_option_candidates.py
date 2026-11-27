@@ -36,6 +36,7 @@ from tests._fixtures import plugin_commands
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, install_composed
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.scope_worlds import B_FLAGS
+from tests._fixtures.warm_tab import INSTALLERS
 
 
 class Mode(enum.Enum):
@@ -138,15 +139,20 @@ def _node(tree: "dict[str, Any]", *path: str) -> "dict[str, Any]":
     return node
 
 
-def _assert_self_preparing(node: "dict[str, Any]", field: str) -> None:
-    """A leaf that prepares its own options: no candidates, its body's flag once in its own params.
+def _assert_names_its_bodies(
+    node: "dict[str, Any]", found: "dict[str, Any]", *bodies: "tuple[str, Any, list[str]]"
+) -> None:
+    """A project instruction's node: no flag of its own, its body classes' uses as candidates.
 
-    The cache answers as the live offer does, which offers such a leaf
-    nothing (it carries ``RECORDS_OPTIONS_ATTR``): its body classes' flags
-    are already its own parameters.
+    The cache answers as the live offer does, which attaches a project
+    instruction's body classes (``OwnOptions.bodies``) for each invocation.
+    Typer's completion installers are left out: a ``run`` leaf carries them
+    whatever its options (Refs #1383).
     """
-    assert "candidates" not in node
-    assert [p["name"] for p in node["params"]].count(field) == 1
+    own = [p["name"] for p in node["params"] if not set(p["flags"]) & set(INSTALLERS)]
+    assert own == ["help"]
+    named = _named(node, found)
+    assert [use for use in bodies if use in named] == list(bodies)
 
 
 # --- the uses ----------------------------------------------------------------------------
@@ -173,8 +179,8 @@ def test_one_class_on_two_instruction_bodies_of_different_projects_keeps_both_us
     key = options_key(Shared)
     assert list(found["rows"]).count(key) == 1
     assert _uses(found, Shared) == [(key, "a", ["run provision"]), (key, "b", ["run deploy"])]
-    for name in ("provision", "deploy"):
-        _assert_self_preparing(_node(tree, "run", name), "reach")
+    _assert_names_its_bodies(_node(tree, "run", "provision"), found, (key, "a", ["run provision"]))
+    _assert_names_its_bodies(_node(tree, "run", "deploy"), found, (key, "b", ["run deploy"]))
 
 
 def test_a_body_class_that_is_also_registered_for_a_plugin_command_keeps_both_uses(plugins):
@@ -185,7 +191,9 @@ def test_a_body_class_that_is_also_registered_for_a_plugin_command_keeps_both_us
     key = options_key(Shared)
     assert [row["name"] for row in found["rows"][key]] == ["reach"]
     assert _uses(found, Shared) == [(key, "a", ["run provision"]), (key, "b", ["flash"])]
-    _assert_self_preparing(_node(tree, "run", "provision"), "reach")
+    provision = _node(tree, "run", "provision")
+    _assert_names_its_bodies(provision, found, (key, "a", ["run provision"]))
+    assert (key, "b", ["flash"]) not in _named(provision, found)
     assert _named(_node(tree, "flash", "erase"), found) == [(key, "b", ["flash"])]
 
 
@@ -271,7 +279,9 @@ def test_every_accepting_leaf_names_its_candidates_and_others_name_none(plugins)
         node = _node(tree, *path)
         leaves = [node] if not node["commands"] else list(node["commands"].values())
         assert all("candidates" not in leaf for leaf in leaves), path
-    _assert_self_preparing(_node(tree, "run", "provision"), "reach")
+    _assert_names_its_bodies(
+        _node(tree, "run", "provision"), found, (options_key(Shared), "b", ["run provision"])
+    )
 
 
 def test_a_node_holds_no_candidate_row(plugins):
@@ -289,8 +299,8 @@ def test_the_writer_reads_no_selection(scope_world, otto_cli, monkeypatch):
     monkeypatch.setattr("otto.cli.main._cache_is_writable", lambda projects: True)
     monkeypatch.setattr("otto.config.completion_cache.cache_is_stale", lambda *a, **k: True)
     monkeypatch.setattr(
-        "otto.config.completion_cache.write_cache",
-        lambda *a, **k: stored.append(k["option_candidates"]),
+        "otto.config.completion_cache.write_sections",
+        lambda projects, payloads, **k: stored.append(payloads["names"]["option_candidates"]),
     )
 
     # Control: under this selection the live path drops project b's flags.
@@ -371,26 +381,52 @@ def test_a_group_record_accepts_when_a_leaf_beneath_it_does():
     assert nested["accepts_options"] is True
 
 
-def test_a_self_preparing_leaf_is_covered_by_no_use():
-    """``covering_uses`` asks the live offer's gate: a self-preparing leaf gets no use."""
-    from otto.cli.invoke import RECORDS_OPTIONS_ATTR, covering_uses
+def test_a_leaf_with_bodies_that_does_not_accept_gets_the_same_answer_from_the_cache_and_live():
+    """One gate answers both: a leaf that does not accept is offered its own bodies only.
+
+    The leaf is ``flash erase`` with a body class of its own and its marker
+    saying it does not accept; ``flash`` itself accepts, and a class is
+    registered for it. The cache's walk (``covering_uses``) and a live TAB
+    (``live_candidates``) both offer the body and not the registration.
+    """
+    from otto.cli.invoke import (
+        ACCEPTS_OPTIONS_ATTR,
+        OWN_OPTIONS_ATTR,
+        OwnOptions,
+        covering_uses,
+        live_candidates,
+        offer_gate,
+    )
+    from otto.params import OptionsOrigin
 
     holder = typer.Typer(add_completion=False)
 
     @holder.command("erase")
     def erase() -> None:
-        """Prepares its own options."""
+        """Has a body class of its own, and does not accept."""
 
-    setattr(erase, RECORDS_OPTIONS_ATTR, True)
-    leaf = typer.main.get_command(holder)
-    root = typer.main.get_command(app)
+    @holder.command("verify")
+    def verify() -> None:
+        """Makes the holder a group."""
+
+    setattr(erase, OWN_OPTIONS_ATTR, OwnOptions(bodies=lambda: [OptionsOrigin(Healthy, "a")]))
+    setattr(erase, ACCEPTS_OPTIONS_ATTR, False)
+    _register(Shape, ["flash"], project="b")
     with plugin_commands.registered(accepts_options=True):
-        root_ctx = _context(root, "otto", None)
-        ctx = _context(leaf, "burn", root_ctx)
-        uses = [Registration(key="m:C", entries=("burn",), project=None)]
-        assert covering_uses(leaf, ctx, uses) == []
-        del erase.__otto_records_options__
-        assert covering_uses(typer.main.get_command(holder), ctx, uses) == [0]
+        group = typer.main.get_command(holder)
+        leaf = group.commands["erase"]
+        root_ctx = _context(typer.main.get_command(app), "otto", None)
+        group_ctx = _context(group, "flash", root_ctx)
+        ctx = _context(leaf, "erase", group_ctx)
+        gate = offer_gate(leaf, ctx, CLI_COMMANDS.get("flash"))
+        assert (gate.path, gate.accepts) == (["flash", "erase"], False)
+        uses = [
+            Registration(key=options_key(Healthy), entries=("flash erase",), project="a"),
+            Registration(key=options_key(Shape), entries=("flash",), project="b"),
+        ]
+        cached = [uses[i].key for i in covering_uses(leaf, ctx, uses)]
+        live = [c.key for c in live_candidates(gate.path, gate.own, covered=gate.accepts)]
+    assert cached == live == [options_key(Healthy)]
 
 
 def test_a_stub_record_holds_arguments_and_a_groups_own_parameters():

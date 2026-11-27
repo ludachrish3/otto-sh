@@ -8,7 +8,12 @@ import typer
 from rich import print as rprint
 
 from ..config._typer import get_current_context
-from ..instruction_catalog import INSTRUCTIONS, InstructionEntry, ProjectInstruction
+from ..instruction_catalog import (
+    INSTRUCTION_GROUP,
+    INSTRUCTIONS,
+    InstructionEntry,
+    ProjectInstruction,
+)
 
 # Re-export: the documented import is otto.instructions; this spelling predates it.
 from ..instruction_catalog import instruction as instruction  # noqa: PLC0414 — explicit re-export
@@ -21,40 +26,29 @@ if TYPE_CHECKING:
 def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
     """Build the leaf that dispatches project instruction *project* through the orchestrator.
 
-    The flags are every body's options fields followed by those of every
-    class registered for ``run``, merged by declaring class. The leaf
-    prepares them through :func:`otto.cli.invoke.prepare_leaf_options` (one
-    :class:`~otto.cli.invoke.LeafOptionSpec`: the ``run`` classes built, the
-    body classes offered and built by the walk), which records what the
-    command was given. It then builds every applicable body's own class once,
-    from that record, before any body runs -- so a bad value fails the same
-    way with or without ``--dry-run`` -- and keeps each instance in the
-    record, so the run's walk hands the same objects back to the bodies and
-    a hook reads them with ``otto.get_options``. A flag nobody typed reaches
-    only the classes the command offers.
-
-    Stamped by :func:`~otto.cli.invoke.stamp_options_leaf`: this leaf, like
-    every leaf ``prepare_command_target`` builds, validates its own options
-    under ``--dry-run`` and finishes the dry run itself (see the body
-    below). No hidden ``typer.Context`` parameter: the leaf reads the
-    current one the same way the wrapper does, so its public signature is
-    exactly the merged options fields.
+    Its signature is empty: the flags are every body's options fields, which
+    the leaf says are its own (``OwnOptions.bodies``), and those of every
+    class covering ``otto run <name>``, attached for each invocation and
+    merged by declaring class (``otto.cli.invoke.offered_options``). The
+    invocation prepares them before the leaf runs, the covering classes
+    built and the body classes recorded for the walk
+    (``otto.cli.invoke.prepare_command_options``); called by other code, the
+    leaf prepares them itself, every value given and every project kept.
+    It then builds every applicable body's own class once, from that
+    record, before any body runs -- so a bad value fails the same way with
+    or without ``--dry-run`` -- and keeps each instance in the record, so the
+    run's walk hands the same objects back to the bodies and a hook reads
+    them with ``otto.get_options``. A flag nobody typed reaches only the
+    classes the command offers. Under ``--dry-run`` the leaf finishes the
+    dry run itself (see the body below).
     """
-    from ..params import merge_option_params, verb_option_classes
+    from ..instruction_catalog import instruction_path
     from ..project.commands import body_origins
-    from .invoke import LeafOptionSpec, stamp_options_leaf
+    from .invoke import OWN_OPTIONS_ATTR, OwnOptions
 
     name = project.spec.name
-    own_origins = body_origins(project)
-    verb_origins = verb_option_classes("run")
-    params = merge_option_params(
-        own_origins + verb_origins,
-        what=f"project instruction {name!r}",
-    )
-    spec = LeafOptionSpec(
-        group="run",
-        build=tuple(origin.cls for origin in verb_origins),
-        walk=tuple(origin.cls for origin in own_origins),
+    own = OwnOptions(
+        bodies=lambda: body_origins(project), finishes_dry_run=True, every_project=True
     )
 
     async def _leaf(**kw: Any) -> Any:
@@ -67,7 +61,7 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
             command_spec,
             dry_run_requested,
             finish_dry_run,
-            prepare_leaf_options,
+            leaf_preparation,
             usage_error_from,
         )
 
@@ -82,7 +76,7 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
         # runtime.
         click_ctx = cast("typer.Context | None", get_current_context(silent=True))
         dry = click_ctx is not None and dry_run_requested(click_ctx)
-        prepared = prepare_leaf_options(kw, spec, leaf=_leaf)
+        prepared = leaf_preparation(_leaf, kw, own, instruction_path(name))
         with prepared.scope():
             ctx = get_context()
             try:
@@ -94,20 +88,19 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
                 walk = orchestrator.prepare_project_instruction(
                     name, ctx, kw, announce=dry, source=options_snapshot(prepared.recorded)
                 )
-                own = walk.own
+                own_instances = walk.own
             except OptionsValidationError as e:
                 raise usage_error_from(e) from e
             # A class the command offers is prepared once and travels with the
             # recorded flags: the run's walk is handed these very objects.
-            for instance in own:
+            for instance in own_instances:
                 prepared.recorded.instances[type(instance)] = instance
             if click_ctx is not None and dry:
                 # Own classes first (one per distinct body, walk order) then the
-                # verb's OTHER registered classes -- same rule
-                # `otto.cli.invoke._wrap_with_options` follows for a standalone
-                # instruction.
-                own_types = {type(instance) for instance in own}
-                verb_instances = [
+                # covering classes -- the order a standalone instruction's
+                # wrapper shows its own class and the covering ones in.
+                own_types = {type(instance) for instance in own_instances}
+                covering_instances = [
                     instance for cls, instance in prepared.instances.items() if cls not in own_types
                 ]
                 if project.spec.dry_run_preview:
@@ -128,18 +121,14 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
                 preview = command_spec(click_ctx).dry_run_preview or _leaf_declares_preview(
                     click_ctx
                 )
-                await finish_dry_run(click_ctx, own + verb_instances, preview=preview)
+                await finish_dry_run(click_ctx, own_instances + covering_instances, preview=preview)
             return await orchestrator.run_project_instruction(name, kw, source=walk.source)
 
     _leaf.__name__ = name.replace("-", "_")
     _leaf.__qualname__ = _leaf.__name__
     _leaf.__doc__ = project.spec.help
-    # Both, not just the signature: the completion cache serialises a command
-    # from `inspect.signature`, while typer reads the ANNOTATIONS to find each
-    # parameter's `typer.Option` metadata.
-    _leaf.__signature__ = inspect.Signature(params)  # ty: ignore[missing-attribute]
-    _leaf.__annotations__ = {p.name: p.annotation for p in params}
-    stamp_options_leaf(_leaf, spec)
+    _leaf.__signature__ = inspect.Signature([])  # ty: ignore[missing-attribute]
+    setattr(_leaf, OWN_OPTIONS_ATTR, own)
     return _leaf
 
 
@@ -157,16 +146,19 @@ def instruction_help(entry: InstructionEntry) -> str | None:
 def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
     """Build ``otto run <name>``'s Typer app from its registry entry, on resolution.
 
-    Built here and not at registration: the flags include every options
-    class registered for ``run``, which a later init module may still add,
-    and resolving those classes may import their modules -- a cost only
-    ``otto run`` should pay. A clash between the instruction's own fields
-    and the verb's is found here, before any body runs.
+    The command holds its own parameters only: the flags of the classes
+    covering ``otto run <name>`` (and a project instruction's body classes)
+    are attached for each invocation, and resolved only when a parse needs
+    them (``otto.cli.invoke.offered_options``). Nothing is resolved here. A
+    clash between the instruction's own fields and a covering class's is
+    found by that parse, before any body runs.
 
     *entry* must already be registered: its owning project, which the dispatch
     gate reads, is looked up in ``INSTRUCTIONS`` by name, and an unregistered
     name raises rather than running ownerless.
     """
+    from ..instruction_catalog import instruction_path
+
     app = typer.Typer()
     if entry.project is not None:
         app.command(entry.name, help=instruction_help(entry))(_project_leaf(entry.project))
@@ -174,7 +166,10 @@ def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
     if entry.handler is None:  # unreachable: __post_init__ requires handler xor project
         raise ValueError(f"instruction {entry.name!r} has neither handler nor project set")
     target = prepare_command_target(
-        entry.handler, entry.options_cls, verb="run", project=INSTRUCTIONS.project(name=entry.name)
+        entry.handler,
+        entry.options_cls,
+        project=INSTRUCTIONS.project(name=entry.name),
+        path=instruction_path(entry.name),
     )
     app.command(entry.name, help=instruction_help(entry))(target)
     return app
@@ -184,9 +179,9 @@ def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
 # a later app.info mutation, so run_app resolves every child instruction
 # lazily through the same idiom as the root app's CLI_COMMANDS group.
 run_app = typer.Typer(
-    name="run",
+    name=INSTRUCTION_GROUP,
     no_args_is_help=True,
-    cls=make_registry_group(INSTRUCTIONS, app_of=build_instruction_app, help_of=instruction_help),
+    cls=make_registry_group(INSTRUCTIONS, app_of=build_instruction_app),
     context_settings={
         "help_option_names": ["-h", "--help"],
     },

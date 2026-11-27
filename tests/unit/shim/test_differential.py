@@ -158,8 +158,8 @@ def world(tmp_path, monkeypatch):
     plus ONE warm key on docker lines: ``docker_default_parent_by_lab``, the
     stored fact a TAB reads without bootstrapping (see ``_typer``). Only that
     key, because a fuller warm snapshot takes ``_OttoGroup._real``'s fast path,
-    which rebuilds ``test`` from the cached ``test_options`` and drops its live
-    options. Spec §1 decision 7 makes bootstrapped Typer the equality target,
+    which attaches ``run``'s cached instruction stubs in place of the live
+    commands. Spec §1 decision 7 makes bootstrapped Typer the equality target,
     and the warm-stub path (``_OttoGroup._real`` attaching cached stubs) is
     explicitly NOT it — a warm-side difference would be a stub defect, not a
     shim one.

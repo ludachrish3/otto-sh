@@ -83,22 +83,28 @@ def test_write_cache_stores_the_shim_section_when_given(tmp_path, monkeypatch):
 
 
 def test_the_section_collects_exactly_what_the_writer_stores(tmp_path, monkeypatch):
-    """The Section and `entry()`'s writer store one shim payload, its leaves' candidates included.
+    """`entry()`'s writer stores, for every section, what that section collects.
 
-    The writer (``otto.cli.main.write_completion_cache``) is driven and its
-    ``shim=`` captured: a writer that built the tree by a call of its own (one
-    leaving out the leaf candidates, another app, a different project list)
-    would drift from the section silently.
+    The writer (``otto.cli.main.write_completion_cache``) is driven and the
+    payloads it hands ``write_sections`` captured: a writer that built a
+    payload by a call of its own (the shim tree without its leaves'
+    candidates, the ``names`` keys restated one by one, another app, a
+    different project list) would drift from the sections silently.
     """
     from otto.cli.main import write_completion_cache
 
     _, projects = _projects(tmp_path, monkeypatch)
-    stored: "dict[str, object]" = {}
-    monkeypatch.setattr(cc, "write_cache", lambda *args, **kwargs: stored.update(kwargs))
+    stored: "dict[str, dict]" = {}
+    monkeypatch.setattr(
+        cc, "write_sections", lambda projects, payloads, **kwargs: stored.update(payloads)
+    )
     write_completion_cache(projects)
-    collected = section_by_name("shim").collect(projects, _completion_collectors())
-    assert stored["shim"] == collected
-    assert '"candidates"' in json.dumps(collected["tree"])
+    cli = _completion_collectors()
+    collected = {section.name: section.collect(projects, cli) for section in SECTIONS}
+    assert set(stored) == {"names", "shim"}
+    assert stored == collected
+    assert '"candidates"' in json.dumps(collected["shim"]["tree"])
+    assert collected["names"]["option_candidates"]["uses"]
 
 
 def test_a_missing_shim_section_makes_a_rebuild_worthwhile(tmp_path, monkeypatch):

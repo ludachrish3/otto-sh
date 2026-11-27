@@ -948,6 +948,40 @@ class TestCollectCliCommandChildren:
         finally:
             CLI_COMMANDS.unregister(name="nesttool")
 
+    def test_a_sub_app_named_by_its_callback_is_recorded_under_the_name_typer_builds(self) -> None:
+        """Typer names a sub-app added with no name from its registered callback second.
+
+        ``typer.main.solve_typer_info_defaults`` reads the ``add_typer`` call,
+        then the sub-app's ``registered_callback``, then ``typer.Typer(...)``.
+        Typer 0.29's ``@sub.callback()`` takes no ``name=``, so the callback
+        record is set as Typer stores it.
+        """
+        from typer.models import TyperInfo
+
+        from otto.cli.registry import CLI_COMMANDS, register_cli_command
+
+        tool, sub = typer.Typer(), typer.Typer()
+
+        def named() -> None: ...
+
+        @sub.command("leaf")
+        def leaf() -> None: ...
+
+        @tool.command("top")
+        def top() -> None: ...
+
+        sub.registered_callback = TyperInfo(name="named", callback=named)
+        tool.add_typer(sub)
+        register_cli_command("cbtool", tool)
+        try:
+            children = self._collect_entry("cbtool")["commands"]
+            live = typer.main.get_command(tool)
+            assert set(live.commands) == {"top", "named"}
+            assert [c["name"] for c in children] == ["top", "named"]
+            assert [c["name"] for c in children[1]["commands"]] == ["leaf"]
+        finally:
+            CLI_COMMANDS.unregister(name="cbtool")
+
 
 def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> None:
     """write_cache/read_cache carry the 'commands' key through a round trip."""
@@ -1502,8 +1536,9 @@ def test_declining_loader_module_does_not_escape_collect_cli_commands(monkeypatc
     ``collect_cli_commands`` imports each non-otto command's ``"pkg.mod:attr"``
     loader. A module-level ``pytest.importorskip`` there raises ``Skipped`` —
     rooted at ``BaseException``, so an ``except Exception`` seam misses it. It
-    escapes ``entry()`` as a call ARGUMENT to ``write_cache``, outside the
-    ``suppress(OSError)``, and tracebacks out of EVERY command including
+    escapes ``entry()`` from ``section.collect`` inside
+    ``write_completion_cache``, outside the ``suppress(OSError)``, and
+    tracebacks out of EVERY command including
     ``otto --help``, and into the shell mid-TAB.
     """
     import sys
