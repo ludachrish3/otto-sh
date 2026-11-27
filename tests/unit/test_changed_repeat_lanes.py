@@ -12,7 +12,9 @@ The sessions are driven with a recording double, as
 """
 
 import re
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 import yaml
@@ -20,6 +22,7 @@ import yaml
 from scripts.local_gate_status import REQUIRED_CONTEXTS_FILE, required_contexts
 from tests._fixtures.gha_matrix import expand_names, matrix_rows, render
 from tests._fixtures.paths import CHECKOUT_ROOT
+from tests._fixtures.root_conftest_pytester import outer_session_free_env
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -61,16 +64,29 @@ class _SkippedError(Exception):
     pass
 
 
+class _ErroredError(Exception):
+    pass
+
+
 class _RecordingSession:
-    """Answers the file listing with *files* and records every other ``run``."""
+    """Answers the file listing with *files* and the collection with what each ``-m`` selects.
+
+    *selects* maps a run's ``-m`` expression to the files it selects; a run it
+    does not name selects every file. Every other ``pytest`` call is a run.
+    """
 
     name = "recorded"
 
-    def __init__(self, files: "list[str]") -> None:
+    def __init__(self, files: "list[str]", selects: "dict[str, list[str]] | None" = None) -> None:
         self._files = files
+        self._selects = selects or {}
         self.posargs: "list[str]" = []
         self.listings: "list[tuple[str, ...]]" = []
+        self.collections: "list[tuple[tuple[str, ...], dict]]" = []
         self.pytests: "list[tuple[tuple[str, ...], dict]]" = []
+        self.logs: "list[str]" = []
+        # When set, the collection prints this instead of the `path: count` lines.
+        self.collection_listing: "str | None" = None
 
     def run(self, *args: str, **kwargs: object) -> "str | None":
         if args[:2] == ("python", "scripts/changed_tests.py"):
@@ -78,15 +94,30 @@ class _RecordingSession:
             self.listing_kwargs = kwargs
             return "".join(f"{path}\n" for path in self._files)
         assert args[:1] == ("pytest",), args
+        if "--collect-only" in args:
+            self.collections.append((args, kwargs))
+            if self.collection_listing is not None:
+                return self.collection_listing
+            expr = args[args.index("-m") + 1]
+            kept = [a for a in args if a in self._selects.get(expr, self._files)]
+            return "".join(f"{path}: 3\n" for path in kept)
         self.pytests.append((args, kwargs))
         return None
 
     def skip(self, *reason: str) -> None:
         raise _SkippedError(*reason)
 
+    def log(self, message: str) -> None:
+        self.logs.append(message)
 
-def _drive(name: str, files: "list[str]") -> _RecordingSession:
-    session = _RecordingSession(files)
+    def error(self, *reason: str) -> None:
+        raise _ErroredError(*reason)
+
+
+def _drive(
+    name: str, files: "list[str]", selects: "dict[str, list[str]] | None" = None
+) -> _RecordingSession:
+    session = _RecordingSession(files, selects)
     getattr(_noxfile(), name).func.__wrapped__(session)
     return session
 
@@ -186,8 +217,167 @@ def test_a_session_repeats_exactly_the_files_the_diff_lists_under_its_roots(
         assert list(argv[1 : 1 + len(files)]) == files
         assert list(argv[1 + len(files) : 1 + len(files) + len(tokens)]) == tokens
         assert not [token for token in argv[1:] if token in ("tests/unit", "tests/e2e", *roots)]
-        # 5 is pytest's "no tests collected": every test in the files is another lane's.
+        # A run starts only once its collection found a test, so exit 5 there is red.
+        assert kwargs["success_codes"] == [0]
+
+
+def _expr(bundle: "tuple[str, ...]") -> str:
+    return bundle[bundle.index("-m") + 1]
+
+
+def test_a_file_whose_tests_the_runs_marker_deselects_is_not_repeated() -> None:
+    """The repeat plugin multiplies items before ``-m`` deselects any (#1394)."""
+    noxfile = _noxfile()
+    kept, dropped = "tests/unit/test_kept.py", "tests/unit/test_stability_only.py"
+    bundle = noxfile.CHANGED_REPEAT_GUARDS_ARGS
+    session = _drive("tests_changed_repeat_guards", [kept, dropped], {_expr(bundle): [kept]})
+    [(argv, _)] = session.pytests
+    assert kept in argv
+    assert dropped not in argv
+
+
+def test_a_run_whose_marker_selects_no_changed_file_is_not_started() -> None:
+    noxfile = _noxfile()
+    files = ["tests/unit/test_one.py"]
+    serial = _expr(noxfile.CHANGED_REPEAT_UNIT_SERIAL_ARGS)
+    session = _drive("tests_changed_repeat_unit", files, {serial: []})
+    assert len(session.collections) == 2
+    [(argv, _)] = session.pytests
+    assert _expr(noxfile.CHANGED_REPEAT_UNIT_TEST_ARGS) in argv
+    assert serial not in argv
+    assert not [a for a, _ in session.pytests if not [t for t in a[1:] if t.endswith(".py")]], (
+        "a pytest call with no path would run the whole suite"
+    )
+
+
+@pytest.mark.parametrize("name", list(_SESSIONS))
+def test_the_collection_selects_as_its_run_does(name: str) -> None:
+    roots, bundles = _SESSIONS[name]
+    files = [f"{roots[0]}/test_one.py"]
+    noxfile = _noxfile()
+    session = _RecordingSession(files)
+    session.posargs = ["--browser", "chromium"]
+    getattr(noxfile, name).func.__wrapped__(session)
+    assert len(session.collections) == len(bundles)
+    for (argv, kwargs), bundle in zip(session.collections, bundles, strict=True):
+        tokens = [t for t in getattr(noxfile, bundle) if not t.startswith("--count=")]
+        assert list(argv) == [
+            "pytest",
+            "--collect-only",
+            "-qq",
+            "-n0",
+            *files,
+            *tokens,
+            "--browser",
+            "chromium",
+        ]
         assert kwargs["success_codes"] == [0, 5]
+        assert kwargs["stderr"] is None
+    # The collection runs under the env of its run, and so selects as it does.
+    for (_, collection), (r_argv, run), bundle in zip(
+        session.collections, session.pytests, bundles, strict=True
+    ):
+        assert collection["env"] == run["env"]
+        # The run spells the same bundle as its collection (which drops only the
+        # count), so the two names a session spells cannot drift apart.
+        full = list(getattr(noxfile, bundle))
+        assert list(r_argv[1 + len(files) : 1 + len(files) + len(full)]) == full
+    assert session.collections[0][1]["env"] == (
+        None if name == "tests_changed_repeat_browser" else noxfile._LEAK_ENV
+    )
+
+
+# Runaway guard, not a measurement: each child takes a few seconds.
+_CHILD_TIMEOUT_S = 300
+
+
+def _collect_listing(cwd: Path, *args: str) -> "subprocess.CompletedProcess[str]":
+    """Run a real ``pytest --collect-only -qq`` in a child and return it.
+
+    The parent run must not steer the child: its env is the outer-session-free
+    one (an ambient PYTEST_ADDOPTS ``-v`` would turn ``-qq`` into node ids).
+    """
+    env = outer_session_free_env()
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-qq",
+            "-n0",
+            "-p",
+            "no:cacheprovider",
+            "--no-cov",
+            *args,
+        ],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=_CHILD_TIMEOUT_S,
+    )
+
+
+def test_a_listing_the_parser_cannot_read_fails_the_session_and_starts_no_run() -> None:
+    session = _RecordingSession(["tests/unit/x.py"])
+    session.collection_listing = "tests/unit/x.py::test_a\ntests/unit/x.py::test_b\n"
+    with pytest.raises(_ErroredError, match=r"(?s)could not be read.*tests/unit/x\.py::test_a"):
+        _noxfile().tests_changed_repeat_guards.func.__wrapped__(session)
+    assert session.pytests == []
+
+
+def test_a_blank_listing_starts_no_run_and_is_no_error() -> None:
+    session = _RecordingSession(["tests/unit/x.py"])
+    session.collection_listing = "\n\n"
+    _noxfile().tests_changed_repeat_guards.func.__wrapped__(session)
+    assert session.pytests == []
+    assert session.logs == ["repeat keeps no file; drops ['tests/unit/x.py']"]
+
+
+def test_each_run_logs_the_files_it_keeps_and_drops() -> None:
+    kept, dropped = "tests/unit/a.py", "tests/unit/b.py"
+    noxfile = _noxfile()
+    expr = _expr(noxfile.CHANGED_REPEAT_GUARDS_ARGS)
+    session = _drive("tests_changed_repeat_guards", [kept, dropped], {expr: [kept]})
+    assert session.logs == [f"repeat keeps ['{kept}']; drops ['{dropped}']"]
+
+
+def test_the_parser_reads_the_listing_under_the_checkouts_own_configuration() -> None:
+    """The checkout's ini and conftests apply (no private ini), as in the real lane."""
+    this = "tests/unit/test_changed_repeat_lanes.py"
+    done = _collect_listing(CHECKOUT_ROOT, "-m", "not stability", this)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert _noxfile()._selected_files(done.stdout, [this]) == [this]
+
+
+def test_the_parser_reads_pytests_own_collect_only_listing(tmp_path: Path) -> None:
+    """Pins pytest's ``-qq`` format: a ``path: count`` line per file with a selected item."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\nmarkers =\n    stability: soak\n")
+    (tmp_path / "test_sweep.py").write_text(
+        "import pytest\npytestmark = pytest.mark.stability\n\n\n"
+        "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n"
+    )
+    (tmp_path / "test_plain.py").write_text(
+        "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n"
+    )
+    (tmp_path / "test_mixed.py").write_text(
+        "import pytest\n\n\n@pytest.mark.stability\ndef test_a():\n    pass\n\n\n"
+        "def test_b():\n    pass\n"
+    )
+    files = ["test_sweep.py", "test_plain.py", "test_mixed.py"]
+    done = _collect_listing(tmp_path, "-c", "pytest.ini", "-m", "not stability", *files)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert _noxfile()._selected_files(done.stdout, files) == ["test_plain.py", "test_mixed.py"]
+
+
+def test_the_parser_ignores_every_line_that_is_not_a_positive_count_for_a_given_file() -> None:
+    listing = (
+        "a.py: 2\nb.py: 0\nother.py: 4\n\nwarning: something: odd\n"
+        "3 tests collected in 0.01s\nc.py: x\n"
+    )
+    assert _noxfile()._selected_files(listing, ["c.py", "a.py", "b.py"]) == ["a.py"]
 
 
 @pytest.mark.parametrize("name", list(_SESSIONS))

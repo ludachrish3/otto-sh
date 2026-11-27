@@ -10,6 +10,9 @@ through the environment and pins the terminal width the inner report is
 parsed at.
 """
 
+import os
+from collections.abc import Mapping
+
 import pytest
 
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -46,6 +49,12 @@ _OUTER_SESSION_ENV = [
     "PYTEST_XDIST_WORKER_COUNT",
     "PYTEST_XDIST_TESTRUNUID",
 ]
+
+
+def outer_session_free_env(environ: "Mapping[str, str]" = os.environ) -> "dict[str, str]":
+    """Return a copy of *environ* without what the outer pytest session leaks into a child."""
+    return {key: value for key, value in environ.items() if key not in _OUTER_SESSION_ENV}
+
 
 # Wide enough that no section header or summary line of the inner report is
 # shortened; pytest sizes them from COLUMNS, which the outer run may set to
