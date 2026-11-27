@@ -388,7 +388,9 @@ CHANGED_TESTS_DEFAULT_RANGE = "HEAD^1..HEAD"
 
 # pytest's "no tests collected": every test in the changed files belongs to
 # another lane (a bed-only test, a browser test in a hostless lane). That is
-# nothing to repeat here, and it is green ONLY for the repeat sessions.
+# nothing to repeat here, so it is green for the repeat's COLLECTION only
+# (`_repeated_files`). A repeat run starts after its collection found a test,
+# so exit 5 from a run is a disagreement and stays red.
 NO_TESTS_COLLECTED = 5
 
 
@@ -970,6 +972,67 @@ def _changed_test_files(session: nox.Session, roots: "tuple[str, ...]") -> "list
     return (listing or "").split()
 
 
+def _selected_files(listing: str, files: "list[str]") -> "list[str]":
+    """Return the *files* that ``pytest --collect-only -qq`` lists with a selected test.
+
+    ``-qq`` prints one ``path: count`` line per file that keeps an item after
+    ``-m`` and ``-k``. Every other line (a warning, a summary, a blank) is
+    ignored; the result keeps *files*' order.
+    """
+    counts: "dict[str, int]" = {}
+    for line in listing.splitlines():
+        path, sep, count = line.rpartition(": ")
+        if sep and count.strip().isdigit():
+            counts[path.strip()] = int(count)
+    return [path for path in files if counts.get(path, 0) > 0]
+
+
+def _repeated_files(
+    session: nox.Session,
+    files: "list[str]",
+    bundle: "tuple[str, ...]",
+    env: "dict[str, str] | None" = None,
+) -> "list[str]":
+    """Return the *files* in which *bundle*'s marker expression selects at least one test.
+
+    The repeat plugin multiplies a file's items while it generates them, before
+    ``-m`` deselects any, so a file no lane runs (the stability-only line-cut
+    sweep) would still be built ``--count`` times over in every worker (#1394).
+    One collection at count 1, with the run's own selection, tells which files
+    to hand the repeat. A collection error still fails the session, and so does
+    a listing that names no kept file yet is not blank: pytest prints only blank
+    lines when nothing is selected, so anything else is a listing this parser
+    cannot read (a verbosity setting, say) and a silent empty selection would
+    repeat nothing and pass.
+    """
+    selection = [token for token in bundle if not token.startswith("--count=")]
+    # stderr=None for the same reason as `_changed_test_files`.
+    listing = session.run(
+        "pytest",
+        "--collect-only",
+        "-qq",
+        "-n0",
+        *files,
+        *selection,
+        *session.posargs,
+        silent=True,
+        stderr=None,
+        env=env,
+        success_codes=[0, NO_TESTS_COLLECTED],
+    )
+    listing = listing or ""
+    selected = _selected_files(listing, files)
+    if not selected and listing.strip():
+        head = "\n".join([line for line in listing.splitlines() if line.strip()][:5])
+        session.error(
+            "the repeat's collection listing could not be read (expected `path: count` lines); "
+            f"its first lines:\n{head}"
+        )
+    dropped = [path for path in files if path not in selected]
+    session.log(f"repeat keeps {selected or 'no file'}; drops {dropped or 'no file'}")
+    return selected
+
+
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
 def tests_changed_repeat_unit(session: nox.Session) -> None:
     """Repeat the ``tests/unit`` files the diff adds or modifies (less the guards family).
@@ -981,24 +1044,26 @@ def tests_changed_repeat_unit(session: nox.Session) -> None:
     files = _changed_test_files(session, CHANGED_REPEAT_UNIT_ROOTS)
     if not files:
         session.skip("the diff adds or modifies no test file under tests/unit")
-    session.run(
-        "pytest",
-        *files,
-        *CHANGED_REPEAT_UNIT_TEST_ARGS,
-        _junitxml(session, "changed-repeat"),
-        *session.posargs,
-        env=_LEAK_ENV,
-        success_codes=[0, NO_TESTS_COLLECTED],
-    )
-    session.run(
-        "pytest",
-        *files,
-        *CHANGED_REPEAT_UNIT_SERIAL_ARGS,
-        _junitxml(session, "changed-repeat-serial"),
-        *session.posargs,
-        env=_LEAK_ENV,
-        success_codes=[0, NO_TESTS_COLLECTED],
-    )
+    if kept := _repeated_files(session, files, CHANGED_REPEAT_UNIT_TEST_ARGS, env=_LEAK_ENV):
+        session.run(
+            "pytest",
+            *kept,
+            *CHANGED_REPEAT_UNIT_TEST_ARGS,
+            _junitxml(session, "changed-repeat"),
+            *session.posargs,
+            env=_LEAK_ENV,
+            success_codes=[0],
+        )
+    if kept := _repeated_files(session, files, CHANGED_REPEAT_UNIT_SERIAL_ARGS, env=_LEAK_ENV):
+        session.run(
+            "pytest",
+            *kept,
+            *CHANGED_REPEAT_UNIT_SERIAL_ARGS,
+            _junitxml(session, "changed-repeat-serial"),
+            *session.posargs,
+            env=_LEAK_ENV,
+            success_codes=[0],
+        )
 
 
 @nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
@@ -1011,15 +1076,16 @@ def tests_changed_repeat_guards(session: nox.Session) -> None:
     files = _changed_test_files(session, CHANGED_REPEAT_UNIT_ROOTS)
     if not files:
         session.skip("the diff adds or modifies no test file under tests/unit")
-    session.run(
-        "pytest",
-        *files,
-        *CHANGED_REPEAT_GUARDS_ARGS,
-        _junitxml(session, "changed-repeat"),
-        *session.posargs,
-        env=_LEAK_ENV,
-        success_codes=[0, NO_TESTS_COLLECTED],
-    )
+    if kept := _repeated_files(session, files, CHANGED_REPEAT_GUARDS_ARGS, env=_LEAK_ENV):
+        session.run(
+            "pytest",
+            *kept,
+            *CHANGED_REPEAT_GUARDS_ARGS,
+            _junitxml(session, "changed-repeat"),
+            *session.posargs,
+            env=_LEAK_ENV,
+            success_codes=[0],
+        )
 
 
 @nox_uv.session(python=list(BOOKEND_PYTHONS), uv_groups=["dev"])
@@ -1034,24 +1100,26 @@ def tests_changed_repeat_e2e(session: nox.Session) -> None:
     files = _changed_test_files(session, CHANGED_REPEAT_E2E_ROOTS)
     if not files:
         session.skip("the diff adds or modifies no test file under tests/e2e")
-    session.run(
-        "pytest",
-        *files,
-        *CHANGED_REPEAT_E2E_TEST_ARGS,
-        _junitxml(session, "changed-repeat"),
-        *session.posargs,
-        env=_LEAK_ENV,
-        success_codes=[0, NO_TESTS_COLLECTED],
-    )
-    session.run(
-        "pytest",
-        *files,
-        *CHANGED_REPEAT_E2E_SERIAL_ARGS,
-        _junitxml(session, "changed-repeat-serial"),
-        *session.posargs,
-        env=_LEAK_ENV,
-        success_codes=[0, NO_TESTS_COLLECTED],
-    )
+    if kept := _repeated_files(session, files, CHANGED_REPEAT_E2E_TEST_ARGS, env=_LEAK_ENV):
+        session.run(
+            "pytest",
+            *kept,
+            *CHANGED_REPEAT_E2E_TEST_ARGS,
+            _junitxml(session, "changed-repeat"),
+            *session.posargs,
+            env=_LEAK_ENV,
+            success_codes=[0],
+        )
+    if kept := _repeated_files(session, files, CHANGED_REPEAT_E2E_SERIAL_ARGS, env=_LEAK_ENV):
+        session.run(
+            "pytest",
+            *kept,
+            *CHANGED_REPEAT_E2E_SERIAL_ARGS,
+            _junitxml(session, "changed-repeat-serial"),
+            *session.posargs,
+            env=_LEAK_ENV,
+            success_codes=[0],
+        )
 
 
 @nox_uv.session(python=[PRIMARY_PYTHON], uv_groups=["dev"])
@@ -1072,15 +1140,17 @@ def tests_changed_repeat_browser(session: nox.Session) -> None:
     files = _changed_test_files(session, DASHBOARD_PATHS)
     if not files:
         session.skip("the diff adds or modifies no test file under the browser suites")
-    session.run(
-        "pytest",
-        *files,
-        *CHANGED_REPEAT_BROWSER_ARGS,
-        *DASHBOARD_ARTIFACT_ARGS,
-        _junitxml(session, "changed-repeat"),
-        *session.posargs,
-        success_codes=[0, NO_TESTS_COLLECTED],
-    )
+    if kept := _repeated_files(session, files, CHANGED_REPEAT_BROWSER_ARGS, env=None):
+        session.run(
+            "pytest",
+            *kept,
+            *CHANGED_REPEAT_BROWSER_ARGS,
+            *DASHBOARD_ARTIFACT_ARGS,
+            _junitxml(session, "changed-repeat"),
+            *session.posargs,
+            env=None,
+            success_codes=[0],
+        )
 
 
 def _scratch(session: nox.Session, name: str) -> Path:

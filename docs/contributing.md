@@ -1847,6 +1847,15 @@ One failure in any repeat fails the job. Nothing is retried, and the fix is
 the test's cause ([When main goes red](#when-main-goes-red) says why). A
 session whose lane has no changed file is skipped.
 
+Each run first collects the changed files once, with its own marker expression
+and no repeat count, and repeats only the files where that expression selects
+a test. The repeat plugin multiplies a file's items while it generates them,
+before the marker expression deselects any, so a file that no lane runs, like
+the stability-only line-cut sweep, was built twenty times over in every worker
+and ran the CI runner out of memory
+([#1394](https://github.com/ludachrish3/otto-sh/issues/1394)). A run whose
+expression selects no changed file is not started.
+
 The repeats of one test are separate items, and a parallel leg spreads them
 over its workers as it does any other items, so two repeats of a test can
 run at the same time (nightly's repeat lanes do the same). A test that takes
