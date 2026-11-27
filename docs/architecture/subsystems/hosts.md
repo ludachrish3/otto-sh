@@ -177,6 +177,14 @@ shell, which is interactive, as a person's command is:
   terminal's width, and a progress bar redraws its line with carriage
   returns, which stay in `value`. Ask the tool for plain output (`ls -1`,
   `ps auxww`, `systemctl status -l`), or pass `terminal=False`.
+- Colour codes land in `value`. `ip` and `tc` colour their output on a
+  terminal, and `ls` and `grep` do through the `--color=auto` aliases the
+  interactive shell loads. Typed back into a later command, the codes are
+  refused with `UntypableCommandError`. A call that parses the output asks
+  the tool for none (`ip -c=never`, `ls --color=never`), or passes
+  `terminal=False` (`--no-terminal`) where the host offers it; a command
+  otto wrote runs through `exec_own`, which takes no terminal where it needs
+  none ({ref}`otto-own-exec`).
 - A pager waits for a key, so the call waits until its timeout. `git log`
   does this. Pass the tool's own option (`git --no-pager log`), or
   `terminal=False`.
