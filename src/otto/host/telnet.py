@@ -386,13 +386,23 @@ def retries_failed_open(
 ) -> bool:
     """Whether a session on *term* may be rebuilt after its first handshake failed.
 
-    Every term but a console that logs in (*console_options* ``login``):
-    its client types the password, and a rebuilt session would type it into
-    the line again. A *named* open (a named or pooled session) is not
-    rebuilt either on a line that serves one client (:func:`single_client`):
-    the host's default session may hold that one slot, so a second dial
-    cannot succeed, and a Zephyr ``shell_telnet`` dialled again while its
-    slot is held stops answering the session that holds it. The open budget
+    Never on a telnet line that serves one client (*telnet_options*
+    ``single_client_console``, the Zephyr ``shell_telnet`` backend): a
+    failed open there nearly always means another client holds the slot, a
+    second dial cannot succeed while it does, and a stock Zephyr 3.7 device
+    dialled again does not answer at all, so the caller would wait a whole
+    readiness deadline to learn what the first failure already said. The
+    rule cannot tell a held slot from one the device has not freed yet; a
+    close drains such a line before releasing it, and an open right after
+    one was not seen to fail (``SessionManager._open_confirmed`` has the
+    count). Never on a console that
+    logs in (*console_options* ``login``): its client types the password,
+    and a rebuilt session would type it into the line again. A *named* open
+    (a named or pooled session) is not rebuilt on any line that serves one
+    client (:func:`single_client`, a console server's included): the host's
+    default session may hold that one slot.
+
+    The open budget
     (:meth:`~otto.host.connections.ConnectionManager.retries_failed_open`)
     and the session's own verdict (``ShellSession._retry_failed_handshake``,
     which ``SessionManager._open_confirmed`` reads) both start here; the
@@ -401,7 +411,7 @@ def retries_failed_open(
     ``ShellSession._retries_named_open``; the budget, which sizes the
     default open, does not.
     """
-    if named and single_client(term, telnet_options):
+    if single_client(term, telnet_options) and (named or term == "telnet"):
         return False
     return not (term == "console" and console_options is not None and console_options.login)
 

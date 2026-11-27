@@ -1152,3 +1152,30 @@ async def test_a_second_open_on_a_one_client_line_dials_once(open_) -> None:
             await host.close()
     assert dials == 2, "the named or pooled open dialled the held line again"
     assert after == "after"
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_a_default_open_on_a_held_one_client_line_dials_once() -> None:
+    """Another client holds the one slot: a host's first open dials once, then fails (#1375).
+
+    The refusal already says the line is in use. A second dial two seconds
+    later cannot succeed while it is, and a stock Zephyr 3.7 device does not
+    answer it at all, so the caller would wait the whole readiness deadline.
+    """
+    from tests._fixtures.loopback_servers import telnet_device
+
+    async with telnet_device(["accept"], one_client=True) as (port, device):
+        holder = telnet_host(port, single_client_console=True)
+        late = telnet_host(port, single_client_console=True)
+        try:
+            assert (await holder.run("echo first"))[0].value == "first"
+            with pytest.raises(ConnectionError):
+                await late._session_mgr._ensure_session()
+            dials = device.connections
+            after = (await holder.run("echo after"))[0].value
+        finally:
+            await late.close()
+            await holder.close()
+    assert dials == 2, "the refused open dialled the held line a second time"
+    assert after == "after"

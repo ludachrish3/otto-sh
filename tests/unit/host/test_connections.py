@@ -665,6 +665,15 @@ class TestConnectAllowance:
         quiet_opts = ConsoleOptions(server="s", port=1, login=False)
         assert self._cm("console", console_options=quiet_opts).retries_failed_open() is True
 
+    def test_a_telnet_line_that_serves_one_client_is_not_retried(self):
+        one = TelnetOptions(single_client_console=True)
+        assert self._cm("telnet", telnet_options=one).retries_failed_open() is False
+        # Asked about telnet from another active term, the answer is the same.
+        assert self._cm("ssh", telnet_options=one).retries_failed_open(term="telnet") is False
+        assert self._cm("ssh", telnet_options=one).retries_failed_open() is True
+        many = TelnetOptions(single_client_console=False)
+        assert self._cm("telnet", telnet_options=many).retries_failed_open() is True
+
     def test_an_unknown_term_counts_nothing(self):
         assert self._cm("ssh").connect_allowance(term="xmodem") == 0.0
 

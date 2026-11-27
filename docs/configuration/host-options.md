@@ -381,7 +381,9 @@ checks what state the line is in; these fields keep such a device working on
   ``Username:``, ``Password:``, etc.
 
   A wrong password is offered twice for each session otto opens, because a
-  failed open is retried ({ref}`per-host-init-timeout`).
+  failed open is retried ({ref}`per-host-init-timeout`). It is offered once
+  on a `telnet` host with ``single_client_console``, whose opens are not
+  retried.
 - ``single_client_console`` (default ``false``) — set ``true`` when the
   endpoint is a single-client console (e.g. Zephyr ``shell_telnet``).
   otto then waits for the line to go quiet before it closes it (see
@@ -411,6 +413,16 @@ at once.
 This applies to a `telnet` host with ``single_client_console: true``, and
 to every host on the `console` term ({ref}`console-term`), whatever its
 telnet options say.
+
+```{note}
+Connect one client at a time to a device that runs stock Zephyr 3.7. On that
+release, a second client that connects to the ``shell_telnet`` port while a
+session is in use can freeze that session: the device stops reading the
+session's line, so a command already sent is not run and times out, and the
+device accepts no other connection until the session sends more input or
+disconnects. The defect is in the device's socket service, so otto cannot
+prevent it from its side of the connection. Zephyr 4.4 does not have it.
+```
 
 (console-term)=
 
@@ -695,11 +707,12 @@ not a console, the message ends with `Seen: '…'`: the last 200 characters the
 device sent, otto's own probe lines left out, scrubbed as a console's quote
 is ({ref}`console failures <console-failures>`). A `Login incorrect` there means
 the login was refused. And a failed open retries once, on a fresh connection,
-after a 2 s pause, and fails if the second attempt does too. Two opens are
-not retried: one on a console whose login has already typed the password,
-and a named or pooled session's on a line that serves one client
-(`single_client_console`, or any console), whose slot the host's own session
-may hold.
+after a 2 s pause, and fails if the second attempt does too. Three opens are
+not retried: one on a console whose login has already typed the password;
+any open on a telnet host with `single_client_console`, where a failed open
+nearly always means another client holds the line; and a named or pooled
+session's on a `console` host, whose one slot the host's own session may
+hold.
 
 `init_timeout` sets that deadline in seconds, a number greater than 0; leave it
 out for the default, 10. The clock starts once the connection is up: over ssh

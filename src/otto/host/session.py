@@ -239,9 +239,10 @@ def resolve_init_timeout(
 
 
 # Default pause between a failed first readiness handshake and the single retry
-# in ``SessionManager._open_confirmed``. Calibrated to single-client RTOS telnet
-# servers (Zephyr's ``CONFIG_SHELL_BACKEND_TELNET``) that don't free the console
-# slot the instant the FIN lands. Injectable via ``SessionManager(retry_backoff=)``
+# in ``SessionManager._open_confirmed``. Chosen for a device that does not free
+# its line the instant the previous connection's FIN lands. A telnet line that
+# serves one client is no longer retried at all (``retries_failed_open``).
+# Injectable via ``SessionManager(retry_backoff=)``
 # so fakes-only unit tests can zero it instead of paying the real wall-clock wait.
 _HANDSHAKE_RETRY_BACKOFF = 2.0
 
@@ -930,7 +931,8 @@ class ShellSession(ABC):
     # Whether SessionManager may rebuild the transport and retry a handshake
     # that failed with the generic readiness error: ``retries_failed_open``
     # (otto.host.telnet), narrowed by a console session whose client typed
-    # a password. True on every term without a console client. A named or
+    # a password. True on ssh; a telnet session asks the rule about its
+    # client's line, which refuses on one that serves one client. A named or
     # pooled open on a line that serves one client is not retried either
     # (``_retries_named_open``, the same rule's ``named``).
     _retry_failed_handshake: bool = True
@@ -2876,6 +2878,10 @@ class TelnetSession(ShellSession):
             self._retry_failed_handshake = (
                 retries_failed_open("console", console_client.options)
                 and not console_client.logged_in
+            )
+        elif client is not None:
+            self._retry_failed_handshake = retries_failed_open(
+                "telnet", telnet_options=client.options
             )
         # Paced-write tuning for slow/RX-limited consoles. ``write_chunk_size``
         # of 0 (the default) writes each payload in a single call — correct for
@@ -4958,7 +4964,8 @@ class SessionManager:
         Two attempts when ``_open_confirmed`` (the open of the default, a
         named and a pooled session alike) retries a failed handshake on a
         rebuilt transport, with the pause before the retry between them; one
-        on a term it does not retry (a console that logs in, see
+        on a term it does not retry (a console that logs in, a telnet line
+        that serves one client; see
         :meth:`~otto.host.connections.ConnectionManager.retries_failed_open`).
         It budgets the default session's open: a named or pooled open on a
         line that serves one client is not retried, so it takes one attempt.
@@ -5291,13 +5298,14 @@ class SessionManager:
         on a session *build* makes afresh, after ``_retry_backoff``. Two
         failures were measured on healthy devices:
 
-        - a single-slot console not yet ready: concurrent fan-out across
-          embedded targets sharing one ssh hop (``do_for_all_hosts`` over
-          several Zephyr boards) can land a fresh telnet socket on a device
-          that accepts the TCP connection then closes it before the marker
-          probe lands (``IncompleteReadError`` of 0 bytes). Single-client
-          RTOS telnet servers do not always free the slot the instant the
-          FIN lands, hence the backoff;
+        - a line not yet ready: a fresh socket can land on a device that
+          accepts the TCP connection then closes it before the marker probe
+          lands (``IncompleteReadError`` of 0 bytes), hence the backoff.
+          First seen on Zephyr ``shell_telnet`` consoles in a fan-out over
+          one ssh hop, before a close drained such a line to quiet. Those
+          consoles are no longer retried (below): since the drained close,
+          an open right after a close did not fail there once in 120 tries
+          (30 on each of the bed's four: Zephyr 2.7, two 3.7 and 4.4);
         - a login whose password the device discarded: BusyBox 1.21.1 and
           1.22.1 ``login`` print the password prompt before they flush
           pending input, so a password sent the instant the prompt appears
@@ -5305,12 +5313,15 @@ class SessionManager:
 
         A genuine never-reached-a-prompt failure (see
         :meth:`ShellSession._fail_init`) fails the same way on the second
-        attempt and propagates. A wrong password is so offered twice per
-        session opened. Never retried: a :class:`ConsoleError`, and a
+        attempt and propagates. Where the open is retried, a wrong password
+        is so offered twice per session opened. Never retried: a :class:`ConsoleError`, and a
         session whose ``_retry_failed_handshake`` is false (a console whose
         client typed a password: a rebuild would type it into the line
-        again), and a *named* (named or pooled) open on a line that serves
-        one client (:func:`~otto.host.telnet.retries_failed_open`). Any
+        again), a telnet line that serves one client (a failed open there
+        nearly always means the slot is held, and a second dial cannot
+        succeed while it is), and
+        a *named* (named or pooled) open on any line that serves one client
+        (:func:`~otto.host.telnet.retries_failed_open`). Any
         failure, cancellation included, closes the session it built before
         propagating.
         """
@@ -6110,9 +6121,9 @@ class SessionManager:
            the login and have a direct credential on an ``ssh`` term
            (``_own_ssh_login``), else the login's;
         2. the marker handshake; when it fails, the transport is rebuilt
-           and the handshake run once more (``_open_confirmed``), except on
-           a line that serves one client, whose slot the default session
-           may hold (:func:`~otto.host.telnet.retries_failed_open`);
+           and the handshake run once more (``_open_confirmed``), except
+           where the one rule says not to
+           (:func:`~otto.host.telnet.retries_failed_open`);
         3. the login proxy's hops (``_apply_login_proxy``), for the
            login's session only;
         4. when *as_user* is not who the session now is, a switch to them

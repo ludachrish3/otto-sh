@@ -2727,6 +2727,29 @@ class TestOpenBudget:
         assert mgr.open_budget(term="console") == 3.0 + 4.0
         conn.retries_failed_open.assert_called_once_with(term="console")
 
+    def test_a_one_client_telnet_line_is_budgeted_one_attempt(self):
+        """The budget reads the rule through a real connection manager (#1375)."""
+        from otto.host.connections import ConnectionManager
+        from otto.host.options import TelnetOptions
+
+        def budget(single_client: bool) -> tuple[float, float]:
+            conns = ConnectionManager(
+                ip="10.0.0.1",
+                creds=[Cred(login="u", password="p")],
+                term="telnet",
+                name="h",
+                host_id="h",
+                telnet_options=TelnetOptions(single_client_console=single_client),
+            )
+            mgr = session_manager(connections=conns, name="h", init_timeout=4.0, retry_backoff=1.0)
+            attempt = conns.connect_allowance() + 4.0 + conns.release_allowance()
+            return mgr.open_budget(), attempt
+
+        total, attempt = budget(single_client=True)
+        assert total == attempt
+        total, attempt = budget(single_client=False)
+        assert total == 2 * attempt + 1.0
+
     def test_a_named_term_is_asked_for_its_own_connect_and_release_waits(self):
         conn = MagicMock()
         conn.connect_allowance.return_value = 0.0
@@ -2939,7 +2962,7 @@ def test_the_budget_and_the_console_session_read_one_retry_rule(monkeypatch):
 
     asked: list[tuple[str, bool]] = []
 
-    def never(term, console_options=None):
+    def never(term, console_options=None, **_kw):
         asked.append((term, console_options.login))
         return False
 
@@ -2970,6 +2993,14 @@ def test_a_console_client_that_logged_in_narrows_the_rule(login):
     client = SimpleNamespace(logged_in=login, read_gate=ReadGate(), options=options)
     session = TelnetSession(reader=object(), writer=object(), console_client=client)
     assert session._retry_failed_handshake is (not login)
+
+
+@pytest.mark.parametrize("single_client", [True, False])
+def test_a_telnet_session_on_a_one_client_line_is_not_retried(single_client):
+    """The session's own verdict is the rule's: no rebuild on a line that serves one client."""
+    client = stream_client(None, None, single_client=single_client)
+    session = TelnetSession(reader=object(), writer=object(), client=client)
+    assert session._retry_failed_handshake is (not single_client)
 
 
 # --- A telnet session closes through its client, and reads through its gate ---
