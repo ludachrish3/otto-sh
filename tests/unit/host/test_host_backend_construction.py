@@ -30,7 +30,9 @@ class TestShellHistoryReachesTheShell:
     async def _first_line(**kwargs) -> str:
         host = _unix_host(**kwargs)
         session = await host._session_mgr._build_session()
-        return session._handshake_payload(session._markers)
+        return session._handshake_payload(
+            session._markers, save=session._saves_terminal(), work=None
+        )
 
     @pytest.mark.asyncio
     async def test_default_unix_host_suppresses_history(self):

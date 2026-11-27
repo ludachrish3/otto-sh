@@ -174,6 +174,55 @@ def _client(
     return c
 
 
+_OWES_LOGOUT = [
+    ((True, True), True),
+    ((True, False), False),
+    ((False, True), False),
+    ((False, False), False),
+]
+"""``((options.logout, logged in), owes a logout)``: only a client that logged in and logs out."""
+
+_OWES_LOGOUT_IDS = ["logs-out", "not-logged-in", "logout-off", "neither"]
+
+
+@pytest.mark.parametrize(("state", "owes"), _OWES_LOGOUT, ids=_OWES_LOGOUT_IDS)
+def test_owes_logout_only_when_logout_is_on_and_this_client_logged_in(state, owes):
+    logout, logged_in = state
+    c = _client([], logout=logout)
+    c._logged_in = logged_in
+    assert c.owes_logout is owes
+
+
+_WORK_SHELL_WHY = {
+    False: (
+        "the shell started none: it cannot start a copy of itself (a restricted shell, "
+        "or one whose name does not end in sh, such as -su), it has no alias command to "
+        "carry the work shell's mark (BusyBox hush, or an ash built without alias "
+        "support), or the line that starts it was lost"
+    ),
+    True: (
+        "the child it tried to start did not answer "
+        "(a startup file that waits for input or never ends?)"
+    ),
+}
+
+
+@pytest.mark.parametrize("started", [False, True], ids=["none-started", "no-answer"])
+def test_a_refused_work_shell_names_the_console_and_both_remedies(started):
+    c = _client([])
+    refused = c.work_shell_refused(started=started)
+    text = str(refused)
+    assert isinstance(refused, ConsoleError)
+    assert text.startswith(c._prefix() + "keeps its shell after otto's session")
+    assert _WORK_SHELL_WHY[started] in text
+    assert _WORK_SHELL_WHY[not started] not in text
+    assert "console_options.login" in text
+    assert "console_options.logout" in text
+    assert "start a copy of itself" in text
+    assert "the console must then show a login prompt" in text
+    assert "otto set none of its settings in that shell" in text
+
+
 class TestClassify:
     def test_ansi_and_line_ends_are_stripped_before_matching(self):
         # Review Focus 1: agetty clears the screen and ends with CRLF+prompt.
@@ -560,6 +609,15 @@ class TestConnectAndClose:
         reader = c.reader
         await c.close()
         assert reader.written == b"\rtest\rPassword1\r"
+
+    @pytest.mark.parametrize(("state", "owes"), _OWES_LOGOUT, ids=_OWES_LOGOUT_IDS)
+    async def test_a_close_logs_out_exactly_when_the_client_owes_it(self, state, owes):
+        logout, logged_in = state
+        c = _client([(b"\x04", b"\r\nlogout\r\n\r\ntest2 login: ")], logout=logout)
+        c._logged_in = logged_in  # a shell that has spoken: logout types EOF at once
+        reader = c.reader
+        await c.close()
+        assert reader.written == (b"\x04" if owes else b"")
 
     async def test_close_cancelled_mid_logout_still_releases_the_transport(self):
         # I1: close() must release the transport even when cancelled mid-

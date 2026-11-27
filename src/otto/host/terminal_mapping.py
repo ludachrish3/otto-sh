@@ -41,9 +41,12 @@ has an exact inverse.
     and types it back with ``stty <record>``
     (:meth:`~otto.host.command_frame.CommandFrame.restore_terminal`), which
     restores echo and tab expansion in one step, at the hand-back to an
-    interactive user and before the session closes. Only the first
-    handshake on the line saves, so a second one (frame entry after a
-    session-setup hook) cannot record otto's own settings as the user's.
+    interactive user and before the session's close, which then logs out
+    or, where the shell outlives the session, leaves otto's work shell
+    (:ref:`console-shell-outlives-session`). Only the first handshake on
+    the line tries the save, so a later one (the work shell's handshake, or
+    frame entry after a session-setup hook) cannot record otto's own
+    settings as the user's.
     A session that ends without a clean close (otto killed, the link cut)
     cannot restore, and neither does a close while the session needs
     recovery (a command timed out and was not re-synced) or sits inside an

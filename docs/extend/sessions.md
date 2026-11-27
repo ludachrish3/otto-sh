@@ -176,8 +176,20 @@ To do this the shell keeps a few unexported variables of otto's:
   session's life;
 - `__otto_tty`: the terminal as a console `exec` found it;
 - `__otto_e`: whether `set -e` was on;
-- `__otto_rc` and `__otto_f`: the status and flag of the end record;
-- `__otto_probe`: the handshake's readiness marker.
+- `__otto_rc` and `__otto_f`: the status and flag of the end record.
+
+A probe line's `__otto_probe`, which holds the end of its marker, does not
+stay: the line unsets it.
+
+On a console whose shell outlives the session, a work shell
+({ref}`console-shell-outlives-session`) also has the alias `__otto_as_w`, the
+mark that says it is otto's work shell. The line that starts it hands the
+child `__otto_child`, which the child unsets as it takes the mark. The
+console's own shell has neither. It keeps `__otto_base`, `__otto_e` and
+`__otto_tty` from the first handshake, which ran there. It also holds
+`__otto_c`, the program the start line runs, for as long as the work shell
+runs: the start line unsets it once the work shell exits, so it stays while
+a work shell is left behind.
 
 Each restore unsets `__otto_e` and `__otto_tty` once it has applied them, so
 an `exec` whose frame never ran (`timeout=0`, or a frame cut before it saved

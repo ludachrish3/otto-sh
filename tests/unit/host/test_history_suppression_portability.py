@@ -466,6 +466,11 @@ LINE = BashFrame().handshake(
     TAIL_MARKERS, prefix=PAYLOAD
 )  # the session's real first line, history suppressed
 RESYNC = _identity_probe(TAIL_MARKERS, PAYLOAD)  # the su/sudo/exit resync line
+# On a console whose shell outlives the session: line 1, typed into the
+# person's shell (less its lead), and the work shell's entry proof, history
+# suppressed.
+WORK_LINE_ONE = render_probe("work-console-handshake", TAIL_MARKERS)
+ENTRY_PROOF = render_probe("work-entry", TAIL_MARKERS, history=True)
 RECOVERY = BashFrame().recover(TAIL_MARKERS)  # the post-timeout recovery probe
 _ANCHOR_SPAN = LINE.index("; ") + 2 + 30  # the assignment plus the start of what follows
 
@@ -517,6 +522,36 @@ def test_a_resync_probe_cut_anywhere_never_answers(name, argv, nounset, fakes_en
         TAIL_MARKERS.recover,
         _identity_pattern(TAIL_MARKERS),
         range(1, len(RESYNC)),
+        nounset,
+        fakes_env,
+    )
+
+
+@pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
+@pytest.mark.parametrize(("name", "argv"), list(REQUIRED_SHELLS.items()), ids=list(REQUIRED_SHELLS))
+def test_a_work_shell_line_one_cut_anywhere_never_answers(name, argv, nounset, fakes_env):
+    """Line 1 on a console whose shell outlives the session is a handshake: no tail answers."""
+    _assert_no_tail_answers(
+        argv,
+        WORK_LINE_ONE,
+        TAIL_MARKERS.ready,
+        probe_answer("work-console-handshake", TAIL_MARKERS),
+        range(1, len(WORK_LINE_ONE)),
+        nounset,
+        fakes_env,
+    )
+
+
+@pytest.mark.parametrize("nounset", [False, True], ids=["plain", "nounset"])
+@pytest.mark.parametrize(("name", "argv"), list(REQUIRED_SHELLS.items()), ids=list(REQUIRED_SHELLS))
+def test_an_entry_proof_cut_anywhere_never_answers(name, argv, nounset, fakes_env):
+    """The work shell's entry proof is a resync probe: no tail of it may answer."""
+    _assert_no_tail_answers(
+        argv,
+        ENTRY_PROOF,
+        TAIL_MARKERS.recover,
+        probe_answer("work-entry", TAIL_MARKERS),
+        range(1, len(ENTRY_PROOF)),
         nounset,
         fakes_env,
     )

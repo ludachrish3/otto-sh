@@ -18,6 +18,7 @@ import pytest
 
 from otto.host.command_frame import (
     FRAME_CLASSES,
+    IDENTITY_MARK_PREFIX,
     READY_SUFFIX,
     RECOVER_SUFFIX,
     AshFrame,
@@ -25,6 +26,7 @@ from otto.host.command_frame import (
     CommandFrame,
     RawFrame,
     SessionMarkers,
+    WorkShellLines,
     ZephyrFrame,
     ZephyrSerialFrame,
     build_command_frame,
@@ -38,6 +40,7 @@ from otto.host.errors import RawLandingError
 from otto.host.login_proxy import _identity_probe
 from otto.host.session import ready_pattern
 from otto.host.terminal_mapping import CALIBRATION_COMMAND
+from otto.registry import Ref
 from tests._fixtures.fake_shell import probe_marker
 from tests._fixtures.interactive_shell import SHELLS
 
@@ -650,3 +653,257 @@ class TestRawFrame:
         # end_pattern never matches anything for it to find.
         assert self.frame.extract_retcode(f"{M.end_prefix}7__", m=M) == -1
         assert self.frame.streams_output_live is False
+
+
+# ---------------------------------------------------------------------------
+# The work shell: the frame's lines for a console whose shell outlives the session
+# ---------------------------------------------------------------------------
+
+
+class _OnlyAbstract(CommandFrame):
+    """A frame that implements the abstract methods and nothing else."""
+
+    type_name = "only-abstract-test"
+
+    def handshake(self, m, *, prefix=""):
+        return ""
+
+    def frame(self, cmd, *, m):
+        return ""
+
+    def recover(self, m):
+        return ""
+
+    def end_pattern(self, m):
+        return re.compile("x")
+
+    def marks_begin(self, data, *, m):
+        return False
+
+    def parse_output(self, buffer, *, cmd, m):
+        return ""
+
+    def extract_retcode(self, buffer, *, m):
+        return -1
+
+
+class WorkShellText(_OnlyAbstract):
+    """Returns text where a record belongs; named by a ``Ref`` below."""
+
+    type_name = "work-shell-text"
+
+    def work_shell(self, *, prefix):  # ty: ignore[invalid-method-override]
+        return "start a shell"
+
+
+class WorkShellRecord(_OnlyAbstract):
+    """Returns bash's record; named by a ``Ref`` below."""
+
+    type_name = "work-shell-record"
+
+    def work_shell(self, *, prefix):
+        return BashFrame().work_shell(prefix=prefix)
+
+
+class WorkShellBadRecord(_OnlyAbstract):
+    """Builds a record its own check refuses; named by a ``Ref`` below."""
+
+    type_name = "work-shell-bad-record"
+
+    def work_shell(self, *, prefix):
+        return dataclasses.replace(BashFrame().work_shell(prefix=prefix), lead="x")
+
+
+def test_only_the_posix_frames_offer_a_work_shell():
+    class ProjectBash(BashFrame):
+        type_name = "project-bash-work-shell"
+
+    for frame in (BashFrame(), AshFrame(), ProjectBash()):
+        assert isinstance(frame.work_shell(prefix=""), WorkShellLines), frame
+    for frame in (ZephyrFrame(), ZephyrSerialFrame(), RawFrame(), _OnlyAbstract()):
+        assert frame.work_shell(prefix="") is None, frame
+
+
+def test_the_work_shell_lines_are_pinned():
+    lines = BashFrame().work_shell(prefix="P; ")
+    assert lines.lead == " "
+    assert lines.start == (
+        "if >/dev/null 2>&1 alias __otto_as_w; then :; else __otto_c=${BASH:-${0#-}}; "
+        "case $__otto_c in *sh) __otto_child=1 $__otto_c;; esac; unset __otto_c; fi\n"
+    )
+    assert lines.proof == (
+        "case ${__otto_child-} in ?*) alias __otto_as_w=:; unset __otto_child;; esac; "
+        "if >/dev/null 2>&1 alias __otto_as_w; then P; :; fi; "
+    )
+    assert lines.readback == "$(>/dev/null 2>&1 alias __otto_as_w && echo 1)"
+    assert lines.exit == (
+        "if >/dev/null 2>&1 alias __otto_as_w; then case ${ZSH_VERSION:-} in ?*) "
+        "setopt CHECKJOBS NOCHECKRUNNINGJOBS NOHUP;; esac; "
+        "case ${BASH_VERSION:-} in ?*) shopt -u checkjobs;; esac; exit; fi"
+    )
+    assert len(lines.exit) == 187  # it rides a framed close line of its own
+    # The history suppression runs only where the mark is owned.
+    assert "then P; :; fi" in lines.proof
+    every = [lines.lead, lines.start, lines.proof, lines.readback, lines.exit]
+    named = {name for line in every for name in re.findall(rf"{IDENTITY_MARK_PREFIX}\w*", line)}
+    assert named == {"__otto_as_w"}
+    assert all(
+        f"alias {name}" in line
+        for line in every
+        for name in re.findall(rf"{IDENTITY_MARK_PREFIX}\w*", line)
+    )
+    # The mark is an alias, never a variable: no line assigns one in its namespace.
+    assigned = {name for line in every for name in re.findall(r"(?<!alias )\b(\w+)=", line)}
+    assert assigned == {"__otto_c", "__otto_child"}
+    assert not any(name.startswith(IDENTITY_MARK_PREFIX) for name in assigned)
+
+
+_GOOD_LINES = BashFrame().work_shell(prefix="")
+
+
+_QUOTE, _SPACES, _CR, _ONE_LINE, _ENDING, _SEMI, _PROBE_WORD, _ACTED_ON = (
+    "holds a quote",
+    "must hold only spaces",
+    "holds a \\r",
+    "must be one line, ending in its one newline",
+    "holds a line ending",
+    "must end in '; '",
+    "would change the probe word",
+    "holds a ! or a TAB",
+)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "rule"),
+    [
+        *[
+            (f, v, _QUOTE)
+            for f, v in [
+                ("lead", "'"),
+                ("start", "'\n"),
+                ("proof", "'; "),
+                ("readback", '$"x"'),
+                ("exit", "exit '"),
+            ]
+        ],
+        ("lead", "x", _SPACES),
+        ("lead", " \n", _SPACES),  # a newline would type the line early
+        ("lead", "\t", _SPACES),  # a TAB completes in the person's line editor
+        ("lead", "\r", _SPACES),  # a CR ends the line
+        ("lead", "\x0c", _SPACES),  # readline's clear-screen; str.isspace() calls it blank
+        ("start", "exec sh\r\n", _CR),
+        ("start", "exec sh", _ONE_LINE),  # no newline to end it
+        ("start", "exec sh\n\n", _ONE_LINE),  # an empty line after it
+        ("start", "exec sh\nexit\n", _ONE_LINE),  # two lines
+        ("proof", ":\n: ; ", _ENDING),
+        ("proof", ":\r: ; ", _ENDING),
+        ("readback", "$(echo 1)\n", _ENDING),
+        ("readback", "$(echo 1)\r", _ENDING),
+        ("exit", "exit\n", _ENDING),
+        ("exit", "exit\r", _ENDING),
+        ("proof", ":", _SEMI),  # the probe's echo would be an argument of `:`
+        ("proof", "", _SEMI),
+        ("readback", "x$(echo 1)", _PROBE_WORD),  # a letter extends the variable name
+        ("readback", "1", _PROBE_WORD),
+        ("readback", "_", _PROBE_WORD),
+        ("readback", "[1]", _PROBE_WORD),  # zsh reads a subscript
+        ("readback", ":-1", _PROBE_WORD),  # zsh reads a modifier
+        # Each reaches a shell otto has not prepared: history expands a `!`,
+        # the line editor completes at a TAB.
+        ("start", "exec sh !\n", _ACTED_ON),
+        ("start", "exec\tsh\n", _ACTED_ON),
+        ("proof", "! :; ", _ACTED_ON),
+        ("proof", ":\t; ", _ACTED_ON),
+        ("readback", "$(echo !)", _ACTED_ON),
+        ("readback", "$(echo\t1)", _ACTED_ON),
+    ],
+)
+def test_a_work_shell_record_refuses_a_line_otto_could_not_type(field, value, rule):
+    with pytest.raises(ValueError, match=rf"WorkShellLines\.{field}\b") as refused:
+        dataclasses.replace(_GOOD_LINES, **{field: value})
+    assert rule in str(refused.value)
+
+
+@pytest.mark.parametrize("how", ["eager", "by_reference"])
+def test_a_frame_whose_work_shell_returns_something_else_is_refused(how):
+    refused = (
+        r"register_command_frame\('work-shell-text'\): WorkShellText\.work_shell returned str; "
+        r"it returns WorkShellLines or None"
+    )
+    if how == "eager":
+        with pytest.raises(TypeError, match=refused):
+            register_command_frame("work-shell-text", WorkShellText)
+        register_command_frame("work-shell-record", WorkShellRecord)
+    else:
+        register_command_frame("work-shell-text", Ref(target=f"{__name__}:WorkShellText"))
+        with pytest.raises(TypeError, match=refused):
+            build_command_frame(type_name="work-shell-text")
+        register_command_frame("work-shell-record", Ref(target=f"{__name__}:WorkShellRecord"))
+    assert isinstance(build_command_frame(type_name="work-shell-record"), WorkShellRecord)
+
+
+class WorkShellQuotedHistory(BashFrame):
+    """A bash frame whose history suppression holds a quote, which the entry proof refuses."""
+
+    type_name = "work-shell-quoted-history"
+
+    def quiet_history(self) -> str:
+        return "HISTFILE='/dev/null'; "
+
+
+def test_a_history_suppression_the_work_shell_record_refuses_is_refused_at_registration():
+    """Registration gives ``work_shell`` the frame's history suppression too, not only none."""
+    with pytest.raises(
+        ValueError,
+        match=r"register_command_frame\('work-shell-quoted-history'\): "
+        r"WorkShellQuotedHistory\.work_shell: WorkShellLines\.proof .* holds a quote",
+    ):
+        register_command_frame("work-shell-quoted-history", WorkShellQuotedHistory)
+
+
+def test_a_record_a_frame_builds_wrong_is_refused_with_the_frames_name():
+    with pytest.raises(ValueError, match=r"WorkShellBadRecord\.work_shell.*WorkShellLines\.lead"):
+        register_command_frame("work-shell-bad-record", WorkShellBadRecord)
+
+
+def test_a_frame_that_cannot_be_built_is_refused_as_that_not_as_its_work_shell():
+    class NeedsArgument(_OnlyAbstract):
+        type_name = "needs-argument"
+
+        def __init__(self, depth):
+            self.depth = depth
+
+    class RefusesItsDefaults(_OnlyAbstract):
+        type_name = "refuses-its-defaults"
+
+        def __init__(self):
+            raise ValueError("no default depth")
+
+    with pytest.raises(
+        TypeError,
+        match=r"register_command_frame\('needs-argument'\): NeedsArgument\(\) could not be built: "
+        r"TypeError: ",
+    ):
+        register_command_frame("needs-argument", NeedsArgument)
+    with pytest.raises(TypeError) as refused:
+        register_command_frame("refuses-its-defaults", RefusesItsDefaults)
+    assert str(refused.value) == (
+        "register_command_frame('refuses-its-defaults'): RefusesItsDefaults() could not be "
+        "built: ValueError: no default depth"
+    )
+    assert "work_shell" not in str(refused.value)
+
+
+def test_a_work_shell_that_raises_is_refused_naming_the_registration_and_the_hook():
+    class Raises(_OnlyAbstract):
+        type_name = "work-shell-raises"
+
+        def work_shell(self, *, prefix):
+            raise RuntimeError("no shell here")
+
+    with pytest.raises(TypeError) as refused:
+        register_command_frame("work-shell-raises", Raises)
+    assert str(refused.value) == (
+        "register_command_frame('work-shell-raises'): Raises.work_shell raised "
+        "RuntimeError: no shell here"
+    )

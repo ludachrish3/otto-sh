@@ -641,7 +641,9 @@ recovery fails, and the open fails as
   a console, whose line outlives the session, a frame can also save the
   settings it found (`save_terminal(m)`) and put exactly those back
   (`restore_terminal(saved)`); the defaults save nothing and restore with
-  `restore_interactive()`.
+  `restore_interactive()`. Where the console's shell outlives the session
+  too, a frame can offer a work shell that the session runs in and leaves
+  at close (`work_shell(prefix=)`, {ref}`frame-work-shell`).
 
 ### Selecting a hook from lab data
 

@@ -516,17 +516,6 @@ operator's decision: {doc}`../cli/host/login` covers `otto host <id> logout`
 and `login --force`. The one reset otto makes on its own is after a
 `reboot --wait` that did not take ({ref}`below <console-failures>`).
 
-(console-shell-outlives-session)=
-
-**A shell that outlives otto's session.** With `login: false` or
-`logout: false`, the shell otto drove stays alive on the line after its
-session closes, and it keeps what otto's handshake line set
-({ref}`per-host-session-setup`). Whoever uses that console next sees TAB do
-nothing and `!!` not recalled, and no history is recorded unless
-`shell_history` is on. {doc}`../cli/host/login` (`otto host <id> login`)
-bridges that same shell on such a console. Start a new shell there, for
-example `exec bash`, to get your own settings back.
-
 (console-failures)=
 
 **The failures.** Every console error starts with the words
@@ -640,7 +629,164 @@ session on it:
 When otto closes the session it logs out (per `logout`), so the next client
 finds `login:`, then waits for the line to go quiet before it releases it.
 A `console`-term host always closes this way, whatever its telnet options
-say: see {ref}`single-client-console`.
+say: see {ref}`single-client-console`. Where otto does not log out, its
+close leaves the shell on the line instead (below).
+
+(console-shell-outlives-session)=
+
+#### A shell that outlives otto's session
+
+By default otto logs in when it connects to a console and logs out when it
+closes, so the shell ends with otto's session. The shell stays on the line
+after otto is done when otto does not log out at close:
+
+- `logout` is `false`; or
+- `login` is `false` (otto drives a shell that was already there), and no
+  `session_setup` hook logged in itself. A hook can log in from a boot menu
+  ({ref}`two dialects <session-landing-frame>`); then otto logs out at close
+  as usual.
+
+On such a console otto starts a child shell in the shell it finds, the
+**work shell**, runs its whole session in it, and leaves it with `exit` when
+the session closes. The shell that was there before, the console's own
+shell, is then back as it was. That covers its shell settings, its TAB
+completion, its `!` history recall and its history settings: otto changes
+none of them. (It changes the terminal's settings, echo and tabs, and puts
+them back at close.) A few of otto's variables from its first line stay in
+that shell, and change no setting ({ref}`below <console-shell-otto-variables>`).
+A login proxy in `creds` (otto logs in as one account, then switches to
+the one it runs as;
+[Credentials and login proxies](host-sources.md#credentials-and-login-proxies)),
+or a user switch left open, is the exception: its shell stays on the line
+(below).
+
+This applies when otto speaks `bash` or `ash` on the console, or a dialect
+derived from them. otto calls a dialect a *frame*: the host's
+`command_frame`, or its `landing_frame` when it has one
+({ref}`two dialects <session-landing-frame>`). A Zephyr shell runs in the
+shell it finds. After a `raw` landing (a boot menu that a hook drives by
+hand), the work shell starts when the hook's session enters its bash
+frame. `otto host <id> login` never starts a work shell: it hands you the
+console's own shell ({doc}`../cli/host/login`).
+
+**What changed for you.** Earlier releases ran these sessions in the
+console's own shell. Now:
+
+- **Your commands run in a child shell.** It starts in the same directory,
+  sees the exported variables and keeps the umask. It reads the startup
+  files of an interactive shell that is not a login shell (`~/.bashrc`,
+  the file `$ENV` names, `~/.zshrc`; not `~/.profile`). It does not see
+  what was typed into the console's shell and not exported: variables,
+  functions, aliases and shell options. So if you prepare a console by hand
+  (`. ./env.sh`, then `login: false`), export what your commands need, or
+  set it up in the shell's startup file.
+- **What otto's commands set does not reach the next session.** A `cd`, an
+  `export`, a `set` or a function ends with the work shell. The one
+  exception is a work shell left behind (below), which the next session
+  reuses. Put what every session needs in a
+  {ref}`session_setup <per-host-session-setup>` hook or in the shell's
+  startup file.
+- **A console whose shell cannot start a child is refused**, as below.
+
+**The refusal.** otto proves that the work shell started before it runs
+anything in it. If it cannot, the open fails with a `ConsoleError`, and
+otto never falls back to the console's own shell. The message begins with
+the console's usual words, then `keeps its shell after otto's session
+(console_options.login or logout is false), so otto runs its commands in a
+work shell, a child of that shell, and`, then says what failed:
+
+- `the shell started none`: the shell cannot start a copy of itself, it
+  has no `alias` command, or the line that starts it was lost. A
+  restricted shell (`rbash`) cannot start a copy, and neither can a shell
+  whose name does not end in `sh`, such as a `dash` that `su -` started,
+  which calls itself `-su`. The mark that proves the work shell is an
+  alias, so a shell with no `alias` command is refused even where the copy
+  started: BusyBox `hush`, and an `ash` built without alias support.
+- `the child it tried to start did not answer`: the child started but
+  never answered, for example because its startup file waits for input or
+  never ends. That child is still on the line. otto's close typed the
+  terminal's restore into it, where the program its startup file runs may
+  have read it, so echo may still be off and you may not see what you
+  type. End whatever its startup file waits on, type `exit` to get back to
+  the console's own shell, then type `stty sane`.
+
+The message ends with the two fixes: set `console_options.login` and
+`console_options.logout` to `true`, so that otto logs in and out and its
+shell ends with its session; or give the console a shell that can start a
+copy of itself. The first fix needs a login prompt on the line, which otto
+answers. A console where init runs a shell straight on the line, with no
+`getty` or `login` in front of it, has none, so there only the second fix
+works. A refused open changes no shell setting in the console's own shell.
+
+**What can be left behind or seen.**
+
+- **A close that did not leave the work shell.** otto types nothing at
+  close when it was killed or the link dropped, when a command it ran timed
+  out and is still running, or when an application shell is attached. A
+  program still reading the line can also take the close line as its own
+  input. Either way the work shell stays on the line, with otto's settings.
+  Type `exit` once to get back to the console's own shell. If nobody does,
+  the next otto session finds the work shell, reuses it, and leaves it at
+  its close.
+- **A stopped job** (Ctrl-Z, or `kill -STOP`) keeps the work shell from
+  exiting, as any shell refuses to exit with a stopped job. otto kills no
+  job. The work shell stays, and the next otto session reuses it. Resume
+  the job (`fg`) or end it, then type `exit`. `dash` has one exception. If
+  otto's last command stopped a job just before the close, dash may exit
+  anyway. The job then has no shell, and the kernel's hang-up signal may
+  end it. A job that is still running neither keeps the work shell nor
+  ends with it: otto's `exit` first turns off bash's `checkjobs` and zsh's
+  running-job check, which a startup file may have turned on.
+- **A login proxy in `creds`.** Every session switches user through the
+  proxy inside its work shell ({ref}`what runs, in order
+  <session-run-order>`), and nothing leaves that shell at close. otto's
+  `exit` reaches the proxy's shell, which is not the work shell, so it does
+  nothing. So every otto session leaves two shells on the line: one for the
+  hop, and the work shell under it. The next session starts inside them and
+  adds one more shell for the hop and one more work shell. Type `exit` until
+  you are back in the console's own shell. Issue
+  [#1388](https://github.com/ludachrish3/otto-sh/issues/1388) tracks it.
+- **A `switch_user` that is never switched back** leaves that user's shell
+  above the work shell in the same way. Type `exit` until you are back in
+  the console's own shell. Issue
+  [#1388](https://github.com/ludachrish3/otto-sh/issues/1388) tracks this
+  too.
+- **A `session_setup` hook that entered another dialect** (an application
+  shell): otto types no `exit` into it, so the work shell stays under it.
+  Leave the application, then type `exit`.
+- **zsh with history suppressed** prints `locking failed for /dev/null` as
+  the work shell exits. It is harmless.
+- **zsh with no startup file in `HOME`** prints its new-user menu
+  (`zsh-newuser-install`) in the work shell at every session. The space
+  otto types first aborts the menu, no file is written, and the session
+  goes on.
+  `touch ~/.zshrc` stops the menu.
+- **History of the console's own shell.** Every line otto types there
+  starts with a space. A shell that ignores lines starting with a space
+  (bash's `HISTCONTROL=ignorespace`, zsh's `HIST_IGNORE_SPACE`) keeps them
+  out of its history. Any other shell can record the two lines that start
+  the work shell. On mksh and ksh93, the work shell's first line can reach
+  the history file too. That line is otto's proof that the work shell
+  started. The same holds on zsh when its startup file sets
+  `INC_APPEND_HISTORY` (or a like option that writes each line as it is
+  read).
+- (console-shell-otto-variables)=
+  **otto's variables.** The first line otto types, its readiness
+  handshake ({ref}`per-host-session-setup`), runs in the console's own
+  shell, so the few variables it sets stay there, as does `__otto_c` while
+  a work shell runs or is left behind
+  ({ref}`the list <exec-frame-shell-state>`). They change no setting.
+- **The work shell's program.** otto starts the program that the running
+  shell's name finds on `PATH`; bash is the exception, as it knows its own
+  path. On a device whose shell was started as `busybox sh` while `sh` on
+  `PATH` is dash, the work shell is dash.
+- **Keys you type while otto's close runs** may be read by an exiting ksh
+  or mksh work shell, and lost.
+
+**A shell an earlier release left behind.** Earlier releases changed the
+console's own shell: TAB did not complete, `!!` did not recall, and with
+`shell_history` off nothing was recorded. A shell left that way stays that
+way. Start a new shell there once, for example `exec bash`.
 
 ### SFTP, SCP, FTP, Netcat
 
@@ -792,7 +938,7 @@ What suppression covers, and what it doesn't:
 | `host.exec(...)` on a session without a terminal | not needed — its shell reads a pipe, is not interactive, and keeps no history at all; an `exec` on a session with a terminal is covered by the first row |
 | Local host commands | not needed — non-interactive |
 | `otto login` | **no** — see the note below |
-| A console shell that stays alive after otto's session closes | stays suppressed, with `!` expansion and TAB completion off, until a new shell starts there ({ref}`a console shell otto leaves behind <console-shell-outlives-session>`) |
+| A console shell that stays alive after otto's session closes | yes, in the work shell otto runs its session in; the console's own shell keeps its history settings, though it can record the lines that start the work shell ({ref}`a shell that outlives otto's session <console-shell-outlives-session>`) |
 | Embedded / Zephyr targets | not applicable — their shell history is a RAM ring buffer, never a file |
 
 ```{note}
@@ -821,14 +967,18 @@ handshake (`__otto_probe=READY__; __otto_echo=; stty -echo || __otto_echo=E; stt
 echo; printf %sX\\r\\nY\\nZ\\rW\\tT\\012 $__otto_echo || :; unset __otto_echo;
 __otto_base=$(stty -g) || __otto_base=; __otto_e=; __otto_tty=;
 echo __OTTO_<id>_$__otto_probe` on bash, every `stty` silenced with `2>/dev/null`),
-and by default nothing else. On a bash-family shell the same line sets how
+and by default nothing else. The exception is a console whose shell
+outlives otto's session: there the handshake goes first into the console's
+own shell without the settings below, then otto starts a work shell, proves
+it, and types the whole handshake again in it
+({ref}`console-shell-outlives-session`). On a bash-family shell the handshake line sets how
 the shell reads a command otto types: `!` is literal, `#` starts a comment,
 and on bash, zsh and mksh a TAB is a character, never completion. On Unix
 hosts it also suppresses history ({ref}`per-host-shell-history`).
 `__otto_base` keeps the terminal's settings as otto left them, which a pooled
 `exec` puts back after its command ({ref}`the exec frame <named-sessions-vs-exec>`);
 it is empty where `stty -g` cannot read them, and then nothing is put back.
-`__otto_echo` is unset on the same line; `__otto_probe` and the exec frame's
+`__otto_echo` and `__otto_probe` are unset on the same line; the exec frame's
 variables stay ({ref}`the full list <exec-frame-shell-state>`). The `printf` is the
 handshake's calibration line: how its known bytes come back shows how the
 session's terminal translates line endings, which is what lets otto return a
@@ -865,7 +1015,11 @@ has the contract and a copyable registration, and the bed case study's
 1. Transport hops (`hop`), then the connection lands.
 2. The console login (term `console` only): from a `login:` prompt otto
    observed, never otherwise — see {ref}`console-term`.
-3. The readiness handshake, in the **landing** dialect.
+3. The readiness handshake, in the **landing** dialect. On a console whose
+   shell outlives the session, the first handshake in a bash-family dialect
+   also starts the work shell (or, after a raw landing, frame entry in
+   step 6), and the rest of the session runs in it
+   ({ref}`console-shell-outlives-session`).
 4. Every login-proxy hop (`creds` with `proxy`), identity-proved.
 5. The hook, over a session framed in the landing dialect.
 6. **Frame entry**: the `command_frame`'s own handshake, in whatever shell
@@ -886,6 +1040,8 @@ own host (`host.run()`, `host.exec()`, `host.send()` and the rest), or into
 any host still opening above it, is refused while the session opens; so is
 a hook that leaves a pooled session as someone other than its user
 ({ref}`why <session-setup-reentry>`).
+
+(session-landing-frame)=
 
 ### Two dialects: `landing_frame`
 

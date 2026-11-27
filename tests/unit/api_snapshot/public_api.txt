@@ -829,6 +829,7 @@ member	otto.host.command_frame:BashFrame.streams_output_live	attribute
 member	otto.host.command_frame:BashFrame.terminal_restore	method	sync	PK:restore:-
 member	otto.host.command_frame:BashFrame.type_name	attribute
 member	otto.host.command_frame:BashFrame.typed	method	sync	KO:cmd:-
+member	otto.host.command_frame:BashFrame.work_shell	method	sync	KO:prefix:-
 abstract	otto.host.command_frame:BashFrame	-
 name	otto.host.command_frame:CommandFrame	class
 mro	otto.host.command_frame:CommandFrame	-
@@ -864,6 +865,7 @@ member	otto.host.command_frame:CommandFrame.script_parsing	method	sync	-
 member	otto.host.command_frame:CommandFrame.single_client_console	attribute
 member	otto.host.command_frame:CommandFrame.streams_output_live	attribute
 member	otto.host.command_frame:CommandFrame.typed	method	sync	KO:cmd:-
+member	otto.host.command_frame:CommandFrame.work_shell	method	sync	KO:prefix:-
 abstract	otto.host.command_frame:CommandFrame	end_pattern extract_retcode frame handshake marks_begin parse_output recover
 name	otto.host.command_frame:ExecInput	class
 mro	otto.host.command_frame:ExecInput	-
@@ -919,6 +921,7 @@ member	otto.host.command_frame:RawFrame.single_client_console	attribute
 member	otto.host.command_frame:RawFrame.streams_output_live	attribute
 member	otto.host.command_frame:RawFrame.type_name	attribute
 member	otto.host.command_frame:RawFrame.typed	method	sync	KO:cmd:-
+member	otto.host.command_frame:RawFrame.work_shell	method	sync	KO:prefix:-
 abstract	otto.host.command_frame:RawFrame	-
 name	otto.host.command_frame:SessionMarkers	class
 mro	otto.host.command_frame:SessionMarkers	-
@@ -933,6 +936,17 @@ member	otto.host.command_frame:SessionMarkers.recover	field
 member	otto.host.command_frame:SessionMarkers.restored	field
 member	otto.host.command_frame:SessionMarkers.saved	field
 abstract	otto.host.command_frame:SessionMarkers	@final @manifest:subclass=false
+name	otto.host.command_frame:WorkShellLines	class
+mro	otto.host.command_frame:WorkShellLines	-
+call	otto.host.command_frame:WorkShellLines	sync	KO:lead:- KO:start:- KO:proof:- KO:readback:- KO:exit:-
+member	otto.host.command_frame:WorkShellLines.__eq__	method	sync	PK:other:-
+member	otto.host.command_frame:WorkShellLines.__hash__	method	sync	-
+member	otto.host.command_frame:WorkShellLines.exit	field
+member	otto.host.command_frame:WorkShellLines.lead	field
+member	otto.host.command_frame:WorkShellLines.proof	field
+member	otto.host.command_frame:WorkShellLines.readback	field
+member	otto.host.command_frame:WorkShellLines.start	field
+abstract	otto.host.command_frame:WorkShellLines	@final @manifest:subclass=false
 name	otto.host.command_frame:ZephyrFrame	class
 mro	otto.host.command_frame:ZephyrFrame	{otto.host.command_frame:CommandFrame,otto.host:CommandFrame}
 call	otto.host.command_frame:ZephyrFrame	sync	-
@@ -971,6 +985,7 @@ member	otto.host.command_frame:ZephyrFrame.single_client_console	attribute
 member	otto.host.command_frame:ZephyrFrame.streams_output_live	attribute
 member	otto.host.command_frame:ZephyrFrame.type_name	attribute
 member	otto.host.command_frame:ZephyrFrame.typed	method	sync	KO:cmd:-
+member	otto.host.command_frame:ZephyrFrame.work_shell	method	sync	KO:prefix:-
 abstract	otto.host.command_frame:ZephyrFrame	-
 name	otto.host.command_frame:command_value	function
 call	otto.host.command_frame:command_value	sync	PK:output:- KO:line_ending:S:"\n"
@@ -1615,6 +1630,7 @@ member	otto.host:BashFrame.streams_output_live	attribute
 member	otto.host:BashFrame.terminal_restore	method	sync	PK:restore:-
 member	otto.host:BashFrame.type_name	attribute
 member	otto.host:BashFrame.typed	method	sync	KO:cmd:-
+member	otto.host:BashFrame.work_shell	method	sync	KO:prefix:-
 abstract	otto.host:BashFrame	-
 name	otto.host:CommandFrame	class
 mro	otto.host:CommandFrame	-
@@ -1650,6 +1666,7 @@ member	otto.host:CommandFrame.script_parsing	method	sync	-
 member	otto.host:CommandFrame.single_client_console	attribute
 member	otto.host:CommandFrame.streams_output_live	attribute
 member	otto.host:CommandFrame.typed	method	sync	KO:cmd:-
+member	otto.host:CommandFrame.work_shell	method	sync	KO:prefix:-
 abstract	otto.host:CommandFrame	end_pattern extract_retcode frame handshake marks_begin parse_output recover
 name	otto.host:CommandPowerConfig	model
 mro	otto.host:CommandPowerConfig	{otto.models:OttoModel}
@@ -1694,6 +1711,7 @@ member	otto.host:ConnectionManager.ftp	method	coroutine	-
 member	otto.host:ConnectionManager.has_direct_cred	method	sync	KO:user:-
 member	otto.host:ConnectionManager.has_tunnel	property:g--
 member	otto.host:ConnectionManager.ip	property:g--
+member	otto.host:ConnectionManager.keeps_console_shell	method	sync	KO:term:N
 member	otto.host:ConnectionManager.login_target	property:g--
 member	otto.host:ConnectionManager.login_target_for	method	sync	KO:protocol:-
 member	otto.host:ConnectionManager.proxy_hops	property:g--
@@ -2453,6 +2471,7 @@ member	otto.host:LocalSession.read_transport_until	method	coroutine	KO:pattern:-
 member	otto.host:LocalSession.reads_a_terminal	attribute
 member	otto.host:LocalSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N KO:exec_input:N
 member	otto.host:LocalSession.send	method	coroutine	PK:text:-
+member	otto.host:LocalSession.shell_outlives_session	property:g--
 member	otto.host:LocalSession.terminal_mapping	property:g--
 member	otto.host:LocalSession.terminal_outlives_session	property:g--
 member	otto.host:LocalSession.write_transport	method	coroutine	KO:data:-
@@ -2641,6 +2660,7 @@ member	otto.host:RawFrame.single_client_console	attribute
 member	otto.host:RawFrame.streams_output_live	attribute
 member	otto.host:RawFrame.type_name	attribute
 member	otto.host:RawFrame.typed	method	sync	KO:cmd:-
+member	otto.host:RawFrame.work_shell	method	sync	KO:prefix:-
 abstract	otto.host:RawFrame	-
 name	otto.host:RawLandingError	class
 mro	otto.host:RawLandingError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
@@ -2884,6 +2904,7 @@ member	otto.host:ShellSession.read_transport_until	method	coroutine	KO:pattern:-
 member	otto.host:ShellSession.reads_a_terminal	attribute
 member	otto.host:ShellSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N KO:exec_input:N
 member	otto.host:ShellSession.send	method	coroutine	PK:text:-
+member	otto.host:ShellSession.shell_outlives_session	property:g--
 member	otto.host:ShellSession.terminal_mapping	property:g--
 member	otto.host:ShellSession.terminal_outlives_session	property:g--
 member	otto.host:ShellSession.write_transport	method	coroutine	KO:data:-
@@ -2916,6 +2937,7 @@ member	otto.host:TelnetSession.read_transport_until	method	coroutine	KO:pattern:
 member	otto.host:TelnetSession.reads_a_terminal	attribute
 member	otto.host:TelnetSession.run_cmd	method	coroutine	KO:cmd:- KO:expects:N KO:timeout:F:0x1.e000000000000p+4 KO:on_output:N KO:redact:B:false KO:write_progress:N KO:exec_input:N
 member	otto.host:TelnetSession.send	method	coroutine	PK:text:-
+member	otto.host:TelnetSession.shell_outlives_session	property:g--
 member	otto.host:TelnetSession.terminal_mapping	property:g--
 member	otto.host:TelnetSession.terminal_outlives_session	property:g--
 member	otto.host:TelnetSession.write_transport	method	coroutine	KO:data:-
@@ -3268,6 +3290,17 @@ member	otto.host:Userland.sudo_form_settled	method	sync	KO:login:-
 member	otto.host:Userland.sudo_form_unread	method	sync	KO:login:-
 member	otto.host:Userland.timeout_style	property:g--
 abstract	otto.host:Userland	@final @manifest:subclass=false
+name	otto.host:WorkShellLines	class
+mro	otto.host:WorkShellLines	-
+call	otto.host:WorkShellLines	sync	KO:lead:- KO:start:- KO:proof:- KO:readback:- KO:exit:-
+member	otto.host:WorkShellLines.__eq__	method	sync	PK:other:-
+member	otto.host:WorkShellLines.__hash__	method	sync	-
+member	otto.host:WorkShellLines.exit	field
+member	otto.host:WorkShellLines.lead	field
+member	otto.host:WorkShellLines.proof	field
+member	otto.host:WorkShellLines.readback	field
+member	otto.host:WorkShellLines.start	field
+abstract	otto.host:WorkShellLines	@final @manifest:subclass=false
 name	otto.host:ZephyrFrame	class
 mro	otto.host:ZephyrFrame	{otto.host.command_frame:CommandFrame,otto.host:CommandFrame}
 call	otto.host:ZephyrFrame	sync	-
@@ -3306,6 +3339,7 @@ member	otto.host:ZephyrFrame.single_client_console	attribute
 member	otto.host:ZephyrFrame.streams_output_live	attribute
 member	otto.host:ZephyrFrame.type_name	attribute
 member	otto.host:ZephyrFrame.typed	method	sync	KO:cmd:-
+member	otto.host:ZephyrFrame.work_shell	method	sync	KO:prefix:-
 abstract	otto.host:ZephyrFrame	-
 name	otto.host:ZephyrHost	class
 mro	otto.host:ZephyrHost	{otto.host:EmbeddedHost} {otto.host:RemoteHost} {otto.host:BaseHost}

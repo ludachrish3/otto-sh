@@ -961,6 +961,29 @@ class ConnectionManager:
             term, self._console_options, telnet_options=self._telnet_options
         )
 
+    def keeps_console_shell(self, *, term: str | None = None) -> bool:
+        """Return whether a session on *term* may leave its console shell to the next user.
+
+        *term* defaults to the active one. True on a console whose options
+        skip the login or the logout: its close then does not end the shell
+        it found or started. The options' answer, read only by
+        :meth:`~otto.host.session.SessionManager.open_budget` to size a
+        session open before any console client exists. It is an upper bound of the
+        client's own answer, ``not``
+        :attr:`~otto.host.console.ConsoleClient.owes_logout`, from the same
+        rule (:func:`~otto.host.console.console_owes_logout`) given the login
+        the options ask for: a session-setup
+        hook on a raw landing that logs in (``login: false``,
+        ``console_login()``) leaves a client that owes a logout, and is
+        counted here as keeping the shell.
+        """
+        term = self._term if term is None else term
+        if term != "console":
+            return False
+        from .console import console_owes_logout  # off the CLI startup import graph on purpose
+
+        return not console_owes_logout(self._console_options, logged_in=self._console_options.login)
+
     @property
     def connected(self) -> bool:
         """Whether any raw connection is currently open."""

@@ -71,6 +71,7 @@ from the default:
 |--------|---------|---------------|
 | `quiet_history()` | `""`: nothing to suppress | Your shell keeps a persistent command history. Return a statement prefix that stops it recording. otto hands it to `handshake` as `prefix`, to place in the first line written into a fresh shell, and resends that line until it lands, so it must print nothing and be safe to repeat. |
 | `script_parsing()` | `""`: nothing to change | Your shell reads a typed line differently from a script line (bash and zsh expand `!word` from history, an interactive zsh reads `#` as a word, on bash, zsh and mksh the line editor completes on TAB). Return one string of statements that turn those differences off, ending in `; ` so `quiet_history()`'s can follow. They must print nothing, be safe to repeat, and hold no quote character, because a terminal may cut the first line. otto places them in `prefix` ahead of `quiet_history()`'s. |
+| `work_shell(prefix=)` | `None`: no work shell | Your dialect is a POSIX shell on a console whose shell may outlive the session ({ref}`console-shell-outlives-session`); derive from `BashFrame` where you can, which offers one. Return the lines of the protocol below. |
 | `parse_partial_output(buffer, m=m)` | The text after the last BEGIN marker and BEGIN's own line ending, with one final line ending removed; `""` before BEGIN has arrived | Your shell prints more between BEGIN and the command's output than BEGIN's own line (a prompt, an exit-code report), so `parse_output`'s parse needs a finished frame. It is a timed-out command's value: `buffer` is what was read up to the deadline, folded as for `parse_output`, with no END and nothing printed after the command. `ZephyrFrame` overrides it to skip the BEGIN rejection and its prompt (`shell_lines_after_begin`, `2`; the getting-started 2.7 frame sets `3`). Without an override such a frame's timed-out value carries those shell lines. |
 | `recover_pattern(m)` | The bare `m.recover` token | Your shell can echo the token without running the probe (an echoing REPL). Return a pattern only a real execution can produce, as `BashFrame` does with the exit code. |
 | `streams_output_live` | `False`: the session buffers to the END sentinel and logs `parse_output(buffer)` | Your stream between the markers can be logged line by line as it arrives, after the three seams below shape it. The invariant to keep: the lines streamed live must equal the lines of what `parse_output` returns, since otto logs each line as it completes and never reads the value to correct them. A frame that streams and also trims or rewrites in `parse_output` other than through `clean_output` logs lines that are not in its `value`. `ZephyrFrame` streams with its tail held back. |
@@ -80,6 +81,77 @@ from the default:
 | `single_client_console` | `False` | Your console serves one client at a time (a serial line, a single-session debug port). A failed readiness handshake is then reported as a held slot rather than an unresponsive device. Waiting for the line to go quiet before closing it is the host's setting, not this one: `telnet_options.single_client_console` ({ref}`single-client-console`). |
 | `measures_terminal_mapping` | `False`: the session is `unmeasured` and nothing changes | Your shell runs on a terminal and you want its line-ending translation undone exactly ({ref}`command-output-contract`). `True` means `handshake` must print the calibration line (`otto.host.terminal_mapping.CALIBRATION_COMMAND`) immediately before READY, and READY must end its line. A `BashFrame` subclass inherits `True`, so one that overrides `handshake` without the calibration line logs an `unknown` WARNING on every session and gets no fold. A `handshake()` override must keep, as `BashFrame` does: <br>- the `prefix` argument, placed in its line, so the script-line statements and history suppression ride the first line (a `handshake()` that drops `prefix` loses both); <br>- printing nothing but READY and the calibration line, and being safe to repeat, since otto resends the line until it lands; <br>- the calibration line, in a line built with {func}`otto.host.command_frame.whole_line_echo`, so a line the shell ran only the tail of never prints READY; <br>- `otto.host.terminal_mapping.establish_exec_state(replace=True)`, which saves the shell's terminal record ({ref}`the exec frame's variables <exec-frame-shell-state>`): without it every pooled `exec` reports its record lost, logs a WARNING, and the pool closes its session after each call. |
 | `exact_output` | `None`: `parse_output` returns the command's exact output, with one trailing newline removed ({ref}`command-output-contract`) | Your device makes the exact output impossible to recover (it trims every answer, say). An `unknown(...)` terminal mapping is not a limitation to declare: it is undefined behaviour, which the session reports with a WARNING. Set it to a {class}`~otto.host.limitation.Limitation` with `kind="device"`, the `reason`, and `measured_on` naming what you measured it on. Declare it on the frame's own class body: registration refuses a subclass that would inherit its parent's `Limitation` unseen. |
+
+(frame-work-shell)=
+
+### A work shell of its own (optional)
+
+On a console whose shell outlives the session, otto runs the session in a
+child shell it starts there and leaves at close, so the console's own shell
+keeps its settings ({ref}`console-shell-outlives-session` says when, and
+what a user sees). A frame offers that by returning a
+{class}`~otto.host.command_frame.WorkShellLines` from `work_shell(prefix=)`;
+`None`, the default, runs the session in the shell it finds. *prefix* is the
+history suppression the new shell needs (`quiet_history()`'s, or empty where
+history is kept), and nothing else.
+
+The record has five fields. otto types these lines in this order:
+
+1. The first handshake, in the console's own shell. Its prefix carries the
+   terminal save (`save_terminal()`), but neither the history suppression
+   nor the script-parsing statements (`script_parsing()`). It measures and
+   saves the terminal and changes no shell setting.
+2. **`start`**: one raw line ending in its one newline, typed once after
+   READY and never resent, with no reply awaited. It starts a shell of the
+   same kind unless the shell reading it already owns the mark, and hands
+   the child a start mark only the child sees (`BashFrame` passes
+   `__otto_child=1` as an assignment before the command).
+3. The entry proof, which carries **`proof`** and **`readback`**. otto
+   places `proof`, statements ending in `; `, on an anchored probe line (the
+   one a login-proxy hop is proved with), and expands `readback` on that
+   line's echo. `proof` turns the start mark into ownership and runs
+   *prefix* only where the mark is owned. `readback` expands to `1` only
+   there, and to nothing elsewhere. otto resends the line until one lands,
+   so both must be safe to repeat. A readback other than `1`, or no answer,
+   refuses the open: otto never runs the session in the shell it found.
+4. The ordinary handshake, in the work shell, with the whole `prefix`.
+5. At close, the terminal's restore, then **`exit`**. otto types `exit` as
+   a command through the current frame's `frame()`, with no reply awaited,
+   and only while the session's current frame still offers a work shell (a
+   hook may have entered another dialect). It leaves the shell only where
+   the shell owns the mark, and does nothing elsewhere (a shell that
+   `switch_user` started above the work shell, say).
+
+**`lead`**, spaces, goes before each line that can run in the console's own
+shell: the first handshake, the start line, the proof, and each close line
+({func}`~otto.host.command_frame.led`). The commands of the session, framed
+by `run` or `exec` in the work shell, get no lead. `BashFrame`'s one space
+keeps a led line out of a history that ignores lines starting with one.
+
+Ownership must be a mark no child inherits. A variable is not one: an
+exported variable, or any variable under `set -a`, reaches every child, so a
+shell started inside the work shell would pass for it. `BashFrame` uses an
+alias, `__otto_as_w`, as its identity mark does: no shell exports an alias.
+The work-shell lines define and query that alias themselves, not through
+`identity_mark_statement()` or `identity_guard()`, so a subclass that marks
+its switched shells another way keeps a working work shell. Its name is
+fixed, so a session finds a work shell an earlier one left behind, types
+the start line and the proof into it again, and reuses it.
+
+Every field keeps {func}`~otto.host.command_frame.whole_line_echo`'s cut
+rules: a console can deliver a line in pieces, so a shell may run only a
+tail of one, and no tail may leave it waiting for more input. So no field
+holds a quote. The start line and the proof's line both reach a shell whose
+reading of a typed line otto has not changed, so they hold no `!` or TAB,
+and no `#` that starts a word (the script-parsing statements come on the
+ordinary handshake after them). Each line otto types, its lead included, is
+at most 1022 bytes ({data}`~otto.host.userland.ASH_ECHOING_LINE_MAX`), the
+longest line BusyBox ash takes from a terminal that still echoes.
+`WorkShellLines` refuses the fields it can check, naming the field.
+{func}`~otto.host.command_frame.register_command_frame` builds the frame,
+asks its `work_shell` with no prefix and with the frame's own history
+suppression, and refuses one that raises or returns anything but a
+`WorkShellLines` or `None`.
 
 ### An exec frame of its own (optional)
 

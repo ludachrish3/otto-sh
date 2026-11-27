@@ -14,6 +14,7 @@ Key features:
 
 import asyncio
 import dataclasses
+import enum
 import math
 import os
 import re
@@ -37,6 +38,7 @@ from typing_extensions import Never, Self, override
 
 from ..errors import OttoError
 from ..models.base import Cred
+from . import login_proxy
 from .cancel_safe import result_within
 from .command_frame import (
     AshFrame,
@@ -46,10 +48,13 @@ from .command_frame import (
     ExecRestore,
     RawFrame,
     SessionMarkers,
+    WorkShellLines,
     begin_line_ending,
     command_value,
     frame_or_default,
     handshake_prefix,
+    history_prefix,
+    led,
     shell_prefix,
 )
 from .errors import (
@@ -63,6 +68,8 @@ from .identity import ROOT_LOGIN
 from .limitation import Limitation
 from .login_proxy import (
     LoginProxyError,
+    _resync_shell,
+    _ResyncAnswer,
     cred_for,
     prove_identity,
     run_proxy,
@@ -901,6 +908,35 @@ def framed_line_overhead(frame: "CommandFrame", *, exec_input: "ExecInput | None
     return _command_line_length(frame, "", exec_input=exec_input)
 
 
+def _offers_work_shell(frame: CommandFrame) -> bool:
+    """Whether *frame* offers a work shell: its ``work_shell`` returns lines.
+
+    The one answer to that question
+    (:meth:`~otto.host.command_frame.CommandFrame.work_shell`), read by a
+    handshake that decides a session runs in none, by the close's exit, and
+    by :meth:`SessionManager.open_budget`. Asked with no prefix, as
+    registration asks it.
+    """
+    return frame.work_shell(prefix="") is not None
+
+
+class _WorkShell(enum.Enum):
+    """Whether a session runs in a work shell (:meth:`ShellSession._enters_work_shell`).
+
+    A session object opens once: a closed session is not reopened, so its
+    close leaves this state as it is.
+    """
+
+    UNDECIDED = enum.auto()
+    """No handshake whose frame offers a work shell has run yet (none, or a raw landing's)."""
+
+    NOT_USED = enum.auto()
+    """Such a handshake ran in the shell it found: a work shell was not wanted there."""
+
+    ENTERED = enum.auto()
+    """The session started a work shell, proved it, and runs in it."""
+
+
 class ShellSession(ABC):
     """Abstract base for persistent shell sessions.
 
@@ -967,6 +1003,16 @@ class ShellSession(ABC):
         # back by the one restore step (_restore_line). None until saved,
         # and wherever nothing is saved.
         self._saved_terminal: str | None = None
+        # Whether a handshake carrying the save has been answered, whatever
+        # record came back: the save is tried once per session
+        # (_saves_terminal).
+        self._terminal_save_tried = False
+        # Whether this session runs in a work shell (_enters_work_shell),
+        # decided at the first handshake whose frame offers one, and the
+        # lines it typed to enter one, from the start line on: a close
+        # leaves the work shell by them (_leave_work_shell).
+        self._work_shell = _WorkShell.UNDECIDED
+        self._work_shell_lines: WorkShellLines | None = None
         # Words naming WHAT this session is a shell on, appended in brackets
         # to a failed-readiness message. Empty for ssh/telnet, whose message
         # needs none; a console term names its server, port and dial mode, so
@@ -1123,6 +1169,23 @@ class ShellSession(ABC):
         """
         return self.console_client is not None
 
+    @property
+    def shell_outlives_session(self) -> bool:
+        """Whether this session's shell stays after the session ends.
+
+        The one place that decides it. True on a console whose client does
+        not owe a logout (:attr:`~otto.host.console.ConsoleClient.owes_logout`):
+        its close leaves the shell running for the console's next user, so a
+        frame that offers a work shell
+        (:meth:`~otto.host.command_frame.CommandFrame.work_shell`) runs the
+        session in a child shell it starts and leaves, and the shell that was
+        there keeps its own settings. Read live, as the client's login can
+        change. False on an ssh, telnet or local session, and on a console
+        whose close logs out. Whether the terminal stays is
+        :attr:`terminal_outlives_session`, true on every console.
+        """
+        return self.console_client is not None and not self.console_client.owes_logout
+
     def _restore_line(self, frame: CommandFrame | None = None) -> str | None:
         """Return the one line undoing what the handshake did to the terminal, in *frame*'s dialect.
 
@@ -1130,38 +1193,102 @@ class ShellSession(ABC):
         were saved, :meth:`~otto.host.command_frame.CommandFrame.restore_terminal`
         of them (echo and tabs as they were found); elsewhere
         :meth:`~otto.host.command_frame.CommandFrame.restore_interactive`.
-        Used at the login bridge's hand-back and by :meth:`_put_terminal_back`.
+        Used at the login bridge's hand-back.
         """
         frame = frame or self._frame
         if self._saved_terminal is not None:
             return frame.restore_terminal(self._saved_terminal)
         return frame.restore_interactive()
 
+    @property
+    def _close_line_typable(self) -> bool:
+        """Whether a close may type a line into the shell on the session's line.
+
+        Not into a dead session, nor into a command still running (it would
+        read the line as its input), nor into an attached app shell.
+        """
+        return self._alive and not self._needs_recovery and self._app_shell is None
+
+    async def _type_close_line(
+        self, line: Callable[[CommandFrame], str | None], *, what: str
+    ) -> None:
+        """Write the close line *line* renders in the current frame, framed; never raises.
+
+        Nothing is typed where :attr:`_close_line_typable` refuses it. Else
+        *line* is given the session's current frame and returns a statement,
+        or ``None`` for no line. The statement is written as one framed
+        command, led as every line of the session's work-shell lines is
+        (:func:`~otto.host.command_frame.led`), and its reply is NOT awaited.
+        Whatever fails, *line*, the frame's rendering or the write, is logged
+        as "could not *what*" and the close goes on, so nothing a frame
+        computes at close can stop the client's release.
+        """
+        if not self._close_line_typable:
+            return
+        try:
+            text = line(self._frame)
+            if text is None:
+                return
+            framed = self._frame.frame(text, m=self._markers)
+            await self.write_transport(data=led(self._work_shell_lines, framed))
+        except Exception as exc:  # noqa: BLE001 — best-effort courtesy on close, like the console logout
+            logger.warning(f"{self._log_tag}: could not {what}: {exc}")
+
     async def _put_terminal_back(self) -> None:
         """Before a close, restore the settings the handshake saved; a no-op where none were.
 
         Only a terminal that outlives the session has saved settings, so an
-        ssh, telnet or local close sends nothing. The restore is written as
-        one framed command and its reply is NOT awaited: the close's next
-        step (a console's logout) reads the line through to the login
-        prompt, and the shell runs the restore before it reads the logout's
-        EOF, so the close costs no round trip more and cannot wait on a
-        shell that is going away (a reboot). A write that fails is logged
-        and the close goes on. A session killed without a clean close never
-        gets here; that is documented, not guarded (no timer, no watchdog).
+        ssh, telnet or local close sends nothing. The restore is one close
+        line (:meth:`_type_close_line`); its reply is NOT awaited: the
+        close's next step (a console's logout) reads the line through to the
+        login prompt, and the shell runs the restore before it reads the
+        logout's EOF, so the close costs no round trip more and cannot wait
+        on a shell that is going away (a reboot). A session killed without a
+        clean close never gets here; that is documented, not guarded (no
+        timer, no watchdog).
         """
         saved, self._saved_terminal = self._saved_terminal, None
-        # Not into a command still running (it would read the line as its
-        # input) nor into an attached app shell.
-        if saved is None or not self._alive or self._needs_recovery or self._app_shell is not None:
+        if saved is None:
             return
-        line = self._frame.restore_terminal(saved)
-        if line is None:
+        await self._type_close_line(
+            lambda f: f.restore_terminal(saved), what="restore the terminal's settings"
+        )
+
+    async def _leave_work_shell(self) -> None:
+        """Before a close, leave the work shell the session runs in; a no-op where it runs in none.
+
+        The exit is the work-shell lines' own
+        (:attr:`~otto.host.command_frame.WorkShellLines.exit`), which leaves
+        only a shell that owns the work mark. It is one close line
+        (:meth:`_type_close_line`), typed only while the current frame still
+        offers a work shell, so the shell on the line still speaks the
+        dialect the session entered with (a hook may have entered another).
+        The session counts as out of its work shell before the line is
+        typed, so a second close types nothing. A work shell that refuses to
+        exit (a stopped job) stays, and the next session reuses it.
+        """
+        lines = self._work_shell_lines
+        if self._work_shell is not _WorkShell.ENTERED or lines is None:
             return
+        self._work_shell = _WorkShell.NOT_USED
         try:
-            await self.write_transport(data=self._frame.frame(line, m=self._markers))
-        except Exception as exc:  # noqa: BLE001 — best-effort courtesy on close, like the console logout
-            logger.warning(f"{self._log_tag}: could not restore the terminal's settings: {exc}")
+            await self._type_close_line(
+                lambda f: lines.exit if _offers_work_shell(f) else None,
+                what="leave the work shell",
+            )
+        finally:
+            self._work_shell_lines = None
+
+    async def _hand_back_line(self) -> None:
+        """Type the courtesy lines of a close on a line that outlives the session; never raises.
+
+        The terminal's restore (:meth:`_put_terminal_back`), then the work
+        shell's exit (:meth:`_leave_work_shell`), so the shell under the
+        work shell gets the terminal as it was found. Each line keeps its own
+        condition, and neither waits for a reply.
+        """
+        await self._put_terminal_back()
+        await self._leave_work_shell()
 
     @property
     def _log_tag(self) -> str:
@@ -1338,7 +1465,9 @@ class ShellSession(ABC):
         if self._needs_recovery:
             await self._stop_under_bound(restore=None)
 
-    def _handshake_payload(self, m: SessionMarkers) -> str:
+    def _handshake_payload(
+        self, m: SessionMarkers, *, save: bool, work: WorkShellLines | None
+    ) -> str:
         """Render the complete first line written into a fresh shell.
 
         The dialect's readiness probe, carrying the shell prefix
@@ -1350,18 +1479,27 @@ class ShellSession(ABC):
         shell executes — anything written before it is
         already in the history list. The frame places it in the line
         (:meth:`~otto.host.command_frame.CommandFrame.handshake`), after the
-        anchor that has to open it. On the first handshake of a terminal that
-        outlives the session the settings save rides in front of it
+        anchor that has to open it. With *save* (the first handshake of a
+        terminal that outlives the session, :meth:`_saves_terminal`) the
+        settings save rides in front of it
         (:func:`~otto.host.command_frame.handshake_prefix`).
+
+        *work* is the work-shell lines this handshake enters with
+        (:meth:`_enters_work_shell`), or ``None``. With them the line is typed
+        into the shell the session found, which keeps its settings: it
+        carries the save and no shell prefix, after the lines'
+        :attr:`~otto.host.command_frame.WorkShellLines.lead`. The work shell's
+        own handshake carries the prefix.
         """
+        entering = work is not None
         prefix = handshake_prefix(
             self._frame,
             m,
-            shell_history=self._shell_history,
-            save_terminal=self._saves_terminal(),
-            script_lines=self._script_lines,
+            shell_history=self._shell_history or entering,
+            save_terminal=save,
+            script_lines=self._script_lines and not entering,
         )
-        return self._frame.handshake(m, prefix=prefix)
+        return led(work, self._frame.handshake(m, prefix=prefix))
 
     def _new_shell_prefix(self) -> str:
         """Return the statements a new shell this session starts is told first.
@@ -1378,11 +1516,34 @@ class ShellSession(ABC):
     def _saves_terminal(self) -> bool:
         """Whether this handshake saves the terminal's settings.
 
-        Only where the terminal outlives the session, and only while nothing
-        is saved: a second handshake (frame entry) on the same line must not
-        save otto's own settings as the user's.
+        Only where the terminal outlives the session, and only until a
+        handshake that carried the save has been answered, whatever record
+        it printed: a later handshake (frame entry, a work shell's) must not
+        save otto's own settings as the user's, and a save that failed in the
+        shell the session found is not tried again elsewhere.
         """
-        return self.terminal_outlives_session and self._saved_terminal is None
+        return self.terminal_outlives_session and not self._terminal_save_tried
+
+    def _enters_work_shell(self) -> WorkShellLines | None:
+        """Return the lines this handshake enters a work shell with, or ``None`` for none.
+
+        A session runs in a work shell when its shell outlives it
+        (:attr:`shell_outlives_session`), it types script lines (not the
+        person's login bridge), and its frame offers one
+        (:meth:`~otto.host.command_frame.CommandFrame.work_shell`), given the
+        session's history suppression
+        (:func:`~otto.host.command_frame.history_prefix`) for the entry proof.
+        Decided once, at the first handshake whose frame offers lines: a raw
+        landing's decides nothing, so a hook that logs in on it has done so
+        by the frame entry that decides.
+        """
+        if (
+            self._work_shell is not _WorkShell.UNDECIDED
+            or not self._script_lines
+            or not self.shell_outlives_session
+        ):
+            return None
+        return self._frame.work_shell(prefix=history_prefix(self._frame, self._shell_history))
 
     async def _ensure_initialized(self) -> None:
         """Open the transport, then run the dialect handshake. Idempotent.
@@ -1406,7 +1567,9 @@ class ShellSession(ABC):
         """
         return self._markers
 
-    async def _handshake(self, timeout: float | None = None, *, opening: bool = False) -> None:
+    async def _handshake(
+        self, timeout: float | None = None, *, opening: bool = False, in_work_shell: bool = False
+    ) -> None:
         """Confirm the current frame's shell is at a prompt; the dialect half of open.
 
         Renders the frame's readiness payload (the shell prefix included)
@@ -1449,17 +1612,28 @@ class ShellSession(ABC):
         probe can echo back) surfaces as a clear ``ConnectionError`` instead
         of hanging until some far-outer timeout.
 
+        Where the session enters a work shell (:meth:`_enters_work_shell`),
+        this handshake runs in the shell the session found, with no shell
+        prefix, and :meth:`_enter_work_shell` follows it: the start line, the
+        entry proof, then this handshake once more, in the work shell.
+
         Split from :meth:`_ensure_initialized` so :meth:`enter_frame` can run
         a SECOND handshake, in a different dialect, on the same transport.
         *opening* is set only by the open's own handshake: its failure may
         quote what the device sent (:meth:`_seen_at_open`), a frame entry's
         never does, since a hook or a hop may have typed other credentials.
+        *in_work_shell* is set only by :meth:`_enter_work_shell`, for the
+        handshake it types in the work shell it just proved: its failure
+        names that shell, not the login.
         """
         deadline = self._init_timeout if timeout is None else timeout
         # Decided once per handshake, before any send: every resend of this
-        # handshake carries the save (or not) alike.
-        saves = self._saves_terminal() and self._frame.save_terminal(self._markers) != ""
-        handshake_cmd = self._handshake_payload(self._markers)
+        # handshake carries the save (or not), and enters a work shell (or
+        # not), alike.
+        save = self._saves_terminal()
+        lines = self._enters_work_shell()
+        saves = save and self._frame.save_terminal(self._markers) != ""
+        handshake_cmd = self._handshake_payload(self._markers, save=save, work=lines)
         if handshake_cmd == "":
             logger.debug(f"{self._log_tag}: raw landing — no handshake to send")
             self._terminal = _UNMEASURED
@@ -1489,7 +1663,7 @@ class ShellSession(ABC):
             confirmed = await confirm_live(
                 lambda data: self.write_transport(data=data),
                 _expect,
-                self._handshake_payload,
+                lambda m: self._handshake_payload(m, save=save, work=lines),
                 lambda m: ready_pattern(m, line_ending=measures),
                 lambda: self._markers,
                 settle=0.0,
@@ -1499,7 +1673,7 @@ class ShellSession(ABC):
         except asyncio.IncompleteReadError as exc:
             partial = exc.partial.decode(errors="replace")
         if not confirmed:
-            await self._fail_init(partial=partial, opening=opening)
+            await self._fail_init(partial=partial, opening=opening, in_work_shell=in_work_shell)
 
         # confirm_live owns the resend bookkeeping internally and doesn't
         # expose a per-probe attempt count to its caller, so this is
@@ -1512,9 +1686,91 @@ class ShellSession(ABC):
             # first record behind this session's tag is the first run's: the
             # settings as found.
             self._saved_terminal = saved_settings(reply, self._markers.saved)
+            self._terminal_save_tried = True
 
         self._initialized = True
         self._alive = True
+        if lines is not None:
+            await self._enter_work_shell(lines, timeout, opening=opening)
+        elif (
+            self._work_shell is _WorkShell.UNDECIDED
+            and self.console_client is not None
+            and _offers_work_shell(self._frame)
+        ):
+            self._work_shell = _WorkShell.NOT_USED
+
+    async def _enter_work_shell(
+        self, lines: WorkShellLines, timeout: float | None, *, opening: bool
+    ) -> None:
+        """Start the work shell *lines* describe, prove it, and run this session's handshake in it.
+
+        The handshake that called this ran in the shell the session found,
+        with no shell prefix. The start line follows it, typed once, and the
+        entry proof is the resync probe (:func:`~otto.host.login_proxy._resync_shell`)
+        carrying the lines: it gives the new shell the work mark and the
+        history suppression before the shell records a line, and reads back
+        whether the shell that answered owns the mark. Then the ordinary
+        handshake runs in the work shell, with the whole shell prefix, and
+        measures the terminal there; it saves nothing. *opening* is the
+        calling handshake's, so that handshake fails as the open's own would,
+        naming the work shell (:meth:`_fail_init`).
+
+        A proof that finds no mark, or no answer by the resync's deadline,
+        refuses the open (:meth:`_refuse_work_shell`): the session never
+        falls back to the shell it found.
+
+        Raises:
+            ConsoleError: the work shell was not proved.
+        """
+        # From the start line on, every close line leads as these lines do
+        # (_type_close_line): on a refusal it may be typed into the shell the
+        # session found.
+        self._work_shell_lines = lines
+        await self.write_transport(data=led(lines, lines.start))
+        # The handshake's own lines are not command-logged; nor is the proof.
+        io = _SessionProxyIO(
+            self,
+            lambda _t, _m: None,
+            lambda _t, _m: None,
+            fold_log=lambda _mode: LogMode.NEVER,
+        )
+        answer: _ResyncAnswer | None = None
+        failure = ""
+        try:
+            answer = await _resync_shell(
+                io, self._log_tag, self.current_user, settle=0.0, work=lines
+            )
+        except LoginProxyError as exc:
+            failure = str(exc)
+        said = (
+            f"got no answer: {failure}"
+            if answer is None
+            else f"answered as {answer.user!r}, in the work shell: {answer.in_work_shell}"
+        )
+        logger.debug(f"{self._log_tag}: work shell entry proof {said}")
+        if answer is None:
+            # The resync's own words speak of a login-proxy transition, which
+            # this is not; the refusal says what failed.
+            raise await self._refuse_work_shell(started=True) from None
+        if not answer.in_work_shell:
+            raise await self._refuse_work_shell(started=False)
+        self._work_shell = _WorkShell.ENTERED
+        await self._handshake(timeout=timeout, opening=opening, in_work_shell=True)
+
+    async def _refuse_work_shell(self, *, started: bool) -> ConsoleError:
+        """Close this session and return the console's refusal of its work shell.
+
+        The session is alive, so the close attempts to put the terminal back
+        first: it types the restore, which a child's startup program still
+        reading the line can take as its input. The refusal is the console client's
+        (:meth:`~otto.host.console.ConsoleClient.work_shell_refused`).
+        """
+        client = self.console_client
+        if client is None:
+            raise RuntimeError(f"{self._log_tag}: a work shell was entered off a console")
+        with suppress(Exception):  # best-effort cleanup, as a failed handshake's close
+            await self.close()
+        return client.work_shell_refused(started=started)
 
     @property
     def terminal_mapping(self) -> str:
@@ -1639,7 +1895,12 @@ class ShellSession(ABC):
         await self._handshake(timeout=timeout)
 
     async def _fail_init(
-        self, attempt: int = 0, *, partial: str = "", opening: bool = False
+        self,
+        attempt: int = 0,
+        *,
+        partial: str = "",
+        opening: bool = False,
+        in_work_shell: bool = False,
     ) -> None:
         """Tear down a session whose readiness handshake never completed.
 
@@ -1657,7 +1918,9 @@ class ShellSession(ABC):
         :attr:`~otto.host.command_frame.CommandFrame.single_client_console`
         the cause is contention (find the other client, or restart the
         console); anywhere else it is a shell that never started or a login
-        that never completed (check credentials).
+        that never completed (check credentials). A handshake typed in a work
+        shell otto just started and proved (*in_work_shell*) names that
+        shell's startup file instead: no login was typed there.
 
         *partial* is what the read that met end of stream had gathered, and
         *opening* says the failed handshake was the open's own; together they
@@ -1679,7 +1942,13 @@ class ShellSession(ABC):
         # before it releases it, as every release of such a line does.
         with suppress(Exception):  # pragma: no cover - best-effort cleanup
             await self.close()
-        if self._frame.single_client_console:
+        if in_work_shell:
+            why = (
+                "it was the work shell otto started in the console's shell, which answered "
+                "otto's entry proof but not this handshake (something its startup file "
+                "set, such as a prompt hook that reads input?); no login was typed there"
+            )
+        elif self._frame.single_client_console:
             why = (
                 "this console serves ONE client at a time, so its slot is most "
                 "likely still held — by another otto run, a stray client, or a "
@@ -3074,16 +3343,24 @@ class TelnetSession(ShellSession):
         a single-client line is drained to quiet before it is closed. It is
         idempotent and joins a close already running, so a default session
         and its manager closing the same shared client release it once.
-        Before that, a console's settings go back to what the handshake found
-        (``_put_terminal_back``), while the shell can still run it.
+        Before that, a console's settings go back to what the handshake found,
+        and a work shell the session runs in is left (``_hand_back_line``),
+        while the shell can still run them; the client's close follows
+        whatever those two lines did. A cancellation while they are typed
+        (a paced write awaits between chunks) still releases the client and
+        marks the session closed; it is raised again after the release.
         """
-        await self._put_terminal_back()
-        if self.console_client is not None:
-            await self.console_client.close()
-        elif self._client is not None:
-            await self._client.close()
-        self._alive = False
-        self._initialized = False
+        try:
+            await self._hand_back_line()
+        finally:
+            try:
+                if self.console_client is not None:
+                    await self.console_client.close()
+                elif self._client is not None:
+                    await self._client.close()
+            finally:
+                self._alive = False
+                self._initialized = False
 
 
 @final
@@ -4975,6 +5252,13 @@ class SessionManager:
         plus the readiness deadline, plus what the failed attempt's close spends
         draining a single-client line before releasing it (see
         :meth:`~otto.host.connections.ConnectionManager.release_allowance`).
+        On a console whose options keep its shell after the session
+        (:meth:`~otto.host.connections.ConnectionManager.keeps_console_shell`),
+        where the command frame or the landing frame offers a work shell, an
+        attempt also counts the work shell's two waits: the entry proof's
+        resync deadline (``login_proxy.RESYNC_DEADLINE``) and a second
+        readiness deadline, for the handshake typed in the work shell, so a
+        refused work shell is reported as the refusal.
         A caller that bounds the open with less reports a refused telnet
         password as its own timeout rather than as the ``ConnectionError`` the
         session raises. Waits otto leaves unbounded are not counted, so such a
@@ -4990,7 +5274,9 @@ class SessionManager:
         connect = 0.0 if conns is None else conns.connect_allowance(term=term)
         release = 0.0 if conns is None else conns.release_allowance(term=term)
         retried = conns is None or conns.retries_failed_open(term=term)
-        attempt = connect + deadline + release
+        keeps_shell = conns is not None and conns.keeps_console_shell(term=term)
+        work = login_proxy.RESYNC_DEADLINE + deadline if keeps_shell and self._may_work() else 0.0
+        attempt = connect + deadline + work + release
         return 2 * attempt + self._retry_backoff if retried else attempt
 
     def _login_user(self) -> str:
@@ -5014,6 +5300,18 @@ class SessionManager:
         if not creds:
             return ""
         return creds[0]
+
+    def _may_work(self) -> bool:
+        """Whether a session this manager opens may enter a work shell: a frame it types offers one.
+
+        The command frame (bash where the host declares none) or the landing
+        frame (:func:`_offers_work_shell`). A Zephyr console, or a raw landing
+        a frame without work-shell lines follows, never enters one.
+        """
+        landing = self._landing_frame
+        return _offers_work_shell(self._target_frame()) or (
+            landing is not None and _offers_work_shell(landing)
+        )
 
     @property
     def _session_frame(self) -> CommandFrame | None:

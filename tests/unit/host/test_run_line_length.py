@@ -83,6 +83,7 @@ from tests.unit.host.test_terminal_switch import _EitherConnection, _unix
 
 if TYPE_CHECKING:
     from otto.host.connections import ConnectionManager
+    from tests._fixtures.interactive_shell import TypedWorkShellLines
 
 SURFACE = "run-command-line-length"
 """The registry record this guard is the first product consumer of."""
@@ -1228,7 +1229,9 @@ def _first_lines() -> "list[tuple[str, str]]":
 
     The handshake of each bash-family frame, with and without the console's
     settings save, and the resync probe a user switch and a login-proxy hop
-    type; each with history suppression on and off.
+    type; each with history suppression on and off. On a console whose
+    shell outlives the session, each frame's three work-shell lines too: line
+    1 with its lead, the start line with its lead, and the entry proof.
     """
     from otto.host.command_frame import AshFrame, BashFrame, SessionMarkers, handshake_prefix
     from otto.host.session import _SESSION_ID_LEN
@@ -1242,14 +1245,49 @@ def _first_lines() -> "list[tuple[str, str]]":
                 prefix = handshake_prefix(frame, m, shell_history=not quiet, save_terminal=save)
                 name = f"{type(frame).__name__} handshake save={save} quiet={quiet}"
                 lines.append((name, frame.handshake(m, prefix=prefix)))
+            work = _work_shell_lines(frame, quiet=quiet)
+            frame_name = type(frame).__name__
+            lines.append((f"{frame_name} work console line 1 quiet={quiet}", work.line_one))
+            lines.append((f"{frame_name} work entry proof quiet={quiet}", work.proof))
         lines.append((f"resync quiet={quiet}", render_probe("resync", m, history=quiet)))
+    for frame in (BashFrame(), AshFrame()):
+        start = _work_shell_lines(frame, quiet=False).start
+        lines.append((f"{type(frame).__name__} work start line", start))
     return lines
+
+
+def _work_shell_lines(frame, *, quiet: bool) -> "TypedWorkShellLines":
+    """The lines a session on *frame* enters its work shell with, as the session types them."""
+    from tests._fixtures.interactive_shell import typed_work_shell_lines
+
+    return typed_work_shell_lines(frame, quiet=quiet)
 
 
 @pytest.mark.parametrize(("name", "line"), _first_lines(), ids=[n for n, _ in _first_lines()])
 def test_the_first_line_of_a_new_shell_fits_an_echoing_ash(name: str, line: str):
     """A first line longer than an echoing ash's line editor would be cut there."""
     assert len(line) <= ASH_ECHOING_LINE_MAX, f"{name}: {len(line)} characters"
+
+
+@pytest.mark.parametrize("quiet", [False, True], ids=["kept", "suppressed"])
+def test_the_entry_proof_needs_no_script_parsing(quiet: bool):
+    """The proof is read before any statement on it runs: it holds no ``!``, ``#`` or TAB.
+
+    So it needs none of the script-parsing statements, which the work
+    shell's own handshake carries, and which would not fit beside the
+    history suppression it does carry.
+    """
+    from otto.host.command_frame import AshFrame, BashFrame
+
+    for frame in (BashFrame(), AshFrame()):
+        work = _work_shell_lines(frame, quiet=quiet)
+        proof = work.proof
+        # Each line can run in the person's shell, so each leads, out of an
+        # `ignorespace` history.
+        assert all(line.startswith(work.lead) for line in (work.line_one, work.start, proof))
+        assert frame.script_parsing() not in proof
+        assert not any(word in proof for word in ("set +H", "setopt", "bind")), proof
+        assert not set(proof) & {"!", "#", "\t"}, proof
 
 
 def _ash_host(kind: str) -> UnixHost:

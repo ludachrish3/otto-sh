@@ -112,6 +112,7 @@ async def test_console_login_runs_the_client_sequence_on_a_console_session():
         # non-None console_client (to decide _retry_failed_handshake), so
         # the stub carries both. A hook logs in on a ``login: false`` console.
         logged_in = False
+        owes_logout = False
         read_gate = ReadGate()
         options = ConsoleOptions(login=False)
 
@@ -140,6 +141,7 @@ async def test_console_login_disables_the_handshake_retry_after_a_successful_log
     # a session built over an already-logged-in client.
     class _Client:
         logged_in = False
+        owes_logout = False
         read_gate = ReadGate()
         options = ConsoleOptions(login=False)
 

@@ -333,6 +333,7 @@ def _telnet_reader_session(fed: _Fed, *, console: bool):
 
         class _Console:
             logged_in = False
+            owes_logout = False
             read_gate = ReadGate()
             options = ConsoleOptions()
 
