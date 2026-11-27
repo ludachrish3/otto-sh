@@ -1,0 +1,18 @@
+diff --git a/subsys/net/lib/sockets/sockets_service.c b/subsys/net/lib/sockets/sockets_service.c
+--- a/subsys/net/lib/sockets/sockets_service.c
++++ b/subsys/net/lib/sockets/sockets_service.c
+@@ -133,6 +133,14 @@
+ 	 */
+ 	for (int i = 0; i < svc->pev_len; i++) {
+ 		ctx.events[get_idx(svc) + i] = svc->pev[i].event;
++		/* otto bed patch: the saved event still carries the revents of
++		 * the last time this socket triggered. Copied back as is, the
++		 * rest of this poll round would call the callback of a socket
++		 * that has nothing to read, and a callback that reads blocking
++		 * (the telnet shell backend's) then stalls the whole service.
++		 * A socket that really is ready is reported by the next poll.
++		 */
++		ctx.events[get_idx(svc) + i].revents = 0;
+ 	}
+ }
+ 
