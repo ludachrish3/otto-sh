@@ -209,7 +209,7 @@ error prints it verbatim; the sections below are its readable form.
 | [`scp-transfer`](#scp-transfer) | `measured-broken` | No `scp` binary on a stock BusyBox device, so otto refuses the transfer up front rather than failing one file at a time. A device with a real `scp` installed is unaffected. Use the `shell` backend. |
 | [`daemon-launch`](#daemon-launch) | `measured-broken` | Launching a tagged daemon needs bash, which a stock BusyBox userland does not have, so `link impair --expire` is refused rather than left with a timer that never runs. Impair without `--expire` and it works. |
 | [`shutdown-command`](#shutdown-command) | `measured-broken` | Nothing, on any measured device: `Host.shutdown()` asks which spelling your device has and emits `poweroff` where there is no `shutdown`. Only a device with neither is refused. `Host.reboot()` is unaffected. |
-| [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 4095 characters, or 1022 where the terminal still echoes, rather than let the terminal truncate it. `Host.exec()` over ssh is safe and is not refused; on a `console`, `telnet` or proxied-login host it types into a shell session and is refused the same way. |
+| [`run-command-line-length`](#run-command-line-length) | `measured-broken` | `Host.run()` refuses a command whose typed line would exceed 4095 characters, or 1022 where the terminal still echoes, rather than let the terminal truncate it. `Host.exec()` is refused the same way, except an `exec(..., terminal=False)` the host accepts, which is safe and is not refused. |
 | [`typed-tab-literal-next`](#typed-tab-literal-next) | `measured-broken` | On a BusyBox serial console, a literal TAB in a `run` or `exec` command reaches the shell with an extra `0x16` byte before it. Nothing is refused; avoid literal TABs there, or use ssh or telnet. |
 | [`product-lifecycle`](#product-lifecycle) | `untested` | otto's `stage`/`install`/`uninstall` verbs emit no command of their own. Whether they work on your device is decided by your own product code. |
 | [`busybox-over-a-real-network`](#busybox-over-a-real-network) | `untested` | Every target is local or on host-local virtual wire, so nothing has met a physical path's latency or loss. |
@@ -607,9 +607,9 @@ refused" below says why it must stay that way for now.
   function: the one framed step of `run_cmd` and of a pooled `exec()`. On an open
   session that reads a terminal it measures the line against that session's
   bound, in the frame it is typed in, and refuses it before it is typed. A pooled
-  `exec()` reads a terminal on a `term: telnet` host, on *any* host whose login
-  is proxied, and where a terminal is asked for; there the message advises
-  splitting the line, since `exec()` is no escape.
+  `exec()` reads a terminal unless it is an accepted `exec(..., terminal=False)`
+  ({ref}`where that is <terminal-false-per-host>`) or a command otto wrote
+  that needs none ({ref}`otto-own-exec`).
 
 A line typed into a shell through a terminal is **silently truncated** past
 4095 characters: the kernel holds one typed line in a 4096-byte buffer, its
@@ -637,25 +637,34 @@ typed, against that session's own bound. 4095 is the Linux terminal's bound
 bash, and a Zephyr board's own shell buffer is a separate, unmeasured bound.
 
 **What the bound applies to.** The line otto *types*, not the command you passed:
-otto's framing adds 38 characters to the line your command starts on, so
-**4057** is the most any single line of your command may be (**984** on a
-session whose terminal still echoes). A multi-line
+otto's framing adds characters to the line your command starts on, and the
+most any single line of your command may be is the bound less that framing.
+A `run()` adds 38 characters, so **4057** is its most (**984** on a session
+whose terminal still echoes). A pooled `exec()` adds 151, because the exec
+frame saves the shell's state on that line, so **3944** is its most
+(**871**). A console `exec()` adds more again. The refusal names both numbers
+for the call it refuses (`otto.host.session.framed_line_overhead` and
+`typed_line_budget` compute them, and a test pins this paragraph to them).
+A multi-line
 script is judged line by line, because the terminal's buffer holds one line —
 a long here-doc is fine as long as no individual line is over.
 
-**What is not refused.** `Host.exec()` over ssh, with no terminal asked for,
-runs on a pooled session without a pty, is unaffected, and is the way to send
-an over-long command there. One
+**What is not refused.** `Host.exec(..., terminal=False)`, where it is
+{ref}`accepted <terminal-false-per-host>`, runs on a pooled session without
+a pty, is unaffected, and is the way to send an over-long command there. The
+refusal of `run()` or `exec()` names it only where the same call would be
+accepted with `terminal=False`; anywhere else the message says to split the
+command. One
 further path stays unguarded deliberately: a named session's
 `HostSession.run()`. Guarding it would make
 {class}`~otto.host.transfer.shell.ShellFileTransfer` refuse its own chunk
 lines, which is the whole reason the `shell` backend exists. It remains
 measured-but-unfixed; on it, truncation is still possible.
 
-On a `console`, `telnet` or proxied-login host there is no such escape:
-`exec()` types into a shell session (the default one on a console, a pooled one
-otherwise), so it passes the same guard, measured in the exec frame, and an
-over-long command is refused there too — split it. The `shell` transfer is not
+Where `terminal=False` is refused there is no such escape: `exec()` types
+into a shell session with a terminal (the default one on a console, a pooled
+one otherwise), so it passes the same guard, measured in the exec frame, and
+an over-long command is refused there too — split it. The `shell` transfer is not
 refused, because it sizes its lines by the exec frame's typed budget.
 
 **Which hosts are refused.** Those whose declared shell dialect is `ash` — the

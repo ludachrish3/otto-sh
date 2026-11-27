@@ -192,7 +192,10 @@ async def test_every_case_the_exec_page_lists_is_what_otto_does(
     """``EXEC_SESSION_CASES`` (rendered on ``docs/command-contracts/exec.md``) against the dispatch.
 
     ``pooled-no-terminal`` is a session opened without a terminal (``plain``),
-    or one whose transport has none (the local host's pipe).
+    or one whose transport has none (the local host's pipe). The dispatch is
+    driven below the public ``exec``, so *needs_shell* False is a call that
+    asks for no terminal (``terminal=False``); a user's unset ``terminal`` is
+    *needs_shell* True, the ``ssh-needs-shell`` case.
     """
     with contextlib.ExitStack() as stack:
         host = build(stack)
@@ -204,6 +207,10 @@ async def test_every_case_the_exec_page_lists_is_what_otto_does(
     elif case == "pooled-terminal":
         assert (ran, plain, types_into_terminal) == ("pooled", False, True)
     else:
+        # ``pooled-no-terminal``: ssh (a session opened ``plain``) and the
+        # local host (its pipe has no terminal, whatever ``plain`` says).
+        # Either fact is the case's promise, so the assertion is their union,
+        # as the page's own case test states it.
         assert ran == "pooled"
         assert plain or not types_into_terminal
 
@@ -458,11 +465,11 @@ def test_a_direct_cred_user_on_a_plain_ssh_host_gets_a_session_without_a_termina
 
 
 @pytest.mark.parametrize(
-    ("terminal", "plain"), [(None, True), (False, True), (True, False)], ids=str
+    ("terminal", "plain"), [(None, False), (False, True), (True, False)], ids=str
 )
 @pytest.mark.asyncio
 async def test_terminal_decides_the_mode_of_an_ssh_exec(terminal, plain, monkeypatch):
-    """``terminal=True`` is a reason to want a shell; unset and ``False`` are answered alike."""
+    """Unset and ``terminal=True`` take a terminal, as ``run`` does; ``False`` takes none."""
     host = _unix_host(term="ssh")
     entries = _spy_entries(host, monkeypatch)
     await host.exec("true", terminal=terminal)
@@ -505,3 +512,265 @@ def test_the_transfer_line_room_is_bounded_where_exec_has_a_terminal(reason, mon
         room = _transfer_ctx(host, monkeypatch).exec_line_room("")
         assert room is not None
         assert room == host._session_mgr.line_budget(shared=False)
+
+
+#: The page's cases an ``exec`` with no user and no need of a shell reaches, by host.
+_OWN_CASES = [
+    pytest.param(case, host.values[0], id=host.id)
+    for case, hosts in _CASE_HOSTS.items()
+    for host in hosts
+    if host.values[1] is None and host.values[2] is False
+]
+
+
+def _assert_case(case: str, host, entries: _Entries) -> None:
+    ran, plain = entries.ran()
+    types_into_terminal = host._live_session_mgr()._types_into_terminal
+    if case == "shared":
+        assert ran == "shared"
+    elif case == "pooled-terminal":
+        assert (ran, plain, types_into_terminal) == ("pooled", False, True)
+    else:
+        # ``pooled-no-terminal``: ssh (a session opened ``plain``) and the
+        # local host (its pipe has no terminal, whatever ``plain`` says).
+        # Either fact is the case's promise, so the assertion is their union,
+        # as the page's own case test states it.
+        assert ran == "pooled"
+        assert plain or not types_into_terminal
+
+
+@pytest.mark.parametrize(("case", "build"), _OWN_CASES)
+@pytest.mark.asyncio
+async def test_otto_s_own_exec_takes_the_session_without_a_terminal_where_the_host_offers_one(
+    case, build, monkeypatch
+):
+    from otto.host.host import exec_own
+
+    with contextlib.ExitStack() as stack:
+        host = build(stack)
+        entries = _spy_entries(host, monkeypatch)
+        await exec_own(host, "true")
+        _assert_case(case, host, entries)
+
+
+async def _own_entries(host, monkeypatch, entry: str) -> _Entries:
+    """Run ``true`` on *host* through *entry*, with the manager's entries spied."""
+    from otto.host.host import exec_own
+    from otto.logger.mode import ExecLogContext
+
+    entries = _spy_entries(host, monkeypatch)
+    if entry == "exec":
+        await host.exec("true")
+    elif entry == "exec_own":
+        await exec_own(host, "true")
+    elif entry == "delegated":
+        ctx = ExecLogContext(
+            command="true",
+            mode=LogMode.QUIET,
+            log_command=lambda *_: None,
+            log_output=lambda *_: None,
+        )
+        await host._exec_delegated("true", exec_log=ctx, expects=None, timeout=10.0)
+    else:
+        await (await host._exec_spawned("true", timeout=10.0))
+    return entries
+
+
+@pytest.mark.parametrize("entry", ["exec_own", "delegated", "spawned"])
+@pytest.mark.asyncio
+async def test_otto_s_own_exec_keeps_its_mode_when_the_users_default_is_a_terminal(
+    entry, monkeypatch
+):
+    host = _unix_host(term="ssh")
+    assert (await _own_entries(host, monkeypatch, "exec")).ran() == ("pooled", False)
+    host = _unix_host(term="ssh")
+    assert (await _own_entries(host, monkeypatch, entry)).ran() == ("pooled", True)
+    host = _unix_host(term="ssh")
+    entries = _spy_entries(host, monkeypatch)
+    await host.exec("true", terminal=False)
+    assert entries.ran() == ("pooled", True)
+
+
+@pytest.mark.parametrize(
+    ("case", "build"),
+    [p for p in _OWN_CASES if p.id != "ssh"],
+)
+@pytest.mark.parametrize("entry", ["exec", "exec_own"])
+@pytest.mark.asyncio
+async def test_a_host_with_no_session_without_a_terminal_ignores_the_users_default(
+    case, build, entry, monkeypatch
+):
+    """The local host, telnet, proxied, hooked and console hosts take what they take without it."""
+    with contextlib.ExitStack() as stack:
+        host = build(stack)
+        _assert_case(case, host, await _own_entries(host, monkeypatch, entry))
+
+
+@pytest.mark.asyncio
+async def test_exec_terminal_false_on_the_local_host_ignores_the_users_default(monkeypatch):
+    host = LocalHost()
+    entries = _spy_entries(host, monkeypatch)
+    await host.exec("true", terminal=False)
+    assert entries.ran()[0] == "pooled"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"sudo": True}, {"expects": [("Password:", "pw")]}, {"user": "app"}],
+    ids=["sudo", "expects", "user"],
+)
+@pytest.mark.asyncio
+async def test_otto_s_own_exec_with_a_prompt_sudo_or_another_user_takes_a_terminal_and_never_refuses(  # noqa: E501 — the name the plan gives it
+    kwargs, monkeypatch
+):
+    from otto.host.host import exec_own
+
+    host = _unix_with_users(term="ssh")
+    # The elevation's wording is privilege's own (``test_privilege.py``); here
+    # only the session the elevated call takes is observed.
+    from otto.host.host import _prepared
+
+    monkeypatch.setattr(host, "_prepare_exec_elevation", AsyncMock())
+    monkeypatch.setattr(host, "_apply_sudo", lambda sc, user=None, exec_input=None: _prepared(sc))
+    entries = _spy_entries(host, monkeypatch)
+    result = await exec_own(host, "true", **kwargs)
+    assert result.status is Status.Success
+    assert entries.ran() == ("pooled", False)
+
+
+_UNSET = object()
+
+
+class _NarrowStandIn:
+    """A host that is not an otto host: its ``exec`` takes only a command and a timeout."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def exec(self, cmd, timeout=_UNSET):
+        self.calls.append({} if timeout is _UNSET else {"timeout": timeout})
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
+
+
+class _AuditingUnixHost(UnixHost):
+    """A project's host class whose ``exec`` records each call, then runs otto's."""
+
+    seen: "list[dict]"
+
+    async def exec(self, cmd, **kwargs):  # type: ignore[override]
+        self.seen.append(kwargs)
+        return await super().exec(cmd, **kwargs)
+
+
+def _auditing_host() -> _AuditingUnixHost:
+    host = _AuditingUnixHost(
+        ip="10.0.0.1",
+        element=Element(name="box"),
+        creds=[Cred(login="admin", password="secret")],
+        log=LogMode.QUIET,
+        term="ssh",
+    )
+    host.seen = []
+    return host
+
+
+@pytest.mark.asyncio
+async def test_a_host_whose_exec_is_not_otto_s_own_receives_the_public_call(monkeypatch):
+    from otto.host.host import BaseHost, exec_own, runs_stock_exec
+
+    def _no_private_entry(*_a, **_k):
+        raise AssertionError("the private entry ran")
+
+    monkeypatch.setattr(BaseHost, "_exec_own", _no_private_entry)
+
+    stand_in = _NarrowStandIn()
+    await exec_own(stand_in, "true")
+    await exec_own(stand_in, "true", timeout=5.0)
+    assert stand_in.calls == [{}, {"timeout": 5.0}]
+
+    sub = _auditing_host()
+    _spy_entries(sub, monkeypatch)
+    await exec_own(sub, "true")
+    await exec_own(sub, "true", timeout=5.0, log=LogMode.QUIET)
+    assert sub.seen == [{}, {"timeout": 5.0, "log": LogMode.QUIET}]
+
+    stock = _unix_host(term="ssh")
+    replaced = AsyncMock(
+        return_value=CommandResult(status=Status.Success, value="", command="true", retcode=0)
+    )
+    stock.exec = replaced  # ty: ignore[invalid-assignment]
+    assert not runs_stock_exec(stock)
+    await exec_own(stock, "true")
+    await exec_own(stock, "true", timeout=5.0, log=LogMode.QUIET)
+    assert [c.kwargs for c in replaced.await_args_list] == [
+        {},
+        {"timeout": 5.0, "log": LogMode.QUIET},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_otto_s_own_exec_without_a_timeout_uses_execs_default(monkeypatch):
+    from otto.host.host import DEFAULT_COMMAND_TIMEOUT, exec_own
+
+    host = _unix_host(term="ssh")
+    entries = _spy_entries(host, monkeypatch)
+    await exec_own(host, "true")
+    entries.ran()
+    assert entries.pooled.await_args.kwargs["timeout"] == DEFAULT_COMMAND_TIMEOUT
+
+
+def test_otto_s_own_entry_has_execs_defaults():
+    """``_exec_own`` spells ``exec``'s defaults again; this pins each one equal."""
+    import inspect
+
+    from otto.host.host import BaseHost
+
+    own = inspect.signature(BaseHost._exec_own).parameters
+    public = inspect.signature(BaseHost.exec).parameters
+    assert "terminal" not in own
+    assert not {"exec_log", "on_typed"} & public.keys()
+    shared = (own.keys() & public.keys()) - {"self", "cmd"}
+    assert shared == public.keys() - {"self", "cmd", "terminal"}
+    for name in shared:
+        assert own[name].default == public[name].default, name
+
+
+@pytest.mark.asyncio
+async def test_otto_s_own_exec_is_a_dry_run_and_takes_its_turn_as_exec_does(
+    console_unix_host, monkeypatch
+):
+    import asyncio
+
+    from otto.host.host import exec_own
+    from tests.conftest import active_context
+    from tests.unit.host.conftest import InFlight
+
+    host = _unix_host(term="ssh")
+    entries = _spy_entries(host, monkeypatch)
+    with active_context(dry_run=True):
+        by_exec = await host.exec("true")
+        by_own = await exec_own(host, "true")
+    assert entries.none_ran()
+    assert by_own.status is by_exec.status is Status.NotRun
+    assert by_own.command == by_exec.command
+
+    probe = InFlight()
+    mgr = console_unix_host._live_session_mgr()
+    monkeypatch.setattr(mgr, "exec_on_default_session", probe.exec_on_default_session)
+    await asyncio.gather(*(exec_own(console_unix_host, f"c{i}") for i in range(4)))
+    assert probe.max_in_flight == 1
+    assert len(probe.seq) == 4
+
+
+def test_the_transfer_line_room_follows_the_session_otto_s_own_command_takes(monkeypatch):
+    from otto.host.command_frame import build_command_frame
+
+    stock = _unix_host(term="ssh")
+    stock._session_mgr._command_frame = build_command_frame(type_name="ash")
+    assert _transfer_ctx(stock, monkeypatch).exec_line_room("x" * 100) is None
+
+    sub = _auditing_host()
+    sub._session_mgr._command_frame = build_command_frame(type_name="ash")
+    room = _transfer_ctx(sub, monkeypatch).exec_line_room("")
+    assert room is not None
+    assert room == sub._session_mgr.line_budget(shared=False)

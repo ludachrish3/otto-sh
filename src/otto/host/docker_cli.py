@@ -99,8 +99,10 @@ class ImageId:
 async def image_id_of(host: "Host", reference: str, *, timeout: float = 60) -> ImageId:
     """Return the id of the image *reference* names on *host*'s docker daemon."""
     from ..utils import Status  # function-local: keeps this module's import light
+    from .host import exec_own  # function-local: off the host import path
 
-    result = await host.exec(
+    result = await exec_own(
+        host,
         f"docker image inspect --format {shlex.quote(IMAGE_ID_FORMAT)} {shlex.quote(reference)}",
         timeout=timeout,
     )
@@ -193,8 +195,10 @@ def _parse_state(text: str) -> ContainerState | None:
 async def inspect_container(host: "Host", name: str, *, timeout: float = 60) -> ContainerInspection:
     """Inspect the container *name* on *host*'s docker daemon, once, for every caller."""
     from ..utils import Status  # function-local: keeps this module's import light
+    from .host import exec_own  # function-local: off the host import path
 
-    result = await host.exec(
+    result = await exec_own(
+        host,
         f"docker container inspect --format {shlex.quote(_INSPECT_TEMPLATE)} {shlex.quote(name)}",
         timeout=timeout,
     )
@@ -236,9 +240,10 @@ async def parent_clock(host: "Host") -> ParentClock:
     never enter and two runners sharing a daemon agree.
     """
     from ..utils import Status
+    from .host import exec_own  # function-local: off the host import path
     from .value_reader import Integer, read_value_or_none
 
-    result = await host.exec(_CLOCK_COMMAND, timeout=60)
+    result = await exec_own(host, _CLOCK_COMMAND, timeout=60)
     if result.status is Status.NotRun or not result.status.is_ok:
         return ParentClock(None, result)
     return ParentClock(read_value_or_none(str(result.value), Integer()), result)
@@ -285,9 +290,10 @@ async def _ask(
     propagates.
     """
     from ..utils import Status
+    from .host import exec_own  # function-local: off the host import path
 
     try:
-        result = await host.exec(cmd, timeout=60)
+        result = await exec_own(host, cmd, timeout=60)
     except Exception as e:  # noqa: BLE001 — a transport or host-side failure is this command's error
         errors.append(f"{cmd}: {type(e).__name__}: {e}")
         return _Answer(_Outcome.FAILED, None)

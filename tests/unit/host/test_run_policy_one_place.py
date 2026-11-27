@@ -88,7 +88,9 @@ async def test_a_live_run_prepares_then_runs_inside_the_binding(kind, monkeypatc
     result = await host._run_one("x", timeout=3.0, log=LogMode.QUIET)
     assert result == ran
     assert order == ["prepare", "bind", "run", "unbind"]
-    manager.run_cmd.assert_awaited_once_with(cmd="x", expects=None, timeout=3.0, log=LogMode.QUIET)
+    manager.run_cmd.assert_awaited_once_with(
+        cmd="x", expects=None, timeout=3.0, log=LogMode.QUIET, exec_escapes=False
+    )
 
 
 @pytest.mark.asyncio

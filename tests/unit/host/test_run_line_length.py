@@ -18,9 +18,10 @@ direction, and this module pins the conversion of it into a refusal.
    comfortably under the bound can still frame into a line over it. A guard that
    measured ``len(cmd)`` would leave a band of commands silently truncated —
    the exact defect, narrowed rather than closed.
-3. The refusal is SCOPED. ``exec()`` allocates no pty and is unaffected, and
-   :class:`~otto.host.transfer.shell.ShellFileTransfer` rides ``exec()`` with
-   5534-character lines as a matter of routine. A guard that reached those
+3. The refusal is SCOPED. ``exec(terminal=False)`` on ssh has no pty and is
+   unaffected, and :class:`~otto.host.transfer.shell.ShellFileTransfer` rides
+   otto's own ``exec()`` on that same session with 5534-character lines as a
+   matter of routine. A guard that reached those
    would break every file transfer to the devices this whole workstream
    exists to support.
 
@@ -50,6 +51,8 @@ from otto.host.command_frame import (
 )
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
+from otto.host.host import ElevatedCommand
+from otto.host.login_proxy import Cred
 from otto.host.session import (
     _SESSION_ID_LEN,
     SessionManager,
@@ -83,6 +86,13 @@ if TYPE_CHECKING:
 
 SURFACE = "run-command-line-length"
 """The registry record this guard is the first product consumer of."""
+
+
+_ADVICE = "`exec(..., terminal=False)` types into a session with no terminal and no line limit"
+"""The way out a refusal names where ``exec(..., terminal=False)`` would carry the call."""
+
+_SPLIT = "an `exec()` of this call has a terminal too, so split it"
+"""The way out a refusal names everywhere else."""
 
 
 class _StubSession(ShellSession):
@@ -247,10 +257,7 @@ class TestAnAshHostRefusesInsteadOfTruncating:
         message = str(excinfo.value)
         assert "edge-router-3" in message
         assert str(PTY_TYPED_LINE_MAX) in message
-        assert "exec()" in message, (
-            "the pty-free path is the only thing a caller can actually do about this "
-            "today, so the refusal has to name it"
-        )
+        assert _SPLIT in message, "a factory-built session has no exec without a terminal"
         assert str(5005) in message, "the refusal must state the command's own length"
 
     @pytest.mark.asyncio
@@ -264,7 +271,7 @@ class TestAnAshHostRefusesInsteadOfTruncating:
                 log=LogMode.NORMAL,
             )
         message = str(excinfo.value)
-        assert "Over ssh, an `exec()` without a terminal" not in message
+        assert "`exec(..., terminal=False)` types into" not in message
         assert "split it" in message
         assert sessions == []
         assert str(5005) in message, "the refusal must state the command's own length"
@@ -458,11 +465,14 @@ class TestTheRefusalIsScoped:
 
     @pytest.mark.asyncio
     async def test_exec_is_not_refused_on_an_ash_host(self, tmp_path) -> None:
-        """An unset ``exec()`` on ssh runs on a session with no pty, so no line editor sees it.
+        """``exec(terminal=False)`` on ssh runs on a session with no pty: no line editor sees it.
 
-        The number is ``ShellFileTransfer``'s own chunk line, which it emits
-        routinely against exactly these devices. If this ever refuses, every
-        file transfer to a BusyBox target stops working.
+        ``terminal=False``: a user's unset ``exec`` now runs under a terminal,
+        whose line editor would cut this line, and the session without one is
+        what is under test. The number is ``ShellFileTransfer``'s own chunk
+        line, which it emits routinely against exactly these devices on that
+        same session. If this ever refuses, every file transfer to a BusyBox
+        target stops working.
         """
         host = _unix()
         conn = _EitherConnection(tmp_path)
@@ -471,7 +481,7 @@ class TestTheRefusalIsScoped:
         # BSD wc pads its count; tr leaves the bare number on every platform.
         line = "printf '%s' '" + "A" * 5500 + "' | wc -c | tr -d ' '"
         try:
-            result = await host.exec(line, log=LogMode.NORMAL)
+            result = await host.exec(line, log=LogMode.NORMAL, terminal=False)
         finally:
             await host.close()
             await conn.reap()
@@ -499,10 +509,8 @@ class TestTheRefusalIsScoped:
             )
         assert all(s.ran == [] for s in sessions)
         message = str(excinfo.value)
-        assert "Over ssh, an `exec()` without a terminal" not in message
-        assert (
-            "`exec()` types into a session with a terminal on this host too, so split it" in message
-        )
+        assert "`exec(..., terminal=False)` types into" not in message
+        assert _SPLIT in message
 
     @pytest.mark.asyncio
     async def test_a_pooled_exec_within_the_line_is_typed(self) -> None:
@@ -637,7 +645,11 @@ class TestRunAndExecShareOneFramedStep:
 
 
 def _planned_budget(host: UnixHost) -> int | None:
-    """The line budget of the session an unset ``exec()`` on *host* takes."""
+    """The line budget of the session an ``exec()`` that needs no terminal takes on *host*.
+
+    That is the session of otto's own commands (the shell transfer's chunks)
+    and of a user's ``terminal=False``.
+    """
     return host._session_mgr.line_budget(
         shared=host._shares_one_line(), plain=host._exec_plain(user=None, needs_shell=False)
     )
@@ -668,8 +680,8 @@ class TestTheExecLineBudget:
     def test_an_ssh_host_has_no_budget_at_all(self) -> None:
         """``None`` is the answer that keeps the path that was never broken still.
 
-        An unset ``exec`` runs on a session without a pty there (the plan's
-        ``plain``), so no line discipline
+        The transfer's own ``exec`` runs on a session without a pty there (the
+        plan's ``plain``), so no line discipline
         sees the command and the shell backend keeps sending full chunks --
         the 9000-character exec ceiling the retired dropbear rig measured (see
         ``otto.host.transfer.shell``'s module docstring, which records both the
@@ -885,7 +897,9 @@ def test_the_framing_overhead_is_measured_for_a_frame_that_rewrites_the_command(
 def test_the_published_framing_numbers_are_the_code_s():
     """The architecture page and the gap's reason both quote the framing overhead
     and the ash line budget. Computed nowhere else, they drifted the last time the
-    frame changed (74/948 survived a frame that costs 38): pin them to the code."""
+    frame changed (74/948 survived a frame that costs 38): pin them to the code.
+    The page also quotes a pooled exec's overhead and budgets, which differ from
+    run's: pinned the same way."""
     from otto.host.session import framed_line_overhead
     from tests._fixtures.paths import CHECKOUT_ROOT
 
@@ -902,6 +916,12 @@ def test_the_published_framing_numbers_are_the_code_s():
         assert str(budget) in text
     # The echoing budget the page prints (984) is the code's too.
     assert f"**{typed_line_budget(AshFrame(), echoes=True)}**" in page
+    # And a pooled exec's, whose frame adds more to the command's line.
+    pooled = ExecInput(stdin_eof=True, restore=SessionManager._exec_restore_for(False))
+    assert f"adds {framed_line_overhead(AshFrame(), exec_input=pooled)}," in page
+    for echoes in (False, True):
+        exec_budget = typed_line_budget(AshFrame(), echoes=echoes, exec_input=pooled)
+        assert f"**{exec_budget}**" in page
 
 
 # ===========================================================================
@@ -1230,3 +1250,146 @@ def _first_lines() -> "list[tuple[str, str]]":
 def test_the_first_line_of_a_new_shell_fits_an_echoing_ash(name: str, line: str):
     """A first line longer than an echoing ash's line editor would be cut there."""
     assert len(line) <= ASH_ECHOING_LINE_MAX, f"{name}: {len(line)} characters"
+
+
+def _ash_host(kind: str) -> UnixHost:
+    """An ash host of *kind*: a direct ssh login, a proxied one, telnet, or a console."""
+    if kind == "console":
+        from otto.host.options import ConsoleOptions
+
+        host = _unix(
+            "console",
+            valid_terms=["console"],
+            console_options=ConsoleOptions(server="test1", port=4001),
+        )
+    elif kind == "proxied":
+        host = _unix()
+        host._session_mgr._connections = cast(  # ty: ignore[invalid-assignment]
+            "ConnectionManager", SimpleNamespace(term="ssh", proxy_hops=[object()])
+        )
+    else:
+        host = _unix(kind)
+    host._session_mgr._command_frame = AshFrame()
+    return host
+
+
+@pytest.mark.parametrize(
+    ("kind", "escapes"),
+    [("ssh", True), ("proxied", False), ("telnet", False), ("console", False)],
+)
+@pytest.mark.asyncio
+async def test_the_refusal_advises_exec_without_a_terminal_only_where_the_host_has_it(
+    kind, escapes, tmp_path
+) -> None:
+    """The ``run()`` refusal's advice is what this host's ``exec(terminal=False)`` does.
+
+    One host drives both: where the advice names ``exec(..., terminal=False)``
+    that call carries the same command intact; everywhere else the advice is
+    to split it, and that call is refused by name.
+    """
+    from otto.host.errors import UnsupportedOptionError
+
+    host = _ash_host(kind)
+    conn = _EitherConnection(tmp_path)
+    host._connections.ssh = AsyncMock(return_value=conn)  # ty: ignore[invalid-assignment]
+    line = "printf '%s' '" + "A" * 5500 + "' | wc -c | tr -d ' '"
+    try:
+        with pytest.raises(UnsupportedOnUserlandError) as refused:
+            await host.run(line)
+        message = str(refused.value)
+        assert ("`exec(..., terminal=False)` types into" in message) is escapes, message
+        assert "split it" in message
+        if escapes:
+            result = await host.exec(line, terminal=False)
+            assert (result.is_ok, result.value) == (True, "5500")
+        else:
+            with pytest.raises(UnsupportedOptionError) as no_session:
+                await host.exec(line, terminal=False)
+            assert no_session.value.option == "terminal"
+    finally:
+        await host.close()
+        await conn.reap()
+
+
+@pytest.mark.parametrize(
+    ("entry", "call"),
+    [
+        ("run", {}),
+        ("exec", {}),
+        ("run", {"sudo": True}),
+        ("run", {"switched": True}),
+        ("exec", {"sudo": True}),
+        ("exec", {"expects": [("never-printed", "x\n")]}),
+    ],
+    ids=["run", "exec", "run-sudo", "run-switched-user", "exec-sudo", "exec-expects"],
+)
+@pytest.mark.asyncio
+async def test_the_advice_is_true_for_the_call_that_receives_it(
+    entry, call, monkeypatch, tmp_path
+) -> None:
+    """On direct ssh ash, only a call ``exec(..., terminal=False)`` would carry is told to use it.
+
+    An elevation, a prompt to answer and a user reached by switching each
+    need a terminal, so that ``terminal=False`` would be refused: those calls
+    are told to split the command. The elevation's own probe is stood in for;
+    the refusal comes before anything it would prepare is used.
+    """
+    host = _unix(
+        creds=[Cred(login="user", password="pass"), Cred(login="app", proxy="su", via="user")]
+    )
+    host._session_mgr._command_frame = AshFrame()
+    conn = _EitherConnection(tmp_path)
+    host._connections.ssh = AsyncMock(return_value=conn)  # ty: ignore[invalid-assignment]
+    monkeypatch.setattr(host, "_prepare_elevation", AsyncMock())
+    monkeypatch.setattr(host, "_prepare_exec_elevation", AsyncMock())
+    monkeypatch.setattr(
+        host,
+        "_elevate",
+        lambda cmd, user=None, *, exec_input=None: ElevatedCommand(
+            f"sudo -S {cmd}", [("assword", "pw\n")]
+        ),
+    )
+    call = dict(call)
+    switched = call.pop("switched", False)
+    if switched:
+        monkeypatch.setattr(type(host._session_mgr), "ambient_user", property(lambda _s: "app"))
+    escapes = not call and not switched
+    line = "echo " + "A" * 5500
+    try:
+        with pytest.raises(UnsupportedOnUserlandError) as refused:
+            await getattr(host, entry)(line, **call)
+    finally:
+        await host.close()
+        await conn.reap()
+    message = str(refused.value)
+    assert (_ADVICE in message) is escapes, message
+    assert (_SPLIT in message) is not escapes, message
+
+
+@pytest.mark.parametrize(
+    "beside", [[], [("never-printed", "x\n")]], ids=["alone", "beside-a-prompted-command"]
+)
+@pytest.mark.asyncio
+async def test_a_command_s_advice_is_its_own_inside_a_sequence(beside, tmp_path) -> None:
+    """A long command with no prompt is told about ``exec(..., terminal=False)`` wherever it runs.
+
+    On direct ssh ash, alone and in a ``run([...])`` beside a command that
+    answers a prompt, it gets the same advice: the advice is decided per
+    command from that command's own prompts, never from the sequence's.
+    """
+    from otto.host.host import ShellCommand
+
+    host = _ash_host("ssh")
+    conn = _EitherConnection(tmp_path)
+    host._connections.ssh = AsyncMock(return_value=conn)  # ty: ignore[invalid-assignment]
+    line = "echo " + "A" * 5500
+    cmds = [line] + ([ShellCommand(cmd="true", expects=beside)] if beside else [])
+    try:
+        with pytest.raises(UnsupportedOnUserlandError) as refused:
+            await host.run(cmds)
+    finally:
+        await host.close()
+        await conn.reap()
+    message = str(refused.value)
+    assert _ADVICE in message, message
+    assert _SPLIT not in message, message

@@ -18,7 +18,7 @@ from ..config.project import Project
 from ..config.scope import DockerImage
 from ..errors import OttoError
 from ..host.docker_host import parent_staging_root
-from ..host.host import Host, is_dry_run
+from ..host.host import Host, exec_own, is_dry_run
 from ..host.shell_quote import path_operand
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
@@ -193,8 +193,8 @@ async def _read_back(
     image_id: str | None = None
     listed = inspected.result
     for reference in references:
-        listed = await parent.exec(
-            f"docker images --format {shlex.quote(_LIST_FORMAT)} {shlex.quote(reference)}"
+        listed = await exec_own(
+            parent, f"docker images --format {shlex.quote(_LIST_FORMAT)} {shlex.quote(reference)}"
         )
         if not listed.status.is_ok:
             return [], None, listed
@@ -247,7 +247,7 @@ async def _remove_build_input(parent: Host, root: Path, key: str, path: Path) ->
     from ..host.connections import teardown_step  # lazy: keeps the import budget
 
     with teardown_step(parent.id, "build input removal"):
-        removed = await parent.exec(build_input_cleanup_command(root, key, path))
+        removed = await exec_own(parent, build_input_cleanup_command(root, key, path))
         if not removed.is_ok:
             logger.warning(
                 f"{parent.id}: could not remove the staged build input {path}: "
@@ -278,7 +278,9 @@ async def _build_one(
     try:
         # Unbounded on purpose: an image build/pull has no defensible bound, and a
         # made-up constant would be wrong on a slower builder. `inf` states that.
-        result = await parent.exec(build_command(root, key, image, options), timeout=float("inf"))
+        result = await exec_own(
+            parent, build_command(root, key, image, options), timeout=float("inf")
+        )
     finally:
         await _remove_build_input(parent, root, key, staged)
     if not result.is_ok:

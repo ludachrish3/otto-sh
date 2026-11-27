@@ -754,7 +754,8 @@ class TestExec:
             await h.close()
             await conn.reap()
         h._connections.ssh_as.assert_awaited_once_with(user="root")
-        assert [asked.get("request_pty") for asked in conn.asked] == [False]
+        # A user's unset exec asks for the terminal, over that user's own login.
+        assert [asked.get("request_pty") for asked in conn.asked] == [None]
 
     @pytest.mark.asyncio
     async def test_exec_user_behind_a_hop_on_ssh_switches_instead_of_refusing(self):
@@ -968,8 +969,8 @@ class TestExec:
             log=LogMode.QUIET,
             expects=None,
             user=None,
-            exec_input=ExecInput(stdin_eof=True),
-            plain=True,
+            exec_input=ExecInput(stdin_eof=True, exec_escapes=True),
+            plain=False,
         )
 
 

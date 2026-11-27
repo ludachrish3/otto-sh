@@ -126,8 +126,9 @@ and nothing else:
     it does not mean Zephyr output arrives untouched: the Zephyr frame itself
     removes the `\r` of each `\r\n`, as described above.
 
-  A session without a terminal (an ssh `exec`'s by default, every local
-  session) has no translation to undo; `terminal_mapping` always reports the terminal of a session that has one.
+  A session without a terminal (on ssh, one asked for with `terminal=False`
+  and the one otto's own commands take; every local session) has no
+  translation to undo; `terminal_mapping` always reports the terminal of a session that has one.
 - **The terminal's tab expansion.** A terminal with `tab3` sends each tab as
   the spaces up to the next tab stop, and that has no exact inverse: `a\tb`
   and `a       b` arrive the same. The pty BusyBox telnetd allocates has it
@@ -173,8 +174,9 @@ The log is a separate view of the same output: what it shows is in
 `send()` writes to the raw stream and `expect()` reads it raw, with `\r\n`
 kept: the fold applies only to a command's `value`.
 
+(typed-command-text)=
 A command string is text, not keystrokes. Where otto types it into a shell
-on a terminal (`run()`, and `exec()` wherever it runs on a shell session), a
+on a terminal (`run()` and `exec()` by default, {ref}`terminal-switch`), a
 TAB and a newline arrive as written (two exceptions: a BusyBox shell whose
 terminal echo could not be turned off still takes a TAB as its completion
 key, and on a BusyBox serial console a TAB arrives with a Ctrl-V before it,
@@ -364,7 +366,7 @@ signal still reports `128 + N`.
 
 (incomplete-or-invalid-command)=
 A command that is not complete or valid shell, on a session whose shell
-reads a pipe (an ssh `exec` without a terminal, every local `exec`), is typed
+reads a pipe (an ssh `exec(..., terminal=False)`, every local `exec`), is typed
 into that shell as it is. An incomplete one (an unclosed quote, here-document
 or `if`) takes in the end of otto's frame, so the call waits out its whole
 timeout and gives the timed-out result (below). An invalid one
@@ -438,8 +440,8 @@ ran on:
 
 | Session | What is stopped | What is left running |
 | --- | --- | --- |
-| ssh, without a terminal (an `exec`'s by default, or `run(terminal=False)`) | `STOP`, then `KILL`, with no `TERM` or `HUP` first, so a command gets no chance to flush or clean up (a `tcpdump -w` loses what it buffered), to every process started with the session's `OTTO_SESSION` token in its environment, whether or not it was detached with `setsid`: the shell, the command, what it started, and a background process an earlier command on the session left ({ref}`the ssh stop <terminal-switch-stop>`) | a process started with `OTTO_SESSION` unset, a process running as another user, and one that removed the token from its environment |
-| a session with a terminal (telnet, a proxied or hooked ssh host, an `exec` with `sudo=True`, `expects=` or `terminal=True`) | the command is interrupted with `^C`, and the call returns once the shell answers again (or the bound above ends); a pooled `exec` session is then closed, and what the command left gets whatever the transport does when a terminal hangs up | what ignores the interrupt and the hang-up |
+| ssh, without a terminal (`run` or `exec` with `terminal=False`, and otto's own commands) | `STOP`, then `KILL`, with no `TERM` or `HUP` first, so a command gets no chance to flush or clean up (a `tcpdump -w` loses what it buffered), to every process started with the session's `OTTO_SESSION` token in its environment, whether or not it was detached with `setsid`: the shell, the command, what it started, and a background process an earlier command on the session left ({ref}`the ssh stop <terminal-switch-stop>`) | a process started with `OTTO_SESSION` unset, a process running as another user, and one that removed the token from its environment |
+| a session with a terminal (on ssh and telnet, `run` and `exec` by default) | the command is interrupted with `^C`, which reaches its foreground processes, and the call returns once the shell answers again (or the bound above ends); a pooled `exec` session is then closed, and what the command left gets whatever the transport does when a terminal hangs up | what the interrupt does not reach (a background process, an earlier command's included) or ignores, and what the hang-up does not end |
 | the local host | when the session is closed, its shell's process group gets `TERM`, and whatever is still in the group 5 seconds later gets `KILL`, the shell included: so the command and every process left in the group, a `nohup` child and a process that ignores `TERM` included; a group that is empty when the shell exits ends the stop at once | a process that moved into a session of its own (`setsid`) with its output redirected |
 | a docker container | the `docker exec` client on the parent | the command inside the container, which keeps running ({ref}`docker-exec-stop` has the workaround) |
 
@@ -450,9 +452,11 @@ stopped by the close as above. Either way the close releases the shell's
 pipes, so a background process that still writes to them gets `EPIPE` (or
 `SIGPIPE`): redirect the output of anything you leave running.
 
+(exec-detached-launch)=
 To leave a process running past a stop on ssh or the local host, start it in
 a session of its own with its output redirected, and on ssh with the token
-unset: `(unset OTTO_SESSION; setsid my-daemon </dev/null >/dev/null 2>&1 &)`.
+unset (only a session without a terminal sets it, and unsetting it elsewhere
+does nothing): `(unset OTTO_SESSION; setsid my-daemon </dev/null >/dev/null 2>&1 &)`.
 `otto.host.daemon.launch_command` starts otto's own daemons that way.
 
 ## The convention, and its two gates

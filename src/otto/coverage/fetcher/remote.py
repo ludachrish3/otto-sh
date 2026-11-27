@@ -113,6 +113,7 @@ async def _fetch_one_product(
         ValueError: *product* has a name that is not a single safe path
             segment. Checked before any host command is issued.
     """
+    from ...host.host import exec_own  # function-local: off the import path until a command runs
     from ...host.product import cov_dir_absent_test, cov_dir_of
 
     layout.validate_product_name(product.name)
@@ -154,7 +155,8 @@ async def _fetch_one_product(
     # re-raised as is; a cancellation arriving during the remove propagates.
     issued = True
     try:
-        archive = await host.exec(
+        archive = await exec_own(
+            host,
             f"{cov_dir_absent_test(cov_dir)} && echo {_NO_COV_DIR} || "
             f'(t=$(mktemp "${{TMPDIR:-/tmp}}/{token}.XXXXXX") && echo "{_ARCHIVE_MARK}$t" '
             f'&& cd {q} && tar -cf "$t" .)',
@@ -290,8 +292,10 @@ async def _remove_remote(host: Any, path: str) -> None:
     (``BaseException``) arriving during the remove propagates: that is
     asyncio's contract for a cancelled task.
     """
+    from ...host.host import exec_own  # function-local: off the import path until a command runs
+
     try:
-        await host.exec(f"rm -f {path}", timeout=30)
+        await exec_own(host, f"rm -f {path}", timeout=30)
     except Exception as exc:  # noqa: BLE001 — cleanup must not mask the real error
         logger.debug("Could not remove %s on %s: %s", path, host.id, exc)
 

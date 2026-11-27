@@ -22,7 +22,7 @@ def _gated(gate: Path) -> str:
     return f"while [ ! -e {gate}/go ]; do sleep 0.02; done; touch {gate}/done; echo finished"
 
 
-@pytest.mark.parametrize("terminal", [None, True], ids=["no-terminal", "terminal"])
+@pytest.mark.parametrize("terminal", [False, True], ids=["no-terminal", "terminal"])
 @pytest.mark.asyncio
 async def test_on_typed_fires_once_after_the_open_and_before_the_command_ends(
     piped, tmp_path, terminal
@@ -36,7 +36,6 @@ async def test_on_typed_fires_once_after_the_open_and_before_the_command_ends(
         seen.append((len(conn.processes), (gate / "done").exists()))
         (gate / "go").touch()
 
-    kw: dict[str, Any] = {} if terminal is None else {"terminal": terminal}
     async with host._host_entry("exec"):
         result = await host._exec_in_turn(
             _gated(gate),
@@ -46,7 +45,7 @@ async def test_on_typed_fires_once_after_the_open_and_before_the_command_ends(
             sudo=False,
             user=None,
             on_typed=typed,
-            **kw,
+            terminal=terminal,
         )
     assert (result.status, result.value) == (Status.Success, "finished")
     # One call, one callback: its session was open, its command not yet done.

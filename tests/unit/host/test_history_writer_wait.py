@@ -31,7 +31,8 @@ class _StubHost:
         self._replies = replies
         self.calls = 0
 
-    async def exec(self, command: str) -> object:
+    async def exec(self, command: str, *, terminal: "bool | None" = None) -> object:
+        assert terminal is False, "a history sample must not run in an interactive shell"
         self.calls += 1
         value = self._replies[min(self.calls - 1, len(self._replies) - 1)]
         return type("_Result", (), {"value": value})()

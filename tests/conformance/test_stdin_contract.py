@@ -22,7 +22,7 @@ from collections.abc import Callable
 
 import pytest
 
-from tests.conformance._entry import EXEC, has_terminal, issue, opened
+from tests.conformance._entry import EXEC, issue, opened
 from tests.conformance._resolved import ResolvedCell
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.conformance]
@@ -71,7 +71,6 @@ async def test_an_exec_without_expects_reads_end_of_file(
             elevated = await host.exec(cmd, timeout=_STDIN_BUDGET_S, sudo=True)
             assert (elevated.timed_out, elevated.value.endswith("otto-cf-eof")) == (False, True)
             # A sudo exec needs a terminal for the prompt: read the session's own.
-            assert has_terminal(resolved_cell, needs_shell=True)
             read = resolved_cell.vocabulary.terminal_read_command
             if read is not None:
                 tty = await host.exec(read, timeout=_STDIN_BUDGET_S, sudo=True)

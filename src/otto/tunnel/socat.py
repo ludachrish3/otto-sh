@@ -1,7 +1,7 @@
 """The socat carrier: pure command/argv builders + the SocatCarrier registrant — no I/O.
 
 Bidirectional ingress/relay/egress builders (#2b); every value is a string or
-list of strings destined for ``host.exec``; running nothing keeps the whole
+list of strings destined for the host's ``exec``; running nothing keeps the whole
 module unit-testable (assert exact argv). Each address reaches its socat
 address through :func:`~otto.host.shell_quote.socat_host`, so it cannot add
 an option; the launcher quotes each argv word for the shell.

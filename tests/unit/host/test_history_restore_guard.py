@@ -52,7 +52,8 @@ class _FakeBed:
         self.restore = restore
         self.commands: list[str] = []
 
-    async def exec(self, command: str) -> _Result:
+    async def exec(self, command: str, *, terminal: "bool | None" = None) -> _Result:
+        assert terminal is False, "a history sample must not run in an interactive shell"
         self.commands.append(command)
         if command.startswith("cat ~/.bash_history"):
             return _Result(self.history if self.history is not None else "<none>")

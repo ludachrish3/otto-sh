@@ -80,7 +80,12 @@ class TestRunInputForms:
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             result = await host.run("ls")
         mock.assert_called_once_with(
-            "ls", expects=None, timeout=DEFAULT_COMMAND_TIMEOUT, log=LogMode.NORMAL, user=None
+            "ls",
+            expects=None,
+            timeout=DEFAULT_COMMAND_TIMEOUT,
+            log=LogMode.NORMAL,
+            user=None,
+            exec_escapes=True,
         )
         assert isinstance(result, Results)
         assert len(result) == 1
@@ -91,7 +96,12 @@ class TestRunInputForms:
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             result = await host.run(ShellCommand(cmd="ls"))
         mock.assert_called_once_with(
-            "ls", expects=None, timeout=DEFAULT_COMMAND_TIMEOUT, log=LogMode.NORMAL, user=None
+            "ls",
+            expects=None,
+            timeout=DEFAULT_COMMAND_TIMEOUT,
+            log=LogMode.NORMAL,
+            user=None,
+            exec_escapes=True,
         )
         assert len(result) == 1
         assert result.only is ok
@@ -124,14 +134,18 @@ class TestTimeoutInheritance:
         """ShellCommand.timeout=None → run-kwarg timeout is used."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd="x"), timeout=5.0)
-        mock.assert_called_once_with("x", expects=None, timeout=5.0, log=LogMode.NORMAL, user=None)
+        mock.assert_called_once_with(
+            "x", expects=None, timeout=5.0, log=LogMode.NORMAL, user=None, exec_escapes=True
+        )
 
     @pytest.mark.asyncio
     async def test_shell_command_overrides_run_kwarg(self, host: UnixHost, ok: CommandResult):
         """ShellCommand.timeout=2 beats run-kwarg timeout=5 in single-cmd form."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd="x", timeout=2.0), timeout=5.0)
-        mock.assert_called_once_with("x", expects=None, timeout=2.0, log=LogMode.NORMAL, user=None)
+        mock.assert_called_once_with(
+            "x", expects=None, timeout=2.0, log=LogMode.NORMAL, user=None, exec_escapes=True
+        )
 
     @pytest.mark.asyncio
     async def test_budget_caps_per_command_timeout(self, host: UnixHost, ok: CommandResult):
@@ -179,6 +193,8 @@ class TestExpectsInheritance:
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.NORMAL,
             user=None,
+            # A prompt to answer needs a terminal: no exec without one would carry it.
+            exec_escapes=False,
         )
 
     @pytest.mark.asyncio
@@ -192,6 +208,8 @@ class TestExpectsInheritance:
             timeout=DEFAULT_COMMAND_TIMEOUT,
             log=LogMode.NORMAL,
             user=None,
+            # A prompt to answer needs a terminal: no exec without one would carry it.
+            exec_escapes=False,
         )
 
 
@@ -329,7 +347,9 @@ class TestShellCommandTimeoutValidationViaRun:
         """Guard against over-tightening: None must keep meaning 'inherit'."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd="x", timeout=None), timeout=5.0)
-        mock.assert_called_once_with("x", expects=None, timeout=5.0, log=LogMode.NORMAL, user=None)
+        mock.assert_called_once_with(
+            "x", expects=None, timeout=5.0, log=LogMode.NORMAL, user=None, exec_escapes=True
+        )
 
     @pytest.mark.asyncio
     async def test_none_timeout_still_inherits_list_form(self, host: UnixHost, ok: CommandResult):

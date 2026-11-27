@@ -377,8 +377,8 @@ VOICE: "dict[str, Voice]" = {
         ),
         branches=(
             Branch(
-                marker="; no terminal on this route",
-                where="a host whose `exec` session has no terminal (ssh by default, local)",
+                marker="; no terminal on this session",
+                where="the local host, whose `exec` session has no terminal",
                 capability=(
                     "run an `exec` that starts from the state its session was set up with "
                     "-- nothing a `run` or an earlier `exec` changed -- and trust that its "
@@ -558,6 +558,43 @@ VOICE: "dict[str, Voice]" = {
             "editor takes a TAB as completion"
         ),
         gaps=("typed-tab-literal-next",),
+    ),
+    "terminal-switch": Voice(
+        short="terminal switch",
+        capability=(
+            "pass `terminal=True` or `terminal=False` and have the command run with a "
+            "terminal or without one, as asked, or see otto refuse the value by name"
+        ),
+        narrowed="the contract declares such a device outside its own domain",
+        branches=(
+            Branch(
+                marker="terminal=True: a terminal; terminal=False: no terminal",
+                where="a host that gives both modes (ssh, reached directly)",
+                capability=(
+                    "pass `terminal=True` and have the command run with a terminal, and "
+                    "pass `terminal=False` and have it run without one"
+                ),
+            ),
+            Branch(
+                marker="terminal=False: refused by name",
+                where=(
+                    "a host with one mode, a terminal (telnet, a console, an embedded host, "
+                    "an ssh host reached through a login proxy or with a session setup hook)"
+                ),
+                capability=(
+                    "pass `terminal=True` and have the command run with a terminal; "
+                    "`terminal=False` is refused by name"
+                ),
+            ),
+            Branch(
+                marker="terminal=True: refused by name",
+                where="a host with one mode, no terminal (the local host)",
+                capability=(
+                    "pass `terminal=False` and have the command run without a terminal; "
+                    "`terminal=True` is refused by name"
+                ),
+            ),
+        ),
     ),
     "transfer-roundtrip": Voice(
         short="file roundtrip",
@@ -3062,9 +3099,10 @@ EXEC_SESSION_CASES = (
     SessionCase(
         "pooled-terminal",
         "a shell session otto keeps for `exec` beside the one `run` uses, with a terminal",
-        "the host is reached over `telnet`; or over `ssh` where the call needs a "
-        "terminal (it passes `expects` (patterns otto answers while the command runs, "
-        "such as a password prompt), `sudo=True`, or `terminal=True`), runs as a "
+        "the host is reached over `telnet`; or over `ssh` where the call has a "
+        "terminal: `terminal` unset or `True`, or a call that needs one (it passes "
+        "`expects` (patterns otto answers while the command runs, such as a password "
+        "prompt) or `sudo=True`), runs as a "
         "`user` otto cannot log in as directly, the host's login is **proxied** (otto "
         "logs in as one account and then switches to the one it runs as; "
         "[Credentials and login proxies]"
@@ -3081,7 +3119,8 @@ EXEC_SESSION_CASES = (
     SessionCase(
         "pooled-no-terminal",
         "a shell session otto keeps for `exec` beside the one `run` uses, without a terminal",
-        "the host is reached over `ssh` and none of the cases above applies, including "
+        "the host is reached over `ssh`, the call passes `terminal=False` and none of "
+        "the cases above applies, including "
         "`exec(user=...)` for a user with SSH credentials of their own, over an SSH "
         "connection as that user; or the host is the local host, whose sessions read "
         "a pipe (each call opens one of its own and closes it after)",
@@ -3680,9 +3719,8 @@ def render_contracts_overview(
         lines += [f"- `{row.surface_id}`: `{row.contract}`" for row in rows]
         lines += [
             "",
-            "The suite also checks `exec` on an SSH host whose `exec` would otherwise get",
-            "a session without a terminal, by declaring a session-setup hook that marks",
-            "each session it sets up: declaring any hook sends `exec` to a session with a",
+            "The suite also checks `exec` on an SSH host that declares a session-setup",
+            "hook marking each session it sets up: such a host has no session without a",
             "terminal, and the mark shows the hook ran as the user the session is for.",
             "Those cells' labels name their kind with `-hooked`.",
         ]

@@ -382,7 +382,7 @@ class TestEveryDeviceTouchInThePackageIsDeclared:
     """A future touch cannot reach a device under `--dry-run` without being named here.
 
     The two funnels are the backstop, but a funnel only guarantees anything
-    while everything routes through it — and `await host.exec(...)` is one line
+    while everything routes through it — and `await exec_own(host, ...)` is one line
     for a future author to write. This scans the package for every call that
     could reach a device and compares the enclosing sites against a declared
     roster, so a new one has to be named here, with its class and its dry-run
@@ -504,6 +504,10 @@ class TestEveryDeviceTouchInThePackageIsDeclared:
                 and inner.args[1].value in self.TOUCHES
             ):
                 out.add(inner.args[1].value)
+                continue
+            # `exec_own(host, cmd)` is how otto's own commands reach `exec`.
+            if isinstance(inner.func, ast.Name) and inner.func.id == "exec_own":
+                out.add("exec")
                 continue
             if not isinstance(inner.func, ast.Attribute) or inner.func.attr not in self.TOUCHES:
                 continue

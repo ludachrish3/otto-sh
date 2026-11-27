@@ -61,6 +61,7 @@ from .host import (
     Host,
     ShellCommand,
     _validate_user,
+    exec_own,
     is_dry_run,
     refuse_declined_fact,
     runs_stock_exec,
@@ -397,7 +398,7 @@ async def probe_ownership(
             read, so nothing about the paths is known.
     """
     where = ", ".join(str(p) for p in paths)
-    result = await parent.exec(_ownership_command(paths, create))
+    result = await exec_own(parent, _ownership_command(paths, create))
     refuse_declined_fact(result, asked=f"probe_ownership({where})")
     if result.timed_out:
         raise HostUnreachableError(
@@ -801,8 +802,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             ~otto.result.CommandNotRunError: this is a dry run, so nothing
                 about this container's state was measured.
         """
-        result = await self.parent.exec(
-            compose_container_probe(self.compose_project, self.service), log=log
+        result = await exec_own(
+            self.parent, compose_container_probe(self.compose_project, self.service), log=log
         )
         refuse_declined_fact(result, asked=f"is_running({self.id})")
         return result
@@ -1221,8 +1222,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 wrapped, exec_log=exec_log, expects=pairs, timeout=timeout
             )
         else:
-            result = await self.parent.exec(
-                wrapped, timeout=timeout, log=self._effective_log(log), expects=pairs
+            result = await exec_own(
+                self.parent, wrapped, timeout=timeout, log=self._effective_log(log), expects=pairs
             )
         # Replace the wrapped command in the result so callers see what they
         # asked for, not the docker-exec wrapper. `replace` rather than a field
@@ -1449,7 +1450,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         # raise ahead of the teardown guard and mask the body's exception.
         host_name = self.name
         try:
-            mkdir = await self.parent.exec(f"mkdir -p {path_operand(stage)}")
+            mkdir = await exec_own(self.parent, f"mkdir -p {path_operand(stage)}")
             if not mkdir.status.is_ok:
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
                 return aggregate_transfer(
@@ -1480,7 +1481,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 # Unbounded on purpose: this command's duration IS the
                 # transfer into the container, which scales with the file's
                 # size — a wall-clock bound here is meaningless (see nc.py).
-                cp = await self.parent.exec(
+                cp = await exec_own(
+                    self.parent,
                     f"docker cp {path_operand(staged)} "
                     f"{shell_operand(f'{self.container_id}:{dest_dir}')}",
                     timeout=float("inf"),
@@ -1509,11 +1511,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                         wrapped = await self._docker_exec(
                             chmod_command(mode=resolved_mode, paths=landed), user=ROOT_LOGIN
                         )
-                        chmod = await self.parent.exec(wrapped, timeout=float("inf"))
+                        chmod = await exec_own(self.parent, wrapped, timeout=float("inf"))
                     else:
-                        # self.exec runs INSIDE the container (parent.exec would
+                        # On self this runs INSIDE the container (on the parent it would
                         # chmod the staging copy, about to be deleted).
-                        chmod = await self.exec(chmod_command(mode=resolved_mode, paths=landed))
+                        chmod = await exec_own(
+                            self, chmod_command(mode=resolved_mode, paths=landed)
+                        )
                     if not chmod.status.is_ok:
                         for f, r in per_file.items():
                             if r.status is Status.Success:
@@ -1529,7 +1533,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             return aggregate_transfer(per_file=per_file)
         finally:
             with teardown_step(host_name, "staging-dir removal"):
-                await self.parent.exec(self._unstage_command(stage))
+                await exec_own(self.parent, self._unstage_command(stage))
 
     async def _chown_landed_as_root(self, per_file: "dict[Path, Result]", effective: str) -> None:
         """Chown every landed file to *effective*, run as root inside the container.
@@ -1546,7 +1550,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         wrapped = await self._docker_exec(
             f"chown {shell_operand(effective)} {paths}", user=ROOT_LOGIN
         )
-        chown = await self.parent.exec(wrapped, timeout=float("inf"))
+        chown = await exec_own(self.parent, wrapped, timeout=float("inf"))
         if chown.status.is_ok:
             return
         for f, r in per_file.items():
@@ -1622,7 +1626,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         # raise ahead of the teardown guard and mask the body's exception.
         host_name = self.name
         try:
-            mkdir = await self.parent.exec(f"mkdir -p {path_operand(stage)}")
+            mkdir = await exec_own(self.parent, f"mkdir -p {path_operand(stage)}")
             if not mkdir.status.is_ok:
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
                 return aggregate_transfer(
@@ -1636,7 +1640,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 # Unbounded on purpose: this command's duration IS the
                 # transfer out of the container, which scales with the file's
                 # size — a wall-clock bound here is meaningless (see nc.py).
-                cp = await self.parent.exec(
+                cp = await exec_own(
+                    self.parent,
                     f"docker cp {shell_operand(f'{self.container_id}:{f}')} {path_operand(staged)}",
                     timeout=float("inf"),
                 )
@@ -1662,7 +1667,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             return aggregate_transfer(per_file={f: per_file[f] for f in files})
         finally:
             with teardown_step(host_name, "staging-dir removal"):
-                await self.parent.exec(self._unstage_command(stage))
+                await exec_own(self.parent, self._unstage_command(stage))
 
     @staticmethod
     def _unstage_command(stage: Path) -> str:

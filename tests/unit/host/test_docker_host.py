@@ -2665,7 +2665,10 @@ async def test_a_parent_s_exec_override_that_audits_sees_the_wrapper_and_logs_it
             seen.append(cmd)
             return await super().exec(cmd, **kwargs)
 
-    parent, dial = ssh_parent_over_shells(_Auditing, tmp_path, {"wire-au": f"echo {_OUT_TOK}"})
+    # The override takes the public default, a terminal: a login shell, as a server's pty shell is.
+    parent, dial = ssh_parent_over_shells(
+        _Auditing, tmp_path, {"wire-au": f"echo {_OUT_TOK}"}, login=True
+    )
     container = _make_container(parent)
     container.log = LogMode.NORMAL
     wired = patch.object(DockerContainerHost, "_docker_exec", AsyncMock(return_value="wire-au"))
@@ -2885,17 +2888,18 @@ async def test_direct_parent_calls_carry_no_context_and_own_helpers_do(monkeypat
     public: list = []
     delegated: list = []
 
-    async def exec_(cmd, **kwargs):
+    # Both entries meet in ``_exec_in_turn``; the parent's ``exec`` stays otto's
+    # own, so the container's hop takes the delegated entry, which alone
+    # carries an ``exec_log``.
+    async def exec_in_turn(cmd, **kwargs):
+        if kwargs.get("exec_log") is not None:
+            delegated.append((cmd, kwargs["exec_log"]))
+            return _ok(cmd)
         public.append((cmd, kwargs.get("log")))
         return _ok(cmd, out="abc123\n" if cmd.startswith("docker ps") else "")
 
-    async def exec_delegated(cmd, **kwargs):
-        delegated.append((cmd, kwargs["exec_log"]))
-        return _ok(cmd)
-
     staged = _mock_parent()
-    monkeypatch.setattr(parent, "exec", exec_)
-    monkeypatch.setattr(parent, "_exec_delegated", exec_delegated)
+    monkeypatch.setattr(parent, "_exec_in_turn", exec_in_turn)
     monkeypatch.setattr(parent, "put", staged.put)
     monkeypatch.setattr(parent, "get", staged.get)
     container = _make_container(parent, container_id="")

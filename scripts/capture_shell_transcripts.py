@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from otto.host.host import exec_own
 from otto.host.session import ShellSession
 from otto.host.session_setup import SessionSetup
 from otto.testing import EXACT_OUTPUT_CASES
@@ -82,8 +83,10 @@ async def _capture(host: Any, commands: list[str], entry: str) -> list[dict[str,
     out = []
     for cmd in commands:
         before = len(_records)
-        call = host.exec if entry == "exec" else host.run
-        result = await call(cmd, timeout=30)
+        if entry == "exec":
+            result = await exec_own(host, cmd, timeout=30)
+        else:
+            result = await host.run(cmd, timeout=30)
         if entry == "run":
             result = result.only
         teed = _records[before:]

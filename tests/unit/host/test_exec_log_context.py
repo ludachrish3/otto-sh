@@ -202,6 +202,12 @@ _HELD = 'echo outtok-a; while [ ! -e "$HOME/release" ]; do sleep 0.05; done; ech
 async def test_an_ssh_exec_logs_as_the_context_says_live(
     log: LogMode, ctx_mode: LogMode, as_user: bool, tmp_path
 ) -> None:
+    """A delegated exec's lines are relayed live, under the context's mode.
+
+    The session is opened first by an ``exec(..., terminal=False)``: the call
+    under test needs no shell, so it takes the session without a terminal,
+    and an unset ``exec`` would open the other one.
+    """
     from tests.unit.host.test_terminal_switch import _EitherConnection
 
     parent, dial = ssh_parent_over_shells(
@@ -224,7 +230,7 @@ async def test_an_ssh_exec_logs_as_the_context_says_live(
     ctx = _recording_ctx(container, ctx_mode)
     try:
         # The session is opened first, so the records below are the call's alone.
-        await parent.exec("true", user=user, log=LogMode.NEVER)
+        await parent.exec("true", user=user, log=LogMode.NEVER, terminal=False)
         with all_records() as records, _watching_records(line_seen, level=logging.DEBUG):
             call = asyncio.create_task(
                 parent._exec_one(

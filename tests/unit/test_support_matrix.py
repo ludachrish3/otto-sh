@@ -72,6 +72,7 @@ from scripts.render_support_matrix import (
     VOICE,
     NotChecked,
     Promise,
+    _arm_matching,
     _domain_of,
     _domain_rule,
     _suite_cells,
@@ -128,6 +129,7 @@ from tests.conformance import test_progress_contract as _progress_contract
 from tests.conformance import test_signal_contract as _signal_contract
 from tests.conformance import test_state_contract as _state_contract
 from tests.conformance import test_stdin_contract as _stdin_contract
+from tests.conformance import test_terminal_contract as _terminal_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
 from tests.conformance import test_transfer_contract as _transfer_contract
 from tests.conformance._bed import bed_space
@@ -2594,21 +2596,27 @@ class _FakeHost:
     #: What the options contract reads to pick its arms: a unix host's, which honours all three.
     capabilities = UnixHost.capabilities
 
-    async def run(self, command, timeout=None, log=LogMode.NORMAL, expects=None):
+    async def run(self, command, timeout=None, log=LogMode.NORMAL, expects=None, terminal=None):
         commands = [command] if isinstance(command, (str, ShellCommand)) else list(command)
         return Results.collect(
             items=[
                 self._logged(
-                    self._prompted(one, expects) or self._answer(one, timeout, self._state),
+                    self._prompted(one, expects)
+                    or self._terminal_read(one, terminal, default=None)
+                    or self._answer(one, timeout, self._state),
                     one.log if isinstance(one, ShellCommand) and one.log is not None else log,
                 )
                 for one in commands
             ]
         )
 
-    async def exec(self, command, timeout=None, log=LogMode.NORMAL, expects=None) -> CommandResult:
+    async def exec(
+        self, command, timeout=None, log=LogMode.NORMAL, expects=None, terminal=None
+    ) -> CommandResult:
         if isinstance(command, ShellCommand) and command.log is not None:
             log = command.log
+        if (read := self._terminal_read(command, terminal, default=True)) is not None:
+            return self._logged(read, log)
         if (prompted := self._prompted(command, expects)) is not None:
             # A call that answers a prompt needs a shell, as on a real ssh cell.
             return self._logged(prompted, log)
@@ -2616,6 +2624,30 @@ class _FakeHost:
         if witnessed is not None and timeout is None:
             await self._run_until_cancelled(witnessed)
         return self._logged(self._answer(command, timeout, dict(self._state)), log)
+
+    def _terminal_read(
+        self, command, terminal: "bool | None", *, default: "bool | None"
+    ) -> "CommandResult | None":
+        """The bare terminal read's answer under *terminal*, or ``None`` for any other call.
+
+        This is an ``ssh`` cell whose login is not proxied: ``run``'s session has
+        a terminal and is left to :meth:`_state_answer` (``None`` *default*, the
+        state contract changes its settings); an unset ``exec``'s has one too
+        (``True``), as a user's unset ``exec`` does; ``terminal=`` asks for
+        either. The twisted host reads the run session's baseline whatever was
+        asked.
+        """
+        if command != POSIX.terminal_read_command:
+            return None
+        mode = default if terminal is None else terminal
+        if mode is None:
+            return None
+        value = (
+            POSIX.terminal_baseline_answer
+            if mode or "the-terminal-read-answers-one-value" in self._twists
+            else _terminal_contract.UNREAD
+        )
+        return CommandResult(status=Status.Success, value=value, command=command, retcode=0)
 
     def _prompted(self, command, expects) -> "CommandResult | None":
         """The prompting command's answer: its prompt, then the line *expects* typed.
@@ -3123,6 +3155,9 @@ CONTROLS = {
     "exec-dry-run": _dry_run_contract.test_control_a_command_issued_live_leaves_its_mark,
     "exec-options": _options_contract.test_control_an_answer_otto_did_not_type_is_refused,
     "typed-input": _input_contract.test_control_the_checksum_comparison_sees_one_changed_byte,
+    "terminal-switch": (
+        _terminal_contract.test_control_the_mode_reading_tells_a_terminal_from_none
+    ),
     "transfer-roundtrip": (
         _transfer_contract.test_control_the_roundtrip_comparison_rejects_a_corrupted_byte
     ),
@@ -3243,6 +3278,14 @@ HOST_CASES = [
         "every checksum answers one value",
         "typed-input",
         ("every-checksum-answers-one-value",),
+        True,
+        False,
+    ),
+    ("the terminal read follows the mode asked for", "terminal-switch", (), True, True),
+    (
+        "every terminal read answers one value",
+        "terminal-switch",
+        ("the-terminal-read-answers-one-value",),
         True,
         False,
     ),
@@ -7113,6 +7156,30 @@ def test_a_cell_whose_observable_matches_two_arms_fails_the_build(committed):
     _watch(injected["cells"]["transfer-mode"]["gnu"], both)
     problems = promise_mismatch(injected)
     assert any("matches 2 of the 2 observables" in problem for problem in problems), problems
+
+
+@pytest.mark.parametrize(
+    ("observable", "arm"),
+    [
+        ("unset: no terminal; terminal=True: a terminal; terminal=False: no terminal", 0),
+        ("unset: a terminal; terminal=True: a terminal; terminal=False: no terminal", 0),
+        ("unset: a terminal; terminal=True: a terminal; terminal=False: refused by name", 1),
+        ("unset: answered; terminal=True: answered; terminal=False: refused by name", 1),
+        ("unset: no terminal; terminal=True: refused by name; terminal=False: no terminal", 2),
+    ],
+)
+def test_each_terminal_switch_observable_lands_on_exactly_one_arm(observable, arm):
+    """The arms are told apart by the two explicit values, whatever the unset call saw.
+
+    Through `_arm_matching`, the one placement the page and `promise_mismatch` use, so
+    a marker that stopped discriminating (or started naming the unset mode) reddens here
+    before a re-measured cell fails the docs build.
+    """
+    voice = VOICE["terminal-switch"]
+    assert len(voice.branches) == 3
+    matched = [branch for branch in voice.branches if branch.marker in observable]
+    assert matched == [voice.branches[arm]], (observable, [b.marker for b in matched])
+    assert _arm_matching(voice, observable) is voice.branches[arm]
 
 
 def test_the_renderer_refuses_to_write_when_a_promise_came_loose(tmp_path, committed, monkeypatch):

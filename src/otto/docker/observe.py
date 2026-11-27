@@ -15,7 +15,7 @@ from typing_extensions import final
 
 from ..errors import FieldError
 from ..host.errors import HostUnreachableError
-from ..host.host import is_dry_run, refuse_declined_fact
+from ..host.host import exec_own, is_dry_run, refuse_declined_fact
 from ..host.unix_host import UnixHost
 from ..logger.mode import LogMode
 from ..result import CommandNotRunError, CommandResult
@@ -158,7 +158,7 @@ async def _exec_targets(targets: "list[LogsTarget]", *, asked: str) -> ObserveRe
     outputs: "list[HostOutput]" = []
     for target in targets:
         try:
-            result = await target.parent.exec(target.command, log=LogMode.QUIET)
+            result = await exec_own(target.parent, target.command, log=LogMode.QUIET)
         except (OSError, ConnectionError, HostUnreachableError) as e:
             result = CommandResult(
                 status=Status.Failed,
@@ -318,7 +318,7 @@ async def _probe(host_id: str, command: str) -> "str | None":
     from ..invocation import require_run
 
     parent = docker_parent(lab=require_run().lab, parent=host_id)
-    result = await parent.exec(command, log=LogMode.QUIET)
+    result = await exec_own(parent, command, log=LogMode.QUIET)
     return result.value if result.status.is_ok and isinstance(result.value, str) else None
 
 

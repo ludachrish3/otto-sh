@@ -2,7 +2,7 @@
 Posix remote file-management mixin.
 
 Mimics the unix CLI (``test``/``ls``/``mkdir``/``rm``/``cp``/``mv``/``cat``)
-over the host's shell via :meth:`~otto.host.host.Host.exec` (on a unix
+over the host's shell via :func:`~otto.host.host.exec_own` (on a unix
 host's single-client ``console`` term, one command at a time on the default
 session). These manage
 files *already on / between locations on* the host — complementary to
@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Annotated
 from ..logger.mode import LogMode
 from ..result import Result
 from ..utils import Arg, Status, cli_exposed
-from .host import is_dry_run, refuse_declined_fact
+from .host import exec_own, is_dry_run, refuse_declined_fact
 from .userland import Userland, UserlandHost, refuse_if_gapped
 
 if TYPE_CHECKING:
@@ -174,7 +174,7 @@ class PosixFileOps(UserlandHost):
                 device nothing — see :func:`~otto.host.host.refuse_declined_fact`.
                 ``False`` would be a fabricated absence.
         """
-        result = await self.exec(f"test -e {self._q(path)}")  # ty: ignore[missing-attribute]
+        result = await exec_own(self, f"test -e {self._q(path)}")
         refuse_declined_fact(result, asked=f"exists({str(path)!r})")
         return result.status.is_ok
 
@@ -197,7 +197,7 @@ class PosixFileOps(UserlandHost):
                 be able to spell an empty directory.
         """
         flags = "-1A" if all else "-1"
-        result = await self.exec(f"ls {flags} {self._q(path)}")  # ty: ignore[missing-attribute]
+        result = await exec_own(self, f"ls {flags} {self._q(path)}")
         refuse_declined_fact(result, asked=f"ls({str(path)!r})")
         if not result.status.is_ok:
             return []
@@ -222,8 +222,8 @@ class PosixFileOps(UserlandHost):
             ~otto.result.CommandNotRunError: under a dry run — an empty list
                 would be a fabricated absence.
         """
-        result = await self.exec(  # ty: ignore[missing-attribute]
-            f'for p in {pattern}; do if [ -e "$p" ]; then printf \'%s\\n\' "$p"; fi; done'
+        result = await exec_own(
+            self, f'for p in {pattern}; do if [ -e "$p" ]; then printf \'%s\\n\' "$p"; fi; done'
         )
         # `if`/`fi`, NOT `[ -e ] &&`: with `&&`, a non-matching final iteration
         # (e.g. a broken symlink sorting last) makes the LOOP's exit status
@@ -246,7 +246,7 @@ class PosixFileOps(UserlandHost):
     async def mkdir(self, path: "str | Path", *, parents: bool = True) -> Result:
         """Create directory *path* (``mkdir``; *parents* adds ``-p``)."""
         flag = "-p " if parents else ""
-        result = await self.exec(f"mkdir {flag}{self._q(path)}")  # ty: ignore[missing-attribute]
+        result = await exec_own(self, f"mkdir {flag}{self._q(path)}")
         return Result(status=result.status, msg=result.value)
 
     async def _walk_remote(self, path: "str | Path") -> "RemoteListing":
@@ -264,7 +264,7 @@ class PosixFileOps(UserlandHost):
         """
         from .recursive_transfer import ListingError, parse_listing, walk_script
 
-        result = await self.exec(walk_script(self._q(path)))  # ty: ignore[missing-attribute]
+        result = await exec_own(self, walk_script(self._q(path)))
         refuse_declined_fact(result, asked=f"walk({str(path)!r})")
         if not result.status.is_ok:
             raise ListingError(f"{path}: tree listing failed: {result.value}")
@@ -287,7 +287,7 @@ class PosixFileOps(UserlandHost):
         if not paths:
             return Result(status=Status.Success)
         cmd = "mkdir -p " + " ".join(self._q(p) for p in paths)
-        result = await self.exec(cmd, user=user)  # ty: ignore[missing-attribute]
+        result = await exec_own(self, cmd, user=user)
         return Result(status=result.status, msg=result.value)
 
     @cli_exposed(help_="Remove path (`rm`); `--recursive` adds `-r`, `--force` adds `-f`.")
@@ -297,24 +297,20 @@ class PosixFileOps(UserlandHost):
         """Remove *path* (``rm``; *recursive* → ``-r``, *force* → ``-f``)."""
         flags = "".join(f for f, on in (("r", recursive), ("f", force)) if on)
         opt = f"-{flags} " if flags else ""
-        result = await self.exec(f"rm {opt}{self._q(path)}")  # ty: ignore[missing-attribute]
+        result = await exec_own(self, f"rm {opt}{self._q(path)}")
         return Result(status=result.status, msg=result.value)
 
     @cli_exposed(help_="Copy src to dst on the host (`cp`); `--recursive` adds `-r`.")
     async def cp(self, src: "str | Path", dst: "str | Path", *, recursive: bool = False) -> Result:
         """Copy *src* to *dst* on the host (``cp``; *recursive* → ``-r``)."""
         opt = "-r " if recursive else ""
-        result = await self.exec(  # ty: ignore[missing-attribute]
-            f"cp {opt}{self._q(src)} {self._q(dst)}"
-        )
+        result = await exec_own(self, f"cp {opt}{self._q(src)} {self._q(dst)}")
         return Result(status=result.status, msg=result.value)
 
     @cli_exposed(help_="Move or rename src to dst on the host (`mv`).")
     async def mv(self, src: "str | Path", dst: "str | Path") -> Result:
         """Move/rename *src* to *dst* on the host (``mv``)."""
-        result = await self.exec(  # ty: ignore[missing-attribute]
-            f"mv {self._q(src)} {self._q(dst)}"
-        )
+        result = await exec_own(self, f"mv {self._q(src)} {self._q(dst)}")
         return Result(status=result.status, msg=result.value)
 
     @cli_exposed(output_dir=False, help_="Print the text contents of path.")
@@ -383,7 +379,7 @@ class PosixFileOps(UserlandHost):
                 f"device with `base64 <path>` and decoding the output locally"
             ),
         )
-        result = await self.exec(f"base64 {self._q(path)}")  # ty: ignore[missing-attribute]
+        result = await exec_own(self, f"base64 {self._q(path)}")
         if not result.status.is_ok:
             raise FileNotFoundError(f"read_file({path!r}) failed: {result.value}")
         flattened = "".join((result.value or "").split())
@@ -471,5 +467,5 @@ class PosixFileOps(UserlandHost):
         encoded = base64.b64encode(body).decode()
         redirect = ">>" if append else ">"
         cmd = f"echo {encoded} | base64 -d {redirect} {self._q(path)}"
-        result = await self.exec(cmd, log=LogMode.QUIET)  # ty: ignore[missing-attribute]
+        result = await exec_own(self, cmd, log=LogMode.QUIET)
         return Result(status=result.status, msg=result.value)

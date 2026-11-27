@@ -144,6 +144,29 @@ class MyRtosHost(EmbeddedHost):
 re-declares `os_type`, `os_name`, and `command_frame` as class-level field
 defaults and is registered under `"zephyr"` at module load.
 
+(otto-own-exec)=
+### The commands otto runs through `exec`
+
+otto runs commands of its own on a host through `exec`: file operations such
+as `rm`, transfers, probes, and a container's `docker exec` on its parent. A
+user's `exec` with `terminal` unset runs under a terminal where the host
+offers one ({ref}`terminal-switch`). otto's own commands take their mode in
+one of two ways:
+
+- On a host whose `exec` is `BaseHost.exec` (most built-in classes, and a
+  subclass that does not override it), they run without a terminal wherever
+  the same call with `terminal=False` would be
+  {ref}`accepted <terminal-false-per-host>`. Anywhere else they run under a
+  terminal, as a user's command does.
+- On a host whose class overrides `exec`, or an instance whose `exec` was
+  replaced, they are calls to that public `exec`, with `terminal` unset. So
+  there they follow the public default: a terminal where the host offers one.
+
+A power command (`power_control.on_cmd`, `off_cmd`, `status_cmd`,
+{ref}`lab-power-control`) is written by you but has no `terminal` choice, so
+it runs on the controller the way otto's own commands do: on a direct ssh
+controller of a stock class, without a terminal, as before.
+
 ### Fields of your own need a `HostSpec`
 
 A `lab.json` entry reaches your class through a boundary spec, a

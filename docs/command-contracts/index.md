@@ -186,6 +186,10 @@ page says, and only the narrower one is promised there, for every command:
   - You can run an `exec` that starts from the state its session was set up with -- nothing a `run` or an earlier `exec` changed -- and trust that its `cd`, variables, options, `exit` and terminal settings reach no later `exec` or `run`.
 - On a console, `exec-isolated` holds in a narrower form.
   - You can run an `exec` on the console's one shell, the one `run` uses: it starts from `run`'s directory, variables and options, and its `cd`, variables, options, `exit` and terminal settings reach no later `exec` or `run`. A command that kills `$$` kills that shell, so it ends the session as the same command from `run` does.
+- On a host with one mode, a terminal (telnet, a console, an embedded host, an ssh host reached through a login proxy or with a session setup hook), `terminal-switch` holds in a narrower form.
+  - You can pass `terminal=True` and have the command run with a terminal; `terminal=False` is refused by name.
+- On a host with one mode, no terminal (the local host), `terminal-switch` holds in a narrower form.
+  - You can pass `terminal=False` and have the command run without a terminal; `terminal=True` is refused by name.
 
 (command-contracts-not-covered)=
 
@@ -358,10 +362,10 @@ By promise id:
 - `exec-dry-run`: `tests/conformance/test_dry_run_contract.py::test_a_dry_run_reaches_no_device_and_returns_one_shape`
 - `exec-options`: `tests/conformance/test_options_contract.py::test_an_option_has_the_same_effect_everywhere_or_is_refused_by_name`
 - `typed-input`: `tests/conformance/test_input_contract.py::test_a_typed_command_reaches_the_shell_byte_for_byte`
+- `terminal-switch`: `tests/conformance/test_terminal_contract.py::test_a_command_sees_the_terminal_mode_it_asked_for`
 - `timeout`: `tests/conformance/test_timeout_contract.py::test_a_command_exceeding_its_budget_fails_the_documented_way`
 
-The suite also checks `exec` on an SSH host whose `exec` would otherwise get
-a session without a terminal, by declaring a session-setup hook that marks
-each session it sets up: declaring any hook sends `exec` to a session with a
+The suite also checks `exec` on an SSH host that declares a session-setup
+hook marking each session it sets up: such a host has no session without a
 terminal, and the mark shows the hook ran as the user the session is for.
 Those cells' labels name their kind with `-hooked`.

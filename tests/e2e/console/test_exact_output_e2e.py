@@ -3,8 +3,10 @@
 ``CommandResult.value`` is the command's output with exactly one trailing
 newline removed. asyncssh's exec channel handed back an empty partial line
 when end-of-file landed after the last line (#711): a timing defect, so a
-single run proves nothing. An ``exec`` runs on a pooled shell session without
-a terminal now, and this module runs each command 20 times on it.
+single run proves nothing. An ``exec(..., terminal=False)`` runs on a pooled
+shell session without a terminal, the session otto's own commands take on a
+direct ssh host, and this module runs each command 20 times on it. An unset
+``terminal`` would take the session with a terminal instead.
 
 One run of each case on every term, route and log mode is the conformance
 suite's: the value in ``tests/conformance/test_output_contract.py``, what the
@@ -44,7 +46,7 @@ async def test_an_ssh_exec_answers_the_exact_output_every_time(host1: Host) -> N
     failures: list[str] = []
     for case in EXACT_OUTPUT_CASES:
         for iteration in range(1, _REPEATS + 1):
-            result = await host1.exec(case.command)
+            result = await host1.exec(case.command, terminal=False)
             if (result.value, result.retcode) != (case.value, case.retcode):
                 failures.append(
                     f"cmd={case.command!r} iteration={iteration}/{_REPEATS}: got "

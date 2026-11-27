@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Literal
 
 from ..host import process_stop
 from ..host.docker_cli import image_rm_command, missing, rm_container_command, said
-from ..host.host import EXEC_CANCEL_REAP_BOUND
+from ..host.host import EXEC_CANCEL_REAP_BOUND, exec_own
 from ..host.product import ARCHIVE_SUFFIXES
 from ..host.shell_quote import path_operand, shell_operand
 
@@ -431,7 +431,8 @@ class ObjectListCache:
         try:
             finished = False
             try:
-                scan = await host.exec(
+                scan = await exec_own(
+                    host,
                     f"docker exec -e {_SCAN_MARK}={res.token} {shlex.quote(container)} "
                     f"sh -c {shlex.quote(_SCAN_SCRIPT)}",
                     timeout=_SCAN_TIMEOUT,
@@ -652,7 +653,7 @@ class ObjectListCache:
         from ..utils import Status
 
         try:
-            result = await host.exec(cmd, timeout=timeout)
+            result = await exec_own(host, cmd, timeout=timeout)
         except (asyncio.TimeoutError, TimeoutError) as e:
             return self._timed_out(product, host, what, e)
         if result.status is Status.NotRun:
@@ -823,7 +824,7 @@ class ObjectListCache:
             try:
                 # wait_for bounds the whole await (connection and channel included);
                 # the exec timeout only lets a well-behaved host end the command first.
-                result = await asyncio.wait_for(host.exec(cmd, timeout=grant), grant)
+                result = await asyncio.wait_for(exec_own(host, cmd, timeout=grant), grant)
             except (asyncio.TimeoutError, TimeoutError) as e:
                 raise _CleanupStepTimeoutError(
                     f"no answer in {grant:g}s ({str(e) or 'timed out'}); {left}"
@@ -842,7 +843,8 @@ class ObjectListCache:
         from ..host.connections import teardown_step
 
         with teardown_step(product.name, f"stop the scan in container {container} on {host.id}"):
-            reaped = await host.exec(
+            reaped = await exec_own(
+                host,
                 f"docker exec {shlex.quote(container)} "
                 + process_stop.reap_marked_command(_SCAN_MARK, token),
                 timeout=60,
@@ -874,7 +876,7 @@ class ObjectListCache:
         from ..utils import Status
 
         res.staging = True
-        made = await host.exec(_make_temp_dir_command(res.token), timeout=60)
+        made = await exec_own(host, _make_temp_dir_command(res.token), timeout=60)
         if made.status is Status.NotRun:
             res.staging = False
             return self._unavailable(product, _DRY_RUN, kind="dry-run")
@@ -895,7 +897,8 @@ class ObjectListCache:
         staged: list[Path] = []
         for n, path in enumerate(paths):
             dest = f"{hostdir}/{n}"
-            copied = await host.exec(
+            copied = await exec_own(
+                host,
                 f"docker cp {shell_operand(f'{source}:{path}')} {path_operand(dest)}",
                 timeout=_COPY_TIMEOUT,
             )

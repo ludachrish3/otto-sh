@@ -16,7 +16,7 @@ from typing_extensions import final
 
 from ..errors import OttoError
 from ..host.daemon import parse_ps_output, ps_scan_command
-from ..host.host import is_dry_run
+from ..host.host import exec_own, is_dry_run
 from ..logger.mode import LogMode
 from .model import ProcKey, Tunnel
 from .sentinel import SENTINEL_PREFIX, ParsedSentinel, parse_sentinel
@@ -125,7 +125,7 @@ async def _device_read(host: Any, cmd: str) -> Any:
             f"{cmd!r} was not run on host {getattr(host, 'id', host)!r}: a dry run makes no "
             f"device contact, so nothing about this host's state was measured"
         )
-    return await host.exec(cmd, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET)
+    return await exec_own(host, cmd, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET)
 
 
 async def _device_running(host: Any) -> bool:

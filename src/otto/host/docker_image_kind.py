@@ -241,7 +241,9 @@ class DockerImageProduct(ShellProduct):
 
     @override
     async def install(self, host: "Host") -> Result:
-        probe = await host.exec("command -v docker", timeout=30)
+        from .host import exec_own  # function-local: off the host import path
+
+        probe = await exec_own(host, "command -v docker", timeout=30)
         if probe.status is Status.NotRun:
             return Result(status=Status.NotRun)
         if not probe.status.is_ok:
@@ -250,14 +252,14 @@ class DockerImageProduct(ShellProduct):
             )
         if self.is_tarball:
             staged = await self._staged_tarball(host)  # where stage() put it
-            loaded = await host.exec(self._load_command(staged), timeout=_LOAD_TIMEOUT)
+            loaded = await exec_own(host, self._load_command(staged), timeout=_LOAD_TIMEOUT)
             if not loaded.status.is_ok:
                 return self._error_from(host, f"{self.name}: docker load", loaded)
             # The staged tarball is an intermediate `docker load` has already
             # consumed (unlike a `shell` product, whose artifact IS the
             # product) — best-effort cleanup, same as kmod's staged .ko;
             # its own failure must not fail an otherwise-successful install.
-            await host.exec(self._cleanup_command(staged), timeout=30)
+            await exec_own(host, self._cleanup_command(staged), timeout=30)
             ref = _loaded_reference(loaded.value)
             if ref is None:
                 return Result(
@@ -266,7 +268,7 @@ class DockerImageProduct(ShellProduct):
                     f"{loaded.value.strip()}",
                 )
         elif self.pull:
-            pulled = await host.exec(self._pull_command(), timeout=_PULL_TIMEOUT)
+            pulled = await exec_own(host, self._pull_command(), timeout=_PULL_TIMEOUT)
             if not pulled.status.is_ok:
                 return self._error_from(host, f"{self.name}: docker pull {self.image}", pulled)
             ref = self.image
@@ -284,7 +286,7 @@ class DockerImageProduct(ShellProduct):
         replaced = await self._remove_stopped(host)
         if replaced is not None:
             return replaced
-        run = await host.exec(self._run_command(shlex.quote(ref)), timeout=120)
+        run = await exec_own(host, self._run_command(shlex.quote(ref)), timeout=120)
         if not run.status.is_ok:
             return self._error_from(host, f"{self.name}: docker run", run)
         return Result(status=Status.Success)
@@ -296,7 +298,9 @@ class DockerImageProduct(ShellProduct):
         restarting container, and that refusal is returned with docker's own text.
         No container of the name is nothing to remove.
         """
-        removed = await host.exec(self._rm_command(force=False), timeout=120)
+        from .host import exec_own  # function-local: off the host import path
+
+        removed = await exec_own(host, self._rm_command(force=False), timeout=120)
         if removed.status is Status.NotRun:
             return Result(status=Status.NotRun)
         if removed.status.is_ok:
@@ -317,7 +321,9 @@ class DockerImageProduct(ShellProduct):
         already there. A tarball names an image without showing otto placed it,
         and another product may share it; ``docker image rm`` is the user's.
         """
-        removed = await host.exec(self._rm_command(force=True), timeout=120)
+        from .host import exec_own  # function-local: off the host import path
+
+        removed = await exec_own(host, self._rm_command(force=True), timeout=120)
         if removed.status is Status.NotRun:
             return Result(status=Status.NotRun)
         # Idempotent: a container that was never installed (or already removed
@@ -391,8 +397,12 @@ class DockerImageProduct(ShellProduct):
         second cleanup succeeds like the first. Any other ``docker logs``
         failure is reported.
         """
+        from .host import exec_own  # function-local: off the host import path
+
         hauled = await super().get_debug_logs(host, dest=dest)
-        logs = await host.exec(f"docker logs {shlex.quote(self.container_name)} 2>&1", timeout=60)
+        logs = await exec_own(
+            host, f"docker logs {shlex.quote(self.container_name)} 2>&1", timeout=60
+        )
         if not logs.status.is_ok and missing(logs, "container"):
             host_id = getattr(host, "id", "?")
             logger.info(

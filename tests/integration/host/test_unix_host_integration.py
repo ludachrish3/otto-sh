@@ -194,13 +194,11 @@ _TTY_PROBE = "[ -t 1 ] && echo tty || echo pipe"
 
 @pytest.mark.parametrize("host1", ["ssh"], indirect=True)
 class TestTerminalSwitch:
+    """What the terminal-switch contract does not measure: the mode ``run`` and ``exec``
+    give is ``tests/conformance/test_terminal_contract.py``'s, on these same hosts."""
+
     @pytest.mark.asyncio
-    async def test_each_entry_has_a_terminal_only_where_it_says(self, host1: Host):
-        assert (await host1.run(_TTY_PROBE)).only.value == "tty"
-        assert (await host1.run(_TTY_PROBE, terminal=False)).only.value == "pipe"
-        assert (await host1.exec(_TTY_PROBE)).value == "pipe"
-        assert (await host1.exec(_TTY_PROBE, terminal=False)).value == "pipe"
-        assert (await host1.exec(_TTY_PROBE, terminal=True)).value == "tty"
+    async def test_a_named_session_without_a_terminal_reads_a_pipe(self, host1: Host):
         async with await host1.open_session("plain", terminal=False) as plain:
             assert (await plain.run(_TTY_PROBE)).only.value == "pipe"
 

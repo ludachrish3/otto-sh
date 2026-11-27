@@ -193,9 +193,10 @@ async def run_lab_health(*, restart_qemu: bool) -> int:
 
 
 async def _checked(host: Any, command: str) -> None:
+    from otto.host.host import exec_own
     from otto.logger.mode import LogMode
 
-    result = await host.exec(command, timeout=60, log=LogMode.QUIET)
+    result = await exec_own(host, command, timeout=60, log=LogMode.QUIET)
     _hygiene().check_probe_result(host.id, result)
 
 

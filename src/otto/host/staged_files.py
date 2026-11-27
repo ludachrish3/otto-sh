@@ -294,11 +294,12 @@ async def _exec(host: "Host", script: str) -> "CommandResult":
     clean. Staging is a plain ``put`` as the login user on every other host.
     """
     from .docker_host import DockerContainerHost  # function-local: off the host import path
+    from .host import exec_own  # function-local: off the host import path
     from .identity import ROOT_LOGIN
 
     if isinstance(host, DockerContainerHost):
-        return await host.exec(script, timeout=_COMMAND_TIMEOUT, user=ROOT_LOGIN)
-    return await host.exec(script, timeout=_COMMAND_TIMEOUT)
+        return await exec_own(host, script, timeout=_COMMAND_TIMEOUT, user=ROOT_LOGIN)
+    return await exec_own(host, script, timeout=_COMMAND_TIMEOUT)
 
 
 # ── the removal and the question ─────────────────────────────────────────────

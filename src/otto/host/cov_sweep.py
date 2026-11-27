@@ -137,16 +137,18 @@ def _parse_presence(output: str, count: int) -> list[bool] | None:
 async def probe_presence(host: "Host", products: "Sequence[Product]") -> frozenset[str] | None:
     """Return the names of *products* whose ``cov_dir`` exists on *host* now.
 
-    One unelevated ``host.exec`` for all of them (nothing is sent for none).
+    One unelevated :func:`~otto.host.host.exec_own` for all of them (nothing is sent for none).
     ``None`` means no evidence: the batch failed, was declined by a dry run,
     or did not answer every product exactly once. A dir behind an unreadable
     ancestor reads as absent — the evidence only ever makes a loss louder,
     so a false "absent" costs a warning, never a wrong verdict.
     """
+    from .host import exec_own  # function-local: off the host import path
+
     if not products:
         return frozenset()
     dirs = [cov_dir_of(p) for p in products]
-    result = await host.exec(_presence_script(dirs), timeout=60)
+    result = await exec_own(host, _presence_script(dirs), timeout=60)
     if result.status is Status.NotRun or not result.is_ok:
         return None
     answers = _parse_presence(result.value, len(dirs))
@@ -298,13 +300,16 @@ async def _probe(host: "Host", products: "Sequence[Product]") -> "dict[str, Answ
     sent for no products. Under a dry run it refuses, rather than invent an
     answer (:func:`~otto.host.host.refuse_declined_fact`).
     """
-    from .host import refuse_declined_fact
+    from .host import (
+        exec_own,  # function-local: off the host import path
+        refuse_declined_fact,
+    )
     from .privilege import run_sh_elevated  # function-local: patched in tests at its home
 
     if not products:
         return {}
     dirs = [cov_dir_of(p) for p in products]
-    plain = await host.exec(_probe_script(dirs), timeout=120)
+    plain = await exec_own(host, _probe_script(dirs), timeout=120)
     refuse_declined_fact(plain, asked=f"{host.id}.coverage_dirs_clean()")
     output, retcode = _command_value(plain)
     answers = dict(
@@ -415,6 +420,7 @@ async def _remove_batch(
     host: "Host", group: str, products: "Sequence[Product]"
 ) -> "dict[str, str | None] | None":
     """Run one removal batch; each product's error, or ``None`` when the session declined it."""
+    from .host import exec_own  # function-local: off the host import path
     from .privilege import run_sh_elevated  # function-local: patched in tests at its home
 
     dirs = [cov_dir_of(p) for p in products]
@@ -425,7 +431,7 @@ async def _remove_batch(
             return None
         cmd = results.only
     else:
-        cmd = await host.exec(script, timeout=600)
+        cmd = await exec_own(host, script, timeout=600)
         if cmd.status is Status.NotRun:
             return None
     output, retcode = _command_value(cmd)

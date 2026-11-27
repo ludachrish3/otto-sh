@@ -67,7 +67,7 @@ from ..host.docker_host import (
     probe_ownership,
 )
 from ..host.errors import HostCommandError, HostUnreachableError, StagingRefusedError
-from ..host.host import Host, is_dry_run
+from ..host.host import Host, exec_own, is_dry_run
 from ..host.shell_quote import path_operand, rm_f_command, rmdir_if_empty
 from ..result import CommandNotRunError, CommandResult
 
@@ -143,7 +143,7 @@ async def stage_image_archive(parent: Host, project: str, image: DockerImage) ->
             detail="Nothing was copied to the parent.",
         )
     remote = image_archive_path(await ensure_private_root(parent), project, image)
-    prepared = await parent.exec(f"mkdir -p {path_operand(remote.parent)}")
+    prepared = await exec_own(parent, f"mkdir -p {path_operand(remote.parent)}")
     if not prepared.status.is_ok:
         raise _staging_failure(
             prepared, f"failed to prepare {remote.parent} on the parent: {prepared.value}"
@@ -152,7 +152,7 @@ async def stage_image_archive(parent: Host, project: str, image: DockerImage) ->
     if not put_result.is_ok:
         raise HostCommandError(f"failed to copy the build archive to the parent: {put_result.msg}")
     uploaded = remote.parent / image.context.name
-    moved = await parent.exec(f"mv -f {path_operand(uploaded)} {path_operand(remote)}")
+    moved = await exec_own(parent, f"mv -f {path_operand(uploaded)} {path_operand(remote)}")
     if not moved.status.is_ok:
         raise _staging_failure(moved, f"failed to place the build archive: {moved.value}")
     return remote
@@ -190,8 +190,8 @@ async def stage_image_context(
     # `tar -xf` below OVERLAYS rather than replaces: docker build would then
     # see a context still holding a file the user deleted locally, and produce
     # an image that still holds the deleted file.
-    prepared = await parent.exec(
-        f"rm -rf {path_operand(remote_dir)} && mkdir -p {path_operand(remote_dir)}"
+    prepared = await exec_own(
+        parent, f"rm -rf {path_operand(remote_dir)} && mkdir -p {path_operand(remote_dir)}"
     )
     if not prepared.status.is_ok:
         raise _staging_failure(
@@ -226,7 +226,8 @@ async def stage_image_context(
         # scales with its size — a wall-clock bound here is meaningless
         # (see nc.py).
         remote_tar = remote_dir / tmp_path.name
-        result = await parent.exec(
+        result = await exec_own(
+            parent,
             f"tar -xf {path_operand(remote_tar)} -C {path_operand(remote_dir)} "
             f"&& {rm_f_command(remote_tar)}",
             timeout=float("inf"),
@@ -277,7 +278,9 @@ async def stage_compose_files(
         )
 
     base = compose_dir(await ensure_private_root(parent), project)
-    prepared = await parent.exec(f"rm -rf {path_operand(base)} && mkdir -p {path_operand(base)}")
+    prepared = await exec_own(
+        parent, f"rm -rf {path_operand(base)} && mkdir -p {path_operand(base)}"
+    )
     if not prepared.status.is_ok:
         raise _staging_failure(
             prepared,
@@ -287,7 +290,7 @@ async def stage_compose_files(
     out: list[Path] = []
     for idx, compose in enumerate(composes):
         sub = base / str(idx)
-        made = await parent.exec(f"mkdir -p {path_operand(sub)}")
+        made = await exec_own(parent, f"mkdir -p {path_operand(sub)}")
         if not made.status.is_ok:
             raise _staging_failure(made, f"failed to create {sub} on the parent: {made.value}")
         try:
@@ -335,7 +338,7 @@ async def cleanup_project(parent: Host, project: str, *, stack: bool) -> Command
     """
     root = await ensure_private_root(parent)
     command = stack_cleanup_command(root, project) if stack else cleanup_command(root, project)
-    return await parent.exec(command)
+    return await exec_own(parent, command)
 
 
 def cleanup_command(root: Path, project: str) -> str:
@@ -736,7 +739,7 @@ async def staged_use_case(parent: "UnixHost", compose_project: str) -> "StagedUs
         await _verify_legacy_compose_files(parent, compose_project, staged)
     # A transfer that dropped before its first write leaves the launcher empty,
     # and `sh <empty file> docker compose down` exits 0 having run nothing.
-    held = await parent.exec(f"test -s {path_operand(staged.launcher)}")
+    held = await exec_own(parent, f"test -s {path_operand(staged.launcher)}")
     if not held.status.is_ok:
         raise _not_a_staging(where, base, f"{staged.launcher.name} is empty")
     return staged
@@ -955,7 +958,9 @@ async def stage_use_case(
     compose_paths = use_case_compose_paths(root, compose_project, files)
     launcher_remote = use_case_launcher(root, compose_project)
     base = compose_dir(root, compose_project)
-    prepared = await parent.exec(f"rm -rf {path_operand(base)} && mkdir -p {path_operand(base)}")
+    prepared = await exec_own(
+        parent, f"rm -rf {path_operand(base)} && mkdir -p {path_operand(base)}"
+    )
     if not prepared.status.is_ok:
         raise _staging_failure(
             prepared,
@@ -1006,7 +1011,7 @@ async def stage_use_case(
 async def _mkdir_and_put(
     parent: Host, dest: Path, paths: list[Path], *, mode: "int | None" = None
 ) -> None:
-    made = await parent.exec(f"mkdir -p {path_operand(dest)}")
+    made = await exec_own(parent, f"mkdir -p {path_operand(dest)}")
     if not made.status.is_ok:
         raise _staging_failure(made, f"failed to create {dest} on the parent: {made.value}")
     put_result = await parent.put(paths, dest, mode=mode)

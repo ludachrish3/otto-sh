@@ -188,8 +188,9 @@ On a host declared as an ash shell (`command_frame: "ash"`, as BusyBox
 devices are), a line the terminal would cut is refused before anything is
 typed, for `run` and an `exec` on a session with a terminal alike. To send
 such a command, split it into shorter lines, put it in a script file and run
-that, or, over `ssh`, use an `exec` without a terminal (the default), whose
-shell reads a pipe and cuts no line. The
+that, or use `exec(..., terminal=False)` where the call can have it, whose
+shell reads a pipe and cuts no line; the refusal says which applies
+([the line-length record](../architecture/subsystems/busybox-support.md#run-command-line-length)). The
 limits are a
 {ref}`declared exception <exception-how-long-one-line-of-a-command-can-be-on-a-session-with-a-terminal>`.
 

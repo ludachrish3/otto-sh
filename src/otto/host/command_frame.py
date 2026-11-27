@@ -165,7 +165,8 @@ class ExecRestore(enum.Enum):
 class ExecInput:
     """What one ``exec`` call asks of the frame that isolates it.
 
-    Built once per call by :meth:`~otto.host.host.BaseHost.exec` and carried
+    Built once per call in the body of :meth:`~otto.host.host.BaseHost.exec`
+    (``_exec_in_turn``, which otto's own commands run through too) and carried
     unchanged to the session; ``None`` where one is accepted means a ``run``
     (its frame, its status, no restore).
     """
@@ -206,6 +207,13 @@ class ExecInput:
     Set only by ``BaseHost._exec_delegated`` and read only through
     ``delegated_exec_log``: by every session's log resolver and by the host that
     logs the line it really runs at DEBUG."""
+
+    exec_escapes: bool = False
+    """Whether ``exec(..., terminal=False)`` would carry this call: a refusal may then say so.
+
+    Set by ``BaseHost._exec_in_turn``, the body of ``exec`` and of otto's own
+    ``_exec_own`` alike, from ``BaseHost._exec_plain`` for the call's user,
+    elevation and prompts; read only by the line-length refusal's advice."""
 
     on_typed: Callable[[], None] | None = None
     """Called when the call's framed command has been written to its session, or ``None``.

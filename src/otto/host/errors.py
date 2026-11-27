@@ -612,7 +612,9 @@ async def exec_or_unreachable(
         HostUnreachableError: the transport raised, or the command hit
             *timeout* without completing. (Or *unreachable*, if given.)
     """
-    result = await _reached(host, cmd, host.exec(cmd, timeout=timeout, log=log), unreachable)
+    from .host import exec_own  # otto.host.host imports this module at its own load
+
+    result = await _reached(host, cmd, exec_own(host, cmd, timeout=timeout, log=log), unreachable)
     return _finished(host, cmd, result, timeout, unreachable)
 
 
