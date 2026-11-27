@@ -1297,7 +1297,10 @@ def run_command(
     :func:`interruptible_prompt` thread may still be writing to the terminal,
     the process exits with that status directly, past the interpreter's
     shutdown (``atexit`` handlers do not run; the log listener is flushed
-    first, bounded). With no explicit *teardown_deadline*, it reads the
+    first, bounded). A further SIGINT that lands once the command has given
+    the signal back, while the loop is still returning, exits the same way:
+    the same status, and after a forced abandon the same hooks.
+    With no explicit *teardown_deadline*, it reads the
     installed run policy's, which the run filled from
     ``OTTO_TEARDOWN_DEADLINE`` when it was prepared (10 s when no policy is
     installed). ``_controller`` is a test seam: tier-1 tests inject
@@ -1326,14 +1329,52 @@ def run_command(
     try:
         return asyncio.run(ctrl._main(coro))  # noqa: SLF001 (_main is test-visible seam, required for tier-1 state machine testing)
     except _InterruptedCommand as exc:
-        if exc.forced:
-            # Decided, and the flush resolved, BEFORE the hooks: SIGINT is the
-            # default handler's again, and a press during the hooks must not
-            # unwind past the exit below into the interpreter's shutdown.
-            flush_logs = _bounded_log_flush() if _prompt_may_be_writing() else None
-            try:
-                _run_force_exit_hooks()
-            finally:
-                if flush_logs is not None:
-                    _exit_past_shutdown(128 + exc.signum, flush_logs)
-        raise SystemExit(128 + exc.signum) from None
+        _exit_interrupted(exc.signum, forced=exc.forced)
+    except (KeyboardInterrupt, RuntimeError) as exc:
+        if ctrl.interrupted is None or not _is_late_interrupt(exc):
+            raise
+        # ``_main`` had given its handlers back and finished. The status is
+        # the one the first signal announced, and a forced run is still owed
+        # its hooks: after a forced abandon this interrupt lands while
+        # asyncio unwinds the abandoned body.
+        _exit_interrupted(ctrl.interrupted, forced=ctrl.forced)
+
+
+def _exit_interrupted(signum: int, *, forced: bool) -> "NoReturn":
+    """Leave an interrupted command with ``128 + signum``; a forced one runs its hooks first.
+
+    The one exit of an interrupted run, whichever way the interruption left
+    the loop.
+    """
+    if forced:
+        # Decided, and the flush resolved, BEFORE the hooks: SIGINT is the
+        # default handler's again, and a press during the hooks must not
+        # unwind past the exit below into the interpreter's shutdown.
+        flush_logs = _bounded_log_flush() if _prompt_may_be_writing() else None
+        try:
+            _run_force_exit_hooks()
+        finally:
+            if flush_logs is not None:
+                _exit_past_shutdown(128 + signum, flush_logs)
+    raise SystemExit(128 + signum) from None
+
+
+def _is_late_interrupt(exc: BaseException) -> bool:
+    """Whether *exc* is a SIGINT that landed after an interrupted run's ``_main`` finished.
+
+    ``_main`` removes its loop signal handlers in its ``finally``, and
+    asyncio puts Python's default SIGINT handler back there. Until
+    ``asyncio.run`` returns, a further SIGINT raises ``KeyboardInterrupt``
+    inside the loop. It leaves ``asyncio.run`` as that ``KeyboardInterrupt``,
+    or, when it struck before the loop had run the stop scheduled for the
+    finished command, as the ``RuntimeError`` asyncio's own cleanup raises on
+    meeting that stop, with the ``KeyboardInterrupt`` as its context.
+
+    The caller asks only for a run that already recorded a signal: with none
+    recorded, a ``KeyboardInterrupt`` is not that run's to interpret (a
+    command nested in a :func:`sync_phase` receives the phase's interrupt
+    this way).
+    """
+    if isinstance(exc, KeyboardInterrupt):
+        return True
+    return isinstance(exc.__context__, KeyboardInterrupt)
