@@ -90,6 +90,9 @@ def register_builtin_commands() -> None:
         # letting a device fact be invented. That preview is the reason the
         # flag exists.
         dry_run_preview=True,
+        # Uses the lab, yet offers no registered options class's flags: its
+        # verbs drive the lab's own wiring, not a project's code.
+        accepts_options=False,
     )
     register_cli_command(
         "tunnel",
@@ -106,6 +109,9 @@ def register_builtin_commands() -> None:
         # device fact anyway. Stopping at the seam would replace that plan with
         # the generic block and delete the shipped preview.
         dry_run_preview=True,
+        # Uses the lab, yet offers no registered options class's flags: its
+        # verbs drive the lab's own wiring, not a project's code.
+        accepts_options=False,
     )
     register_cli_command(
         "monitor",

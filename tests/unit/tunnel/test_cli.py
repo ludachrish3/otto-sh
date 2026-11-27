@@ -7,7 +7,6 @@ so app-level tests drive ``tunnel_app`` through the production dispatch seam
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -37,6 +36,7 @@ from otto.tunnel import (
 )
 from otto.tunnel.check import TunnelCheckColumn, TunnelCheckHop, TunnelCheckReport
 from otto.tunnel.socat import NoFreePortError
+from tests._fixtures.clickctx import chain
 from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
@@ -114,7 +114,7 @@ def test_hosts_completer_narrows_to_l2_neighbors_after_comma(tmp_path):
         patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.declared.get_projects", return_value=[project]),
     ):
-        result = _hosts_completer(None, "a,")
+        result = _hosts_completer(_ctx_with_labs(None), "a,")
     assert result == ["a,b"]  # c is on a different /24; a is already typed
 
 
@@ -125,7 +125,7 @@ def test_hosts_completer_falls_back_to_full_list_on_narrowing_error(tmp_path):
         patch("otto.declared.get_projects", return_value=[project]),
         patch("otto.cli.tunnel._ip_by_host", side_effect=RuntimeError("boom")),
     ):
-        result = _hosts_completer(None, "a,")
+        result = _hosts_completer(_ctx_with_labs(None), "a,")
     assert set(result) == {"a,b", "a,c", "a,local"}  # unnarrowed fallback (incl. builtin `local`)
 
 
@@ -135,17 +135,16 @@ def test_hosts_completer_no_comma_yet_is_unaffected(tmp_path):
         patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.declared.get_projects", return_value=[project]),
     ):
-        result = _hosts_completer(None, "a")
+        result = _hosts_completer(_ctx_with_labs(None), "a")
     assert result == ["a"]  # no comma yet: narrowing never engages
 
 
 # ── _hosts_completer lab scoping (issue #138) ────────────────────────────────
 
 
-def _ctx_with_labs(lab_names) -> SimpleNamespace:
-    """Click-like context chain: ``-l/--lab`` lives on the root ``otto`` ctx."""
-    root = SimpleNamespace(info_name="otto", params={"labs": lab_names}, parent=None)
-    return SimpleNamespace(info_name="tunnel", params={}, parent=root)
+def _ctx_with_labs(lab_names):
+    """The context chain completion builds: ``-l/--lab`` lives on otto's root ctx."""
+    return chain("otto", "tunnel", root_params={"labs": lab_names})
 
 
 def test_hosts_completer_live_scan_filters_by_selected_lab(tmp_path):

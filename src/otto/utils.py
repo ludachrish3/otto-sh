@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import time
+import types
 from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -772,6 +773,26 @@ def annotation_is_subclass(annotation: object, base: "type | tuple[type, ...]") 
         and isinstance(annotation, type)
         and issubclass(annotation, base)
     )
+
+
+def unwrap_optional(annotation: Any) -> Any:
+    """Return the inner type of an ``X | None`` annotation, else the annotation.
+
+    The one reading of an optional annotation. Both spellings are handled:
+    ``types.UnionType`` (``X | None``) and ``typing.Union`` (``Optional[X]``).
+    A union of several non-``None`` members is returned unchanged; only the
+    ``X | None`` shape is unwrapped.
+
+    >>> from typing import Optional
+    >>> from otto.utils import unwrap_optional
+    >>> unwrap_optional(Optional[bool]), unwrap_optional(int | None), unwrap_optional(int | str)
+    (<class 'bool'>, <class 'int'>, int | str)
+    """
+    if get_origin(annotation) in (types.UnionType, Union):
+        non_none = [arg for arg in get_args(annotation) if arg is not type(None)]
+        if len(non_none) == 1:
+            return non_none[0]
+    return annotation
 
 
 @final

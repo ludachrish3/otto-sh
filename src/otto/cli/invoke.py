@@ -12,7 +12,7 @@ import contextlib
 import dataclasses
 import functools
 import inspect
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast, get_type_hints
@@ -21,23 +21,34 @@ import typer
 from rich.markup import escape
 from typing_extensions import assert_never, override
 
-from ..config._typer import get_current_context
-from ..errors import OttoError
+from ..config._typer import (
+    OWN_PARAMS_ATTR,
+    Parameter,
+    built_spellings,
+    carrier,
+    get_current_context,
+)
+from ..config._typer import own_params as _own_params
+from ..errors import OttoError, is_containable
 from ..params import (
-    OPTION_VERBS,
     OptionsNotAvailableError,
     OptionsOrigin,
+    OptionsRegistrationError,
     OptionsValidationError,
+    Registration,
     command_options,
+    covering,
+    flag_spellings,
     merge_option_params,
+    options_key,
     options_params,
     recorded_in_force,
+    resolve_registration,
     sensitive_field_names,
     verb_option_classes,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
     from contextlib import AbstractContextManager
 
     from _typeshed import DataclassInstance
@@ -188,44 +199,40 @@ RECORDS_OPTIONS_ATTR = "__otto_records_options__"
 Stamped ``True`` by :func:`stamp_options_leaf`, with the two dry-run markers.
 """
 
-# Temporary: stage 2 replaces this set with the registration's own
-# declaration (design §5.4, ``accepts_options``). Nothing but
-# ``option_group`` may read it.
-OPTION_GROUPS: frozenset[str] = frozenset(OPTION_VERBS) | {"host"}
-"""The top-level commands whose leaves mark option reads pending until they read their flags."""
-
-
-def option_group(ctx: typer.Context) -> str | None:
-    """Return the top-level command *ctx* sits under when it is one of :data:`OPTION_GROUPS`.
-
-    The top-level command is the node just below the root of *ctx*'s chain;
-    the root itself sits under none.
-    """
-    node: Any = ctx
-    if node.parent is None:
-        return None
-    while node.parent.parent is not None:
-        node = node.parent
-    name = getattr(node.command, "name", None)
-    return name if name in OPTION_GROUPS else None
-
 
 def _records_options(ctx: typer.Context) -> bool:
     return bool(getattr(getattr(ctx.command, "callback", None), RECORDS_OPTIONS_ATTR, False))
 
 
+def _owns_options(ctx: typer.Context) -> bool:
+    return getattr(getattr(ctx.command, "callback", None), OWN_OPTIONS_ATTR, None) is not None
+
+
 def pending_options(ctx: typer.Context) -> "RecordedOptions | None":
     """Return the pending record a command holds before it reads its flags, else ``None``.
 
-    The one place that decides whether a command marks: it does when it sits
-    under one of :data:`OPTION_GROUPS` (:func:`option_group`) or its callback
-    carries :data:`RECORDS_OPTIONS_ATTR`. While the record is in force, a read
-    of any options class raises ``OptionsNotAvailableError``.
+    The one place that decides whether a command marks: it does when it
+    accepts registered options (:func:`leaf_accepts_options`, over the
+    invocation's command spec and :func:`command_path`), or its callback
+    carries :data:`RECORDS_OPTIONS_ATTR` or :data:`OWN_OPTIONS_ATTR`. The
+    record's ``group`` is the top-level command when it accepts, else
+    ``None``. For the root context, before any subcommand runs, it answers
+    for the top-level command being dispatched, from its registration
+    (:func:`spec_accepts_options`). A context with no command spec in its
+    invocation (``meta['_otto_command_spec']``) accepts nothing. While the
+    record is in force, a read of any options class raises
+    ``OptionsNotAvailableError``.
     """
     from ..params import RecordedOptions
 
-    group = option_group(ctx)
-    if group is None and not _records_options(ctx):
+    spec = cast("CommandSpec | None", ctx.meta.get(_COMMAND_SPEC_KEY))
+    group = None
+    if spec is not None:
+        path = command_path(ctx, spec)
+        callback = getattr(ctx.command, "callback", None)
+        if leaf_accepts_options(spec, callback, beneath_group=len(path) > 1):
+            group = path[0]
+    if group is None and not _records_options(ctx) and not _owns_options(ctx):
         return None
     return RecordedOptions(group=group, pending=True)
 
@@ -273,7 +280,13 @@ class LeafOptions:
 
     *recorded* is the call's record, *instances* the built instance of each
     class of the spec's *build*, in order, and *rest* the leaf's keyword
-    arguments that are not option fields.
+    arguments that are not option fields. *sensitive* names the fields,
+    over every class the spec offers, whose value a dry run masks.
+
+    For a command prepared when it is invoked (:func:`prepare_command_options`)
+    *finishes_dry_run* is the command's own answer (it awaits its own dry-run
+    tail) and *raw* holds each attached parameter's value as the parser
+    produced it, for the ``would run:`` line.
     """
 
     recorded: "RecordedOptions"
@@ -282,6 +295,9 @@ class LeafOptions:
     _hold: "Callable[[], AbstractContextManager[None]]" = dataclasses.field(
         default=contextlib.nullcontext, repr=False, compare=False
     )
+    finishes_dry_run: bool = False
+    sensitive: frozenset[str] = frozenset()
+    raw: "Mapping[str, Any]" = dataclasses.field(default_factory=dict)
 
     def scope(self) -> "AbstractContextManager[None]":
         """Hold the record for the leaf's body.
@@ -307,19 +323,31 @@ def stamp_options_leaf(leaf: Callable[..., Any], spec: LeafOptionSpec) -> None:
     setattr(leaf, SENSITIVE_FIELDS_ATTR, sensitive_names(spec.build + spec.walk))
 
 
-def _parsed_by(leaf: Callable[..., Any]) -> "typer.Context | None":
-    """Return the parser context whose record *leaf*'s first preparation reads, else ``None``.
+def _invoking(leaf: Callable[..., Any]) -> "typer.Context | None":
+    """Return the current parser context when its command is *leaf*, else ``None``.
 
-    The current parser context, when its command is *leaf* (compared through
-    :func:`inspect.unwrap`) and no preparation has read it yet; this marks it,
-    so a leaf that awaits its own prepared target is a direct call the
-    second time. ``None`` means a direct call from other code.
+    Compared through :func:`inspect.unwrap`, so a wrapper and the function it
+    wraps are the same command.
     """
     parser_ctx = cast("typer.Context | None", get_current_context(silent=True))
-    if parser_ctx is None or parser_ctx.meta.get(_LEAF_PREPARED):
+    if parser_ctx is None:
         return None
     callback = getattr(parser_ctx.command, "callback", None)
     if callback is None or inspect.unwrap(callback) is not inspect.unwrap(leaf):
+        return None
+    return parser_ctx
+
+
+def _parsed_by(leaf: Callable[..., Any]) -> "typer.Context | None":
+    """Return the parser context whose record *leaf*'s first preparation reads, else ``None``.
+
+    The current parser context, when its command is *leaf* (:func:`_invoking`)
+    and no preparation has read it yet; this marks it, so a leaf that awaits
+    its own prepared target is a direct call the second time. ``None`` means
+    a direct call from other code.
+    """
+    parser_ctx = _invoking(leaf)
+    if parser_ctx is None or parser_ctx.meta.get(_LEAF_PREPARED):
         return None
     parser_ctx.meta[_LEAF_PREPARED] = True
     return parser_ctx
@@ -350,12 +378,19 @@ def prepare_leaf_options(
     :meth:`LeafOptions.scope`'s block, the context's binding handed back
     after); with none, :meth:`LeafOptions.scope` holds it. Callers enter
     :meth:`LeafOptions.scope` before anything reads the context's option
-    values.
+    values. :attr:`LeafOptions.sensitive` is collected over every class
+    *spec* offers.
 
     A value that fails a class's validation raises ``typer.BadParameter``.
     """
     from ..config._typer import given_names
-    from ..params import RecordedOptions, build_offered, command_options, init_field_names
+    from ..params import (
+        RecordedOptions,
+        build_offered,
+        command_options,
+        init_field_names,
+        sensitive_names,
+    )
     from ..run_context import record_options, try_get_context
 
     offered = spec.build + spec.walk
@@ -373,13 +408,22 @@ def prepare_leaf_options(
     recorded = RecordedOptions(
         group=spec.group, parsed=parsed, given=given, offered=offered, instances=dict(instances)
     )
+    sensitive = sensitive_names(offered)
     ctx = try_get_context()
     if ctx is None:
-        return LeafOptions(recorded, instances, rest, lambda: command_options(recorded))
+        return LeafOptions(
+            recorded, instances, rest, lambda: command_options(recorded), sensitive=sensitive
+        )
     if parser_ctx is None and spec.group is None:
-        return LeafOptions(recorded, instances, rest, lambda: _recorded_for_block(ctx, recorded))
+        return LeafOptions(
+            recorded,
+            instances,
+            rest,
+            lambda: _recorded_for_block(ctx, recorded),
+            sensitive=sensitive,
+        )
     record_options(ctx, recorded)
-    return LeafOptions(recorded, instances, rest)
+    return LeafOptions(recorded, instances, rest, sensitive=sensitive)
 
 
 def _bind_run_leaf(
@@ -411,6 +455,17 @@ def _bind_run_leaf(
         raise usage_error_from(e) from e
 
 
+def _own_option_names(cls: "type | None") -> frozenset[str]:
+    """Return the names a command's own options class *cls* puts in its signature.
+
+    The one split of a command's parameters into its own class's fields
+    (:func:`~otto.params.options_params`) and the rest; none for no class.
+    """
+    if cls is None:
+        return frozenset()
+    return frozenset(p.name for p in options_params(cast("type[DataclassInstance]", cls)))
+
+
 def _wrap_with_options(
     func: Callable[..., Any],
     opts_cls: "type[DataclassInstance] | None",
@@ -428,15 +483,23 @@ def _wrap_with_options(
     admits), the command also takes the flags of every options class
     registered for that verb, merged with the own class by declaring class: a
     field the own class inherits from a registered base is one flag, and the
-    same name introduced by two unrelated classes raises
+    same name or flag spelling introduced by two unrelated classes, or by a
+    field and one of the instruction's own parameters, raises
     ``OptionsCollisionError`` here, when the command is built. At call time
     the wrapper prepares its values through :func:`prepare_leaf_options`
     (one :class:`LeafOptionSpec`, built here: the own class, then every
     other class the verb covers), which records what the command was given;
     the ``run`` verb then injects through
-    :func:`otto.instructions.bind_handler_kwargs` (:func:`_bind_run_leaf`),
-    and a verb-less command receives its own built instance. *project* owns
-    the own class, and is who a collision message names for it.
+    :func:`otto.instructions.bind_handler_kwargs` (:func:`_bind_run_leaf`).
+    *project* owns the own class, and is who a collision message names for it.
+
+    Without *verb* the command says what is its own (:class:`OwnOptions`:
+    *opts_cls*, *project*, and that it finishes its own dry run) and prepares
+    nothing when it is dispatched: the invocation prepares it with the
+    classes covering it (:func:`prepare_command_options`), and the wrapper
+    hands *func* the own class's prepared instance and its other keyword
+    arguments. Called by other code (no parser context of its own), it
+    prepares its own class itself, every value given.
     """
     func_name = getattr(func, "__name__", repr(func))
     sig = inspect.signature(func)
@@ -456,7 +519,7 @@ def _wrap_with_options(
             )
 
     own_params = options_params(opts_cls) if opts_cls is not None else []
-    own_field_names = {p.name for p in own_params}
+    own_field_names = _own_option_names(opts_cls)
 
     verb_params: list[inspect.Parameter] = []
     injected: dict[str, type] = {}
@@ -478,16 +541,25 @@ def _wrap_with_options(
         # The own class goes first, so a base field it inherits is counted
         # once, under the class that declares it, and a clash between an own
         # field and a verb field is reported naming both. Every other visible
-        # parameter is reserved: a verb field of the same name would make the
-        # signature ambiguous.
+        # parameter is reserved, by name and by flag spelling: a verb field of
+        # the same name would make the signature ambiguous, and one of the
+        # same spelling would shadow the parameter's flag. Spellings are read
+        # from the resolved hint, so a string annotation reads the same.
         own_origin = [OptionsOrigin(opts_cls, project)] if opts_cls is not None else []
-        reserved = {
-            name: f"parameter {name!r} of instruction {func_name!r}"
-            for name in sig.parameters
+        inline = [
+            p.replace(annotation=hints.get(name, p.annotation))
+            for name, p in sig.parameters.items()
             if name != opts_param_name and name not in injected
+        ]
+        reserved = {p.name: f"parameter {p.name!r} of instruction {func_name!r}" for p in inline}
+        reserved_flags = {
+            spelling: reserved[p.name] for p in inline for spelling in flag_spellings(p)
         }
         merged = merge_option_params(
-            own_origin + verb_origins, what=f"otto {verb} {func_name}", reserved=reserved
+            own_origin + verb_origins,
+            what=f"otto {verb} {func_name}",
+            reserved=reserved,
+            reserved_flags=reserved_flags,
         )
         verb_params = [p for p in merged if p.name not in own_field_names]
 
@@ -518,12 +590,20 @@ def _wrap_with_options(
 
     @functools.wraps(func)
     async def wrapper(**kw: Any) -> Any:
-        prepared = prepare_leaf_options(kw, spec, leaf=wrapper)
-        with prepared.scope():
+        # A dispatched verb-less command was prepared when it was invoked; the
+        # invocation holds that record around this call.
+        handed = _handed_options(wrapper) if verb is None else None
+        prepared = handed if handed is not None else prepare_leaf_options(kw, spec, leaf=wrapper)
+        own_kw = (
+            prepared.rest
+            if handed is None
+            else {k: v for k, v in kw.items() if k not in own_field_names}
+        )
+        with prepared.scope() if handed is None else contextlib.nullcontext():
             if verb == "run":
-                call_kw = _bind_run_leaf(func, opts_cls, prepared.rest)
+                call_kw = _bind_run_leaf(func, opts_cls, own_kw)
             else:
-                call_kw = dict(prepared.rest)
+                call_kw = dict(own_kw)
                 if opts_cls is not None and opts_param_name is not None:
                     call_kw[opts_param_name] = prepared.instances[opts_cls]
             # Validation is already DONE by this point, exactly as it is on a
@@ -551,8 +631,34 @@ def _wrap_with_options(
             return await func(**call_kw)
 
     wrapper.__signature__ = inspect.Signature(new_params)  # ty: ignore[missing-attribute]
-    stamp_options_leaf(wrapper, spec)
+    if verb is None:
+        own = OwnOptions(cls=opts_cls, project=project, finishes_dry_run=True)
+        setattr(wrapper, OWN_OPTIONS_ATTR, own)
+    else:
+        stamp_options_leaf(wrapper, spec)
     return wrapper
+
+
+_PREPARED_HANDED = "otto.prepared_options_handed"
+"""``click.Context.meta`` key: a verb-less wrapper has been handed the invocation's preparation."""
+
+
+def _handed_options(leaf: Callable[..., Any]) -> "LeafOptions | None":
+    """Return the invocation's preparation for *leaf*'s first call as the command invoked.
+
+    The current parser context's :func:`prepared_options`, when its command
+    is *leaf* (:func:`_invoking`) and nothing has been handed it yet; this
+    marks it, so a later call of *leaf* from its own body is a direct call.
+    ``None`` otherwise: a direct call from other code, or a command driven
+    without otto's invoke wrapper.
+    """
+    parser_ctx = _invoking(leaf)
+    if parser_ctx is None or parser_ctx.meta.get(_PREPARED_HANDED):
+        return None
+    prepared = prepared_options(parser_ctx)
+    if prepared is not None:
+        parser_ctx.meta[_PREPARED_HANDED] = True
+    return prepared
 
 
 def prepare_command_target(
@@ -937,8 +1043,9 @@ def ensure_inline_lab(ctx: typer.Context) -> None:
     warning from ``otto.labs.composite``, notably) render through it. A lab
     that cannot load reports and exits with the loud path's message and code.
     """
-    validate_project_switches(ctx)
-    fail_loud_on_bootstrap_errors(ctx)
+    selection = scope_selection(ctx)
+    validate_project_switches(selection)
+    fail_loud_on_bootstrap_errors(selection)
     ensure_cli_session(ctx)
     with lab_context_refusals():
         ensure_lab_context(ctx)
@@ -1004,15 +1111,43 @@ def maybe_root_options(ctx: "typer.Context | None") -> "RootOptions | None":
     return root_options(ctx)
 
 
+_COMMAND_SPEC_KEY = "_otto_command_spec"
+"""``click.Context.meta`` key: the spec of the invocation's command (:func:`stash_command_spec`)."""
+
+
+def stash_command_spec(ctx: typer.Context, spec: "CommandSpec") -> None:
+    """Keep *spec* as the spec of the command *ctx*'s invocation runs.
+
+    The root group stashes the dispatched command's spec before it dispatches,
+    so its pending mark and a group's lab probe are decided for that command;
+    the leaf-invoke wrapper stashes its own before the preamble runs.
+    ``ctx.meta`` is shared down the context chain, so every context of the
+    invocation reads the same one.
+    """
+    ctx.meta[_COMMAND_SPEC_KEY] = spec
+
+
+def settle_for_root_listing(ctx: typer.Context) -> None:
+    """Clear the dispatch's mark for a root listing, which never runs its command.
+
+    ``otto --list-hosts run x`` and ``--show-lab``, ``--list-products``,
+    ``--list-tools`` answer in the root callback and exit: the invocation
+    records nothing, so the root's mark is settled and the stashed command
+    spec is dropped, and the lab they load reads defaults.
+    """
+    settle_options(ctx, records_nothing=True)
+    ctx.meta.pop(_COMMAND_SPEC_KEY, None)
+
+
 def command_spec(ctx: typer.Context) -> "CommandSpec":
     """Typed read of the invoked command's spec — ``meta['_otto_command_spec']``.
 
-    Stashed by the leaf-invoke wrapper (and ``otto test``'s direct entry) before
-    the preamble runs; same seam-per-key rule as :func:`root_options`.
+    Stashed by :func:`stash_command_spec` before the preamble runs; same
+    seam-per-key rule as :func:`root_options`.
     """
     from .registry import CommandSpec
 
-    spec = ctx.meta["_otto_command_spec"]
+    spec = ctx.meta[_COMMAND_SPEC_KEY]
     assert isinstance(spec, CommandSpec), (  # noqa: S101 — internal invariant: the invoke wrapper stashed a CommandSpec
         f"meta['_otto_command_spec'] holds {type(spec).__name__}, not CommandSpec"
     )
@@ -1106,10 +1241,13 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     (:func:`try_ensure_lab`) swallows them.
 
     The whole call runs inside the command's pending mark
-    (:func:`pending_options`), so the lab build and every constructor it runs
-    are refused an option read (``OptionsNotAvailableError``) rather than
-    answered with defaults; the installed context carries that mark until
-    the leaf records its flags or :func:`settle_options` clears it. A command
+    (:func:`pending_options`), so for a command that accepts registered
+    options (or carries its own class) the lab build and every constructor
+    it runs are refused an option read (``OptionsNotAvailableError``) rather
+    than answered with defaults; the installed context carries that mark
+    until the command records its flags or :func:`settle_options` clears it.
+    A leaf that does not mark has settled the root group's mark before its
+    preamble (the leaf-invoke wrapper), so its build reads defaults. A command
     that has already read its flags (a lab-free leaf whose body opens the
     lab) is past that window: the record in force is carried onto the
     context instead, so its body and hooks keep reading its values.
@@ -1251,20 +1389,21 @@ def try_ensure_lab(ctx: typer.Context) -> "OttoContext | None":
         return None
 
 
-def validate_project_switches(ctx: typer.Context) -> None:
-    """Exit 2 when ``-I``/``-E`` names a project discovery never found (spec §2).
+def validate_project_switches(selection: "ScopeSelection") -> None:
+    """Exit 2 when *selection*'s ``-I``/``-E`` names a project discovery never found (spec §2).
 
-    Runs at first use (the preamble / the ``--show-lab`` branch) rather than in
-    the root callback, because the check needs the discovered project set and the
-    root callback also runs for ``--help``, where there is no invocation to
-    validate. It claims no saving on user code: ``entry()`` has already called
-    ``bootstrap()`` before argv parsing on every non-completion invocation, and
-    the gate on the very next line calls it again. The early return below is
-    just "nothing was asked for, so look nothing up".
+    Takes the selection :func:`scope_selection` returned, so it validates
+    wherever the selection is read: in the preamble, in an inline lab load,
+    and before the root callback has recorded anything. It claims no saving
+    on user code: ``entry()`` has already called ``bootstrap()`` before argv
+    parsing on every non-completion invocation, and the gate that follows it
+    calls it again. The early return below is just "nothing was asked for, so
+    look nothing up".
 
     The name is normalized on BOTH sides — the switch values arrive
-    PEP-503-normalized from the root callback, so comparing them against a raw
-    ``project.name`` would reject the only spelling the CLI can produce.
+    PEP-503-normalized from the root parameters' callback, so comparing them
+    against a raw ``project.name`` would reject the only spelling the CLI can
+    produce.
 
     The rule is :func:`otto.session.select_projects`'s, the same one
     :func:`~otto.context.open_context` applies; this function only renders its refusal,
@@ -1275,8 +1414,7 @@ def validate_project_switches(ctx: typer.Context) -> None:
     usage text too. The overlap arm of :func:`report_project_selection_error` is
     unreachable from here: the root callback has already refused an overlap.
     """
-    opts = maybe_root_options(ctx)
-    if opts is None or not (opts.include_projects or opts.exclude_projects):
+    if not (selection.include or selection.exclude):
         return
     from ..bootstrap import bootstrap
     from ..config.scope import refused_names
@@ -1287,32 +1425,102 @@ def validate_project_switches(ctx: typer.Context) -> None:
         result = bootstrap()
         select_projects_with_refused(
             result.projects,
-            list(opts.include_projects),
-            list(opts.exclude_projects),
+            list(selection.include),
+            list(selection.exclude),
             refused=refused_names(result.errors),
         )
     except ProjectSelectionError as e:
         report_project_selection_error(e)
 
 
-def scope_selection(ctx: typer.Context) -> "ScopeSelection":
-    """Read the ``-l`` / ``-I`` / ``-E`` selection from the root options (``OTTO_LAB`` too).
+OTTO_ROOT_ATTR = "__otto_root__"
+"""Set ``True`` on otto's root group class (``otto.cli.main._OttoGroup``).
 
-    ``RootOptions.labs`` is already split into component names by the root
-    callback's ``parse_lab_selection``, so it is never split again here. Where
-    the root callback never ran (a library caller, a test) nothing was
-    selected: an empty selection, as :func:`validate_project_switches` reads it.
+How :func:`scope_selection` knows a context's root is otto's: a sub-app
+driven on its own (a test's ``DispatchRunner``, ``run_cli`` on a group) has a
+root that does not carry it, and so has no selection."""
+
+
+def selection_from_params(params: "Mapping[str, Any]") -> "ScopeSelection":
+    """Turn the root command's parsed parameters into the ``-l`` / ``-I`` / ``-E`` selection.
+
+    The one reader of those three parameters. Pure: it takes the ``str`` items
+    of each when it is a list, as they are, and anything else as empty. It
+    splits and normalises nothing: the root parameters' callbacks
+    (``otto.cli.main.parse_lab_selection`` and ``parse_project_list``) have
+    already split ``-l`` on ``+`` and ``-I``/``-E`` on commas, and normalised
+    the project names, before the values reach the parsed parameters, under
+    a completion parse too. ``OTTO_LAB`` arrives through ``labs``.
+
+    The root callback builds its record (:class:`RootOptions`) through it, and
+    :func:`scope_selection` calls it, so the two never disagree.
     """
     from ..config.scope import ScopeSelection
 
-    opts = maybe_root_options(ctx)
-    if opts is None:
-        return ScopeSelection(labs=(), include=(), exclude=())
+    def _names(key: str) -> "tuple[str, ...]":
+        value = params.get(key)
+        if not isinstance(value, list):
+            return ()
+        return tuple(item for item in value if isinstance(item, str))
+
     return ScopeSelection(
-        labs=tuple(opts.labs or ()),
-        include=tuple(opts.include_projects),
-        exclude=tuple(opts.exclude_projects),
+        labs=_names("labs"),
+        include=_names("include_projects"),
+        exclude=_names("exclude_projects"),
     )
+
+
+def scope_selection(ctx: typer.Context) -> "ScopeSelection":
+    """Read the invocation's ``-l`` / ``-I`` / ``-E`` selection (``OTTO_LAB`` too).
+
+    Read from the parsed parameters of *ctx*'s root context through
+    :func:`selection_from_params`, not from the root callback's record: the
+    root's own parse sets them on every path, so the answer is the same on a
+    dispatch, in a command's ``--help``, under a completion parse (where the
+    root callback records nothing) and for a top-level command resolved before
+    the root callback runs. A root that is not otto's (no
+    :data:`OTTO_ROOT_ATTR` on its command: a sub-app driven on its own)
+    selected nothing: an empty selection, so every project takes part.
+    """
+    root = ctx.find_root()
+    if getattr(root.command, OTTO_ROOT_ATTR, False):
+        return selection_from_params(root.params)
+    from ..config.scope import ScopeSelection
+
+    return ScopeSelection(labs=(), include=(), exclude=())
+
+
+def unknown_lab_on_failed_parse(ctx: typer.Context) -> None:
+    """Report an unknown lab in place of a command line's failed parse; else return.
+
+    Called by otto's root group when a command's parse fails with ``No such
+    option``, before that error is printed. With no lab selected
+    (:func:`scope_selection`: ``-l`` or ``OTTO_LAB``; a root that is not otto's
+    selects none) it returns at once. Otherwise the lab is loaded by the load
+    step of the lab build (``otto.session.lab.load_lab_and_view``: no context
+    is bound, no reservation gate is built, no container host is registered).
+    An unknown lab is raised through :func:`report_lab_context_error`, in the
+    words and with the exit status a line that parses gets. Every other
+    outcome returns, so the parser's error stands: the load succeeds, the lab
+    is out of reach, a source or the inventory cannot be read, or anything
+    else is raised. With several labs the load's first error decides. Which
+    option failed is not asked. Only this failure path pays the load: a line
+    that parses, its ``--help`` and a completion parse never reach it.
+    """
+    labs = list(scope_selection(ctx).labs)
+    if not labs:
+        return
+    from ..bootstrap import bootstrap
+    from ..session.errors import LabBuildError
+    from ..session.lab import load_lab_and_view
+
+    try:
+        load_lab_and_view(bootstrap().projects, labs=labs)
+    except LabBuildError as e:
+        if e.kind == "unknown_lab":
+            report_lab_context_error(e)
+    except Exception:  # any other outcome leaves the parser's error
+        getLogger(__name__).debug("lab check after a failed parse raised", exc_info=True)
 
 
 def listing_participation(ctx: typer.Context, projects: "Sequence[Project]") -> "Participation":
@@ -1341,13 +1549,13 @@ def listing_participation(ctx: typer.Context, projects: "Sequence[Project]") -> 
         ensure_inline_lab(ctx)
         settle_options(ctx, records_nothing=True)
         return participating(projects, ctx=get_context())
-    validate_project_switches(ctx)
-    fail_loud_on_bootstrap_errors(ctx)
+    validate_project_switches(selection)
+    fail_loud_on_bootstrap_errors(selection)
     print_no_lab_cue()
     return participating(projects, selection=selection)
 
 
-def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
+def fail_loud_on_bootstrap_errors(selection: "ScopeSelection | None" = None) -> None:
     """Exit(1) on an ACTIVE project's load error, or one an active project requires — loud gate.
 
     The per-error ``warning:`` lines were already printed by ``entry()`` at
@@ -1356,10 +1564,13 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     preamble AND the root ``--show-lab``/``--list-hosts`` branch, so anything
     that inspects the registered world fails the same way.
 
-    With *ctx*, an error attributable to a project that is inactive for this
-    invocation demotes to one warning line (spec §3): a broken sibling must not
-    fail a run it is not part of. Inactivity here is the PRE-LAB projection —
-    the explicit switches plus lab-name inference
+    *selection* is the invocation's ``-l`` / ``-I`` / ``-E``, the one
+    :func:`scope_selection` returned; the caller reads it once and hands the
+    same value to :func:`validate_project_switches`, so the two gates never
+    judge different selections. With it, an error attributable to a project
+    that is inactive for this invocation demotes to one warning line (spec
+    §3): a broken sibling must not fail a run it is not part of. Inactivity
+    here is the PRE-LAB projection — the explicit switches plus lab-name inference
     (:func:`otto.config.scope.inactive_before_lab`) — because this gate is what
     protects lab construction from a half-registered world and so has to run
     before it; a project that is inactive only because it is host-starved
@@ -1369,8 +1580,8 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     fixes. Attribution is by ``root``: an error belonging to no discovered
     project (a ``settings.toml`` that failed to PARSE, so no
     :class:`~otto.config.project.Project` object exists) can never be judged
-    inactive and stays fatal. Without *ctx* — library callers, tests — every
-    error is fatal, unchanged.
+    inactive and stays fatal. Without *selection* — library callers, tests —
+    nothing is selected and no lab is named, so every error is fatal.
 
     The rule is :func:`otto.session.check_projects`'s, the same one
     :func:`~otto.context.open_context` applies; this function only renders its verdict.
@@ -1382,17 +1593,16 @@ def fail_loud_on_bootstrap_errors(ctx: "typer.Context | None" = None) -> None:
     result = bootstrap()
     if not result.errors:
         return
-    opts = maybe_root_options(ctx)
-    # Without root options (a test, a library caller) nothing is selected and
-    # no lab is named, so check_projects demotes nothing: every error is fatal.
-    selection = (
-        ProjectSelection(include=list(opts.include_projects), exclude=list(opts.exclude_projects))
-        if opts is not None
+    # No selection (a test, a library caller): nothing is selected and no lab
+    # is named, so check_projects demotes nothing: every error is fatal.
+    switches = (
+        ProjectSelection(include=list(selection.include), exclude=list(selection.exclude))
+        if selection is not None
         else ProjectSelection()
     )
-    labs = list(opts.labs or []) if opts is not None else []
+    labs = list(selection.labs) if selection is not None else []
     try:
-        check = check_projects(result=result, labs=labs, selection=selection)
+        check = check_projects(result=result, labs=labs, selection=switches)
     except ProjectLoadError as e:
         _echo_demotions(e.demoted)
         _echo_required(e.required)
@@ -1761,6 +1971,117 @@ def leaf_is_gated(spec: "CommandSpec", callback: object) -> bool:
     )
 
 
+ACCEPTS_OPTIONS_ATTR = "__cli_accepts_options__"
+"""Per-leaf answer to whether a command offers the flags of registered options
+classes, for a leaf beneath a group that differs from its group's registration.
+``True`` or ``False``; absent means the leaf says nothing. Read by
+:func:`leaf_accepts_options`, beneath a group only: a top-level command is
+judged by its registration, and a marker on one that disagrees is refused when
+a real parse resolves it (:func:`refuse_a_disagreeing_marker`)."""
+
+
+def _accepts_marker(callback: object) -> "bool | None":
+    """Read *callback*'s :data:`ACCEPTS_OPTIONS_ATTR`: ``None`` when it carries none."""
+    marker = getattr(callback, ACCEPTS_OPTIONS_ATTR, None)
+    return None if marker is None else bool(marker)
+
+
+def spec_accepts_options(spec: "CommandSpec") -> bool:
+    """Whether a registration offers the flags of registered options classes.
+
+    The registration alone, so it is known without importing the command: its
+    ``accepts_options`` when set, else whether it is not ``lab_free``.
+    """
+    if spec.accepts_options is not None:
+        return spec.accepts_options
+    return not spec.lab_free
+
+
+def leaf_accepts_options(spec: "CommandSpec", callback: object, *, beneath_group: bool) -> bool:
+    """Whether this command offers the flags of registered options classes.
+
+    The one reader. Beneath a group: the callback's
+    :data:`ACCEPTS_OPTIONS_ATTR` when it carries one; else the registration's
+    ``accepts_options`` when set; else whether the leaf is not lab-free
+    (:func:`leaf_is_lab_free`, which honours the leaf's own lab-free marker).
+    A top-level command (*beneath_group* false) is judged by its registration
+    alone (:func:`spec_accepts_options`): a lab-free marker on its callback
+    keeps its meaning for the lab and does not change this answer.
+    """
+    if not beneath_group:
+        return spec_accepts_options(spec)
+    marker = _accepts_marker(callback)
+    if marker is not None:
+        return marker
+    if spec.accepts_options is not None:
+        return spec.accepts_options
+    return not leaf_is_lab_free(spec, callback)
+
+
+def refuse_a_disagreeing_marker(spec: "CommandSpec", command: object) -> None:
+    """Refuse a top-level single command whose marker disagrees with its registration.
+
+    *command* is the command *spec* resolved to. A group passes (its leaves'
+    markers are theirs to carry); so does a single command (a function, or an
+    app Typer flattens to its one command) with no :data:`ACCEPTS_OPTIONS_ATTR`
+    on its callback, or one that agrees with :func:`spec_accepts_options`.
+
+    The root group calls it when a real parse (a dispatch, the command's own
+    ``--help``) resolves the command, never under a resilient one (a TAB, the
+    completion cache's rebuild walk), so a misregistered command still
+    completes.
+
+    Raises:
+        OptionsRegistrationError: the marker disagrees; the message names the
+            command, both answers and the fix.
+    """
+    if hasattr(command, "commands"):
+        return
+    marker = _accepts_marker(getattr(command, "callback", None))
+    registered = spec_accepts_options(spec)
+    if marker is None or marker == registered:
+        return
+    raise OptionsRegistrationError(
+        f"command {spec.name!r}: its callback's {ACCEPTS_OPTIONS_ATTR} says "
+        f"{marker} but its registration answers {registered} for whether it "
+        "accepts registered options; set accepts_options= on the registration"
+    )
+
+
+def command_path(ctx: typer.Context, spec: "CommandSpec") -> list[str]:
+    """Name the command *ctx* runs: *spec*'s registered name, then the commands beneath it.
+
+    A list of command names from the top level down to the leaf, the shape
+    ``otto.params.covering`` takes.
+
+    The top-level command's context is the child of otto's root context
+    (:data:`OTTO_ROOT_ATTR`), or the root itself when the root is not otto's (a
+    sub-app driven on its own), so the first word is the registration's name
+    either way. An argument such as a host id is not a context and is not in
+    the path: ``otto host r1 install`` is ``["host", "install"]``.
+    """
+    below = [c.info_name or c.command.name or "" for c in _from_top_level(ctx)[1:]]
+    return [spec.name, *below]
+
+
+def _from_top_level(ctx: Any) -> list[Any]:
+    """Return the contexts from the top-level command's down to *ctx*.
+
+    The top-level command's context is the child of otto's root context
+    (:data:`OTTO_ROOT_ATTR`), or the root itself when the root is not otto's.
+    Empty for otto's root context itself.
+    """
+    # Any: a parent is the vendored click fork's Context, not typer.Context.
+    chain: list[Any] = []
+    node: Any = ctx
+    while node is not None:
+        chain.append(node)
+        node = node.parent
+    chain.reverse()
+    top = 1 if getattr(chain[0].command, OTTO_ROOT_ATTR, False) else 0
+    return chain[top:]
+
+
 def command_preamble(ctx: typer.Context) -> None:
     """Run once when a real (non-help) command invocation starts.
 
@@ -1768,8 +2089,10 @@ def command_preamble(ctx: typer.Context) -> None:
     errors fail loud → lab-free commands skip the lab slice → CLI session
     (logging) → lab context → per-command output dir → an inactive project's
     instruction is refused → an active project's unsatisfied Python dependencies
-    are refused → reservation gate → a leaf that records no options has its
-    pending mark cleared (:func:`settle_options`) → the dry-run seam. ``--help`` paths never
+    are refused → reservation gate → the command's options are prepared
+    (:func:`prepare_command_options`; a bad value is a usage error here, and a
+    leaf that records no options has its pending mark cleared) → the dry-run
+    seam. ``--help`` paths never
     reach this function: click's help option exits during leaf parse, before
     ``Command.invoke``.
 
@@ -1789,8 +2112,10 @@ def command_preamble(ctx: typer.Context) -> None:
 
     # Order matters: a typo'd -I/-E name is reported as a typo, rather than
     # being silently absorbed into a demotion decision the gate makes next.
-    validate_project_switches(ctx)
-    fail_loud_on_bootstrap_errors(ctx)
+    # One read of the selection serves both gates, so they cannot disagree.
+    selection = scope_selection(ctx)
+    validate_project_switches(selection)
+    fail_loud_on_bootstrap_errors(selection)
 
     spec = command_spec(ctx)
     # A leaf under a lab-bound group may opt out of the lab slice with the
@@ -1800,9 +2125,9 @@ def command_preamble(ctx: typer.Context) -> None:
     if not leaf_is_lab_free(spec, callback):
         open_live_lab(ctx, spec, gate=leaf_is_gated(spec, callback))
 
-    # A leaf that records nothing reads defaults from here on, the dry-run
-    # seam included.
-    settle_options(ctx)
+    # The values are validated before the seam, so a dry run fails the same
+    # way; a leaf that records nothing reads defaults from here on.
+    prepare_command_options(ctx)
     stop_at_dry_run_seam(ctx, spec)
 
 
@@ -1837,8 +2162,10 @@ SENSITIVE_FIELDS_ATTR = "__otto_sensitive_fields__"
 A ``frozenset[str]``, stamped by :func:`stamp_options_leaf` (and by
 ``otto.cli.run._project_leaf``) from ``otto.params.sensitive_names`` over every
 options class contributing flags to the command. Read by ``_param_words``
-so the generic argv echo -- which knows nothing about options classes, only
-raw click parameters -- can still print ``<hidden>`` for a
+for a leaf that prepares its own options (a command prepared when it is
+invoked carries the same set as :attr:`LeafOptions.sensitive`), so the
+generic argv echo -- which knows nothing about options classes, only raw
+click parameters -- can still print ``<hidden>`` for a
 ``SecretStr``/``SecretBytes`` field or one declared ``repr=False``, the same
 two conditions ``_options_line`` already masks in the ``options:`` block.
 """
@@ -1847,9 +2174,11 @@ DRY_RUN_SELF_FINISHING_ATTR = "__otto_dry_run_self_finishing__"
 """Per-leaf marker that a leaf validates its own options and finishes its own dry run.
 
 Stamped ``True`` by :func:`stamp_options_leaf` on every leaf that prepares
-its options through :func:`prepare_leaf_options` (every leaf
-:func:`prepare_command_target`'s ``options=``/verb machinery builds), and by the
-project-instruction leaf ``otto.cli.run._project_leaf`` builds. Read by
+its options through :func:`prepare_leaf_options` itself (every leaf
+:func:`prepare_command_target` builds for the ``run`` verb), and by the
+project-instruction leaf ``otto.cli.run._project_leaf`` builds; a command
+prepared when it is invoked answers with :attr:`LeafOptions.finishes_dry_run`
+instead. Read by
 :func:`stop_at_dry_run_seam`, which returns immediately for such a leaf --
 no probe, no reference resolution, no print -- because the leaf's own body
 does all three itself, via :func:`finish_dry_run`, AFTER it has bound and
@@ -1933,7 +2262,15 @@ def _leaf_declares_preview(ctx: typer.Context) -> bool:
 
 
 def _leaf_self_finishes_dry_run(ctx: typer.Context) -> bool:
-    """Whether the resolved leaf validates its own options and finishes its own dry run."""
+    """Whether the resolved leaf finishes its own dry run.
+
+    A command prepared when it was invoked answers from its preparation
+    (:attr:`LeafOptions.finishes_dry_run`); a leaf that prepares its own
+    options, from its :data:`DRY_RUN_SELF_FINISHING_ATTR` stamp.
+    """
+    prepared = prepared_options(ctx)
+    if prepared is not None:
+        return prepared.finishes_dry_run
     return bool(getattr(getattr(ctx.command, "callback", None), DRY_RUN_SELF_FINISHING_ATTR, False))
 
 
@@ -1953,20 +2290,33 @@ def resolve_dry_run_references(ctx: typer.Context) -> "list[LabReference]":
 def _param_words(ctx: typer.Context) -> "list[str]":
     """Echo one context's non-default parameters back as command-line words.
 
-    A name :data:`SENSITIVE_FIELDS_ATTR` lists on this node's callback has its
-    VALUE replaced with the literal ``<hidden>`` -- the flag still shows (an
-    operator needs to know the switch was given), only what followed it is
-    masked. A boolean flag carries no separate value word to mask.
+    Every parameter the command parsed (``get_params``: its own and those
+    the invocation attached). A command prepared when it was invoked
+    (:func:`prepared_options`) gives the attached values as the parser held
+    them (:attr:`LeafOptions.raw`) and the names to mask
+    (:attr:`LeafOptions.sensitive`); otherwise the names to mask are those
+    :data:`SENSITIVE_FIELDS_ATTR` lists on this node's callback. A masked
+    name has its VALUE replaced with the literal ``<hidden>`` -- the flag
+    still shows (an operator needs to know the switch was given), only what
+    followed it is masked. A boolean flag carries no separate value word to
+    mask.
     """
     import shlex
 
-    sensitive = getattr(getattr(ctx.command, "callback", None), SENSITIVE_FIELDS_ATTR, frozenset())
+    prepared = prepared_options(ctx)
+    if prepared is not None:
+        sensitive = prepared.sensitive
+        values = {**ctx.params, **prepared.raw}
+    else:
+        callback = getattr(ctx.command, "callback", None)
+        sensitive = getattr(callback, SENSITIVE_FIELDS_ATTR, frozenset())
+        values = dict(ctx.params)
     words: list[str] = []
-    for param in getattr(ctx.command, "params", ()):
+    for param in ctx.command.get_params(ctx):
         name = getattr(param, "name", None)
-        if name is None or name not in ctx.params:
+        if name is None or name not in values:
             continue
-        value = ctx.params[name]
+        value = values[name]
         if value is None or value == param.default:
             continue
         opts = [o for o in (getattr(param, "opts", None) or []) if o.startswith("-")]
@@ -2116,10 +2466,11 @@ def stop_at_dry_run_seam(ctx: typer.Context, spec: "CommandSpec") -> None:
 
     A no-op when this is not a dry run, which is every non-``-n`` invocation.
 
-    A leaf marked :data:`DRY_RUN_SELF_FINISHING_ATTR` is handled not at all:
-    it returns immediately, because such a leaf's OWN body binds and builds
-    its options from the real, typer-converted kwargs and then calls
-    :func:`finish_dry_run` itself.
+    A leaf that finishes its own dry run (``_leaf_self_finishes_dry_run``:
+    its preparation says so, or its :data:`DRY_RUN_SELF_FINISHING_ATTR`
+    stamp) is handled not at all: it returns immediately, because such a
+    leaf's OWN body calls :func:`finish_dry_run` itself with the options it
+    was prepared with.
 
     Otherwise this function runs the probe step itself, synchronously, via
     ``run_probe`` — the ONLY place this path spins up a
@@ -2135,6 +2486,9 @@ def stop_at_dry_run_seam(ctx: typer.Context, spec: "CommandSpec") -> None:
     own) ``dry_run_preview`` is passed straight through, so a previewing
     command (``link``/``tunnel``) still gets ``--probe``'s announcement/
     dial/report before its body runs for real, exactly as it always has.
+
+    A command prepared when it was invoked (:func:`prepared_options`) shows
+    the instances it was prepared with in the block's ``options:`` section.
     """
     if not dry_run_requested(ctx):
         return
@@ -2142,10 +2496,12 @@ def stop_at_dry_run_seam(ctx: typer.Context, spec: "CommandSpec") -> None:
     if _leaf_self_finishes_dry_run(ctx):
         return
 
+    prepared = prepared_options(ctx)
+    options = [] if prepared is None else list(prepared.instances.values())
     preview = spec.dry_run_preview or _leaf_declares_preview(ctx)
     step = _sync_probe_step(ctx)
     _conclude_dry_run(
-        ctx, [], preview=preview, contacted=step.contacted, references=step.references
+        ctx, options, preview=preview, contacted=step.contacted, references=step.references
     )
 
 
@@ -2586,11 +2942,614 @@ def _require_async_leaf(cmd: Any, spec: "CommandSpec") -> None:
     )
 
 
+_ATTACHED_PARAMS = "otto.attached_params"
+"""``ctx.meta`` key: the parameters attached to each command of the invocation, by path."""
+
+_ATTACHED_VALUES = "otto.attached_values"
+"""``ctx.meta`` key: the attached values taken out of each command's ``ctx.params``, by path."""
+
+
+OWN_OPTIONS_ATTR = "__otto_own_options__"
+"""Per-leaf marker holding the command's :class:`OwnOptions`: what it says is its own.
+
+Set on the callback when the command is built, read by :func:`offered_options`.
+"""
+
+
+@dataclasses.dataclass(frozen=True)
+class OwnOptions:
+    """What a command says is its own, fixed when the command is built.
+
+    *cls* is its own options class, whose fields are already in its
+    signature; *project* registered the command and is who a collision names
+    for *cls*. *bodies* returns the body classes its own walk builds, every
+    project's. *finishes_dry_run* says the command awaits its own dry-run
+    tail. *reserved* names, for a collision message, each of its own
+    parameters that is not a field of *cls*. *every_project* keeps every
+    project whatever the invocation's selection.
+    """
+
+    cls: type | None = None
+    project: str | None = None
+    bodies: "Callable[[], list[OptionsOrigin]] | None" = None
+    finishes_dry_run: bool = False
+    reserved: "Mapping[str, str]" = dataclasses.field(default_factory=dict)
+    every_project: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class Offer:
+    """What one command offers for one invocation, beyond its own parameters.
+
+    *params* are attached after the command's own. *spec* is what the
+    command records under (its top-level command's name), the classes built
+    before its body (its own class, then the covering ones) and the body
+    classes its walk builds. *convert* turns the parser's values, the own
+    class's and the attached ones alike, into what a function declaring them
+    would receive. *finishes_dry_run* is the command's own answer. *own*
+    names the fields of its own class (``_own_option_names``), whose
+    values stay in its ``ctx.params`` for its function.
+    """
+
+    params: tuple[Parameter, ...]
+    spec: LeafOptionSpec
+    convert: "Callable[[Mapping[str, Any]], dict[str, Any]]"
+    finishes_dry_run: bool
+    own: frozenset[str] = frozenset()
+
+
+@dataclasses.dataclass(frozen=True)
+class Candidate:
+    """One options class described on its own, for completion.
+
+    *key* is its registry key, *project* the project that registered it (or
+    owns the body), *entries* the entries it serves (a body class: the one
+    command it is a body of), and *params* its own parameters as Typer builds
+    them, with no other class's.
+    """
+
+    key: str
+    project: str | None
+    entries: "tuple[str, ...]"
+    params: tuple[Parameter, ...]
+
+
+_OFFERED = "otto.offered_options"
+"""``ctx.meta`` key: each command's :class:`Offer` (or ``None``) for the invocation, by path."""
+
+
+_KEPT_PROJECTS = "otto.kept_projects"
+"""``ctx.meta`` key: :func:`kept_projects`' answer for the invocation."""
+
+
+def kept_projects(ctx: typer.Context) -> "frozenset[str] | None":
+    """Return the projects whose classes the invocation *ctx* offers; ``None`` keeps every one.
+
+    The one answer to which projects take part in what a command offers,
+    asked once per invocation (kept in the root context's ``ctx.meta``).
+    A root that is not otto's (no :data:`OTTO_ROOT_ATTR`: a sub-app driven
+    on its own) keeps every project. Otherwise the invocation's selection
+    (:func:`scope_selection`) is validated first
+    (:func:`validate_project_switches`: an unknown ``-I``/``-E`` name exits 2
+    before any command's flags are built, in ``--help`` too), and the answer
+    is the names of the projects that take part at the command-line tier
+    (``otto.config.scope.participating`` over the ``-l`` names and the
+    switches, never a loaded lab). A completion parse never asks.
+    """
+    root = ctx.find_root()
+    if not getattr(root.command, OTTO_ROOT_ATTR, False):
+        return None
+    if _KEPT_PROJECTS not in root.meta:
+        from ..bootstrap import bootstrap
+        from ..config.scope import participating
+
+        selection = scope_selection(ctx)
+        validate_project_switches(selection)
+        kept = participating(bootstrap().projects, selection=selection).kept
+        root.meta[_KEPT_PROJECTS] = frozenset(project.name for project in kept)
+    return cast("frozenset[str]", root.meta[_KEPT_PROJECTS])
+
+
+def _no_conversion(values: "Mapping[str, Any]") -> "dict[str, Any]":
+    """Return *values* as they are: a completion parse never invokes, so nothing converts."""
+    return dict(values)
+
+
+def candidate_of(
+    key: str,
+    project: "str | None",
+    entries: "tuple[str, ...]",
+    resolve: "Callable[[], type]",
+) -> "Candidate | None":
+    """Describe one options class on its own: the one description completion reads.
+
+    Calls *resolve* for the class and builds its own parameters
+    (:func:`~otto.params.options_params`, through Typer), with no other
+    class's. A class that cannot be resolved or built gives ``None``: this
+    never raises for it.
+    """
+    return _described(
+        key,
+        project,
+        entries,
+        lambda: options_params(cast("type[DataclassInstance]", resolve())),
+    )
+
+
+def _described(
+    key: str,
+    project: "str | None",
+    entries: "tuple[str, ...]",
+    signature: "Callable[[], Sequence[inspect.Parameter]]",
+) -> "Candidate | None":
+    """Build the candidate of *key* from the parameters *signature* returns; ``None`` on failure."""
+    try:
+        carried = carrier(signature())
+    except BaseException as exc:
+        if not is_containable(exc):
+            raise
+        getLogger(__name__).debug(f"options class {key!r} is left out of completion: {exc!r}")
+        return None
+    return Candidate(key=key, project=project, entries=entries, params=carried.params)
+
+
+def completion_candidates(
+    path: "Sequence[str]", own: "OwnOptions | None", *, covered: bool
+) -> "list[Candidate]":
+    """Return the candidates a completion parse of the command *path* offers.
+
+    The one answer, cold or warm. When the invocation reads the completion
+    cache (``otto.registry.get_completion_names``) and its snapshot records
+    the candidates (an ``option_candidates`` mapping), they come from it:
+    the recorded uses that cover *path*, each class's rows rebuilt as
+    completion stubs, and no class is resolved. A snapshot that records none
+    (one built by hand) is a miss, as for every other key a completer reads,
+    and the answer is the live registry's (:func:`live_candidates`).
+    *covered* is the command's gate's accepts answer
+    (:attr:`OfferGate.accepts`); from the cache, a command that does not
+    accept is offered nothing, as the cache's walk recorded it
+    (:func:`covering_uses`). From the cache, *own*'s body classes
+    (``OwnOptions.bodies``) are not offered: the cache records only the
+    project instructions' bodies, and no other command declares bodies yet.
+    """
+    from ..registry import get_completion_names
+
+    names = get_completion_names()
+    recorded = names.get("option_candidates") if names is not None else None
+    if isinstance(recorded, dict):
+        return _cached_candidates(path, recorded) if covered else []
+    return live_candidates(path, own, covered=covered)
+
+
+def _cached_candidates(path: "Sequence[str]", recorded: "Mapping[str, Any]") -> "list[Candidate]":
+    """Return the candidates of the command *path* from the cache's recorded ``option_candidates``.
+
+    Each recorded use that covers *path* (``otto.params.covering`` over one
+    :class:`~otto.params.Registration` per use, whatever its project), its
+    class's rows rebuilt as completion stubs
+    (``otto.config.completion_stubs.stub_param_from_row``): each parses as the
+    live parameter does and suggests no value. No options class is
+    imported or resolved; a malformed record gives no candidate, and nothing
+    raises.
+    """
+    try:
+        rows = recorded["rows"]
+        uses = covering(path, among=recorded_registrations(recorded["uses"]))
+    except BaseException as exc:
+        if not is_containable(exc):
+            raise
+        getLogger(__name__).debug(f"otto {' '.join(path)}: no recorded candidates: {exc!r}")
+        return []
+    if not uses:
+        return []
+    from ..config.completion_stubs import stub_param_from_row
+
+    found = (
+        _described(
+            use.key,
+            use.project,
+            use.entries,
+            lambda u=use: [stub_param_from_row(row) for row in rows[u.key]],
+        )
+        for use in uses
+    )
+    return [candidate for candidate in found if candidate is not None]
+
+
+def live_candidates(
+    path: "Sequence[str]", own: "OwnOptions | None", *, covered: bool = True
+) -> "list[Candidate]":
+    """Return the candidates of the command *path*, from the live registry, for completion.
+
+    Each body class of *own* (its entries: the command itself), then, with
+    *covered*, each registration that covers *path* whatever its project
+    (``otto.params.covering``), each described by :func:`candidate_of`.
+    *covered* is the command's gate's accepts answer
+    (:attr:`OfferGate.accepts`): a command that does not accept registered
+    options is offered its bodies only. A class that fails is left out and
+    costs no other its place; nothing raises. :func:`completion_candidates`
+    is its one caller on a TAB.
+    """
+    found: "list[Candidate | None]" = []
+    if own is not None and own.bodies is not None:
+        try:
+            bodies = own.bodies()
+        except BaseException as exc:
+            if not is_containable(exc):
+                raise
+            getLogger(__name__).debug(f"otto {' '.join(path)}: no body classes: {exc!r}")
+            bodies = []
+        entry = (" ".join(path),)
+        found.extend(
+            candidate_of(options_key(origin.cls), origin.project, entry, lambda o=origin: o.cls)
+            for origin in bodies
+        )
+    if covered:
+        found.extend(
+            candidate_of(
+                registration.key,
+                registration.project,
+                registration.entries,
+                lambda r=registration: resolve_registration(r).cls,
+            )
+            for registration in covering(path)
+        )
+    return [candidate for candidate in found if candidate is not None]
+
+
+def recorded_registrations(uses: "Iterable[Mapping[str, Any]]") -> "list[Any]":
+    """Return one ``otto.params.Registration`` per recorded use, in order.
+
+    *uses* are the ``uses`` the completion cache's ``option_candidates``
+    holds (``otto.cli.registry.collect_option_candidates``): each a key, the
+    entries it serves and its project. The one reading of a use as what
+    ``otto.params.covering`` judges, for the cache's walk
+    (:func:`covering_uses`) and a warm TAB (:func:`completion_candidates`)
+    alike. Raises ``KeyError`` or ``TypeError`` on a malformed use.
+    """
+    return [
+        Registration(key=use["key"], entries=tuple(use["entries"]), project=use["project"])
+        for use in uses
+    ]
+
+
+def covering_uses(cmd: Any, ctx: Any, among: "Sequence[Any]") -> list[int]:
+    """Return the indexes into *among* of the recorded uses that cover the command *cmd*, in order.
+
+    For the completion cache's walk: *ctx* is *cmd*'s context in otto's
+    tree, and *among* holds one ``otto.params.Registration`` per use
+    ``otto.cli.registry.collect_option_candidates`` recorded (its key,
+    entries and project). The command is judged by the live offer's own
+    gate (:func:`offer_gate`), for the top-level registration its path
+    starts with: one that prepares its own options, or does not accept,
+    gets ``[]``. Otherwise the answer is the uses ``otto.params.covering``
+    keeps for its path, whatever their project: a body's use covers its
+    instruction through its entries. Nothing is resolved.
+    """
+    from .registry import CLI_COMMANDS
+
+    contexts = _from_top_level(ctx)
+    name = contexts[0].info_name if contexts else None
+    if name is None or name not in CLI_COMMANDS:
+        return []
+    gate = offer_gate(cmd, ctx, CLI_COMMANDS.peek(name=name))
+    if gate.self_preparing or not gate.accepts:
+        return []
+    kept = {id(registration) for registration in covering(gate.path, among=among)}
+    return [index for index, registration in enumerate(among) if id(registration) in kept]
+
+
+def offered_options(ctx: typer.Context, spec: "CommandSpec") -> "Offer | None":
+    """Return what the command *ctx* parses offers for this invocation, or ``None``.
+
+    The one offer, decided once per command and invocation (kept in
+    ``ctx.meta`` under the command's path). ``None`` for a command that
+    prepares its own options (its callback carries
+    :data:`RECORDS_OPTIONS_ATTR`), and for one that neither accepts
+    registered options (:func:`leaf_accepts_options`) nor carries
+    :data:`OWN_OPTIONS_ATTR`.
+
+    Under a completion parse (``ctx.resilient_parsing``: a TAB) it is the
+    union of :func:`completion_candidates` (the completion cache's recorded
+    candidates on a warm TAB, the live registry's otherwise), the first name
+    and the first spelling winning, the command's own parameters skipped:
+    nothing is merged and nothing can fail.
+
+    Otherwise the registrations covering the command
+    (``otto.params.covering``, over :func:`kept_projects`) are
+    resolved, stopping at the first that fails, and a body class is kept
+    only when no project owns it or its project is kept: a project that does
+    not take part offers nothing and has nothing imported. A command whose
+    :class:`OwnOptions` sets *every_project* keeps every project and never
+    asks :func:`kept_projects`. With no registration and no
+    :class:`OwnOptions`, ``None``, and nothing is resolved or built. The own
+    class, the kept body classes and the covering classes are merged
+    (:func:`~otto.params.merge_option_params`) with the command's other own
+    parameters reserved by name and by spelling, ``-h``/``--help``
+    included. A collision raises ``OptionsCollisionError`` naming both
+    owners, and a class that cannot be imported ``OptionsRegistrationError``,
+    from this command's own parse or ``--help`` only.
+    """
+    offered = cast("dict[str, Offer | None]", ctx.meta.setdefault(_OFFERED, {}))
+    key = _attached_key(ctx, spec)
+    if key not in offered:
+        offered[key] = _offer(ctx, spec)
+    return offered[key]
+
+
+@dataclasses.dataclass(frozen=True)
+class OfferGate:
+    """What decides whether a command is offered anything beyond its own parameters."""
+
+    path: "list[str]"
+    """The command's path (:func:`command_path`)."""
+    own: "OwnOptions | None"
+    """What its callback says is its own (:data:`OWN_OPTIONS_ATTR`)."""
+    accepts: bool
+    """Whether it accepts registered options (:func:`leaf_accepts_options`)."""
+    self_preparing: bool
+    """Whether it prepares its own options (:data:`RECORDS_OPTIONS_ATTR`): it is offered nothing."""
+
+    @property
+    def offers(self) -> bool:
+        """Whether anything may be offered (not self-preparing; accepting, or carrying its own)."""
+        return not self.self_preparing and (self.accepts or self.own is not None)
+
+
+def offer_gate(command: Any, ctx: Any, spec: "CommandSpec") -> OfferGate:
+    """Read the gate of what *command*, parsed under *ctx* beneath *spec*, is offered.
+
+    The one reading of it, for the live offer (:func:`offered_options`)
+    and the completion cache's walk (:func:`covering_uses`) alike, so the
+    cache answers as the live offer does.
+    """
+    callback = getattr(command, "callback", None)
+    path = command_path(ctx, spec)
+    return OfferGate(
+        path=path,
+        own=cast("OwnOptions | None", getattr(callback, OWN_OPTIONS_ATTR, None)),
+        accepts=leaf_accepts_options(spec, callback, beneath_group=len(path) > 1),
+        self_preparing=bool(getattr(callback, RECORDS_OPTIONS_ATTR, False)),
+    )
+
+
+def _offer(ctx: typer.Context, spec: "CommandSpec") -> "Offer | None":
+    """Decide :func:`offered_options`' answer for the command *ctx* parses."""
+    command: Any = ctx.command
+    gate = offer_gate(command, ctx, spec)
+    if not gate.offers:
+        return None
+    path, own, accepts = gate.path, gate.own, gate.accepts
+    nothing_built = LeafOptionSpec(group=path[0], build=())
+    if ctx.resilient_parsing:
+        mine = own_params(command, ctx)
+        names = {param.name for param in mine}
+        words = {word for param in mine for word in built_spellings(param)}
+        union: list[Parameter] = []
+        for candidate in completion_candidates(path, own, covered=accepts):
+            for param in candidate.params:
+                spelled = built_spellings(param)
+                if param.name in names or any(word in words for word in spelled):
+                    continue
+                names.add(param.name)
+                words.update(spelled)
+                union.append(param)
+        return Offer(tuple(union), nothing_built, _no_conversion, finishes_dry_run=False)
+    kept = None if own is not None and own.every_project else kept_projects(ctx)
+    registrations = covering(path, kept=kept) if accepts else []
+    if not registrations and own is None:
+        return None
+    mine = own_params(command, ctx)
+    origins = [resolve_registration(registration) for registration in registrations]
+    bodies = [
+        origin
+        for origin in (own.bodies() if own is not None and own.bodies is not None else [])
+        if kept is None or origin.project is None or origin.project in kept
+    ]
+    own_cls = own.cls if own is not None else None
+    own_origin = [OptionsOrigin(own_cls, own.project)] if own is not None and own_cls else []
+    own_fields = _own_option_names(own_cls)
+    what = f"otto {' '.join(path)}"
+    described = own.reserved if own is not None else {}
+    reserved = {
+        param.name: described.get(param.name) or f"parameter {param.name!r} of {what}"
+        for param in mine
+        if param.name and param.name not in own_fields
+    }
+    reserved_flags = {
+        word: reserved[param.name]
+        for param in mine
+        if param.name in reserved
+        for word in built_spellings(param)
+    }
+    merged = merge_option_params(
+        own_origin + bodies + origins,
+        what=what,
+        reserved=reserved,
+        reserved_flags=reserved_flags,
+    )
+    carried = carrier(merged)
+    build = tuple(dict.fromkeys([*(o.cls for o in own_origin), *(o.cls for o in origins)]))
+    return Offer(
+        params=tuple(p for p in carried.params if p.name not in own_fields),
+        spec=dataclasses.replace(nothing_built, build=build, walk=tuple(o.cls for o in bodies)),
+        convert=carried.convert,
+        finishes_dry_run=own.finishes_dry_run if own is not None else False,
+        own=own_fields,
+    )
+
+
+def attached_params(ctx: typer.Context, spec: "CommandSpec") -> Sequence[Parameter]:
+    """Return the parameters this invocation attaches to the command *ctx* runs.
+
+    The parameters of its :func:`offered_options`, or none. Asked once per
+    context and command (:func:`attach_params` keeps the answer).
+    """
+    offer = offered_options(ctx, spec)
+    return () if offer is None else offer.params
+
+
+def _attached_key(ctx: typer.Context, spec: "CommandSpec") -> str:
+    return " ".join(command_path(ctx, spec))
+
+
+def _attached_for(
+    ctx: typer.Context, spec: "CommandSpec", own: Sequence[Parameter]
+) -> "tuple[Parameter, ...]":
+    """Return what *ctx*'s command has attached, asking :func:`attached_params` once per path."""
+    kept = cast("dict[str, tuple[Parameter, ...]]", ctx.meta.setdefault(_ATTACHED_PARAMS, {}))
+    key = _attached_key(ctx, spec)
+    if key not in kept:
+        names = {param.name for param in own}
+        kept[key] = tuple(p for p in attached_params(ctx, spec) if p.name not in names)
+    return kept[key]
+
+
+def attach_params(cmd: Any, spec: "CommandSpec") -> None:
+    """Wrap leaf *cmd*'s ``get_params`` to add the invocation's attached parameters (idempotent).
+
+    The wrapper returns the command's own parameters, then
+    :func:`attached_params` less any whose name the command already has, then
+    the help option. Click's parse, both help renderers and shell completion
+    read ``get_params``, so the attached flags parse, show and complete as the
+    command's own. What was attached is kept in ``ctx.meta`` under the
+    context's command path, so every call on one context returns the same
+    objects (the parse compares parameters by identity) and nothing of one
+    invocation stays on *cmd*, which outlives it. An error raised while
+    attaching propagates from the parse: it stops that command only.
+    """
+    if getattr(cmd, "_otto_params_attached", False):
+        return
+    cmd._otto_params_attached = True  # noqa: SLF001 — own marker attribute on the command object
+    original_get_params = cmd.get_params
+
+    def _get_params_with_attached(inner_ctx: Any) -> list[Parameter]:
+        own = original_get_params(inner_ctx)
+        attached = _attached_for(inner_ctx, spec, own)
+        if not attached:
+            return own
+        help_option = cmd.get_help_option(inner_ctx)
+        body = [param for param in own if param is not help_option]
+        return [*body, *attached, *(param for param in own if param is help_option)]
+
+    setattr(_get_params_with_attached, OWN_PARAMS_ATTR, original_get_params)
+    cmd.get_params = _get_params_with_attached
+
+
+def own_params(cmd: Any, ctx: typer.Context) -> list[Parameter]:
+    """Return *cmd*'s parameters for *ctx* with nothing attached: what its own ``get_params`` says.
+
+    The help option included. A command :func:`attach_params` never wrapped
+    answers its ``get_params``. The completion cache's walk reads the same
+    answer, so a flag attached for one invocation is never stored as a
+    command's own.
+    """
+    return _own_params(cmd, ctx)
+
+
+def take_attached(ctx: typer.Context) -> "dict[str, Any]":
+    """Take the attached values out of ``ctx.params`` and return them, keyed by name.
+
+    *ctx* is the context of a command being invoked (its spec stamped, see
+    :func:`command_spec`). The values are each attached parameter's as the
+    parser produced it (already parsed by the parameter's type), and they are
+    kept in ``ctx.meta``: a second call returns the same mapping. Called before
+    the command's function, so the function is never passed a name it does
+    not declare. With nothing attached: an empty mapping.
+    """
+    key = _attached_key(ctx, command_spec(ctx))
+    taken = cast("dict[str, dict[str, Any]]", ctx.meta.setdefault(_ATTACHED_VALUES, {}))
+    if key not in taken:
+        attached = ctx.meta.get(_ATTACHED_PARAMS, {}).get(key, ())
+        taken[key] = {
+            p.name: ctx.params.pop(p.name) for p in attached if p.name and p.name in ctx.params
+        }
+    return taken[key]
+
+
+_PREPARED = "otto.prepared_options"
+"""``ctx.meta`` key: each invoked command's preparation for the invocation, by path."""
+
+
+@dataclasses.dataclass(frozen=True)
+class _Prepared:
+    """One invoked command's preparation, with the command it was made for."""
+
+    command: Any
+    options: LeafOptions
+
+
+def prepare_command_options(ctx: typer.Context) -> "LeafOptions | None":
+    """Prepare the options of the command *ctx* invokes: validated before its body, once.
+
+    *ctx* is the context of a command being invoked (its spec stamped, see
+    :func:`command_spec`). With its :func:`offered_options`, the attached
+    values (:func:`take_attached`) and the own class's values (the names
+    :attr:`Offer.own` holds), which stay in ``ctx.params`` for the command's
+    function, go through the offer's
+    ``convert`` together, so each has the shape a function declaring it
+    receives; then :func:`prepare_leaf_options` splits, records, builds and
+    validates them over the offer's spec. The result, which also carries the
+    attached values as parsed (:attr:`LeafOptions.raw`) and the command's
+    own answer for its dry run, is kept in ``ctx.meta``
+    (:func:`prepared_options`) and returned.
+
+    With no offer the command records nothing: :func:`settle_options`
+    clears its pending mark and this returns ``None``. Under a completion
+    parse (``ctx.resilient_parsing``) it does nothing and returns ``None``.
+
+    A value that fails a class's validation raises ``typer.BadParameter``.
+    """
+    if ctx.resilient_parsing:
+        return None
+    spec = command_spec(ctx)
+    offer = offered_options(ctx, spec)
+    if offer is None:
+        settle_options(ctx)
+        return None
+    attached = take_attached(ctx)
+    callback = cast("Callable[..., Any]", ctx.command.callback)
+    own_values = {name: value for name, value in ctx.params.items() if name in offer.own}
+    converted = offer.convert({**own_values, **attached})
+    prepared = dataclasses.replace(
+        prepare_leaf_options(converted, offer.spec, leaf=callback),
+        finishes_dry_run=offer.finishes_dry_run,
+        raw=dict(attached),
+    )
+    kept = cast("dict[str, _Prepared]", ctx.meta.setdefault(_PREPARED, {}))
+    kept[_attached_key(ctx, spec)] = _Prepared(command=ctx.command, options=prepared)
+    return prepared
+
+
+def prepared_options(ctx: typer.Context) -> "LeafOptions | None":
+    """Return what :func:`prepare_command_options` prepared for the command *ctx* invokes.
+
+    Only the invoked command's own context answers. ``None`` for a command
+    it prepared nothing for, and for any other context of the invocation (the
+    root's, a group's), or of one where it has not run (a command driven
+    without otto's invoke wrapper).
+    """
+    kept = cast("dict[str, _Prepared] | None", ctx.meta.get(_PREPARED))
+    if not kept:
+        return None
+    found = kept.get(_attached_key(ctx, command_spec(ctx)))
+    if found is None or found.command is not ctx.command:
+        return None
+    return found.options
+
+
 def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
     """Wrap a single leaf command's ``invoke``: preamble + async-leaf bridge (idempotent).
 
-    A lab-free leaf is invoked inside its pending mark (:func:`pending_options`),
-    which :func:`settle_options` clears for a leaf that records nothing.
+    The attached values are taken out of the leaf's ``ctx.params`` first
+    (:func:`take_attached`), so its function receives only its own.
+
+    A leaf that does not mark (:func:`pending_options`) settles the root
+    group's dispatch mark before the preamble, so it reads defaults
+    throughout. A lab-free leaf is invoked inside its pending mark, which
+    :func:`settle_options` clears for a leaf that records nothing. A
+    leaf the preamble prepared (:func:`prepared_options`) runs, its bridge
+    included, inside :meth:`LeafOptions.scope`.
     """
     if getattr(cmd, "_otto_preambled", False):
         return cmd
@@ -2598,20 +3557,31 @@ def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
     original_invoke = cmd.invoke
 
     def _invoke_with_preamble(inner_ctx: Any) -> Any:
+        # Restamp on the leaf's own (inner) ctx: ctx.meta is shared by-reference
+        # down the click context chain, but the spec must reflect THIS leaf.
+        stash_command_spec(inner_ctx, spec)
+        # A leaf that does not mark is free of the dispatch's mark for its
+        # whole run (preamble, lab build, gate, body): settled before anything.
+        mark = pending_options(inner_ctx)
+        if mark is None:
+            settle_options(inner_ctx)
+        # First: the function is passed only the names it declares.
+        take_attached(inner_ctx)
         # Before the preamble, so a refused command creates no output dir and
         # loads no lab.
         if spec.async_leaves:
             _require_async_leaf(cmd, spec)
-        # Restamp on the leaf's own (inner) ctx: ctx.meta is shared by-reference
-        # down the click context chain, but the spec must reflect THIS leaf.
-        inner_ctx.meta["_otto_command_spec"] = spec
         command_preamble(inner_ctx)
         # No lab context holds the pending mark for a lab-free leaf: hold it
         # here, over the body and its bridge, settled for a leaf that records
         # nothing; a leaf that records holds its own record inside this one.
         lab_free = leaf_is_lab_free(spec, getattr(inner_ctx.command, "callback", None))
-        with command_options(pending_options(inner_ctx) if lab_free else None):
+        prepared = prepared_options(inner_ctx)
+        with contextlib.ExitStack() as held:
+            held.enter_context(command_options(mark if lab_free else None))
             settle_options(inner_ctx)
+            if prepared is not None:
+                held.enter_context(prepared.scope())
             result = original_invoke(inner_ctx)
             # The lifecycle bridge (wave 2 of the command-lifecycle-uniformity
             # spec): a plain ``async def`` leaf — typer never awaits callbacks, so
@@ -2660,6 +3630,26 @@ def _wrap_get_help(cmd: Any) -> None:
     cmd.get_help = _get_help_with_banner
 
 
+def _settled_when_childless(callback: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a group's *callback* so a group that runs with no child reads defaults.
+
+    Click sets ``invoked_subcommand`` before it calls a group's callback, so
+    the callback is the first place that can tell the two apart. With no
+    child the group itself is the command that runs, and the dispatch's
+    pending mark is settled (:func:`settle_options`) before its body; with a
+    child nothing changes, and a read in the callback raises.
+    """
+
+    @functools.wraps(callback)
+    def _callback(*args: Any, **kwargs: Any) -> Any:
+        ctx = cast("typer.Context | None", get_current_context(silent=True))
+        if ctx is not None and ctx.invoked_subcommand is None:
+            settle_options(ctx, records_nothing=True)
+        return callback(*args, **kwargs)
+
+    return _callback
+
+
 def wrap_leaf_callbacks(cmd: Any, spec: "CommandSpec") -> Any:
     """Wrap every leaf command under *cmd* so its invoke runs the preamble first.
 
@@ -2670,12 +3660,17 @@ def wrap_leaf_callbacks(cmd: Any, spec: "CommandSpec") -> Any:
     dynamic ``otto host <verb>`` commands) are wrapped on resolution too.
     Already-wrapped commands are skipped (resolution results are cached).
     Also wraps every node's ``get_help`` (see ``_wrap_get_help``) so any
-    help screen reached through this tree shows the banner.
+    help screen reached through this tree shows the banner, every leaf's
+    ``get_params`` (:func:`attach_params`) so the invocation's attached flags
+    are the leaf's own, and every group's callback, where it has one, so a
+    group that runs with no child settles the dispatch's pending mark before
+    its body (:func:`settle_options`).
     """
     if getattr(cmd, "_otto_preambled", False):
         return cmd
     _wrap_get_help(cmd)
     if not hasattr(cmd, "commands"):
+        attach_params(cmd, spec)
         return _wrap_invoke(cmd, spec)
 
     cmd._otto_preambled = True  # noqa: SLF001 — own marker attribute on the command object
@@ -2699,6 +3694,9 @@ def wrap_leaf_callbacks(cmd: Any, spec: "CommandSpec") -> Any:
             "bridge and would silently do nothing — write group/root callbacks "
             "as plain `def` (only leaf commands may be `async def`)"
         )
+
+    if group_cb is not None:
+        cmd.callback = _settled_when_childless(group_cb)
 
     for sub in cmd.commands.values():
         wrap_leaf_callbacks(sub, spec)
@@ -2745,8 +3743,15 @@ class ChildTable(Protocol):
         ...
 
 
+_LISTING_CHILDREN = "otto_registry_group_listing"
+"""``ctx.meta`` key set while a registry group renders its own help."""
+
+
 def make_registry_group(
-    child_registry: ChildTable, *, app_of: "Callable[[Any], typer.Typer]"
+    child_registry: ChildTable,
+    *,
+    app_of: "Callable[[Any], typer.Typer]",
+    help_of: "Callable[[Any], str | None]",
 ) -> "type[TyperGroup]":
     """Build a TyperGroup class whose children come from *child_registry*.
 
@@ -2761,6 +3766,9 @@ def make_registry_group(
     the rest of the CLI. ``resolve_command`` -- dispatch, which is how
     ``otto run <name>`` and ``otto run <name> --help`` both reach the command --
     renders it as the command's error and exits 1, before any body runs.
+    The group's own help lists such a child by name with *help_of*'s line for
+    its entry, so ``otto run --help`` still shows every command, and the one
+    that cannot be built says why when it is run.
     This follows the same idiom as ``HostGroup`` (``cli/expose.py``): the
     group only resolves children on demand — it does NOT itself wrap them
     with the leaf-invoke preamble. ``main.py``'s root dispatch wraps the
@@ -2775,7 +3783,7 @@ def make_registry_group(
     preamble when dispatched for real.
 
     """
-    from typer.core import TyperGroup
+    from typer.core import TyperCommand, TyperGroup
 
     class RegistryBackedGroup(TyperGroup):
         """Group whose subcommands resolve from a component registry."""
@@ -2791,6 +3799,14 @@ def make_registry_group(
                 return super().resolve_command(ctx, args)
             except OttoError as exc:
                 fail(exc)
+
+        @override
+        def format_help(self, ctx: Any, formatter: Any) -> None:
+            ctx.meta[_LISTING_CHILDREN] = True
+            try:
+                super().format_help(ctx, formatter)
+            finally:
+                ctx.meta.pop(_LISTING_CHILDREN, None)
 
         @override
         def list_commands(self, ctx: Any) -> list[str]:
@@ -2813,7 +3829,15 @@ def make_registry_group(
             cache = self._child_cache
             if cmd_name not in cache:
                 entry = child_registry.get(cmd_name)
-                converted: Any = typer.main.get_command(app_of(entry))
+                try:
+                    app = app_of(entry)
+                except OttoError:
+                    if not ctx.meta.get(_LISTING_CHILDREN):
+                        raise
+                    # Listed by name and help line only, and not kept: the
+                    # command itself is built afresh, and refused, when run.
+                    return TyperCommand(cmd_name, help=help_of(entry))
+                converted: Any = typer.main.get_command(app)
                 cache[cmd_name] = (
                     converted.commands[cmd_name]
                     if hasattr(converted, "commands") and cmd_name in converted.commands

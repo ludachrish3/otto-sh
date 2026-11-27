@@ -427,12 +427,9 @@ def test_list_star_no_lab_cue(listing_world, flag):
 def test_a_typod_exclude_with_no_projects_is_the_switch_refusal_not_no_project(monkeypatch):
     """The gates run in the old order: switches (exit 2) before the no-projects refusal (exit 1)."""
     from otto.cli import invoke
-    from tests._fixtures.rootoptions import make_root_options
 
-    opts = make_root_options(exclude_projects=("typo",))
-    monkeypatch.setattr(invoke, "maybe_root_options", lambda ctx: opts)
     monkeypatch.setattr("otto.declared.get_projects", list)
     monkeypatch.setattr(invoke, "fail_loud_on_bootstrap_errors", lambda ctx=None: None)
-    result = runner.invoke(app, ["--list-products"], env=WIDE)
+    result = runner.invoke(app, ["-E", "typo", "--list-products"], env=WIDE)
     assert result.exit_code == 2, result.output
     assert "no project 'typo'" in result.output

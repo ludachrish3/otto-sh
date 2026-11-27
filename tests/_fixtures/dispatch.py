@@ -103,6 +103,7 @@ class DispatchRunner(CliRunner):
         async_leaves: bool = False,
         dry_run_preview: bool | None = None,
         lab_free: bool = True,
+        accepts_options: bool | None = None,
         under_root: bool = False,
         **extra: Any,
     ) -> Result:
@@ -141,6 +142,12 @@ class DispatchRunner(CliRunner):
         left at its ``None`` default: no ``--lab`` given), the exact case the
         lab slice must refuse.
 
+        *accepts_options* is the synthetic spec's own
+        ``CommandSpec.accepts_options``: left ``None``, the spec's ``lab_free``
+        decides, as for any registration. Pass ``True`` to drive a lab-free
+        harness run of a command whose shipped registration offers the flags of
+        registered options classes (``run``, a lab-bound plugin).
+
         *under_root* nests the dispatched command under a bare ``otto`` group,
         so *args* start with the command's own name (``["test", ...]``) and the
         click context chain is root → command, as on the real CLI. A reader that
@@ -157,6 +164,7 @@ class DispatchRunner(CliRunner):
             name=name,
             loader=app,
             lab_free=lab_free,
+            accepts_options=accepts_options,
             output_dir=False,
             async_leaves=async_leaves,
             dry_run_preview=(

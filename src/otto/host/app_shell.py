@@ -26,17 +26,16 @@ the ``parse=`` spec:
 
 import asyncio
 import re
-import types
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, ClassVar, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar, get_args, get_origin
 
 from pydantic import ValidationError
 from typing_extensions import Self, override
 
 from otto.models.base import OttoModel
 from otto.result import ShellResult
-from otto.utils import Status, annotation_is_subclass
+from otto.utils import Status, annotation_is_subclass, unwrap_optional
 
 from ..errors import OttoError
 from .command_frame import _ANSI_RE
@@ -96,27 +95,13 @@ class Parsed(OttoModel):
         # -> ParseMismatch wrap, silently downgrade an authoring error into a
         # quiet failed result.
         for field, info in cls.model_fields.items():
-            inner = _unwrap_optional(info.annotation)
+            inner = unwrap_optional(info.annotation)
             if get_origin(inner) is not list or _parsed_reader(inner) is not None:
                 continue
             (element,) = get_args(inner)
             raise TypeError(
                 f"{cls.__name__}.{field}: list fields must contain a Parsed subclass, got {element}"
             )
-
-
-def _unwrap_optional(annotation: Any) -> Any:
-    """Return the inner type of an ``X | None`` annotation, else the annotation.
-
-    Handles both the ``types.UnionType`` (``X | None``) and ``typing.Union``
-    (``Optional[X]``) spellings. A union of several non-``None`` members is
-    returned unchanged — only the ``Sub | None`` shape is unwrapped.
-    """
-    if get_origin(annotation) in (types.UnionType, Union):
-        non_none = [arg for arg in get_args(annotation) if arg is not type(None)]
-        if len(non_none) == 1:
-            return non_none[0]
-    return annotation
 
 
 def _parsed_reader(spec: Any) -> "Callable[[str], Any] | None":
@@ -147,7 +132,7 @@ def _parse_region(annotation: Any, region: str | None) -> Any:
     """
     if region is None:
         return None
-    reader = _parsed_reader(_unwrap_optional(annotation))
+    reader = _parsed_reader(unwrap_optional(annotation))
     return region if reader is None else reader(region)
 
 

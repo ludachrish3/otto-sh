@@ -21,13 +21,15 @@ and the reference can link them. The public names are on :doc:`/api/params`.
 
 .. autoclass:: otto.params.OptionsSource
 
-.. autodata:: otto.params.OPTION_VERBS
-
 .. autoclass:: otto.params.OptionsEntry
 
 .. autoclass:: otto.params.OptionsOrigin
 
 .. autofunction:: otto.params.verb_option_classes
+
+.. autofunction:: otto.params.authored_flags
+
+.. autofunction:: otto.params.flag_spellings
 
 .. autofunction:: otto.params.merge_option_params
 

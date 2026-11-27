@@ -13,9 +13,9 @@ three exit codes, and the ``otto defaults`` panel.
 Otto's seven are declared when ``otto.project.actions`` loads, which this module
 imports, and the root conftest fills their table again after each test's
 restore; the ``registered`` fixture only says a test relies on them.
-The flag set is only known once every project's init has spoken, so bootstrap
-checks the merged options (``check_project_instruction_options``) AFTER the
-project loop.
+The flag set is only known once every project's init has spoken, so a clash
+between two bodies' options is found when ``otto run <name>`` builds that one
+command, never at bootstrap: it stops that command and nothing else.
 
 THE ORCHESTRATOR IS PATCHED AT ``orchestrator.<name>``, never at
 ``otto.project.<name>``: :data:`otto.project.orchestrator._ENTRIES` resolves the
@@ -30,6 +30,7 @@ run under the leaf-invoke bridge the root dispatch installs. ``--help`` and
 
 import io
 import logging
+import os
 import re
 import sys
 from typing import Annotated
@@ -40,19 +41,17 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from otto import options
-from otto.cli.run import build_instruction_app, instruction, run_app
+from otto.cli.run import build_instruction_app, instruction, instruction_help, run_app
 from otto.context import OttoContext
 from otto.instruction_catalog import (
     FIRST_PARTY_INSTRUCTIONS,
     INSTRUCTIONS,
-    PROJECT_INSTRUCTIONS,
     STANDALONE_INSTRUCTIONS,
     InstructionEntry,
     ProjectInstructionError,
 )
 from otto.instructions import run_instruction
 from otto.labs.loader import Lab
-from otto.params import OptionsCollisionError
 from otto.project import (
     Cleanliness,
     CleanlinessItem,
@@ -70,10 +69,6 @@ from otto.project import (
     UninstallToolsOptions,
     orchestrator,
     register_project_actions,
-)
-from otto.project.commands import (
-    check_project_instruction_options,
-    merged_option_params,
 )
 from otto.registry import registering_project
 from otto.result import Result
@@ -241,20 +236,20 @@ def test_project_instruction_with_novel_name_is_unaffected():
 # ── Bootstrap wiring ─────────────────────────────────────────────────────────
 
 
-def test_bootstrap_declares_the_bodies_before_any_project_init_and_checks_after(
+def test_bootstrap_declares_the_bodies_before_any_project_init_and_merges_no_options(
     tmp_path, monkeypatch, purge_tmp_imports
 ):
-    """Phase 2 declares otto's BODIES first and checks the merged OPTIONS last.
+    """Bootstrap declares otto's BODIES first and merges no command's OPTIONS at all.
 
-    The two halves are ordered against opposite ends of the project loop and both
-    orderings are load-bearing. ``otto.project.actions.declare`` runs first, so
-    every project's actions class is checked against otto's own; the options check
-    comes last, because a project's override is what ADDS flags to the merged
-    command and a check taken before the loop would check the union of nothing.
+    ``otto.project.actions.declare`` runs before the project loop, so every
+    project's actions class is checked against otto's own. The bodies' options
+    are merged only when ``otto run <name>`` builds that command, so a clash
+    stops that command and not every otto command at startup: bootstrap never
+    calls ``otto.params.merge_option_params``.
 
-    Observed as the CALLS, each read off its module when the root calls it, so a
-    caller substituting either function is honoured: patching the module
-    attribute is what this test does. The init module records its own run in a
+    Observed as the CALLS, each read off its module when called, so a caller
+    substituting either function is honoured: patching the module attribute is
+    what this test does. The init module records its own run in a
     log the test owns, so the module must really run: ``purge_tmp_imports`` drops
     it from ``sys.modules`` after the test, or a second pass in one process
     (``--count=2 --repeat-scope=session``) would find it cached and never run it.
@@ -272,8 +267,9 @@ def test_bootstrap_declares_the_bodies_before_any_project_init_and_checks_after(
         seen.append("<declare>")
         real_declare()
 
-    def _check_spy() -> None:
-        seen.append("<check>")
+    def _merge_spy(*_args: object, **_kwargs: object) -> list[object]:
+        seen.append("<merge>")
+        return []
 
     project = make_project(
         tmp_path / "acme",
@@ -284,7 +280,7 @@ def test_bootstrap_declares_the_bodies_before_any_project_init_and_checks_after(
     monkeypatch.setitem(sys.modules, "acme_order_log", types.SimpleNamespace(seen=seen))
     monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setattr("otto.project.actions.declare", _declare_spy)
-    monkeypatch.setattr("otto.project.commands.check_project_instruction_options", _check_spy)
+    monkeypatch.setattr("otto.params.merge_option_params", _merge_spy)
     bs._reset()
     try:
         result = bs.bootstrap()
@@ -292,7 +288,7 @@ def test_bootstrap_declares_the_bodies_before_any_project_init_and_checks_after(
         bs._reset()
 
     assert result.errors == []
-    assert seen == ["<declare>", "acme_init", "<check>"]
+    assert seen == ["<declare>", "acme_init"]
 
 
 def test_a_projects_collision_reaches_the_user_as_a_framed_error_not_a_crash(
@@ -1202,12 +1198,17 @@ def two_projects(monkeypatch):
 
 
 def _root(monkeypatch, **fields):
-    """Stand in for the root callback's stash: the ``-l`` / ``-I`` / ``-E`` it parsed."""
+    """Stand in for the root's parse: the ``-l`` / ``-I`` / ``-E`` it read, and their record."""
     from otto.cli import invoke
+    from otto.config.scope import ScopeSelection
     from tests._fixtures.rootoptions import make_root_options
 
     opts = make_root_options(**fields)
+    selection = ScopeSelection(
+        labs=tuple(opts.labs or ()), include=opts.include_projects, exclude=opts.exclude_projects
+    )
     monkeypatch.setattr(invoke, "maybe_root_options", lambda ctx: opts)
+    monkeypatch.setattr(invoke, "scope_selection", lambda ctx: selection)
 
 
 def test_list_instructions_omits_inactive_project_panel(registered, two_projects, monkeypatch):
@@ -1318,7 +1319,6 @@ class TestMergedFlags:
                 async def install(self, opts: WidgetInstall):
                     return await super().install(opts)
 
-        check_project_instruction_options()
         out = runner.invoke(run_app, ["install", "--help"]).output
 
         assert "--ensure" in out
@@ -1357,54 +1357,9 @@ class TestMergedFlags:
                 async def install(self, opts: BInstall):
                     return await super().install(opts)
 
-        check_project_instruction_options()
         out = runner.invoke(run_app, ["install", "--help"]).output
 
         assert out.count("--lab-env") == 1, out
-        params = merged_option_params(PROJECT_INSTRUCTIONS.get("install"))
-        assert [p.name for p in params].count("lab_env") == 1
-
-    def test_two_projects_each_declaring_the_same_field_collide_loud(self, registered) -> None:
-        """The same NAME from two classes is two flags, and otto refuses to guess.
-
-        Silently keeping the first would hand project ``b``'s body project ``a``'s
-        value — a flag that reads as its own and is not — so the publish fails
-        and the message says how to share one.
-        """
-
-        @options
-        class AInstall(InstallOptions):
-            lab_env: Annotated[str, typer.Option(help="A's lab environment.")] = "bench"
-
-        @options
-        class BInstall(InstallOptions):
-            lab_env: Annotated[str, typer.Option(help="B's lab environment.")] = "floor"
-
-        with registering_project("a"):
-
-            @register_project_actions
-            class A(ProjectActions):
-                @instruction(options=AInstall)
-                async def install(self, opts: AInstall):
-                    return await super().install(opts)
-
-        with registering_project("b"):
-
-            @register_project_actions
-            class B(ProjectActions):
-                @instruction(options=BInstall)
-                async def install(self, opts: BInstall):
-                    return await super().install(opts)
-
-        with pytest.raises(OptionsCollisionError) as excinfo:
-            check_project_instruction_options()
-
-        message = str(excinfo.value)
-        assert "'install'" in message
-        assert "'lab_env'" in message
-        assert "project 'a'" in message
-        assert "project 'b'" in message
-        assert "share one base class" in message
 
     def test_a_project_added_instruction_is_published_under_its_module(self, registered) -> None:
         """A name otto never declared is derived too, attributed to ITS declarer.
@@ -1430,10 +1385,10 @@ class TestMergedFlags:
     def test_the_published_command_serialises_for_the_completion_cache(self, registered) -> None:
         """TAB completion reads the command's SIGNATURE, which this one builds by hand.
 
-        ``serialize_options`` refuses a parameter whose annotation is not
-        ``Annotated[..., typer.Option(...)]`` and skips the whole command, so a
-        leaf that carried only ``**kwargs`` — or annotations that did not match
-        its signature — would silently lose its flags from every completion.
+        ``serialize_options`` records the parameters of the callback's
+        signature, so a leaf that carried only ``**kwargs`` — or annotations
+        that did not match its signature — would silently lose its flags from
+        every completion. The body class's flags are recorded by name.
         """
         import typer.main
 
@@ -1481,10 +1436,10 @@ class TestMergedFlags:
             STANDALONE_INSTRUCTIONS.register(name="deploy", entry=entry)
         assert INSTRUCTIONS.get("deploy").project is not None
 
-    def test_checking_twice_is_harmless(self, registered) -> None:
-        """The post-loop check reads the tables and writes nothing: a second call passes."""
-        check_project_instruction_options()
-        check_project_instruction_options()
+    def test_building_the_command_twice_is_harmless(self, registered) -> None:
+        """Building ``otto run install`` reads the tables and writes nothing: a rebuild passes."""
+        build_instruction_app(INSTRUCTIONS.get("install"))
+        build_instruction_app(INSTRUCTIONS.get("install"))
 
         entry = INSTRUCTIONS.get("install")
         assert entry.module == ACTIONS_MODULE
@@ -1502,6 +1457,113 @@ class TestMergedFlags:
         with pytest.raises(ProjectInstructionError, match="rename one of them"):
             STANDALONE_INSTRUCTIONS.register(name="install", entry=entry)
         assert INSTRUCTIONS.get("install").module == ACTIONS_MODULE
+
+
+# ── A clash between two bodies' options stops its own command ────────────────
+
+_CLASHING_INSTALL_INIT = """\
+from typing import Annotated
+
+import typer
+
+from otto import options
+from otto.instructions import instruction
+from otto.project import InstallOptions, ProjectActions, register_project_actions
+
+
+@options
+class {cls}Install(InstallOptions):
+    lab_env: Annotated[str, typer.Option(help="{cls}'s lab environment.")] = "{default}"
+
+
+@register_project_actions
+class {cls}(ProjectActions):
+    @instruction(options={cls}Install)
+    async def install(self, opts: {cls}Install):
+        return await super().install(opts)
+"""
+
+
+@pytest.fixture
+def two_clashing_projects(tmp_path, monkeypatch, purge_tmp_imports, registered):
+    """Projects ``a`` and ``b`` on ``OTTOPATH``, each declaring its own ``lab_env`` on install.
+
+    The same field name from two unrelated classes: ``otto run install``
+    cannot be built. Bootstrap is reset around the test, which bootstraps
+    for itself.
+    """
+    from otto import bootstrap as bs
+
+    dirs = [
+        make_project(
+            tmp_path / project,
+            name=project,
+            extra=f'libs = ["lib"]\ninit = ["clash_{project}_init"]\n',
+            files={
+                f"lib/clash_{project}_init.py": _CLASHING_INSTALL_INIT.format(
+                    cls=project.upper(), default=default
+                )
+            },
+        )
+        for project, default in (("a", "bench"), ("b", "floor"))
+    ]
+    monkeypatch.setenv("OTTOPATH", os.pathsep.join(str(d) for d in dirs))
+    bs._reset()
+    try:
+        yield dirs
+    finally:
+        bs._reset()
+
+
+def test_two_projects_whose_install_classes_clash_do_not_fail_bootstrap(two_clashing_projects):
+    from otto.bootstrap import bootstrap
+
+    assert bootstrap().errors == []
+
+
+def test_the_clash_stops_otto_run_install_naming_both_projects(
+    two_clashing_projects, monkeypatch, capsys
+):
+    monkeypatch.setattr("sys.argv", ["otto", "run", "install"])
+    monkeypatch.setenv("COLUMNS", "400")  # one line: rich would wrap the message
+    wrapper = typer.Typer()
+
+    @wrapper.command()
+    def otto_entry() -> None:
+        from otto.cli.main import entry
+
+        entry()
+
+    result = CliRunner().invoke(wrapper, [])
+    out = result.output + capsys.readouterr().err
+    assert result.exit_code == 1, (out, result.exception)
+    lines = [line for line in out.splitlines() if line.strip()]
+    assert len(lines) == 1, out
+    [message] = lines
+    assert "'install'" in message
+    assert "'lab_env'" in message
+    assert "project 'a'" in message
+    assert "project 'b'" in message
+    assert "share one base class" in message
+    assert "Traceback" not in out
+
+
+def test_the_clash_stops_nothing_else(two_clashing_projects, run_cli):
+    from otto.bootstrap import bootstrap
+
+    assert bootstrap().errors == []
+    status = run_cli(["run", "status"])
+    listing = run_cli(["run", "--help"])
+
+    # status ran both projects' bodies: exit 1 is its "uninstalled" answer.
+    assert status.exit_code == 1, status.output
+    assert "lab is uninstalled" in status.output
+    assert "lab_env" not in status.output
+    assert listing.exit_code == 0, listing.output
+    [install_row] = [line for line in listing.output.splitlines() if line.startswith("│ install ")]
+    help_line = instruction_help(INSTRUCTIONS.get("install"))
+    assert help_line is not None
+    assert " ".join(help_line.split()[:4]) in install_row, listing.output
 
 
 # ── Task 4b fix round 1, item A.3: a dry run validates the REAL published leaf ──

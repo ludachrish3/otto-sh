@@ -36,7 +36,8 @@ populated instance is reconstructed at call time
   init module, for `run`, `test` or both. They live in the `OPTIONS` registry
   ({doc}`registries`). A verb's flag set is the union of its registered
   classes, merged by declaring class: a field two classes inherit from one
-  base is one flag, and one name from two unrelated classes is an
+  base is one flag, and one name, or one flag spelling
+  ({func}`~otto.params.flag_spellings`), from two unrelated fields is an
   `OptionsCollisionError` naming both. At dispatch, the command records on
   the invocation's `OttoContext` which of its flags were given, and builds
   every class it offers from the parsed flags, so a validation failure is an
@@ -257,8 +258,8 @@ do:
   class must inherit otto's class for that name; otherwise one project overriding
   `install` would take `--ensure` off the command for everyone, and
   `super().install(opts)` would have no field to read. Two projects declaring the
-  same flag from different classes is a bootstrap error for the whole
-  invocation: a flag whose meaning depends on which project reads it is not
+  same flag from different classes is an error that stops that one command
+  when it is built (every other command works): a flag whose meaning depends on which project reads it is not
   something to resolve silently, and a flag set the user cannot see is not
   something to degrade around. Flags merge by declaring class. Under
   `otto test`, an `ensure` converge builds each body's options from the

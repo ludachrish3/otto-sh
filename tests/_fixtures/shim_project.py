@@ -75,7 +75,7 @@ composes = ["core"]
 """
 
 INIT = '''
-"""Registers a host class, a nested plugin group, an instruction and test options."""
+"""Registers a host class, a nested plugin group and its options, an instruction, test options."""
 
 import enum
 from pathlib import Path
@@ -84,6 +84,9 @@ from typing import Annotated
 import typer
 
 import otto
+from otto.cli.docker import _image_ref_completer
+from otto.cli.host import _host_id_completer
+from otto.cli.test import _markers_completer, _names_completer
 from otto.instructions import instruction
 from otto.host.os_profile import register_host_class
 from otto.host.unix_host import UnixHost
@@ -105,6 +108,16 @@ class Kind(enum.Enum):
     full = "full"
 
 
+class Mode(enum.Enum):
+    fast = "fast"
+    slow = "slow"
+
+
+def _undeclared(incomplete: str) -> list[str]:
+    """A completer that declares no completion source: a TAB runs it live."""
+    return []
+
+
 plug = typer.Typer(help="A plugin group.")
 nest = typer.Typer(help="A nested group.")
 plug.add_typer(nest, name="nest")
@@ -123,8 +136,50 @@ otto.register_cli_command("plug", plug)
 
 
 @otto.options
+class _PlugOpts:
+    """Registered for plug only: one field per row feature, and one per completion source kind."""
+
+    debug: Annotated[int, typer.Option("--debug", "-d", help="Debug level.")] = 0
+    size: Annotated[tuple[int, int], typer.Option(help="Width and height.")] = (1, 1)
+    plain: Annotated[str, typer.Option(help="Completes nothing.")] = ""
+    file: Annotated[typer.FileText | None, typer.Option(help="Echoes the fragment.")] = None
+    mode: Annotated[Mode, typer.Option(help="How fast.")] = Mode.fast
+    source: Annotated[str, typer.Option(autocompletion=_host_id_completer)] = ""
+    pick_test: Annotated[str, typer.Option(autocompletion=_names_completer)] = ""
+    pick_marker: Annotated[str, typer.Option(autocompletion=_markers_completer)] = ""
+    pick_image: Annotated[str, typer.Option(autocompletion=_image_ref_completer)] = ""
+    undeclared: Annotated[str, typer.Option(autocompletion=_undeclared)] = ""
+
+
+otto.register_options(_PlugOpts, verbs=["plug"])
+
+
+@otto.options
+class _PlugClash:
+    """Also registered for plug, and spells ``--debug`` too: the live command refuses to build."""
+
+    louder: Annotated[int, typer.Option("--debug")] = 0
+    clash_only: Annotated[int, typer.Option()] = 0
+
+
+otto.register_options(_PlugClash, verbs=["plug"])
+# A class that cannot be imported: the live command refuses, a TAB leaves it out.
+otto.register_options("shimsut_gone:Missing", verbs=["plug"])
+
+
+@otto.options
 class _Opts:
+    """blink_all's own class: ``--run-<name>`` has the type and completer of plug's ``--<name>``."""
+
     level: Annotated[int, typer.Option("--level", help="How bright.")] = 1
+    run_plain: Annotated[str, typer.Option(help="Completes nothing.")] = ""
+    run_file: Annotated[typer.FileText | None, typer.Option(help="Echoes the fragment.")] = None
+    run_mode: Annotated[Mode, typer.Option(help="How fast.")] = Mode.fast
+    run_source: Annotated[str, typer.Option(autocompletion=_host_id_completer)] = ""
+    run_pick_test: Annotated[str, typer.Option(autocompletion=_names_completer)] = ""
+    run_pick_marker: Annotated[str, typer.Option(autocompletion=_markers_completer)] = ""
+    run_pick_image: Annotated[str, typer.Option(autocompletion=_image_ref_completer)] = ""
+    run_undeclared: Annotated[str, typer.Option(autocompletion=_undeclared)] = ""
 
 
 @instruction(options=_Opts)

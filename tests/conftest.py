@@ -2655,6 +2655,25 @@ def _isolate_registries():
     yield
 
     _restore_tables(snapshots, modules_before)
+    _forget_entry_checks()
+
+
+def _forget_entry_checks() -> None:
+    """Drop the options entry checker and the entries judged for a result, importing neither.
+
+    Both belong to the registry they judge: a checker a test left installed
+    would judge the next test's registrations, and a remembered result would
+    skip an entry the next test registers under the same key.
+    """
+    params = sys.modules.get("otto.params")
+    if params is not None:
+        params.set_entry_checker(None)
+    cli_registry = sys.modules.get("otto.cli.registry")
+    if cli_registry is not None:
+        judged = cli_registry._JUDGED
+        judged.result = None
+        judged.pairs.clear()
+        judged.reported.clear()
 
 
 def _snapshot_tables() -> "list[tuple[object, object]]":

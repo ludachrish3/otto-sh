@@ -40,10 +40,59 @@ def _default_for(kind: str, cached_default: Any) -> Any:
     return cached_default
 
 
+def stub_param_from_row(row: dict[str, Any]) -> inspect.Parameter:
+    """Rebuild one cached completion row as the parameter of a completion stub.
+
+    *row* is a parameter's row as a tree node stores it
+    (``otto.config.completion_tree``): its spellings (``flags``; none for an
+    argument), whether it takes a value, ``multiple`` and ``nargs``. The
+    stub parses a command line as the live parameter does: an option that
+    takes no value is a flag, one that takes ``nargs`` words takes that many,
+    a repeated one repeats (a flag too, so it is offered again once given)
+    and an argument is positional (``nargs`` ``-1`` takes the rest). Every
+    value is a plain ``str`` and no value completer is rebuilt, whatever the
+    row's ``source``: the stub offers the parameter, and a word typed for it
+    lands where the live parameter puts it, but it suggests no value. The one
+    builder of a stub parameter from a row.
+    """
+    flags = list(row.get("flags") or ())
+    nargs = int(row.get("nargs", 1))
+    word: Any = tuple[tuple([str] * nargs)] if nargs > 1 else str  # ty: ignore[invalid-type-form] — a type built at runtime
+    default: Any = None
+    if not flags:
+        base: Any = list[str] if nargs == -1 else word
+        info: Any = typer.Argument()
+    elif not row.get("takes_value", True) and row.get("multiple"):
+        # Typer repeats a switch only as a ``list[bool]`` declared with a
+        # ``/``; a trailing one keeps every spelling a primary.
+        base, info = list[bool], typer.Option(*flags[:-1], f"{flags[-1]}/")
+    elif not row.get("takes_value", True):
+        base, default, info = bool, False, typer.Option(*flags)
+    else:
+        base = list[word] if row.get("multiple") else word
+        info = typer.Option(*flags)
+    return inspect.Parameter(
+        row["name"],
+        inspect.Parameter.KEYWORD_ONLY,
+        default=default,
+        annotation=Annotated[base, info],
+    )
+
+
 def stub_params(options: list[dict[str, Any]]) -> list[inspect.Parameter]:
-    """Rebuild keyword-only ``typer.Option`` parameters from cached option dicts."""
+    """Rebuild keyword-only stub parameters from cached option dicts.
+
+    A record that carries a ``"row"`` (an argument, or an option whose
+    ``kind`` cannot say how it parses) is rebuilt from that row
+    (:func:`stub_param_from_row`, a ``typer.Argument`` for an argument);
+    every other record is a ``typer.Option`` over the plain type of its
+    ``kind``, with its flags, help and default.
+    """
     params: list[inspect.Parameter] = []
     for opt in options:
+        if isinstance(opt.get("row"), dict):
+            params.append(stub_param_from_row(opt["row"]))
+            continue
         kind = opt["kind"]
         base = _kind_to_annotation(kind)
         flags = list(opt.get("flags") or ())
@@ -111,22 +160,25 @@ def build_stub_group(
     name: str,
     help: str | None,  # noqa: A002 — mirrors typer's own `help=` keyword
     children: list[dict[str, Any]],
+    options: "list[dict[str, Any]] | None" = None,
 ) -> typer.Typer:
     """Rebuild a cached third-party GROUP as a nested stub Typer.
 
     Leaf children come back through :func:`build_stub_command` (the same
     shape as suite/instruction stubs); a child that itself carries
-    ``"commands"`` recurses. Only names/helps/option signatures exist —
+    ``"commands"`` recurses, with its own ``"options"``. *options* are the
+    group's own parameters (its callback's), rebuilt by :func:`stub_params`
+    on the group's callback. Only names/helps/option signatures exist —
     stubs are never dispatched (the callback raises if invoked).
     """
-    grp = typer.Typer(name=name, help=help)
+    grp = typer.Typer(name=name, help=help, callback=_build_callback(options) if options else None)
     for child in children:
         cname = child.get("name")
         if not cname:
             continue
         if child.get("commands") is not None:
             grp.add_typer(
-                build_stub_group(cname, child.get("help"), child["commands"]),
+                build_stub_group(cname, child.get("help"), child["commands"], child.get("options")),
                 name=cname,
             )
         else:

@@ -17,7 +17,7 @@ from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 import typer
 
-from ..utils import Arg, Exclude, Opt, split_on
+from ..utils import Arg, Exclude, Opt, split_on, unwrap_optional
 from .completers import completion_source
 
 
@@ -197,14 +197,8 @@ def _split_annotation(hint: Any) -> tuple[Any, tuple[Any, ...]]:
 
 def _is_optional(base: Any) -> tuple[bool, Any]:
     """Detect ``X | None`` / ``Optional[X]``; return (is_optional, X)."""
-    _native_union = getattr(types, "UnionType", None)
-    origin = get_origin(base)
-    is_union = origin is Union or (_native_union is not None and isinstance(base, _native_union))
-    if is_union:
-        args = [a for a in get_args(base) if a is not type(None)]
-        if len(args) == 1 and len(get_args(base)) == 2:  # noqa: PLR2004 — Optional[X] has exactly 2 type args (X and NoneType), clearer inline
-            return True, args[0]
-    return False, base
+    inner = unwrap_optional(base)
+    return inner is not base, inner
 
 
 def _normalize_scalar(base: Any, marker_type: type | None) -> Any:

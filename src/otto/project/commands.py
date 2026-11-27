@@ -6,14 +6,13 @@ it. Its flags are the union of every body's options and every class
 registered for the ``run`` verb, deduplicated by declaring class, and each
 body is handed its own class at dispatch
 (:func:`otto.project.orchestrator.run_project_instruction`).
-:func:`check_project_instruction_options` checks the bodies' options once
-every project's init has run (bootstrap), so a clash is a startup error.
+Two bodies' options that clash are found when that one command's flags are
+built, so the clash stops that command and no other.
 """
 
-import inspect
 from typing import TYPE_CHECKING
 
-from ..instruction_catalog import PROJECT_INSTRUCTIONS, ProjectInstruction
+from ..instruction_catalog import ProjectInstruction
 
 if TYPE_CHECKING:
     from ..params import OptionsOrigin
@@ -29,29 +28,3 @@ def body_origins(entry: ProjectInstruction) -> "list[OptionsOrigin]":
         for body in entry.bodies
         if body.options_cls is not None
     ]
-
-
-def merged_option_params(entry: ProjectInstruction) -> list[inspect.Parameter]:
-    """Merge every body's options fields into one command's parameters."""
-    from ..params import merge_option_params
-
-    return merge_option_params(body_origins(entry), what=f"project instruction {entry.spec.name!r}")
-
-
-def check_project_instruction_options() -> None:
-    """Merge every project instruction's body options, refusing a clash.
-
-    Run once every project has spoken (bootstrap, after the init loop): a project's
-    override is what ADDS flags to a merged command, so only then is the flag
-    set known. Reads the tables and writes nothing, so running it again is
-    harmless. The command itself -- whose flags add the ``run`` verb's
-    classes -- is built when ``otto run`` resolves it, the only path that
-    should pay for resolving those classes.
-
-    Raises:
-        otto.params.OptionsCollisionError: Two bodies' options classes declare
-            the same field from different classes; the message names both
-            projects.
-    """
-    for name in PROJECT_INSTRUCTIONS.names():
-        merged_option_params(PROJECT_INSTRUCTIONS.get(name))

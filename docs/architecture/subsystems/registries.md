@@ -311,28 +311,78 @@ cover them, and nothing here claims otherwise:
 
 ## The options registry
 
-`OPTIONS` ({mod}`otto.params`) holds the options classes registered for a
-verb. Its entry is an `OptionsEntry`: the class, or a `Ref` to it, together
-with the verbs it serves, so the verbs are known without importing the class;
-the project that registered it is the engine's (`OPTIONS.project(name=key)`). That is
-what lets `otto host` and every other command stay free of options modules
-registered by string.
+`OPTIONS` ({mod}`otto.params`) holds the registered options classes. Its
+entry is an `OptionsEntry`: the class, or a `Ref` to it, together with its
+`verbs=` entries, so the entries are known without importing the class; the
+project that registered it is the engine's (`OPTIONS.project(name=key)`).
+That is what lets `otto host` and every other command stay free of options
+modules registered by string.
 
 - **The key is the class's `module:qualname`,** and the registry's
   *validate* refuses a record whose class has another key. A class
   therefore has one key, by object or by string, and registering it again
   follows the engine's [duplicate rule](#the-engine); `overwrite=True`
-  replaces the verb list. A string that resolves to a re-export (a
+  replaces the entry list. A string that resolves to a re-export (a
   class whose own `module:qualname` differs) is refused by the registry's
   *check_resolved* when it is resolved, since it would otherwise be a
   second key for one class.
-- **Verbs are an `OptionVerb`** (`Literal["run", "test"]`, listed in
-  `OPTION_VERBS`), checked at registration: an unknown verb, an empty list
-  or a repeated verb raises there, not at dispatch.
-- **Reading a verb resolves only that verb's classes**
-  (`verb_option_classes`), in registration order: otto's own first, then
-  each project's in dependency order. `merge_option_params` then merges their
-  fields by declaring class, the same rule project instructions use.
+- **An entry is an `OptionVerb`**: a command path of one or two command
+  names joined by one space (`"run"`, `"run install"`, a plugin's
+  `"flash erase"`), checked by its form alone at registration: an empty
+  list, a malformed entry, or one repeated or covered by another raises
+  there. Whether it names a command is not known below the command line, so
+  the registry does not ask.
+- **Coverage, then resolution.** `otto.params.covering` takes a
+  command path and the projects kept, and returns the `Registration`s whose
+  entries are a prefix of the path (`entry_covers`), each with its project,
+  in registration order (otto's own first, then each project's in dependency
+  order). It resolves nothing: a lazy reference stays a reference. A
+  registration no project owns always applies; a caller that passes no
+  projects keeps every one. `resolve_registration` is the second step, one
+  registration at a time, so each caller decides what a failure means: a
+  dispatch and a command's own `--help` stop at the first class that cannot
+  be imported, a completion writer keeps the ones that succeed.
+  `merge_option_params` then merges the resolved fields with the command's
+  own by declaring class and by flag spelling
+  ({func}`~otto.params.flag_spellings`), the same rule project instructions
+  use.
+
+**Which commands accept is declared where the command is registered.**
+`CommandSpec.accepts_options` (`True`, `False`, or `None` for a
+registration that said nothing) and the leaf marker
+`__cli_accepts_options__` ({data}`~otto.cli.invoke.ACCEPTS_OPTIONS_ATTR`)
+are read by one function, {func}`~otto.cli.invoke.leaf_accepts_options`,
+which applies the rule the guide for adding a command states
+([A project's options on your
+command](../../extend/extending-cli.md#a-projects-options-on-your-command)).
+A top-level command is judged by its registration alone
+({func}`~otto.cli.invoke.spec_accepts_options`), so it is known without
+importing the command. otto's own commands are registered through the same
+declaration as a plugin's. The entry check, the site that offers the
+flags, the "flags pending" mark and the completion collectors all ask that
+reader, and nothing in the command line holds a second list of commands.
+
+**The entry checker.** Whether an entry names a command is judged by one
+function, `otto.cli.registry.entry_error`, at three moments:
+
+- at startup, by `check_option_entries`, once for each bootstrap result,
+  after every project's init modules have run and before the bootstrap
+  findings are printed and judged. It reads `CommandSpec`s and the
+  instruction tables, so it imports no command: the first word of every
+  entry, and every `"run <name>"` entry, is judged here;
+- when a group is resolved by a real parse (`check_group_entries`, from the
+  root group's `get_command`), for the two-word entries beneath it, since a
+  lazily registered group's commands exist only once it is imported;
+- when a registration is made after startup. The registry holds one optional
+  checker (`otto.params.set_entry_checker`) and installs none itself.
+  `entry()` sets it once the startup check has run, unless the invocation is
+  a completion, and clears it when the invocation ends. While it is set, a
+  registration calls it before it is recorded, and a bad entry raises at the
+  call. A library process never sets it, so it judges no entry.
+
+An error found at startup or at a group's resolution is a
+`BootstrapError(source="options")` attributed to the registering project,
+judged by the same classifier as every project load error.
 
 The architecture of the verbs themselves, and how the built instances reach
 tests and instructions, is on {doc}`execution`.

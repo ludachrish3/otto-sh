@@ -22,6 +22,7 @@ from otto.link import (
 )
 from otto.link.check import LinkCheckHost, LinkCheckReport
 from otto.link.model import Link, LinkEndpoint
+from tests._fixtures.clickctx import chain
 from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.literal_text import HOSTILE, assert_one_verbatim_line
 from tests.conftest import active_context
@@ -916,7 +917,8 @@ class TestCompleter:
                 return_value=["edge", "dataplane", "lnk-1"],
             ),
         ):
-            assert _link_completer(None, "e") == ["edge"]
+            ctx = chain("otto", "link", root_params={})  # no -l given
+            assert _link_completer(ctx, "e") == ["edge"]
 
 
 class TestDryRunRendering:

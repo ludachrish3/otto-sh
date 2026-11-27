@@ -17,8 +17,8 @@ LONG_COMMAND = "tar -xzf /opt/stage/agent.tar.gz -C /opt/agent && " + "/opt/agen
 assert len(LONG_COMMAND) > 100
 
 
-def _canned(name, ctx, kwargs):
-    del ctx, kwargs
+def _canned(name, ctx, kwargs, recorded=None):
+    del name, ctx, kwargs, recorded
     return [
         ProjectPlan(
             "project1",
@@ -58,6 +58,25 @@ def test_dry_run_install_prints_the_plan_then_the_standard_block(run_cli):
     assert out.index("project1") < out.index("dry run: no command body was run")
     # The harness has no ``otto`` root group, so the command path starts at ``run``.
     assert "would run: run install" in _flat(out)
+
+
+def test_the_leaf_hands_the_plan_its_record(run_cli, monkeypatch, tmp_path):
+    """The plan reads the command's record, holding the walk's own instance, not bare kwargs."""
+    from otto.project import InstallOptions
+
+    patch_bootstrap(monkeypatch, [fake_project("r1", project_scope=None, root=tmp_path)])
+    with (
+        patch("otto.project.plan.plan_instruction", side_effect=_canned) as planned,
+        patch("otto.project.plan.plan_lab_tail", return_value=[]) as tail,
+    ):
+        dry = run_cli(["run", "install", "--ensure"], dry_run=True)
+    assert dry.exit_code == 0, dry.output
+    recorded = planned.call_args.kwargs["recorded"]
+    assert recorded is not None
+    assert tail.call_args.kwargs["recorded"] is recorded
+    instance = recorded.instances[InstallOptions]
+    assert type(instance) is InstallOptions
+    assert instance.ensure is True
 
 
 @pytest.mark.parametrize("name", ["uninstall", "cleanup", "install-tools", "uninstall-tools"])

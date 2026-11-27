@@ -83,16 +83,22 @@ def test_write_cache_stores_the_shim_section_when_given(tmp_path, monkeypatch):
 
 
 def test_the_section_collects_exactly_what_the_writer_stores(tmp_path, monkeypatch):
-    """The Section and `entry()` both build the tree from `_completion_collectors()`.
+    """The Section and `entry()`'s writer store one shim payload, its leaves' candidates included.
 
-    One source of the app and the dispatch key: this guards against either side
-    growing an argument of its own (another app, a different project list) — the
-    two would then drift silently.
+    The writer (``otto.cli.main.write_completion_cache``) is driven and its
+    ``shim=`` captured: a writer that built the tree by a call of its own (one
+    leaving out the leaf candidates, another app, a different project list)
+    would drift from the section silently.
     """
+    from otto.cli.main import write_completion_cache
+
     _, projects = _projects(tmp_path, monkeypatch)
-    assert section_by_name("shim").collect(
-        projects, _completion_collectors()
-    ) == build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
+    stored: "dict[str, object]" = {}
+    monkeypatch.setattr(cc, "write_cache", lambda *args, **kwargs: stored.update(kwargs))
+    write_completion_cache(projects)
+    collected = section_by_name("shim").collect(projects, _completion_collectors())
+    assert stored["shim"] == collected
+    assert '"candidates"' in json.dumps(collected["tree"])
 
 
 def test_a_missing_shim_section_makes_a_rebuild_worthwhile(tmp_path, monkeypatch):

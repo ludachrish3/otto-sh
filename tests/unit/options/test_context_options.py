@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+from typing import Literal
 
 import pytest
 
@@ -129,6 +130,26 @@ def test_preserving_an_unbound_context_leaves_it_unbound(ctx):
         ctx.bind_verb_options(verb="test", kwargs={})
     assert ctx.verb is None
     assert ctx.options(FirmwareOpts).firmware == "latest"
+
+
+@options
+class Variant:
+    variant: Literal["debug", "release"] = "release"
+
+
+def test_binding_with_a_command_builds_the_classes_for_that_command(ctx):
+    register_options(Variant, verbs=["run install"])
+    ctx.bind_verb_options(verb="run", command="install", kwargs={"variant": "debug"})
+    assert ctx.options(Variant).variant == "debug"
+    assert Variant in ctx._recorded.offered
+    before = ctx._recorded
+    with pytest.raises(OptionsValidationError, match="variant"):
+        ctx.bind_verb_options(verb="run", command="install", kwargs={"variant": "nope"})
+    assert ctx._recorded is before
+    assert ctx.options(Variant).variant == "debug"
+    ctx.bind_verb_options(verb="run", kwargs={})
+    assert Variant not in ctx._recorded.offered
+    assert ctx.options(Variant).variant == "release"
 
 
 @options

@@ -72,6 +72,8 @@ def marked():
         commands=lambda: [*cli.commands(), {"name": "zz-parity-command"}],
         app=toy,
         pending_key=KEY,
+        option_candidates=cli.option_candidates,
+        leaf_candidates=cli.leaf_candidates,
     )
 
 
@@ -128,6 +130,7 @@ def test_entry_stores_what_the_sections_collect(project_env):
     assert {"name": "zz-parity-instruction"} in names["instructions"]
     assert {"name": "--zz-parity-option"} in names["test_options"]
     assert {"name": "zz-parity-command"} in names["commands"]
+    assert set(names["option_candidates"]) == {"rows", "uses"}
     assert list(shim["tree"]["commands"]) == ["zz-parity-app"]  # the toy app, under its key
     assert len(shim["tables"]) == 2  # the dependency-skipped project too
     for section, payload in [["names", names], ["shim", shim]]:

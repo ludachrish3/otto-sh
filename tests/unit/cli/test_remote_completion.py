@@ -19,6 +19,7 @@ from otto.config.remote_completion_cache import ListingEntry
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import patch_bootstrap
+from tests._fixtures.clickctx import chain
 from tests._fixtures.fake_project import fake_project
 
 
@@ -106,18 +107,20 @@ def test_present_home_directory_keeps_tilde():
 
 
 def _ctx(host_id="dut1", labs=("unix",), holder=None, exclude_projects=None, include_projects=None):
-    """A mock Click context chain: leaf command -> `otto host` group -> root."""
-    root = SimpleNamespace(
-        params={
+    """A Click context chain as a TAB builds it: leaf -> `otto host` group -> otto's root."""
+    leaf = chain(
+        "otto",
+        "host",
+        "get",
+        root_params={
             "labs": list(labs),
             "holder": holder,
             "exclude_projects": exclude_projects,
             "include_projects": include_projects,
         },
-        parent=None,
     )
-    group = SimpleNamespace(params={"host_id": host_id, "hop": "", "term": None}, parent=root)
-    return SimpleNamespace(params={}, parent=group)
+    leaf.parent.params = {"host_id": host_id, "hop": "", "term": None}
+    return leaf
 
 
 class _FakeHost:
@@ -141,21 +144,30 @@ def test_chain_walk_takes_each_key_from_the_innermost_context_that_has_it():
     assert chain.holder == "carol"
 
 
+def _root_completion_parse(args):
+    """The root's context after a completion parse of *args*: its parameter callbacks ran."""
+    import typer
+
+    from otto.cli.main import app
+
+    return typer.main.get_command(app).make_context("otto", list(args), resilient_parsing=True)
+
+
 def test_chain_walk_takes_the_excluded_projects_split_on_commas():
-    """``-E r2,r3 -E r4`` reaches the gate as three names, even if no callback split them."""
-    chain = rc._collect_chain_params(_ctx(exclude_projects=["r2, r3", "r4"]))
+    """``-E r2,r3 -E r4`` reaches the gate as three names: the root's callback split them."""
+    chain = rc._collect_chain_params(_root_completion_parse(["-E", "r2, r3", "-E", "r4"]))
     assert chain.exclude_projects == ["r2", "r3", "r4"]
 
 
 def test_chain_walk_takes_the_included_projects_split_on_commas():
-    params = rc._collect_chain_params(_ctx(include_projects=["a,b", "c"]))
+    params = rc._collect_chain_params(_root_completion_parse(["-I", "a,b", "-I", "c"]))
     assert params.include_projects == ["a", "b", "c"]
 
 
-def test_chain_walk_survives_a_self_referential_mock():
-    node = SimpleNamespace(params="not-a-dict")
-    node.parent = node
-    assert rc._collect_chain_params(node) == rc._ChainParams(
+def test_chain_walk_of_a_chain_whose_root_is_not_ottos_finds_no_selection():
+    leaf = chain("host", "get")
+    leaf.parent.params = {"labs": ["unix"], "include_projects": ["a"]}
+    assert rc._collect_chain_params(leaf) == rc._ChainParams(
         host_id="", hop="", term=None, labs=[], holder=None
     )
 
@@ -915,9 +927,18 @@ rc._store_listing_for = lambda host_id, directory, entries: None
 rc._release_context = lambda token: None
 rc._live_listing = _warn_then_list
 
-root = SimpleNamespace(params={"labs": ["unix"], "holder": None}, parent=None)
-group = SimpleNamespace(params={"host_id": "dut1"}, parent=root)
-got = rc.remote_path_completer(SimpleNamespace(params={}, parent=group), "/var/")
+import click
+
+from otto.cli.invoke import OTTO_ROOT_ATTR
+
+root_command = click.Group("otto")
+setattr(root_command, OTTO_ROOT_ATTR, True)
+root = click.Context(root_command, info_name="otto")
+root.params = {"labs": ["unix"], "holder": None}
+group = click.Context(click.Group("host"), parent=root, info_name="host")
+group.params = {"host_id": "dut1"}
+leaf = click.Context(click.Command("get"), parent=group, info_name="get")
+got = rc.remote_path_completer(leaf, "/var/")
 assert got == ["/var/logs/"], got
 """
 

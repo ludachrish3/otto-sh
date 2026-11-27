@@ -84,15 +84,22 @@ def test_roundtrip_str_list() -> None:
     assert base == list[str]
 
 
-def test_unsupported_annotation_drops_command() -> None:
-    """An annotation outside the supported kinds produces ``None`` (skip)."""
+def test_an_unsupported_annotation_keeps_its_option_opaque() -> None:
+    """An annotation outside the supported kinds keeps its record, opaque: no flag is dropped."""
     from decimal import Decimal
+
+    from otto.config.completion_cache import OPAQUE_KIND
 
     def source(
         amount: Annotated[Decimal, typer.Option("--amount")] = Decimal(0),
     ) -> None: ...
 
-    assert serialize_options(source, command_name="source") is None
+    [amount] = serialize_options(source, command_name="source")
+    assert (amount["name"], amount["flags"], amount["kind"]) == (
+        "amount",
+        ["--amount"],
+        OPAQUE_KIND,
+    )
 
 
 def test_stub_callback_raises_if_invoked() -> None:
@@ -109,3 +116,29 @@ def test_stub_command_name_sanitized_for_dunder() -> None:
     cmd = stub_app.registered_commands[0]
     assert cmd.name == "test-instruction"
     assert cmd.callback.__name__ == "test_instruction"
+
+
+@pytest.mark.parametrize(
+    "declared", [("--feature/--no-feature",), ("-f", "--feature/--no-feature")]
+)
+def test_a_repeated_switch_rebuilds_as_a_switch_that_repeats(declared: "tuple[str, ...]") -> None:
+    """A ``list[bool]`` switch's row rebuilds as a flag that repeats, with every spelling.
+
+    Click offers an option already given only when it repeats, so a stub that
+    did not repeat would hide the switch after its first use.
+    """
+    from otto.config._typer import built_spellings, carrier
+    from otto.config.completion_stubs import stub_param_from_row
+    from otto.config.completion_tree import param_rows
+
+    live_param = inspect.Parameter(
+        "feature",
+        inspect.Parameter.KEYWORD_ONLY,
+        default=None,
+        annotation=Annotated[list[bool], typer.Option(*declared)],
+    )
+    [live] = carrier([live_param]).params
+    row = param_rows([live])["feature"]
+    [stub] = carrier([stub_param_from_row(row)]).params
+    assert (stub.is_flag, stub.multiple) == (live.is_flag, live.multiple) == (True, True)
+    assert sorted(built_spellings(stub)) == sorted(built_spellings(live))

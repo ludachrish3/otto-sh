@@ -304,14 +304,29 @@ def test_a_verb_option_named_like_a_run_flag_fails_before_any_test(otto_test_cli
 
 
 def test_a_collision_names_the_flag_actually_typed(otto_test_cli):
-    """``random_order`` is the ``--random/--no-random`` flag, not a ``--random-order``."""
+    """``random_order`` is the ``--random`` flag, not a ``--random-order``."""
 
     @options
     class Clash:
         random_order: bool = False
 
     register_options(Clash, verbs=["test"])
-    with pytest.raises(OptionsCollisionError, match="otto test's --random/--no-random"):
+    with pytest.raises(OptionsCollisionError, match="otto test's --random;"):
+        otto_test_cli(["test", "--help"])
+
+
+def test_a_verb_option_spelled_like_a_run_flag_fails_before_any_test(otto_test_cli):
+    """``shuffle`` spelled ``--random`` would shadow ``otto test``'s ``--random/--no-random``."""
+
+    @options
+    class Clash:
+        shuffle: Annotated[bool, typer.Option("--random")] = False
+
+    register_options(Clash, verbs=["test"])
+    with pytest.raises(
+        OptionsCollisionError,
+        match=r"flag --random of field 'shuffle'.*collides with otto test's --random",
+    ):
         otto_test_cli(["test", "--help"])
 
 

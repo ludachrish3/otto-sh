@@ -4,24 +4,28 @@ A :class:`CommandSpec` describes one top-level command or group: its name, a
 loader (a live Typer app, a plain/async function, or a lazy ``"pkg.mod:attr"``
 string imported only on dispatch), the help line shown by ``otto --help``
 *without* importing the module, and dispatch metadata (``lab_free``,
-``output_dir``, ``gate``, ``dry_run_preview``). First-party subcommands and
+``output_dir``, ``gate``, ``dry_run_preview``, ``accepts_options``). First-party subcommands and
 third-party plugins register through the same :func:`register_cli_command`.
 """
 
 import functools
 import importlib
 import inspect
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import typer
 from typer.models import TyperInfo
 from typing_extensions import final
 
-from ..registry import Registry, registration_boundary
+from ..registry import Registry, get_registering_project, registration_boundary
 from .builtin_commands import register_builtin_commands
 from .invoke import prepare_command_target
+
+if TYPE_CHECKING:
+    from ..declared import BootstrapResult
+    from ..params import Registration
 
 __all__ = ["CLI_COMMANDS", "CommandSpec", "cli_command", "register_cli_command"]
 
@@ -48,6 +52,14 @@ class CommandSpec:
 
     gate: bool = True
     """Whether invocations run the reservation gate (ignored when ``lab_free``)."""
+
+    accepts_options: bool | None = None
+    """Whether this command offers the flags of registered options classes.
+
+    ``None``: the registration said nothing, so a command that uses the lab
+    does and a ``lab_free`` one does not. A leaf beneath a group can differ
+    from its group with ``__cli_accepts_options__``; whether a command accepts
+    is read by :func:`~otto.cli.invoke.leaf_accepts_options`."""
 
     dry_run_preview: bool = False
     """Whether ``--dry-run`` lets this command's leaves run their bodies.
@@ -95,6 +107,7 @@ def register_cli_command(
     gate: bool = True,
     async_leaves: bool = False,
     dry_run_preview: bool = False,
+    accepts_options: bool | None = None,
     overwrite: bool = False,
 ) -> None:
     """Register a top-level ``otto`` command or group.
@@ -107,6 +120,10 @@ def register_cli_command(
 
     *dry_run_preview* opts every leaf under this command out of the
     ``--dry-run`` seam default (see :attr:`CommandSpec.dry_run_preview`).
+
+    *accepts_options* says whether the command offers the flags of registered
+    options classes; left ``None``, a command that uses the lab does and a
+    *lab_free* one does not (see :attr:`CommandSpec.accepts_options`).
 
     The command is credited to the module that called this function (or
     applied :func:`cli_command`), which is what the completion cache reads to
@@ -128,6 +145,7 @@ def register_cli_command(
         gate=gate,
         async_leaves=async_leaves,
         dry_run_preview=dry_run_preview,
+        accepts_options=accepts_options,
     )
     CLI_COMMANDS.register(name=name, entry=spec, overwrite=overwrite)
 
@@ -141,6 +159,7 @@ def cli_command(
     output_dir: bool = True,
     gate: bool = True,
     dry_run_preview: bool = False,
+    accepts_options: bool | None = None,
 ) -> Callable[..., Any]:
     """Register an async function as a top-level ``otto`` command.
 
@@ -160,6 +179,14 @@ def cli_command(
     myself", which is exactly what monitor does. ``async def`` is in turn
     necessary and not sufficient: a body that blocks the event loop is no more
     interruptible than a sync one (see :func:`~otto.instructions.instruction`).
+
+    ``accepts_options`` is :func:`register_cli_command`'s: whether the command
+    offers the flags of registered options classes. The command's options
+    are prepared when it is invoked (``otto.cli.invoke.prepare_command_options``):
+    ``options=`` is its own class (credited to the registering project), the
+    classes covering it are added when it accepts, all of them are validated
+    before the body and shown under ``--dry-run``, and the function receives
+    the own class's instance and its own parameters only.
     """
 
     @registration_boundary
@@ -173,7 +200,7 @@ def cli_command(
                 "nothing to await is still correct — or, if it touches no lab hosts, "
                 "register it with lab_free=True, where sync is exactly right."
             )
-        target = prepare_command_target(func, options)
+        target = prepare_command_target(func, options, project=get_registering_project())
         cmd_name = name or getattr(func, "__name__", repr(func)).replace("_", "-")
         doc_line = ((func.__doc__ or "").strip().splitlines() or [""])[0]
         # Register the prepared callable itself — resolve_spec_command's
@@ -188,6 +215,7 @@ def cli_command(
             output_dir=output_dir,
             gate=gate,
             dry_run_preview=dry_run_preview,
+            accepts_options=accepts_options,
         )
         return func
 
@@ -299,6 +327,271 @@ def resolve_spec_command(spec: CommandSpec) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# The entry check: does a registered options class's ``verbs=`` entry name a
+# command that accepts registered options?
+# ---------------------------------------------------------------------------
+#
+# These functions locate commands and judge entries; they never decide whether
+# a command marks, attaches or completes registered flags (that is
+# otto.cli.invoke.leaf_accepts_options and otto.params.covering), so the guard
+# against command-name literals in those deciders does not reach them.
+
+
+def _close(word: str, names: "Iterable[str]") -> str:
+    """``"; did you mean 'x'?"`` for the names close to *word*, else ``""``."""
+    import difflib
+
+    matches = difflib.get_close_matches(word, list(names))
+    return f"; did you mean {', '.join(repr(m) for m in matches)}?" if matches else ""
+
+
+def _hung_on_run() -> list[str]:
+    """Return the names of the commands and groups hung on ``otto run`` itself.
+
+    Read by the one walk of a Typer app's children (:func:`_typer_children`),
+    so a sub-app added with no name offers its commands, as Typer merges them.
+    """
+    from .run import run_app
+
+    return [child.name for child in _typer_children(run_app)]
+
+
+def _run_entry_error(spec: CommandSpec, name: str) -> str | None:
+    """Judge ``"run <name>"`` from the tables: it names a command, and an instruction accepts.
+
+    An instruction is judged by the one reader over its handler, which is
+    already loaded and whose markers its built leaf carries (a project
+    instruction has none, so the registration's default answers); nothing
+    is built. A command hung on ``otto run`` is judged with its group, when
+    ``run`` is resolved.
+    """
+    from ..instruction_catalog import INSTRUCTIONS
+    from .invoke import leaf_accepts_options
+
+    hung = _hung_on_run()
+    if name in hung:
+        return None
+    instruction = INSTRUCTIONS.find(name=name)
+    if instruction is None:
+        known = [*INSTRUCTIONS.names(), *hung]
+        return f"otto run has no command {name!r}{_close(name, known)}"
+    if leaf_accepts_options(spec, instruction.handler, beneath_group=True):
+        return None
+    return f"otto run {name} does not accept registered options"
+
+
+def _accepts_beneath(spec: CommandSpec, command: Any) -> bool:
+    """Whether *command* beneath *spec*'s group accepts: a leaf by the reader, a group by a leaf."""
+    from .invoke import leaf_accepts_options
+
+    children = getattr(command, "commands", None)
+    if children is None:
+        return leaf_accepts_options(spec, getattr(command, "callback", None), beneath_group=True)
+    return any(_accepts_beneath(spec, child) for child in children.values())
+
+
+def _beneath_group_error(spec: CommandSpec, name: str, group: Any) -> str | None:
+    """Judge *name* beneath the resolved *group* of *spec*: it exists, and it accepts."""
+    children = getattr(group, "commands", None)
+    if children is None:
+        return f"otto {spec.name} is a single command, with no command {name!r} beneath it"
+    child = children.get(name)
+    if child is None:
+        if name in group.list_commands(typer.Context(group)):
+            # A child the group builds only when asked (an instruction under
+            # `run`, judged from its table above): building it here would
+            # import project code.
+            return None
+        return f"otto {spec.name} has no command {name!r}{_close(name, children)}"
+    if _accepts_beneath(spec, child):
+        return None
+    return f"otto {spec.name} {name} does not accept registered options"
+
+
+def entry_error(
+    registration: "Registration", entry: str, *, group_of: "Callable[[str], Any | None]"
+) -> str | None:
+    """Return the message for *entry* of *registration* when it is a bad entry, else ``None``.
+
+    The one judgement of an entry, which the startup check, a group's
+    resolution and the checker of a late registration all call:
+
+    - the first word must be a registered command (a close match is
+      suggested); an entry under ``host`` passes;
+    - a one-word entry's registration must accept registered options
+      (:func:`~otto.cli.invoke.spec_accepts_options`), judged without
+      importing the command;
+    - ``"run <name>"``: *name* must be an instruction or a command or group
+      hung on ``otto run``, and an instruction must accept (its handler read
+      by :func:`~otto.cli.invoke.leaf_accepts_options`, nothing built);
+    - a two-word entry whose group *group_of* returns (the resolved group;
+      ``None`` while it is not resolved) must name a command or sub-group
+      beneath it; a command must accept
+      (:func:`~otto.cli.invoke.leaf_accepts_options`), and so must at least
+      one command under a sub-group. ``run`` is judged so too.
+
+    It imports no command module but :mod:`otto.cli.run`, and that only for
+    a ``"run <name>"`` entry. It locates commands; it does not decide whether
+    a command marks, attaches or completes registered flags.
+    """
+    from ..params import _who
+    from .invoke import spec_accepts_options
+
+    who = _who(registration.project)
+    said = f"options class {registration.key!r}, registered for {entry!r} by {who}"
+    words = entry.split()
+    first = words[0]
+    if first not in CLI_COMMANDS:
+        return f"{said}: otto has no command {first!r}{_close(first, CLI_COMMANDS.names())}"
+    if first == "host":
+        return None
+    spec = CLI_COMMANDS.peek(name=first)
+    if len(words) == 1:
+        if spec_accepts_options(spec):
+            return None
+        accepting = [
+            name
+            for name in CLI_COMMANDS.names()
+            if spec_accepts_options(CLI_COMMANDS.peek(name=name))
+        ]
+        return (
+            f"{said}: otto {first} does not accept registered options; "
+            f"the commands that do: {', '.join(accepting)}"
+        )
+    name = words[1]
+    if first == "run":
+        problem = _run_entry_error(spec, name)
+        if problem is not None:
+            return f"{said}: {problem}"
+    group = group_of(first)
+    if group is None:
+        return None
+    problem = _beneath_group_error(spec, name, group)
+    return None if problem is None else f"{said}: {problem}"
+
+
+@dataclass
+class _Judged:
+    """The entries judged for one bootstrap result, so a second check over it repeats nothing."""
+
+    result: object = None
+    """The bootstrap result these sets belong to, compared by identity."""
+    pairs: "set[tuple[str, str, bool]]" = field(default_factory=set)
+    """``(key, entry, at_resolution)`` for each entry judged: at startup, or with its group."""
+    reported: "set[tuple[str, str]]" = field(default_factory=set)
+    """``(key, entry)`` for each entry whose error is on the result."""
+
+
+_JUDGED = _Judged()
+
+
+def _judged_for(result: "BootstrapResult") -> _Judged:
+    """Return the judged record for *result*, emptied when *result* is not the one last checked."""
+    if _JUDGED.result is not result:
+        _JUDGED.result = result
+        _JUDGED.pairs.clear()
+        _JUDGED.reported.clear()
+    return _JUDGED
+
+
+def _judge(
+    result: "BootstrapResult",
+    registration: "Registration",
+    entry: str,
+    *,
+    group_of: "Callable[[str], Any | None]",
+) -> None:
+    """Append *entry*'s error, if any, to *result* as a load error of the registering project."""
+    message = entry_error(registration, entry, group_of=group_of)
+    if message is None:
+        return
+    from ..config.scope import BootstrapError
+    from ..params import OptionsRegistrationError
+
+    root = next((p.root for p in result.projects if p.name == registration.project), None)
+    _JUDGED.reported.add((registration.key, entry))
+    result.errors.append(
+        BootstrapError(
+            root, source="options", cause=OptionsRegistrationError(message), reason=message
+        )
+    )
+
+
+def check_option_entries(result: "BootstrapResult") -> None:
+    """Judge every registration's entries at startup, appending each error to *result*.
+
+    Each entry is judged by :func:`entry_error` with no group resolved, so a
+    two-word entry is held only to its first word (and a ``"run <name>"`` to
+    its name). An error is a ``BootstrapError(source="options")`` attributed
+    to the registering project's root (``None`` for none), so the startup
+    printer and the dispatch gate judge it as any project load error.
+
+    Once per bootstrap result: an entry already judged for *result* is not
+    judged again, so a second ``entry()`` over the same result appends
+    nothing twice and still judges a registration made since; another result
+    starts again. It locates commands; it does not decide whether a command
+    marks, attaches or completes registered flags.
+    """
+    from ..params import registrations
+
+    judged = _judged_for(result)
+    for registration in registrations():
+        for entry in registration.entries:
+            pair = (registration.key, entry, False)
+            if pair in judged.pairs:
+                continue
+            judged.pairs.add(pair)
+            _judge(result, registration, entry, group_of=lambda _: None)
+
+
+def check_group_entries(result: "BootstrapResult", spec: CommandSpec, group: Any) -> None:
+    """Judge the two-word entries under *spec*'s name against its resolved *group*.
+
+    Each error is appended to *result* as :func:`check_option_entries`
+    appends one; an entry already judged against the group for *result*, or
+    one whose error is already on it, is not judged again. A ``host`` group
+    is not judged here. It locates commands; it does not decide whether a
+    command marks, attaches or completes registered flags.
+    """
+    if spec.name == "host":
+        return
+    from ..params import registrations
+
+    judged = _judged_for(result)
+    for registration in registrations():
+        for entry in registration.entries:
+            words = entry.split()
+            if words[0] != spec.name or len(words) == 1:
+                continue
+            pair = (registration.key, entry, True)
+            if pair in judged.pairs or (registration.key, entry) in judged.reported:
+                continue
+            judged.pairs.add(pair)
+            _judge(result, registration, entry, group_of=lambda _: group)
+
+
+def refuse_bad_entries(
+    registration: "Registration", *, group_of: "Callable[[str], Any | None]"
+) -> None:
+    """Refuse a late registration when :func:`entry_error` finds a bad entry in it.
+
+    The command line installs it (``otto.params.set_entry_checker``) once the
+    startup check has run, so a registration made later is judged when it
+    is made, by the same judgement.
+
+    Raises:
+        OptionsRegistrationError: the first message :func:`entry_error`
+            gives for the registration's entries.
+    """
+    from ..params import OptionsRegistrationError
+
+    for entry in registration.entries:
+        message = entry_error(registration, entry, group_of=group_of)
+        if message is not None:
+            raise OptionsRegistrationError(message)
+
+
+# ---------------------------------------------------------------------------
 # Completion-cache walkers: the CLI's own command tree, serialised for the cache
 # ---------------------------------------------------------------------------
 #
@@ -318,9 +611,10 @@ def collect_current_commands() -> list[dict[str, Any]]:
     and the ``test`` verb's registered options) are served from the command
     tree like any other leaf's.
 
-    Each item is ``{"name": str, "options": list[dict]}``; a command whose
-    options can't be fully serialized is cached with ``options: []`` so
-    the name still completes even though the per-option flags don't.
+    Each item is ``{"name": str, "options": list[dict]}``, every option
+    recorded (:func:`otto.config.completion_cache.serialize_options`); a
+    command that cannot be built is cached with ``options: []`` so the name
+    still completes even though the per-option flags don't.
     """
     import logging
 
@@ -345,8 +639,8 @@ def collect_current_commands() -> list[dict[str, Any]]:
         callback = None
         if app is not None and app.registered_commands:
             callback = app.registered_commands[0].callback
-        options = serialize_options(callback, command_name=name) if callback else None
-        out.append({"name": name, "options": options if options is not None else []})
+        options = serialize_options(callback, command_name=name) if callback else []
+        out.append({"name": name, "options": options})
     return out
 
 
@@ -356,8 +650,8 @@ def collect_test_verb_options() -> list[dict[str, Any]]:
     The completion fast path builds ``otto test`` without the options
     registry, so it reads these instead
     (:func:`otto.cli.test.build_test_app`). A verb whose flags cannot be
-    built (a collision) or serialised caches ``[]``: ``otto test`` is where
-    the collision is reported.
+    built (a collision) caches ``[]``: ``otto test`` is where the collision
+    is reported.
     """
     import logging
 
@@ -375,48 +669,192 @@ def collect_test_verb_options() -> list[dict[str, Any]]:
         """Carry the verb's parameters for :func:`serialize_options`."""
 
     verb_flags.__signature__ = inspect.Signature(params)  # ty: ignore[missing-attribute]
-    return serialize_options(verb_flags, command_name="test") or []
+    return serialize_options(verb_flags, command_name="test")
 
 
-def _serialize_cli_children(app: Any) -> list[dict[str, Any]]:
+def _instruction_path(name: str) -> list[str]:
+    """Return the command path of instruction *name*: the group instructions hang on, then it."""
+    from .run import run_app
+
+    return [str(run_app.info.name), name]
+
+
+def collect_option_candidates() -> dict[str, Any]:
+    """Describe every options class a command may offer, each on its own, for the cache.
+
+    Enumerated from the two tables and from no command: first every
+    project instruction (``otto.instruction_catalog.PROJECT_INSTRUCTIONS``,
+    in table order) and each of its bodies' classes
+    (:func:`otto.project.commands.body_origins`), whose entry is the
+    instruction's own command path; then every registration
+    (:func:`otto.params.registrations`, in registration order). Each is
+    described by :func:`otto.cli.invoke.candidate_of`, the description
+    completion reads for one command too, and one that fails is left out.
+
+    Returns ``{"rows": {key: [row, ...]}, "uses": [{"key", "project",
+    "entries"}, ...]}``. Every occurrence is one use, in enumeration order,
+    with its own project and entries: nothing is merged and no selection is
+    read. A class's rows, one per parameter as a tree node records it
+    (:func:`otto.config.completion_tree.param_rows`), are stored once, the
+    first time its key is met.
+    """
+    import logging
+
+    from ..config.completion_tree import param_rows
+    from ..errors import is_containable
+    from ..instruction_catalog import PROJECT_INSTRUCTIONS
+    from ..params import options_key, registrations, resolve_registration
+    from ..project.commands import body_origins
+    from .invoke import candidate_of
+
+    found: list[Any] = []
+    try:
+        instructions = list(PROJECT_INSTRUCTIONS.items())
+    except BaseException as e:
+        if not is_containable(e):
+            raise
+        logging.getLogger(__name__).debug(f"completion-cache: no instruction bodies: {e!r}")
+        instructions = []
+    for name, instruction in instructions:
+        entries = (" ".join(_instruction_path(name)),)
+        found.extend(
+            candidate_of(options_key(origin.cls), origin.project, entries, lambda o=origin: o.cls)
+            for origin in body_origins(instruction)
+        )
+    found.extend(
+        candidate_of(
+            registration.key,
+            registration.project,
+            registration.entries,
+            lambda r=registration: resolve_registration(r).cls,
+        )
+        for registration in registrations()
+    )
+    rows: dict[str, list[dict[str, Any]]] = {}
+    uses: list[dict[str, Any]] = []
+    for candidate in found:
+        if candidate is None:
+            continue
+        uses.append(
+            {"key": candidate.key, "project": candidate.project, "entries": list(candidate.entries)}
+        )
+        if candidate.key not in rows:
+            rows[candidate.key] = list(param_rows(candidate.params).values())
+    return {"rows": rows, "uses": uses}
+
+
+def _typer_command_name(info: Any) -> str:
+    """Return the name a command registered on a Typer app goes by, as Typer names it."""
+    return info.name or typer.main.get_command_name(info.callback.__name__)
+
+
+def _typer_group_name(info: Any) -> str | None:
+    """Return the name a sub-app added to a Typer app goes by, or ``None`` when it has none."""
+    sub = info.typer_instance
+    names = (info.name, None if sub is None else sub.info.name)
+    return next((n for n in names if isinstance(n, str) and n), None)
+
+
+def _group_callback(sub: typer.Typer, info: Any = None) -> "Callable[..., Any] | None":
+    """Return the callback of the group Typer builds from *sub* (added with *info*), if any.
+
+    Typer takes it from the ``add_typer`` call first, then ``sub``'s
+    ``@callback()``, then ``typer.Typer(callback=...)``; an unset one is a
+    placeholder, not a callable.
+    """
+    registered = sub.registered_callback
+    found = (
+        getattr(info, "callback", None),
+        None if registered is None else registered.callback,
+        sub.info.callback,
+    )
+    return next((callback for callback in found if callable(callback)), None)
+
+
+@dataclass(frozen=True)
+class _TyperChild:
+    """One child of a Typer app, as ``typer.main.get_group`` builds it."""
+
+    name: str
+    """The name it goes by beneath the app."""
+    info: Any
+    """A command's ``CommandInfo``, or a named sub-app's ``TyperInfo``."""
+    is_group: bool
+    """Whether it is a named sub-app, which Typer keeps a group whatever it holds."""
+
+
+def _typer_children(app: typer.Typer) -> list[_TyperChild]:
+    """Return the children of *app*, in order, as Typer builds its group.
+
+    The one walk of a Typer app's registrations: its commands first, then
+    each sub-app it added, a named one (:func:`_typer_group_name`) as a
+    group and one with no name as its own children merged in its place, as
+    ``typer.main.get_group`` merges them. The entry check (what is hung on
+    ``otto run``) and the completion cache's children read it, so they name
+    what the built group lists.
+    """
+    children = [
+        _TyperChild(_typer_command_name(info), info, is_group=False)
+        for info in app.registered_commands
+    ]
+    for info in app.registered_groups:
+        sub = info.typer_instance
+        if sub is None:
+            continue
+        name = _typer_group_name(info)
+        if name is None:
+            children.extend(_typer_children(sub))
+        else:
+            children.append(_TyperChild(name, info, is_group=True))
+    return children
+
+
+def _serialize_cli_children(app: Any, spec: CommandSpec) -> list[dict[str, Any]]:
     """Serialize a third-party Typer group's children for the cache.
 
     Children reuse the instruction/suite option schema (rebuilt by
     :func:`otto.config.completion_stubs.build_stub_command` on the fast
-    path). A child whose options don't round-trip degrades to name+help —
-    the name still tab-completes, only ``--<TAB>`` falls back. Nested groups
-    recurse. A sub-app added with a name stays a group whatever it holds
-    (Typer flattens only the top-level app, ``_typer_app_flattens``); one
-    added with no name has its commands merged into its parent's, as Typer
-    merges them.
+    path), every parameter recorded, arguments included. Each child records
+    ``accepts_options``, the answer for it beneath *spec*'s group: a leaf
+    by :func:`otto.cli.invoke.leaf_accepts_options`, a group by whether a
+    leaf beneath it accepts (``_accepts_beneath``). Nested groups
+    recurse and record their own parameters as ``options`` beside their
+    ``commands``. The children are the one walk's (:func:`_typer_children`):
+    a sub-app added with a name stays a group whatever it holds (Typer
+    flattens only the top-level app, ``_typer_app_flattens``); one added
+    with no name has its commands merged into its parent's, as Typer merges
+    them.
     """
-    from typer.main import get_command_name
-
     from ..config.completion_cache import serialize_options
+    from .invoke import leaf_accepts_options
 
     children: list[dict[str, Any]] = []
-    for cmd_info in app.registered_commands:
-        cname = cmd_info.name or get_command_name(cmd_info.callback.__name__)
+    for child in _typer_children(app):
+        info = child.info
+        if not child.is_group:
+            children.append(
+                {
+                    "name": child.name,
+                    "help": info.help or inspect.getdoc(info.callback) or "",
+                    "options": serialize_options(info.callback, command_name=child.name),
+                    "accepts_options": leaf_accepts_options(
+                        spec, info.callback, beneath_group=True
+                    ),
+                }
+            )
+            continue
+        sub = info.typer_instance
+        ghelp = next((h for h in (info.help, sub.info.help) if isinstance(h, str)), "")
+        callback = _group_callback(sub, info)
         children.append(
             {
-                "name": cname,
-                "help": cmd_info.help or inspect.getdoc(cmd_info.callback) or "",
-                "options": serialize_options(cmd_info.callback, command_name=cname) or [],
+                "name": child.name,
+                "help": ghelp,
+                "commands": _serialize_cli_children(sub, spec),
+                "options": serialize_options(callback, command_name=child.name) if callback else [],
+                "accepts_options": _accepts_beneath(spec, typer.main.get_group(sub)),
             }
         )
-    for grp_info in app.registered_groups:
-        sub = grp_info.typer_instance
-        if sub is None:
-            continue
-        gname = next(
-            (n for n in (grp_info.name, sub.info.name) if isinstance(n, str) and n),
-            None,
-        )
-        if gname is None:
-            children.extend(_serialize_cli_children(sub))
-            continue
-        ghelp = next((h for h in (grp_info.help, sub.info.help) if isinstance(h, str)), "")
-        children.append({"name": gname, "help": ghelp, "commands": _serialize_cli_children(sub)})
     return children
 
 
@@ -424,7 +862,8 @@ def collect_cli_commands() -> list[dict[str, Any]]:
     """Snapshot third-party top-level CLI commands for the completion cache.
 
     Reads the live :data:`otto.cli.registry.CLI_COMMANDS` registry and
-    returns one ``{"name", "help", "lab_free"}`` dict per entry whose
+    returns one ``{"name", "help", "lab_free", "accepts_options"}`` dict per
+    entry whose
     registering module (``CLI_COMMANDS.origin(name)``) is *not* under
     ``otto.`` — built-in commands re-register
     on every real invocation (bootstrap always runs), so caching them would
@@ -433,9 +872,12 @@ def collect_cli_commands() -> list[dict[str, Any]]:
     executed, which the completion fast path deliberately skips; caching
     their name/help/``lab_free`` here is what lets them still tab-complete.
 
-    A GROUP entry additionally carries ``"commands"`` (recursive child
-    metadata) and a flattening single-command app carries ``"options"`` —
-    both omitted when empty. Serializing children may import a lazy
+    ``accepts_options`` is the one reader's answer for the command
+    (:func:`otto.cli.invoke.leaf_accepts_options`). A GROUP entry
+    additionally carries ``"commands"`` (recursive child metadata) and its
+    own parameters as ``"options"``; a flattening single-command app and a
+    function loader carry their command's ``"options"`` — each omitted when
+    empty. Serializing children may import a lazy
     ``"pkg.mod:attr"`` loader's module: a slow-path-only, once-per-cache-
     refresh cost, contained per command (a broken loader degrades that entry
     to name+help and real dispatch still reports the import error loudly).
@@ -444,28 +886,40 @@ def collect_cli_commands() -> list[dict[str, Any]]:
 
     from ..config.completion_cache import serialize_options
     from ..errors import is_containable
+    from .invoke import leaf_accepts_options
 
     log = logging.getLogger(__name__)
     out: list[dict[str, Any]] = []
     for name, spec in CLI_COMMANDS.items():
         if CLI_COMMANDS.origin(name=name).startswith("otto."):
             continue
-        entry: dict[str, Any] = {"name": name, "help": spec.help, "lab_free": spec.lab_free}
+        entry: dict[str, Any] = {
+            "name": name,
+            "help": spec.help,
+            "lab_free": spec.lab_free,
+            "accepts_options": leaf_accepts_options(spec, None, beneath_group=False),
+        }
         try:
             loader = spec.loader
             if isinstance(loader, str):
                 mod_name, _, attr = loader.partition(":")
                 loader = getattr(importlib.import_module(mod_name), attr)
+            options: list[dict[str, Any]] = []
             if isinstance(loader, typer.Typer):
                 if _typer_app_flattens(loader):
                     cmd_info = loader.registered_commands[0]
                     options = serialize_options(cmd_info.callback, command_name=spec.name)
-                    if options:
-                        entry["options"] = options
                 else:
-                    commands = _serialize_cli_children(loader)
+                    commands = _serialize_cli_children(loader, spec)
                     if commands:
                         entry["commands"] = commands
+                    callback = _group_callback(loader)
+                    if callback is not None:
+                        options = serialize_options(callback, command_name=spec.name)
+            elif callable(loader):
+                options = serialize_options(loader, command_name=spec.name)
+            if options:
+                entry["options"] = options
         # Containment seam: the cache stays name-only, dispatch reports loudly.
         #
         # BaseException, not Exception: this imports a THIRD-PARTY loader module,

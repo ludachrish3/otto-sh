@@ -297,8 +297,9 @@ def bootstrap() -> BootstrapResult:
     # here, before any project's init runs, so every project's actions class is
     # checked against otto's own; `declare()` rather than the import alone, so
     # a slot emptied since the module was first imported is filled again. The
-    # merged flags are checked after the loop instead (see below), because they
-    # are only known once every project has declared its own bodies.
+    # bodies' options are not merged here at all: `otto run <name>` merges
+    # them when it builds that one command, so a clash between two projects'
+    # classes stops that command and not every otto command at startup.
     #
     # Not contained like the per-project imports below: this is otto's own module,
     # so a failure here is a bug in otto, not a project's, and framing it as one
@@ -316,7 +317,7 @@ def bootstrap() -> BootstrapResult:
     try:
         # The project layer sits below the root. Each function is read off its
         # module when called, so a caller may substitute it.
-        from .project import actions, commands
+        from .project import actions
 
         actions.declare()
         for project in resolution.ordered:
@@ -329,10 +330,6 @@ def bootstrap() -> BootstrapResult:
                         if not is_containable(e):
                             raise
                         errors.append(BootstrapError(project.root, source=mod, cause=e))
-        # Every project has spoken: check each project instruction's merged
-        # options. Not contained -- a cross-project options collision is a
-        # declared conflict the user must resolve, not one project's breakage.
-        commands.check_project_instruction_options()
         # Every loaded project's host classes are registered now, so its
         # [os_profiles] tables can be checked: a table may name a class an init
         # module registers. A skipped project's init never ran, so it is not judged.

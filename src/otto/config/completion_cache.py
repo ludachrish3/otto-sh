@@ -135,10 +135,9 @@ import logging
 import os
 import stat as stat_module
 import time
-import types
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
 
 from . import corpus_snapshot
 
@@ -281,7 +280,15 @@ CACHE_FILENAME = "completion_cache.json"
 #      the host summaries (labs unioned across projects, every pattern resolved
 #      against every project's declared names). The payload's shape is the
 #      same, but a v32 entry holds the narrower buckets, so it is dropped.
-SCHEMA_VERSION = 33
+# v34: "names" gains "option_candidates" (every options class a command may
+#      offer, one row list per class and one use per occurrence) and each
+#      covered leaf's tree node "candidates" (indexes into those uses). A
+#      command's "options" keep every flag: an option the cache cannot
+#      describe is "kind": "opaque" with its completion row, where a v33
+#      entry dropped the whole command's flags. "commands" records carry
+#      "accepts_options", a function loader's options, and a group's own
+#      parameters. A v33 entry has none of these, so it is dropped.
+SCHEMA_VERSION = 34
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.
@@ -365,10 +372,9 @@ COLLECT_LOCK_STALE_SECONDS = COLLECT_TIMEOUT_SECONDS + 30
 
 
 # Python type <-> serialized kind. Kept intentionally small: these are the
-# only types whose tab-completion shape (value vs. flag, how many args) we
-# need to recreate. Anything not in this map is "unsupported" for caching
-# purposes — the option is logged at DEBUG and dropped from the cached
-# schema; completion still works on the slow path.
+# only types whose tab-completion shape (value vs. flag, how many args) a kind
+# alone recreates. Any other type is recorded as OPAQUE_KIND, with the
+# parameter's completion row beside it (serialize_options).
 _TYPE_TO_KIND: dict[Any, str] = {
     str: "str",
     int: "int",
@@ -377,6 +383,9 @@ _TYPE_TO_KIND: dict[Any, str] = {
     Path: "path",
 }
 _KIND_TO_TYPE: dict[str, Any] = {v: k for k, v in _TYPE_TO_KIND.items()}
+
+OPAQUE_KIND = "opaque"
+"""A recorded option whose type no other kind names; its ``"row"`` says how it parses."""
 
 
 def is_completion_mode() -> bool:
@@ -763,23 +772,12 @@ def inventory_digest_text(projects: list["Project"]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _unwrap_optional(t: Any) -> Any:
-    """Strip a single ``Optional[...]`` wrapper, leaving other types intact."""
-    origin = get_origin(t)
-    is_union = origin is Union or isinstance(t, types.UnionType)
-    if not is_union:
-        return t
-    non_none = [a for a in get_args(t) if a is not type(None)]
-    if len(non_none) == 1:
-        return non_none[0]
-    return t
-
-
 def _type_to_kind(base: Any) -> str | None:
     """Map a Python type to the cache's ``kind`` tag, or ``None`` if unsupported."""
     from ..params import contains_secret_type  # lazy: only the cache-seed path asks
+    from ..utils import unwrap_optional
 
-    base = _unwrap_optional(base)
+    base = unwrap_optional(base)
     if base in _TYPE_TO_KIND:
         return _TYPE_TO_KIND[base]
     is_list = get_origin(base) is list
@@ -790,21 +788,6 @@ def _type_to_kind(base: Any) -> str | None:
         # command line, so a string is what completion rebuilds.
         return "str_list" if is_list else "str"
     return None
-
-
-def _extract_flags(option_info: Any) -> list[str]:
-    """Return the user-authored flag strings from a ``typer.Option`` instance.
-
-    Typer stores the first positional flag as the info's ``default`` attribute
-    and the rest in ``param_decls``; concatenate them in declaration order so
-    the rebuilder reproduces the original call.
-    """
-    flags: list[str] = []
-    primary = getattr(option_info, "default", None)
-    if isinstance(primary, str) and (primary.startswith("-") or "/" in primary):
-        flags.append(primary)
-    flags.extend(getattr(option_info, "param_decls", ()) or ())
-    return flags
 
 
 def _json_safe_default(default: Any) -> Any:
@@ -830,12 +813,25 @@ def serialize_options(
     callback: Any,
     *,
     command_name: str,
-) -> list[dict[str, Any]] | None:
-    """Convert a Typer command callback's signature into cache-shape dicts.
+) -> list[dict[str, Any]]:
+    """Convert a Typer command callback's signature into cache-shape dicts, one per parameter.
 
-    Returns ``None`` (not an empty list) when any parameter uses an
-    annotation form we don't know how to round-trip — that causes the
-    command to be skipped entirely rather than cached with a half-signature.
+    Every parameter but a ``typer.Context`` is recorded, so no flag is ever
+    dropped: ``{"name", "flags", "kind", "default", "help"}``, each read
+    through :func:`otto.params.declared_parameter`, so both of Typer's
+    styles give the same record (``flags`` are the spellings the author
+    wrote; the default-value style's ``default`` is its info's own). ``kind``
+    names the type (``str``, ``int``, ``float``, ``bool``, ``path``,
+    ``str_list``); a type none of them names is :data:`OPAQUE_KIND`. Where
+    ``kind`` cannot say how the parameter parses (an opaque type, a
+    positional argument, or a count or flag that takes no value) the record
+    also carries ``"row"``, the completion row a tree node gives
+    the parameter Typer builds for it
+    (:func:`otto.config.completion_tree.param_rows`): its spellings, whether
+    and how many values it takes, and its completion source; ``row["flags"]``
+    is empty for an argument. A record whose kind says it all is the same as
+    it was before rows existed. A signature that cannot be read gives ``[]``.
+
     The CLI's command-tree walkers in ``otto.cli.registry`` call it: the walk
     lives with the CLI, which ``otto.config`` never imports, and the cache's
     shape lives here.
@@ -845,73 +841,79 @@ def serialize_options(
         sig = inspect.signature(callback)
     except (TypeError, ValueError) as e:  # pragma: no cover — paranoia
         log.debug(
-            f"completion-cache: skipping {command_name!r}, signature inspection failed: {e!r}",
+            f"completion-cache: no options for {command_name!r}, signature unreadable: {e!r}",
         )
-        return None
+        return []
 
     import typer  # lazy: this runs at cache-seed time, not at module import
 
+    from ..params import declared_parameter  # lazy: like the other cache-seed reads
+
+    # The suite runner carries a Typer-injected ``ctx: typer.Context``
+    # parameter (used to read run options from ``ctx.meta``). It is not a CLI
+    # option, so it is not recorded.
+    declared = [p for p in sig.parameters.values() if p.annotation is not typer.Context]
+    built: dict[str, dict[str, Any]] | None = None
     options: list[dict[str, Any]] = []
-    for pname, param in sig.parameters.items():
-        ann = param.annotation
-        # The suite runner carries a Typer-injected ``ctx: typer.Context``
-        # parameter (used to read run options from ``ctx.meta``). It is not a CLI
-        # option and has no ``Annotated[...]`` metadata, so skip it rather than
-        # treating the whole command as un-cacheable.
-        if ann is typer.Context:
-            continue
-        if get_origin(ann) is Annotated:
-            args = get_args(ann)
-            base = args[0]
-            # OptionInfo lives at module path typer.models.OptionInfo; match on
-            # attribute shape to avoid importing typer at module load.
-            meta = next(
-                (a for a in args[1:] if hasattr(a, "param_decls")),
-                None,
-            )
-        elif param.default is not inspect.Parameter.empty:
-            # A bare annotation with a default is what typer makes a plain
-            # `--name` option of: an options-class field written without
-            # `typer.Option(...)` (`firmware: str = "latest"`).
-            base, meta = ann, typer.Option()
-        else:
-            log.debug(
-                f"completion-cache: skipping option {command_name}.{pname!r} — "
-                f"annotation {ann!r} is not Annotated[...] and has no default",
-            )
-            return None
-        if meta is None:
-            log.debug(
-                f"completion-cache: skipping option {command_name}.{pname!r} — "
-                f"no typer.Option metadata in annotation",
-            )
-            return None
-
-        kind = _type_to_kind(base)
-        if kind is None:
-            log.debug(
-                f"completion-cache: skipping option {command_name}.{pname!r} — "
-                f"unsupported annotation type {base!r}",
-            )
-            return None
-
-        options.append(
-            {
-                "name": pname,
-                "flags": _extract_flags(meta),
-                "kind": kind,
-                # A flag whose help hides its default (``show_default=False``,
-                # which otto.params.options_params sets on every sensitive
-                # field) never has that default written to disk either.
-                "default": (
-                    None
-                    if getattr(meta, "show_default", True) is False
-                    else _json_safe_default(param.default)
-                ),
-                "help": getattr(meta, "help", None) or "",
-            }
+    for param in declared:
+        # The one reading of how Typer takes the parameter (otto.params): its
+        # info, whichever style wrote it, and whether it is an argument.
+        reading = declared_parameter(param)
+        info = reading.info
+        kind = _type_to_kind(reading.annotation)
+        record: dict[str, Any] = {
+            "name": param.name,
+            "flags": reading.declarations,
+            "kind": kind or OPAQUE_KIND,
+            # A flag whose help hides its default (``show_default=False``,
+            # which otto.params.options_params sets on every sensitive
+            # field) never has that default written to disk either.
+            "default": (
+                None
+                if getattr(info, "show_default", True) is False
+                else _json_safe_default(reading.default)
+            ),
+            "help": getattr(info, "help", None) or "",
+        }
+        # A named kind takes one value per use, or none for a bool: only a
+        # tuple takes more, and no kind names a tuple, so it is opaque. A
+        # count, or a flag that is not a bool, takes no value whatever its kind.
+        valueless = (
+            bool(getattr(info, "count", False))
+            or getattr(info, "flag_value", None) is not None
+            or (bool(getattr(info, "is_flag", None)) and kind != "bool")
         )
+        if kind is None or reading.argument or valueless:
+            if built is None:
+                built = _built_rows(declared, command_name=command_name)
+            row = built.get(param.name)
+            if row is not None:
+                record["row"] = row
+        options.append(record)
     return options
+
+
+def _built_rows(
+    params: "list[inspect.Parameter]", *, command_name: str
+) -> dict[str, dict[str, Any]]:
+    """Return the completion row of each parameter Typer builds for the signature *params*.
+
+    ``{}`` when Typer cannot build them (a type Typer itself does not
+    support, a string annotation): the records keep their names and flags.
+    """
+    from ..errors import is_containable
+    from ._typer import carrier
+    from .completion_tree import param_rows
+
+    try:
+        return param_rows(carrier(params).params)
+    except BaseException as e:  # a cache write never fails over one command
+        if not is_containable(e):
+            raise
+        logging.getLogger(__name__).debug(
+            f"completion-cache: no completion rows for {command_name!r}: {e!r}"
+        )
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -1045,7 +1047,8 @@ def read_cache(
     ``docker_images``, ``docker_services_by_use_case``, ``active_projects``,
     ``term_backends``, ``transfer_backends``, ``usernames``, ``commands``,
     ``labs``, ``host_classes_by_id``, ``projects``, ``links``,
-    ``logins_by_host``, ``docker_default_parent_by_lab`` and ``inventory_names`` keys.
+    ``logins_by_host``, ``docker_default_parent_by_lab``, ``inventory_names`` and
+    ``option_candidates`` keys.
     ``instructions`` and ``hosts`` are required; the rest default to empty
     when a payload omits them.
 
@@ -1079,6 +1082,7 @@ def read_cache(
     logins_by_host = merged.get("logins_by_host", {})
     docker_default_parent_by_lab = merged.get("docker_default_parent_by_lab", {})
     inventory_names = merged.get("inventory_names", [])
+    option_candidates = merged.get("option_candidates", {"rows": {}, "uses": []})
     if (
         not isinstance(instructions, list)
         or not isinstance(test_options, list)
@@ -1101,6 +1105,7 @@ def read_cache(
         or not isinstance(logins_by_host, dict)
         or not isinstance(docker_default_parent_by_lab, dict)
         or not isinstance(inventory_names, list)
+        or not isinstance(option_candidates, dict)
     ):
         return None
     return {
@@ -1125,6 +1130,7 @@ def read_cache(
         "logins_by_host": logins_by_host,
         "docker_default_parent_by_lab": docker_default_parent_by_lab,
         "inventory_names": inventory_names,
+        "option_candidates": option_candidates,
     }
 
 
@@ -1204,6 +1210,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     logins_by_host: dict[str, list[dict[str, Any]]] | None = None,
     docker_default_parent_by_lab: dict[str, str] | None = None,
     inventory_names: list[str] | None = None,
+    option_candidates: dict[str, Any] | None = None,
     shim: dict[str, Any] | None = None,
     digests: dict[str, str] | None = None,
     tainted: bool = False,
@@ -1267,6 +1274,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
             "logins_by_host": logins_by_host or {},
             "docker_default_parent_by_lab": docker_default_parent_by_lab or {},
             "inventory_names": inventory_names or [],
+            "option_candidates": option_candidates or {"rows": {}, "uses": []},
         },
     }
     if shim is not None:

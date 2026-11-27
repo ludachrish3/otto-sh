@@ -369,12 +369,17 @@ def scoped_projects(project_root, monkeypatch, _generated_modules_evicted):
 
 
 def _root(monkeypatch, **fields):
-    """Stand in for the root callback's stash: the ``-l`` / ``-I`` / ``-E`` it parsed."""
+    """Stand in for the root's parse: the ``-l`` / ``-I`` / ``-E`` it read, and their record."""
     from otto.cli import invoke
+    from otto.config.scope import ScopeSelection
     from tests._fixtures.rootoptions import make_root_options
 
     opts = make_root_options(**fields)
+    selection = ScopeSelection(
+        labs=tuple(opts.labs or ()), include=opts.include_projects, exclude=opts.exclude_projects
+    )
     monkeypatch.setattr(invoke, "maybe_root_options", lambda ctx: opts)
+    monkeypatch.setattr(invoke, "scope_selection", lambda ctx: selection)
 
 
 def test_list_tests_with_lab_omits_inactive_tree(otto_test_cli, scoped_projects, monkeypatch):

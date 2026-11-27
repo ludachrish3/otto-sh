@@ -1,5 +1,6 @@
 """Top-level ``otto`` CLI: callback, subcommand dispatch, and eager option handlers."""
 
+import contextlib
 import dataclasses
 import importlib
 import os
@@ -15,7 +16,12 @@ from typing import (
 import typer
 from typing_extensions import override
 
-from ..config._typer import NoSuchOption, QuietCompletionGroup, pending_subcommand_args
+from ..config._typer import (
+    NoSuchOption,
+    QuietCompletionGroup,
+    built_spellings,
+    pending_subcommand_args,
+)
 from ..config.env import (
     DEFAULT_LOG_RETENTION_DAYS,
     FIELD_PRODUCT_ENV_VAR,
@@ -376,6 +382,12 @@ class _OttoGroup(QuietCompletionGroup):
     cache entry can never shadow real dispatch.
     """
 
+    __otto_root__ = True
+    """``otto.cli.invoke.OTTO_ROOT_ATTR``: a context whose root runs this group is
+    otto's, and ``otto.cli.invoke.scope_selection`` reads the selection from it.
+    Spelled out rather than imported: this module stays off ``otto.cli.invoke``
+    at import, for the completion fast path."""
+
     _stub_cache: dict[str, Any]
     _real_cache: dict[str, Any]
     _cache_revision: int
@@ -396,9 +408,15 @@ class _OttoGroup(QuietCompletionGroup):
         # One root invoke wraps every subcommand's parse, so a root option typed
         # after the subcommand is hinted here rather than in each command class.
         try:
-            return super().invoke(ctx)
+            with self._dispatch_mark(ctx):
+                return super().invoke(ctx)
         except NoSuchOption as e:
-            global_opts = {o for p in self.params for o in (*p.opts, *p.secondary_opts)}
+            # An unknown lab is the error to fix first: reported in place of
+            # the parser's, and looked up only on this failure path.
+            from .invoke import unknown_lab_on_failed_parse
+
+            unknown_lab_on_failed_parse(ctx)
+            global_opts = {word for param in self.params for word in built_spellings(param)}
             target = self._dispatch_target(ctx)
             if target is not None and e.option_name in global_opts:
                 e.message = (
@@ -406,6 +424,38 @@ class _OttoGroup(QuietCompletionGroup):
                     f"global options go before the subcommand: otto {e.option_name} ... {target}"
                 )
             raise
+
+    def _dispatch_mark(self, ctx: Any) -> "contextlib.AbstractContextManager[None]":
+        """Hold the dispatched command's pending mark over the dispatch.
+
+        The registered top-level command's spec is stashed for the invocation
+        and ``otto.cli.invoke.pending_options`` decides the mark, so a read of
+        an options class in a group's callback raises when the command accepts
+        registered options. The leaf's own record, or the context its lab
+        slice installs, takes over from there. A static or unknown command
+        holds nothing.
+        """
+        target = self._dispatch_target(ctx)
+        spec = None if target is None else self._registered_spec(ctx, target)
+        if spec is None:
+            return contextlib.nullcontext()
+        from ..params import command_options
+        from .invoke import pending_options, stash_command_spec
+
+        stash_command_spec(ctx, spec)
+        return command_options(pending_options(ctx))
+
+    def _registered_spec(self, ctx: Any, cmd_name: str) -> "CommandSpec | None":
+        """Return the registration *cmd_name* dispatches to, else ``None``.
+
+        ``None`` for a static command of this group (it shadows the registry)
+        and for a name nothing registered.
+        """
+        from .registry import CLI_COMMANDS
+
+        if super().get_command(ctx, cmd_name) is not None or cmd_name not in CLI_COMMANDS:
+            return None
+        return CLI_COMMANDS.get(cmd_name)
 
     def _dispatch_target(self, ctx: Any) -> str | None:
         """Return the subcommand name pending dispatch, if any."""
@@ -500,17 +550,29 @@ class _OttoGroup(QuietCompletionGroup):
 
     @override
     def get_command(self, ctx: Any, cmd_name: str) -> Any:
-        from .registry import CLI_COMMANDS
+        spec = self._registered_spec(ctx, cmd_name)
+        if spec is None:
+            static = super().get_command(ctx, cmd_name)
+            return static if static is not None else self._cached_stub(cmd_name)
+        if self._wants_real(ctx, cmd_name):
+            real = self._real(spec)
+            if not ctx.resilient_parsing:
+                # A real parse (a dispatch, the command's --help) refuses a
+                # top-level command whose marker disagrees with its
+                # registration; a completion parse and the cache rebuild's
+                # walk (both resilient) still resolve it, so one
+                # misregistered command never breaks a TAB or root help.
+                from .invoke import refuse_a_disagreeing_marker
 
-        static = super().get_command(ctx, cmd_name)
-        if static is not None:
-            return static
-        if cmd_name in CLI_COMMANDS:
-            spec = CLI_COMMANDS.get(cmd_name)
-            if self._wants_real(ctx, cmd_name):
-                return self._real(spec)
-            return self._stub(spec)
-        return self._cached_stub(cmd_name)
+                refuse_a_disagreeing_marker(spec, real)
+                _judge_group_entries(spec, real)
+            return real
+        return self._stub(spec)
+
+    def resolved(self, name: str) -> Any:
+        """Return the command this group has resolved for *name*, or ``None`` while it has not."""
+        _, real = self._caches()
+        return real.get(name)
 
     def _cached_stub(self, cmd_name: str) -> Any:
         """Return a stub for *cmd_name* sourced from the completion cache.
@@ -519,8 +581,14 @@ class _OttoGroup(QuietCompletionGroup):
         holds them here (bootstrap didn't run), but the cache snapshot from a
         prior slow-path run does. An entry with serialized child metadata
         (``commands``) rebuilds a nested group of stubs so the group's
-        subcommands tab-complete; a leaf entry with cached ``options``
-        rebuilds them for ``--<TAB>``. Dispatch never reaches this branch — a
+        subcommands tab-complete, a group with its own parameters; a leaf
+        entry with cached ``options``, or one that accepts registered
+        options, rebuilds them for ``--<TAB>``. The stub is wrapped as a real
+        command is (``otto.cli.invoke.wrap_leaf_callbacks``) under a spec
+        carrying the entry's ``accepts_options``, each leaf's callback marked
+        with its own (:func:`_mark_cached_accepts`): a TAB offers it the flags
+        of the cached options classes that cover it, as the live command's
+        TAB offers them. Dispatch never reaches this branch — a
         dispatch target either resolves via ``CLI_COMMANDS`` (bootstrap ran
         first, per :func:`entry`) or is an unknown command Typer rejects. The
         synthesized spec's ``lab_free`` is forward-looking metadata only; stubs
@@ -540,14 +608,23 @@ class _OttoGroup(QuietCompletionGroup):
             return None
         children = entry.get("commands") or []
         options = entry.get("options") or []
-        if children or options:
+        accepts = entry.get("accepts_options")
+        spec = CommandSpec(
+            name=cmd_name,
+            loader=None,
+            help=entry.get("help"),
+            lab_free=bool(entry.get("lab_free")),
+            accepts_options=accepts if isinstance(accepts, bool) else None,
+        )
+        if children or options or (accepts and entry.get("commands") is None):
             cache, _ = self._caches()
             if cmd_name not in cache:
                 from ..config.completion_stubs import build_stub_command, build_stub_group
+                from .invoke import wrap_leaf_callbacks
 
                 help_text = _stub_help(cmd_name, entry.get("help"))
                 if children:
-                    tmp = build_stub_group(cmd_name, help_text, children)
+                    tmp = build_stub_group(cmd_name, help_text, children, options)
                     rich_stub: Any = typer.main.get_group(tmp)
                 else:
                     # get_command flattens the single-command stub app to the
@@ -555,14 +632,9 @@ class _OttoGroup(QuietCompletionGroup):
                     tmp = build_stub_command(cmd_name, options, help=help_text)
                     rich_stub = typer.main.get_command(tmp)
                 rich_stub.name = cmd_name
-                cache[cmd_name] = rich_stub
+                _mark_cached_accepts(rich_stub, entry)
+                cache[cmd_name] = wrap_leaf_callbacks(rich_stub, spec)
             return cache[cmd_name]
-        spec = CommandSpec(
-            name=cmd_name,
-            loader=None,
-            help=entry.get("help"),
-            lab_free=bool(entry.get("lab_free")),
-        )
         return self._stub(spec)
 
 
@@ -588,7 +660,7 @@ app = typer.Typer(
 def main(  # noqa: PLR0913 — CLI command params
     ctx: typer.Context,
     *,
-    labs: Annotated[
+    labs: Annotated[  # noqa: ARG001 — read through selection_from_params(ctx.params), the selection's one reader
         list[str] | None,
         typer.Option(
             "--lab",
@@ -802,7 +874,12 @@ def main(  # noqa: PLR0913 — CLI command params
     if ctx.resilient_parsing:
         return
 
-    from .invoke import RootOptions, ensure_inline_lab
+    from .invoke import (
+        RootOptions,
+        ensure_inline_lab,
+        selection_from_params,
+        settle_for_root_listing,
+    )
 
     if probe and not dry_run:
         # A usage error, not a silent promotion to a dry run: --probe DIALS
@@ -844,8 +921,11 @@ def main(  # noqa: PLR0913 — CLI command params
 
         xdir = home_root.default_xdir()
 
+    # The selection goes through its one reader, so the record and every
+    # reader of the root's parsed parameters agree.
+    selection = selection_from_params(ctx.params)
     ctx.meta["_otto_root_options"] = RootOptions(
-        labs=labs,
+        labs=list(selection.labs) or None,
         xdir=xdir,
         log_days=log_days,
         log_level=log_level,
@@ -856,8 +936,8 @@ def main(  # noqa: PLR0913 — CLI command params
         holder=holder,
         skip_reservation_check=skip_reservation_check,
         field=field,
-        include_projects=tuple(include_projects or ()),
-        exclude_projects=tuple(exclude_projects or ()),
+        include_projects=selection.include,
+        exclude_projects=selection.exclude,
     )
 
     # Root capture (spec 2026-08-30 §3.1): the console handler goes up NOW,
@@ -868,6 +948,10 @@ def main(  # noqa: PLR0913 — CLI command params
     from ..logger import management
 
     management.install_console(log_level, show_time=show_time)
+
+    if list_products or list_tools or show_lab or list_hosts:
+        # A root listing never runs the command after it: nothing marks.
+        settle_for_root_listing(ctx)
 
     if list_products or list_tools:
         # Read-only listings that contact no host. Without --lab they describe
@@ -899,6 +983,29 @@ def main(  # noqa: PLR0913 — CLI command params
         raise typer.Exit
 
 
+def _mark_cached_accepts(cmd: Any, record: "dict[str, Any]") -> None:
+    """Give each leaf stub under *cmd* its record's ``accepts_options`` as its callback's marker.
+
+    *cmd* is a stub built from the cached *record*
+    (:meth:`_OttoGroup._cached_stub`). A leaf beneath a group is judged by its
+    callback's marker (``otto.cli.invoke.leaf_accepts_options``), so the stub's
+    leaf answers as the live leaf the record was written from did.
+    """
+    from .invoke import ACCEPTS_OPTIONS_ATTR
+
+    commands = getattr(cmd, "commands", None)
+    if commands is None:
+        accepts = record.get("accepts_options")
+        callback = getattr(cmd, "callback", None)
+        if isinstance(accepts, bool) and callback is not None:
+            setattr(callback, ACCEPTS_OPTIONS_ATTR, accepts)
+        return
+    for child in record.get("commands") or []:
+        sub = commands.get(child.get("name")) if isinstance(child, dict) else None
+        if sub is not None:
+            _mark_cached_accepts(sub, child)
+
+
 def _attach_cached_stubs(
     parent: typer.Typer,
     commands: list[dict[str, Any]],
@@ -916,6 +1023,38 @@ def _attach_cached_stubs(
             continue
         options = entry.get("options") or []
         parent.add_typer(build_stub_command(name, options))
+
+
+def _judge_group_entries(spec: "CommandSpec", group: Any) -> None:
+    """Judge the entries under a just-resolved command; print each new error as a warning line.
+
+    Only a real parse resolves through here (a TAB never prints or fails),
+    and only after a bootstrap: with no published result (the completion
+    fast path) there is nothing to judge against. The startup printer has
+    already run, so a new error is printed here; it stays on the result,
+    where the command's gate judges it.
+    """
+    from ..declared import published_result
+    from .registry import check_group_entries
+
+    result = published_result()
+    if result is None:
+        return
+    before = len(result.errors)
+    check_group_entries(result, spec, group)
+    for err in result.errors[before:]:
+        typer.echo(f"warning: {err}", err=True)
+
+
+def _resolved_command(name: str) -> Any:
+    """Return the command otto's root group resolved for *name* this invocation, else ``None``."""
+    from ..config._typer import get_current_context
+
+    ctx = get_current_context(silent=True)
+    if ctx is None:
+        return None
+    root = ctx.find_root().command
+    return root.resolved(name) if isinstance(root, _OttoGroup) else None
 
 
 def _emit_bootstrap_findings(result: "BootstrapResult") -> None:
@@ -992,6 +1131,7 @@ DELEGATED_NAMES_KEYS: frozenset[str] = frozenset(
         "logins_by_host",
         "docker_default_parent_by_lab",
         "inventory_names",
+        "option_candidates",
     }
 )
 """The remaining ``names`` payload keys. Each is consumed by a completer that
@@ -1015,7 +1155,10 @@ default to by the one rule (a lab the rule refuses is absent); the docker
 completers read it to scope a container id to the default parent.
 ``inventory_names`` is read by ``otto.cli.inventory``'s ``--inventory``
 completer, which falls back to the settings' declared names on a miss.
-Test names are in no section:
+``option_candidates`` (every options class's completion rows, and each use
+of one) is read by the completion offer (``otto.cli.invoke.completion_candidates``),
+which checks it is a mapping and answers from the live registry otherwise, and
+by the shim, whose tree nodes name its uses by index. Test names are in no section:
 they live in the per-file test tables (``otto.config.collected_tests``).
 
 ``tests/unit/config/test_cache_sections.py`` pins that
@@ -1117,6 +1260,78 @@ def print_traceback_if_debug() -> None:
         traceback.print_exc()
 
 
+def write_completion_cache(
+    projects: "list[Project]",
+    *,
+    digests: "dict[str, str] | None" = None,
+    tainted: bool = False,
+) -> None:
+    """Write the completion cache for *projects* from what this process has registered.
+
+    The one assembly of ``otto.config.completion_cache.write_cache``'s
+    keywords: every ``names`` key from its collector, the ``shim`` section's
+    payload from that section's own collector, and the CLI's collectors
+    (``_completion_collectors``), read once. :func:`entry` calls it after a bootstrap that found the cache
+    stale; *digests* are the section digests that check computed (``None``
+    recomputes them) and *tainted* marks a write after a contained bootstrap
+    error. An ``OSError`` from the write propagates.
+    """
+    from ..config.cache_sections import SHIM_SECTION, section_by_name
+    from ..config.completion_cache import (
+        collect_active_project_names,
+        collect_backend_names,
+        collect_docker_capable_host_ids,
+        collect_docker_default_parent_by_lab,
+        collect_docker_image_names,
+        collect_docker_services_by_use_case,
+        collect_docker_use_case_names,
+        collect_host_classes_by_id,
+        collect_host_drops,
+        collect_host_ids,
+        collect_host_ids_by_lab,
+        collect_inventory_names,
+        collect_lab_names,
+        collect_links,
+        collect_logins_by_host,
+        collect_project_names,
+        collect_reservation_usernames,
+        write_cache,
+    )
+
+    cli = _completion_collectors()
+    backends = collect_backend_names()
+    write_cache(
+        projects,
+        cli.instructions(),
+        collect_host_ids(projects),
+        test_options=cli.test_options(),
+        docker_hosts=collect_docker_capable_host_ids(projects),
+        docker_use_cases=collect_docker_use_case_names(projects),
+        docker_images=collect_docker_image_names(projects),
+        docker_services_by_use_case=collect_docker_services_by_use_case(projects),
+        active_projects=collect_active_project_names(projects),
+        term_backends=backends["term_backends"],
+        transfer_backends=backends["transfer_backends"],
+        usernames=collect_reservation_usernames(projects),
+        commands=cli.commands(),
+        labs=collect_lab_names(projects),
+        hosts_by_lab=collect_host_ids_by_lab(projects),
+        host_drops=collect_host_drops(projects),
+        host_classes_by_id=collect_host_classes_by_id(projects),
+        projects=collect_project_names(projects),
+        links=collect_links(projects),
+        logins_by_host=collect_logins_by_host(projects),
+        docker_default_parent_by_lab=collect_docker_default_parent_by_lab(projects),
+        inventory_names=collect_inventory_names(projects),
+        option_candidates=cli.option_candidates(),
+        # The shim section's own collector, over the same collectors: the
+        # section and this write build the tree by one call, so they cannot drift.
+        shim=section_by_name(SHIM_SECTION).collect(projects, cli),
+        digests=digests,
+        tainted=tainted,
+    )
+
+
 def _completion_collectors() -> "CliCollectors":
     """Return the CLI's walks of its own command tree, for a completion-cache rebuild.
 
@@ -1124,9 +1339,34 @@ def _completion_collectors() -> "CliCollectors":
     the cache's writer, takes the walkers, the root app and the dispatch key from
     here, as do the cache's sections (``otto.config.cache_sections.SECTIONS``),
     its parity reference.
+
+    The candidates are described once per returned instance: the ``names``
+    section stores them and every leaf of the ``shim`` section's tree names
+    the uses that cover it (``otto.cli.invoke.covering_uses``) by index into
+    that same list, so one write's two sections cannot disagree.
     """
     from ..config.cache_sections import CliCollectors
-    from .registry import collect_cli_commands, collect_current_commands, collect_test_verb_options
+    from ..params import Registration
+    from .invoke import covering_uses, recorded_registrations
+    from .registry import (
+        collect_cli_commands,
+        collect_current_commands,
+        collect_option_candidates,
+        collect_test_verb_options,
+    )
+
+    described: list[dict[str, Any]] = []
+    among: list[Registration] = []
+
+    def option_candidates() -> dict[str, Any]:
+        if not described:
+            described.append(collect_option_candidates())
+            among.extend(recorded_registrations(described[0]["uses"]))
+        return described[0]
+
+    def leaf_candidates(cmd: Any, ctx: Any) -> list[int]:
+        option_candidates()
+        return covering_uses(cmd, ctx, among)
 
     return CliCollectors(
         instructions=collect_current_commands,
@@ -1134,6 +1374,8 @@ def _completion_collectors() -> "CliCollectors":
         commands=collect_cli_commands,
         app=app,
         pending_key=PENDING_SUBCMD_ARGS_KEY,
+        option_candidates=option_candidates,
+        leaf_candidates=leaf_candidates,
     )
 
 
@@ -1273,7 +1515,21 @@ def entry(cache_stale: bool = False) -> None:
                 # front of it is noise, not information.
                 typer.echo(f"error: {e}", err=True)
                 raise SystemExit(1) from e
+            from .registry import check_option_entries
+
+            check_option_entries(result)
             _emit_bootstrap_findings(result)
+            if not completion:
+                # From here a registration is judged when it is made. Never
+                # under a TAB: a TAB never fails, and its lazy imports may register.
+                from functools import partial
+
+                from ..params import set_entry_checker
+                from .registry import refuse_bad_entries
+
+                set_entry_checker(partial(refuse_bad_entries, group_of=_resolved_command))
+                # Cleared however the invocation ends, the answer's stack unwinding.
+                answer.callback(set_entry_checker, None)
 
             # Only the paths that READ the cache refresh it. Validating it stats
             # every key path, and an ordinary command would pay that on every
@@ -1297,65 +1553,9 @@ def entry(cache_stale: bool = False) -> None:
                     # the scope makes each path's stat one syscall.
                     section_digests: dict[str, str] = {}
                     if cache_is_stale(result.projects, digests=section_digests):
-                        from ..config.completion_cache import (
-                            collect_active_project_names,
-                            collect_backend_names,
-                            collect_docker_capable_host_ids,
-                            collect_docker_default_parent_by_lab,
-                            collect_docker_image_names,
-                            collect_docker_services_by_use_case,
-                            collect_docker_use_case_names,
-                            collect_host_classes_by_id,
-                            collect_host_drops,
-                            collect_host_ids,
-                            collect_host_ids_by_lab,
-                            collect_inventory_names,
-                            collect_lab_names,
-                            collect_links,
-                            collect_logins_by_host,
-                            collect_project_names,
-                            collect_reservation_usernames,
-                            write_cache,
-                        )
-                        from ..config.completion_tree import build_shim_payload
-
-                        cli = _completion_collectors()
-                        instructions = cli.instructions()
-                        backends = collect_backend_names()
                         with contextlib.suppress(OSError):
-                            write_cache(
+                            write_completion_cache(
                                 result.projects,
-                                instructions,
-                                collect_host_ids(result.projects),
-                                test_options=cli.test_options(),
-                                docker_hosts=collect_docker_capable_host_ids(result.projects),
-                                docker_use_cases=collect_docker_use_case_names(result.projects),
-                                docker_images=collect_docker_image_names(result.projects),
-                                docker_services_by_use_case=collect_docker_services_by_use_case(
-                                    result.projects
-                                ),
-                                active_projects=collect_active_project_names(result.projects),
-                                term_backends=backends["term_backends"],
-                                transfer_backends=backends["transfer_backends"],
-                                usernames=collect_reservation_usernames(result.projects),
-                                commands=cli.commands(),
-                                labs=collect_lab_names(result.projects),
-                                hosts_by_lab=collect_host_ids_by_lab(result.projects),
-                                host_drops=collect_host_drops(result.projects),
-                                host_classes_by_id=collect_host_classes_by_id(result.projects),
-                                projects=collect_project_names(result.projects),
-                                links=collect_links(result.projects),
-                                logins_by_host=collect_logins_by_host(result.projects),
-                                docker_default_parent_by_lab=collect_docker_default_parent_by_lab(
-                                    result.projects
-                                ),
-                                inventory_names=collect_inventory_names(result.projects),
-                                # The shim section's collector, this write's parity
-                                # reference, reads the same _completion_collectors(), so
-                                # the tree has one source and the two cannot drift.
-                                shim=build_shim_payload(
-                                    result.projects, app=cli.app, pending_key=cli.pending_key
-                                ),
                                 digests=section_digests,
                                 # A contained bootstrap error means registration did not
                                 # finish, so what was just collected is a PARTIAL picture

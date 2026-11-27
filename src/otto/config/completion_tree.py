@@ -18,12 +18,14 @@ Typer's own classes and every context comes from the command's own
 # Spec: docs/superpowers/specs/2026-09-04-shim-completion-design.md, sections 3.3-3.4.
 
 import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from typer.core import TyperArgument, TyperGroup, TyperOption
+from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
 from ..errors import OttoError
+from ._typer import built_spellings, own_params
 from .cache_sections import SHIM_SECTION as SHIM_SECTION  # noqa: PLC0414 — explicit re-export
 from .corpus_snapshot import Unreadable
 from .corpus_snapshot import observe as _snapshot_observe
@@ -38,6 +40,12 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 HOST_SCOPED_BY = "host_id"
+
+LeafCandidates = Callable[["Command", "Context"], "list[int]"]
+"""What the CLI says covers a command: the indexes of the candidate uses that do, in order.
+
+The uses are ``names["option_candidates"]["uses"]``; ``[]`` for a command
+that offers no registered options class's flags."""
 
 
 @runtime_checkable
@@ -128,7 +136,7 @@ def _param(
     source = _source_for(param, ctx, f"{where}/{param.name}", unregistered)
     return {
         # A TyperArgument's `opts` holds its NAME (['host_id']), not a flag: no flags at all.
-        "flags": [*param.opts, *param.secondary_opts] if is_option else [],
+        "flags": built_spellings(param),
         "name": param.name,
         "takes_value": not (param.is_flag or param.count) if is_option else True,
         "multiple": bool(param.multiple),
@@ -136,6 +144,21 @@ def _param(
         "sep": source.get("sep"),
         "source": source,
     }
+
+
+def param_rows(params: "Sequence[Parameter]") -> "dict[str, dict[str, Any]]":
+    """Return each of *params*' completion rows, by parameter name, as a tree node stores them.
+
+    *params* are built parameters (Typer's), read as the parameters of one
+    plain command that holds only them: the row is the one a tree node gives
+    the same parameter (the one row function, used outside a walk). A hidden
+    parameter has no row. A completer that declares no completion source
+    gives ``{"kind": "live"}``, as in a tree.
+    """
+    holder = TyperCommand(name="otto", params=list(params))
+    ctx = _context(holder, "otto", None)
+    rows = {param.name: _param(param, ctx, "otto", []) for param in params if param.name}
+    return {name: row for name, row in rows.items() if row is not None}
 
 
 def _child(group: TyperGroup, ctx: "Context", name: str, pending_key: str) -> "Command | None":
@@ -153,6 +176,7 @@ def _node(
     where: str,
     unregistered: list[str],
     pending_key: str,
+    leaf_candidates: "LeafCandidates | None" = None,
 ) -> dict[str, Any]:
     """Serialise one command as a Node.
 
@@ -160,8 +184,17 @@ def _node(
     the shim indexes all four and hands over if any is missing. ``scoped_by``
     (and, on the root, ``host_classes``) are the optional ones it reads with
     ``.get``.
+
+    A node's ``params`` are the command's own (``otto.config._typer.own_params``):
+    never a flag the command takes only for one invocation. A leaf that
+    *leaf_candidates* says is covered also carries ``candidates``, the
+    indexes of the uses that cover it (absent when none do); a node holds no
+    candidate row.
     """
-    params = [p for p in (_param(x, ctx, where, unregistered) for x in cmd.get_params(ctx)) if p]
+    # The command's own parameters: a flag attached for one invocation is not
+    # the command's, and is never stored as one.
+    own = own_params(cmd, ctx)
+    params = [p for p in (_param(x, ctx, where, unregistered) for x in own) if p]
     commands: dict[str, Any] = {}
     if isinstance(cmd, TyperGroup):  # the test typer._click's _resolve_context descends by
         for sub_name in cmd.list_commands(ctx):
@@ -185,7 +218,13 @@ def _node(
                 continue
             sub_ctx = _context(sub, sub_name, ctx)
             commands[sub_name] = _node(
-                sub, sub_ctx, sub_name, f"{where}/{sub_name}", unregistered, pending_key
+                sub,
+                sub_ctx,
+                sub_name,
+                f"{where}/{sub_name}",
+                unregistered,
+                pending_key,
+                leaf_candidates,
             )
     # "group" is the PARSER's shape, not "has subcommands": TyperGroup sets
     # allow_interspersed_args = False (typer/core.py:999) where a leaf TyperCommand
@@ -200,6 +239,10 @@ def _node(
     }
     if isinstance(cmd, _ScopedGroup):  # otto.cli.expose.HostGroup
         node["scoped_by"] = HOST_SCOPED_BY
+    if leaf_candidates is not None and not isinstance(cmd, TyperGroup):
+        covered = leaf_candidates(cmd, ctx)
+        if covered:
+            node["candidates"] = covered
     return node
 
 
@@ -228,17 +271,23 @@ def _host_class_views(
     return views
 
 
-def serialize_tree(cli: "Command", *, pending_key: str) -> TreeSerialisation:
+def serialize_tree(
+    cli: "Command", *, pending_key: str, leaf_candidates: "LeafCandidates | None" = None
+) -> TreeSerialisation:
     """Serialise the CLI as Nodes plus per-host-class verb views, every completer classified.
 
     *cli* is ``typer.main.get_command(app)``, a ``TyperGroup`` for otto.
     *pending_key* is the ``ctx.meta`` key the root group's dispatch reads
     (``otto.cli.main.PENDING_SUBCMD_ARGS_KEY``): set to a child's name, it
     makes the group resolve that child for real instead of as a stub.
+    *leaf_candidates* names, for each leaf, the candidate uses that cover it
+    (the CLI supplies it, ``otto.config.cache_sections.CliCollectors``); a
+    covered leaf's node records them as ``candidates``. Without it no node
+    has ``candidates``.
     """
     unregistered: list[str] = []
     ctx = _context(cli, "otto", None)
-    tree = _node(cli, ctx, "otto", "otto", unregistered, pending_key)
+    tree = _node(cli, ctx, "otto", "otto", unregistered, pending_key, leaf_candidates)
     views = (
         _host_class_views(cli, ctx, unregistered, pending_key)
         if isinstance(cli, TyperGroup)
@@ -310,12 +359,20 @@ def inventory_block(projects: "list[Project]") -> dict[str, Any]:
     return {"kind": "stat", "files": [stat_triple(p) for p in paths]}
 
 
-def build_shim_payload(projects: "list[Project]", *, app: Any, pending_key: str) -> dict[str, Any]:
+def build_shim_payload(
+    projects: "list[Project]",
+    *,
+    app: Any,
+    pending_key: str,
+    leaf_candidates: "LeafCandidates | None" = None,
+) -> dict[str, Any]:
     """Everything the shim needs to validate and answer, from the bootstrapped app (spec §3).
 
-    *app* is the root Typer app and *pending_key* the ``ctx.meta`` key its
-    dispatch reads. The CLI supplies both (``otto.cli.main._completion_collectors``),
-    because ``otto.config`` never imports the CLI. ``keys`` are the ``names``
+    *app* is the root Typer app, *pending_key* the ``ctx.meta`` key its
+    dispatch reads and *leaf_candidates* what covers each leaf
+    (:func:`serialize_tree`). The CLI supplies all three
+    (``otto.cli.main._completion_collectors``), because ``otto.config`` never
+    imports the CLI. ``keys`` are the ``names``
     section's key paths as stat triples, its lab key paths included (computed
     here, after init); ``tables`` are the projects whose per-file test tables a
     test-name TAB reads (their ``root``, the key each table is stored
@@ -327,7 +384,9 @@ def build_shim_payload(projects: "list[Project]", *, app: Any, pending_key: str)
     from .cache_sections import section_by_name, writer_key_paths
     from .user_settings import user_settings_path, user_settings_stat
 
-    tree = serialize_tree(typer.main.get_command(app), pending_key=pending_key).tree
+    tree = serialize_tree(
+        typer.main.get_command(app), pending_key=pending_key, leaf_candidates=leaf_candidates
+    ).tree
     names = section_by_name("names")
     # The user settings file is a SHIM-only key path (the names digest folds it
     # in through the shared tail instead): the shim cannot read TOML, so it

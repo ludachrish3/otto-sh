@@ -126,34 +126,18 @@ class _ChainParams:
     """The ``-I`` names, so the classifier sees what the command forces active."""
 
 
-def _split_names(value: object) -> "list[str]":
-    """Split a chain's ``-I``/``-E`` list on commas, dropping blanks and non-strings.
-
-    Split here as well as in the option's callback: a value read off the chain
-    mid-TAB may not have been through it, and an unsplit ``"a,b"`` would name
-    no project.
-    """
-    return [
-        part.strip()
-        for item in (value if isinstance(value, list) else [])
-        if isinstance(item, str)
-        for part in item.split(",")
-        if part.strip()
-    ]
-
-
 def _collect_chain_params(ctx: "typer.Context") -> _ChainParams:
-    """Walk the (possibly mocked) context chain for the params completion needs.
+    """Recover the params completion needs from the Click context chain.
 
     The ``otto host`` group callback returns early under
     ``ctx.resilient_parsing``, so ``ctx.meta`` is empty during completion and
-    this walk is the *only* source for these values.
-
-    Same defensive, depth-capped walk as
-    :func:`otto.cli.completers.selected_lab_names`: only a genuine ``dict``
-    ``params`` counts, each key is taken from the innermost context that
-    carries it, and a self-referential mock cannot loop forever.
+    the chain is the *only* source for these values. The selection (``-l``,
+    ``-I``, ``-E``) comes from :func:`otto.cli.invoke.scope_selection`, its one
+    reader; the rest is walked here: each key is taken from the innermost
+    context that carries it, and the walk is depth-capped.
     """
+    from .invoke import scope_selection
+
     found: dict[str, Any] = {}
     node: object = ctx
     for _ in range(25):
@@ -161,27 +145,19 @@ def _collect_chain_params(ctx: "typer.Context") -> _ChainParams:
             break
         params = getattr(node, "params", None)
         if isinstance(params, dict):
-            for key in (
-                "host_id",
-                "hop",
-                "term",
-                "labs",
-                "holder",
-                "exclude_projects",
-                "include_projects",
-            ):
+            for key in ("host_id", "hop", "term", "holder"):
                 if key not in found and key in params:
                     found[key] = params[key]
         node = getattr(node, "parent", None)
-    labs = found.get("labs")
+    selection = scope_selection(ctx)
     return _ChainParams(
         host_id=found.get("host_id") or "",
         hop=found.get("hop") or "",
         term=found.get("term") or None,
-        labs=[x for x in labs if isinstance(x, str)] if isinstance(labs, list) else [],
+        labs=list(selection.labs),
         holder=found.get("holder") or None,
-        exclude_projects=_split_names(found.get("exclude_projects")),
-        include_projects=_split_names(found.get("include_projects")),
+        exclude_projects=list(selection.exclude),
+        include_projects=list(selection.include),
     )
 
 

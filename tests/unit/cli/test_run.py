@@ -617,11 +617,14 @@ class TestInstructionSeamGuard:
     def _lane() -> "typer.Typer":
         """A stand-in for `run_app`: same group class, same async-leaf lane."""
         from otto.cli.invoke import make_registry_group
-        from otto.cli.run import build_instruction_app
+        from otto.cli.run import build_instruction_app, instruction_help
         from otto.instruction_catalog import INSTRUCTIONS as REGISTRY
 
         app = typer.Typer(
-            name="run", cls=make_registry_group(REGISTRY, app_of=build_instruction_app)
+            name="run",
+            cls=make_registry_group(
+                REGISTRY, app_of=build_instruction_app, help_of=instruction_help
+            ),
         )
 
         @app.callback()

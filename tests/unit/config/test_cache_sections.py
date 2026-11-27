@@ -339,6 +339,7 @@ def test_write_cache_keys_match_the_names_collector(projects):
     cc.write_cache(discovered, [], [])
     data = json.loads(cc._cache_path().read_text())
     stored_keys = set(data["sections"]["names"]["payload"])
+    assert "option_candidates" in stored_keys
     assert stored_keys == set(
         section_by_name("names").collect(discovered, _completion_collectors())
     )

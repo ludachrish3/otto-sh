@@ -16,7 +16,7 @@ ergonomics match `@instruction()` (see {doc}`../cli/run/index`): an
 `OttoContext`-annotated parameter is injected and hidden from the CLI, and an
 `options=` dataclass expands into individual flags. Unlike `@instruction()`,
 `@cli_command()` takes keyword arguments only (`options=`, `name=`, `help=`,
-`lab_free=`, `output_dir=`, `gate=`, `dry_run_preview=`) and does not forward
+`lab_free=`, `output_dir=`, `gate=`, `dry_run_preview=`, `accepts_options=`) and does not forward
 extra positional or keyword arguments to Typer.
 
 ```python
@@ -184,7 +184,7 @@ it always blocks *execution*.
 
 `register_cli_command()` takes keyword-only metadata, mirrored on
 {class}`~otto.cli.registry.CommandSpec`. `@cli_command()` accepts `lab_free`,
-`output_dir`, `gate` and `dry_run_preview`, but not `async_leaves` or
+`output_dir`, `gate`, `dry_run_preview` and `accepts_options`, but not `async_leaves` or
 `overwrite`, which only `register_cli_command()` takes. The registering module
 is not metadata you pass: the engine records it, and
 `CLI_COMMANDS.origin(name=name)` reads it back. The first three rows are the ones
@@ -196,6 +196,7 @@ most commands set:
 | `output_dir` | `True`  | Creates a per-invocation artifact directory under `--xdir` before the command body runs.                                                |
 | `gate`       | `True`  | Runs the reservation gate before dispatch (ignored entirely when `lab_free=True`).                                                      |
 | `dry_run_preview` | `False` | Under `--dry-run`, `False` stops the invocation after validation and prints the would-run block, so a command written without dry runs in mind never reaches a device. `True` runs the body, which must short-circuit at its own `is_dry_run()` branch (the shape `link` and `tunnel` use). One leaf can opt in alone with `cli_exposed(dry_run_preview=True)`. |
+| `accepts_options` | `None` | Whether the command offers the flags of options classes a project registers for it. `None` answers by the lab: a command that uses the lab accepts, a `lab_free` one does not. See [A project's options on your command](#a-projects-options-on-your-command). |
 | `async_leaves` | `False` | `register_cli_command()` only. Every leaf under the command must be `async def`; otto refuses a sync leaf when it is invoked. `run` sets it. |
 
 The first three take effect once per real invocation, *after* argv parsing and
@@ -232,6 +233,69 @@ The built-ins span the whole matrix — read them as worked examples
   skips the refusals the opening runs before it.
 - **`run`, `test`, `host`** keep the defaults: the full lab-aware,
   output-dir-creating, gate-checked path.
+
+## A project's options on your command
+
+A project can register an options class for your command, by naming it in
+`verbs=` (`"mytool"`, or `"mytool flash"` for one command beneath it;
+[Naming commands](../setup/options-advanced.md#naming-commands)), the way it
+registers one for `otto run install`.
+
+**Which commands accept them.** A command that uses the lab accepts
+registered options without being asked, and a `lab_free=True` command does
+not. This is decided for each command, not for its group: a command marked
+lab-free beneath a lab-bound group (`__cli_lab_free__ = True` on its
+function) does not accept, though its group does. To say otherwise:
+
+- for the whole registration, pass `accepts_options=True` or `False` to
+  `register_cli_command()` or `@cli_command()`;
+- for one command beneath a group, set `__cli_accepts_options__` to `True`
+  or `False` on its function, right after the function, as with
+  `__cli_gate__`:
+
+```python
+@mytool_app.command()
+def version() -> None:
+    """Print the tool's version."""
+    ...
+
+
+version.__cli_accepts_options__ = False  # no project flags on `otto mytool version`
+```
+
+The marker counts beneath a group only. For a top-level command (a
+function, or an app that flattens into its one command), the registration
+decides, and a marker that disagrees with it is refused when the command is
+resolved, with a message that says to set `accepts_options=` on the
+registration.
+
+**What your command's users then get**, with no code of yours:
+
+- the flags of every class that covers the command, in its `--help` and in
+  TAB;
+- the values validated before your body runs: a bad value is a usage error,
+  exit 2;
+- under `otto -n`, the values in the dry-run block, a secret field masked
+  ({doc}`../cli/dry-run`);
+- the values in your body and in anything it calls, through
+  `otto.get_options(Cls)`; your function's own parameters are unchanged.
+
+TAB completes such a flag in every shell. In bash it also completes the
+flag's value when the field has fixed choices (an `Enum` type) or uses one of
+otto's own completion sources.
+
+**Your parameters share a namespace with those flags.** A project's field
+named or spelled like one of your command's parameters is an error on that
+command ([One flag per name on a command](../setup/options-advanced.md#one-flag-per-name-on-a-command)
+has the details). Adding a parameter to a command that projects already use
+can therefore break a project that spells the same name.
+
+**A group's own callback cannot read them.** It runs before its command's
+flags are parsed, so `otto.get_options` there raises
+{class}`~otto.params.OptionsNotAvailableError` when the command that follows
+accepts registered options; when it does not, the read returns defaults. A
+group invoked with no command (`typer.Typer(invoke_without_command=True)`)
+offers no registered flags, and its callback reads defaults.
 
 ## Collisions
 

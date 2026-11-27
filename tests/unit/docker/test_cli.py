@@ -21,6 +21,7 @@ from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.clickctx import chain
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.project_scaffold import make_project
@@ -1262,10 +1263,9 @@ def test_completer_prefix_filter():
 # ---------------------------------------------------------------------------
 
 
-def _ctx_with_labs(lab_names) -> SimpleNamespace:
-    """Click-like context chain: ``-l/--lab`` lives on the root ``otto`` ctx."""
-    root = SimpleNamespace(info_name="otto", params={"labs": lab_names}, parent=None)
-    return SimpleNamespace(info_name="docker", params={}, parent=root)
+def _ctx_with_labs(lab_names):
+    """The context chain completion builds: ``-l/--lab`` lives on otto's root ctx."""
+    return chain("otto", "docker", root_params={"labs": lab_names})
 
 
 def test_completer_cache_hit_filters_by_selected_lab():

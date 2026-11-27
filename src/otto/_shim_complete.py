@@ -46,7 +46,7 @@ from typing import Any
 from .home_root import HOME_ENV_VAR, home_dir
 
 CACHE_FILENAME = "completion_cache.json"
-SCHEMA = 33
+SCHEMA = 34
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
 WINDOW_SECONDS = 60
 """How long the ``names`` marker vouches for the ``names`` key set."""
@@ -225,6 +225,7 @@ class Resolution:
     """Where the complete words (everything before the fragment) left the parser."""
 
     __slots__ = (
+        "candidates",
         "dashdash",
         "given",
         "host_id",
@@ -245,8 +246,11 @@ class Resolution:
         host_id: str | None = None,
         root_lab_values: list[str] | None = None,
         term: str | None = None,
+        candidates: "dict[str, Any] | None" = None,
     ) -> None:
         self.node = node
+        # the names payload's ``option_candidates``: the rows a node's "candidates" name
+        self.candidates = candidates
         self.given: set[str] = set()  # options given a value on THIS command (COMMANDLINE source)
         self.positionals = 0  # positionals consumed on this command
         self.option_values: dict[str, str] = {}  # value-taking options' last value, by param name
@@ -259,12 +263,45 @@ class Resolution:
         self.last_token: str | None = None  # last complete word: click's textual pending rule
 
 
-def _options(node: dict[str, Any]) -> list[dict[str, Any]]:
-    return [p for p in node["params"] if p["flags"]]
+def _params(node: dict[str, Any], candidates: "dict[str, Any] | None") -> list[dict[str, Any]]:
+    """Return *node*'s parameters, then the rows of each use it names in ``candidates``.
+
+    Mirrors the completion offer's union (``otto.cli.invoke._offer``): the
+    node's own parameters first, then, for each use index the node lists
+    under ``"candidates"``, the rows recorded under that use's ``key`` in
+    *candidates* (the ``names`` payload's ``option_candidates``), a row
+    whose name or any spelling is already taken left out (the first name and
+    the first spelling win). The rows go before the node's trailing help
+    option, where the offer attaches them. The writer named the uses: this
+    decides no coverage.
+    """
+    own = node["params"]
+    picked = node.get("candidates")
+    if not picked or not candidates:
+        return own
+    help_option = own[-1:] if own and own[-1]["name"] == "help" else []
+    params = own[: len(own) - len(help_option)]
+    names = {p["name"] for p in own}
+    words = {flag for p in own for flag in p["flags"]}
+    uses, rows = candidates["uses"], candidates["rows"]
+    for index in picked:
+        for row in rows.get(uses[index]["key"], []):
+            if row["name"] in names or any(flag in words for flag in row["flags"]):
+                continue
+            names.add(row["name"])
+            words.update(row["flags"])
+            params.append(row)
+    return [*params, *help_option]
 
 
-def _positionals(node: dict[str, Any]) -> list[dict[str, Any]]:
-    return [p for p in node["params"] if not p["flags"]]
+def _options(node: dict[str, Any], candidates: "dict[str, Any] | None") -> list[dict[str, Any]]:
+    """Return *node*'s options, its candidates' included (:func:`_params`)."""
+    return [p for p in _params(node, candidates) if p["flags"]]
+
+
+def _positionals(node: dict[str, Any], candidates: "dict[str, Any] | None") -> list[dict[str, Any]]:
+    """Return *node*'s positionals, its candidates' included (:func:`_params`)."""
+    return [p for p in _params(node, candidates) if not p["flags"]]
 
 
 def _reject_multi_value(param: dict[str, Any]) -> None:
@@ -281,13 +318,15 @@ def _reject_multi_value(param: dict[str, Any]) -> None:
         raise Handover(f"nargs={param['nargs']} option {param['name']}")
 
 
-def _match_option(node: dict[str, Any], word: str) -> tuple[dict[str, Any], str | None]:
+def _match_option(
+    node: dict[str, Any], word: str, candidates: "dict[str, Any] | None"
+) -> tuple[dict[str, Any], str | None]:
     """Mirror ``typer._click.parser``: an exact long flag, ``--long=value``, ``-svalue``.
 
     click matches NO prefix of a long option (``--la`` is ``NoSuchOption``) and
     stacks short flags (``-hv``); the shim hands over on both rather than guess.
     """
-    options = _options(node)
+    options = _options(node, candidates)
     if word.startswith("--"):
         name, has_eq, value = word.partition("=")
         for param in options:
@@ -316,8 +355,17 @@ def _view(
     return node["commands"]
 
 
-def resolve(tree: dict[str, Any], args: list[str], classes: dict[str, str]) -> Resolution:
+def resolve(
+    tree: dict[str, Any],
+    args: list[str],
+    classes: dict[str, str],
+    candidates: "dict[str, Any] | None" = None,
+) -> Resolution:
     """Walk the complete words before the fragment; every unknown construct hands over.
+
+    *candidates* is the names payload's ``option_candidates``: a node's
+    parameters are its own and the rows of the uses it names
+    (:func:`_params`), on the walk and in the answer.
 
     TWO parsers, not one. ``typer.core.TyperGroup`` sets
     ``allow_interspersed_args = False`` (typer/core.py:999) where a leaf
@@ -334,7 +382,7 @@ def resolve(tree: dict[str, Any], args: list[str], classes: dict[str, str]) -> R
     still offers ``--help``: the group's parser never saw it, so its parameter source
     is not ``COMMANDLINE``. At a LEAF options and positionals interleave freely.
     """
-    res = Resolution(tree)
+    res = Resolution(tree, candidates=candidates)
     index, total = 0, len(args)
     while index < total:
         # Indexed, never `.get`: "group" is a REQUIRED Node key, like "params" and
@@ -350,7 +398,7 @@ def resolve(tree: dict[str, Any], args: list[str], classes: dict[str, str]) -> R
                 res.dashdash = True
                 break
             if not res.dashdash and word.startswith("-") and len(word) > 1:
-                param, value = _match_option(res.node, word)
+                param, value = _match_option(res.node, word, res.candidates)
                 index += 1
                 if not param["takes_value"]:
                     if value is not None:
@@ -379,7 +427,7 @@ def resolve(tree: dict[str, Any], args: list[str], classes: dict[str, str]) -> R
             break
         if not is_group:
             continue  # a leaf that just read `--`: the rest are positionals
-        for param in _positionals(res.node):  # _process_args_for_args, this group's own
+        for param in _positionals(res.node, res.candidates):  # _process_args_for_args
             if index >= total:
                 break
             if param["nargs"] > 1:
@@ -410,7 +458,7 @@ def resolve(tree: dict[str, Any], args: list[str], classes: dict[str, str]) -> R
 
 def _consume_positional(res: Resolution, word: str) -> None:
     """Give *word* to this command's next argument (click's ``_process_args_for_args``)."""
-    positionals = _positionals(res.node)
+    positionals = _positionals(res.node, res.candidates)
     if res.positionals < len(positionals):
         param = positionals[res.positionals]
         if param["nargs"] > 1:
@@ -442,7 +490,11 @@ def _descend(
     if child is None:
         raise Handover(f"unknown command {word!r}")
     return Resolution(
-        child, host_id=res.host_id, root_lab_values=res.root_lab_values, term=res.term
+        child,
+        host_id=res.host_id,
+        root_lab_values=res.root_lab_values,
+        term=res.term,
+        candidates=res.candidates,
     )
 
 
@@ -560,7 +612,12 @@ def _payload_values(
         if res is None:
             return []
         index = next(
-            (i for i, p in enumerate(_positionals(res.node)) if p["name"] == scope_param), None
+            (
+                i
+                for i, p in enumerate(_positionals(res.node, res.candidates))
+                if p["name"] == scope_param
+            ),
+            None,
         )
         if index is None or index >= len(res.positional_words):
             return []
@@ -798,20 +855,20 @@ def _target(res: Resolution, frag: str) -> tuple[str, dict[str, Any] | None, str
         frag = ""
     elif "=" in frag and frag.startswith("-"):
         name, _, frag = frag.partition("=")
-        param, _ = _match_option(node, name)
+        param, _ = _match_option(node, name, res.candidates)
         pending = param if param["takes_value"] else None
         eq = True
     if frag.startswith("-") and not res.seen_dashdash:
         return "command", None, frag  # runs after the split too: `args.append(name)` is not `--`
     if not eq and res.last_token is not None and res.last_token.startswith("-"):
-        for param in _options(node):  # _is_incomplete_option: args[-1] in param.opts
+        for param in _options(node, res.candidates):  # _is_incomplete_option: args[-1] in opts
             if param["takes_value"] and res.last_token in param["flags"]:
                 _reject_multi_value(param)
                 pending = param
                 break
     if pending is not None:
         return "param", pending, frag
-    for index, param in enumerate(_positionals(node)):
+    for index, param in enumerate(_positionals(node, res.candidates)):
         if param["nargs"] > 1:
             raise Handover(f"nargs={param['nargs']} positional {param['name']}")
         if param["nargs"] == -1 or index >= res.positionals:
@@ -839,7 +896,7 @@ def complete(
     if frag and not frag[0].isalnum():
         items.extend(
             flag
-            for p in _options(res.node)
+            for p in _options(res.node, res.candidates)
             if p["multiple"] or p["name"] not in res.given
             for flag in p["flags"]
             if flag.startswith(frag)
@@ -1201,7 +1258,12 @@ def _answer_items(environ: dict[str, str], now: float) -> tuple[list[str], str |
         raise Handover("no cache file", stale=True) from None
     payload = servable_shim(data, now)
     names = data["sections"]["names"]["payload"]
-    res = resolve(payload["tree"], args, names.get("host_classes_by_id", {}))
+    res = resolve(
+        payload["tree"],
+        args,
+        names.get("host_classes_by_id", {}),
+        names.get("option_candidates"),
+    )
     site = _site_for(res, frag)
     cache_mtime_ns = os.stat(cache_path).st_mtime_ns  # see validate_keys for the race
     _check_names(payload, os.path.dirname(cache_path), cache_mtime_ns, now)

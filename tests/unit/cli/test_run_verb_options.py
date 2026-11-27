@@ -148,6 +148,28 @@ def test_an_own_field_colliding_with_a_run_flag_fails_before_the_body(run_cli):
     assert ran == []
 
 
+def test_a_verb_field_spelled_like_an_inline_parameter_fails_before_the_body(run_cli):
+    """A field named ``loud`` but spelled ``--note`` would shadow the instruction's ``--note``."""
+
+    @options
+    class Loud:
+        loud: Annotated[bool, typer.Option("--note")] = False
+
+    register_options(Loud, verbs=["run"])
+    ran = []
+
+    @instruction()
+    async def tagged(note: str = "n") -> None:
+        ran.append(note)
+
+    result = run_cli(["run", "tagged", "--note", "x"])
+    assert result.exit_code != 0
+    text = " ".join(result.output.replace("│", " ").split())
+    assert "flag --note of field 'loud'" in text
+    assert "collides with parameter 'note' of instruction 'tagged'" in text
+    assert ran == []
+
+
 def test_a_collision_also_renders_on_the_commands_help(run_cli):
     """``otto run clash --help`` resolves the command too, and says why it can't."""
     register_options(InstallOptions, verbs=["run"])

@@ -85,9 +85,32 @@ def build_lab_and_view(
     (:func:`~otto.inventory.config.require_eager`), so a broken declaration
     refuses with the same error either way. The load decides every component's
     availability once, in one status report over every source, the same
-    report ``otto --list-labs`` shows. Last, each project's declared docker
-    services become placeholder hosts, so they list and complete before
-    ``compose up``.
+    report ``otto --list-labs`` shows. That much is the load step
+    (``otto.session.lab.load_lab_and_view``), called here. Last, each
+    project's declared docker services become placeholder hosts, so they list
+    and complete before ``compose up``.
+
+    Raises what ``load_lab_and_view`` raises.
+    """
+    built = load_lab_and_view(projects, labs=labs, view=view)
+
+    from ..docker.compose import register_declared_container_hosts
+
+    register_declared_container_hosts(built.lab, projects)
+    return built
+
+
+def load_lab_and_view(
+    projects: "list[Project]", *, labs: list[str], view: "InventoryView | None" = None
+) -> BuiltLab:
+    """Load lab(s) *labs* as :func:`build_lab_and_view` does, and register nothing.
+
+    The load step of :func:`build_lab_and_view`, whose description of *labs*,
+    the sources, the inventory view and *view* holds here: the sources, the
+    inventory view, the load, and the translation of their errors into
+    :class:`~otto.session.LabBuildError`. No declared container host is
+    registered: it is for a caller that only needs to know whether the lab
+    loads, and an unknown lab is refused in the words a build gives it.
 
     Raises :class:`~otto.session.LabBuildError`: no labs, no projects (none
     was discovered: :func:`~otto.config.project.no_project_found_message`), an unknown lab, an
@@ -144,8 +167,4 @@ def build_lab_and_view(
         raise LabBuildError(str(e), field="labs", kind="unknown_lab", detail=str(e)) from e
     except LabUnavailableError as e:
         raise LabBuildError(str(e), field="labs", kind="unavailable_lab", detail=str(e)) from e
-
-    from ..docker.compose import register_declared_container_hosts
-
-    register_declared_container_hosts(lab, projects)
     return BuiltLab(lab=lab, view=view)

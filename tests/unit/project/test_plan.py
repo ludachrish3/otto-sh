@@ -1,5 +1,6 @@
 """plan_instruction walks like the real run and turns what it cannot know into gaps."""
 
+import dataclasses
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ from otto.host.docker_image_kind import DockerImageProduct
 from otto.host.host import BaseHost
 from otto.host.product import ProductPlan
 from otto.host.toolchain import Toolchain
+from otto.params import RecordedOptions
 from otto.project.actions import ProjectActions, register_project_actions
 from otto.project.options import InstallOptions
 from otto.project.plan import HostPlan, ProductPlanEntry, ProjectPlan, plan_instruction
@@ -373,7 +375,9 @@ def test_every_dispatched_host_method_override_is_a_gap(monkeypatch, instruction
     ctx = _Ctx([host_cls("h1", [_Planned("agent", "r1", _plan(install=["sh a"]))])])
     _wire(monkeypatch, ["r1"], ctx)
     [project] = plan_instruction(
-        name=instruction_name, ctx=ctx, kwargs={"product_logs": False, "debug_logs": False}
+        name=instruction_name,
+        ctx=ctx,
+        kwargs={"product_logs": False, "debug_logs": False},
     )
     assert project.hosts == [
         HostPlan(
@@ -669,7 +673,10 @@ def test_a_remove_coverage_dirs_override_is_named_not_previewed(monkeypatch):
 def test_cleanup_walks_projects_in_reverse(monkeypatch):
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1", "r2"], ctx)
-    assert [p.project for p in plan_instruction(name="cleanup", ctx=ctx, kwargs={})] == ["r2", "r1"]
+    assert [p.project for p in plan_instruction(name="cleanup", ctx=ctx, kwargs={})] == [
+        "r2",
+        "r1",
+    ]
 
 
 def test_cleanup_no_product_logs_drops_the_haul_gap(monkeypatch):
@@ -960,3 +967,114 @@ def test_the_staged_files_step_prints_under_not_checked_between_coverage_and_doc
         "    h1: coverage data: find x",
         f"    h1: {gap}",
     ]
+
+
+# ── The plan reads the command's record ─────────────────────────────────────
+
+
+def test_the_plan_reads_the_instance_the_command_recorded(monkeypatch):
+    built: list[object] = []
+
+    @dataclasses.dataclass
+    class _Counted(InstallOptions):
+        def __post_init__(self) -> None:
+            built.append(self)
+
+    inst = _Counted(ensure=True)
+    # The parsed values say otherwise: only the instance itself shows the gap.
+    recorded = RecordedOptions(
+        parsed={"ensure": False}, given=frozenset({"ensure"}), instances={InstallOptions: inst}
+    )
+    ctx = _Ctx([_Host("h1")])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction(
+        name="install", ctx=ctx, kwargs=dict(recorded.parsed), recorded=recorded
+    )
+    assert project.gaps == [_ENSURE_RECOVER]
+    assert built == [inst]
+    assert recorded.instances[InstallOptions] is inst
+
+
+def test_the_plan_builds_a_class_the_record_does_not_hold_from_the_record(monkeypatch):
+    recorded = RecordedOptions(
+        parsed={"ensure": True, "recover_partial": False},
+        given=frozenset({"ensure", "recover_partial"}),
+    )
+    ctx = _Ctx([_Host("h1")])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction(
+        name="install", ctx=ctx, kwargs=dict(recorded.parsed), recorded=recorded
+    )
+    assert project.gaps == [_ENSURE_OVER_PARTIAL]
+    assert recorded.instances[InstallOptions] == InstallOptions(ensure=True, recover_partial=False)
+
+
+def test_the_plan_of_an_unset_flag_is_the_class_default(monkeypatch):
+    # Parsed (an overriding class's default) but not given, and the command did
+    # not offer InstallOptions: InstallOptions' own default, False, is read.
+    recorded = RecordedOptions(parsed={"ensure": True}, given=frozenset())
+    ctx = _Ctx([_Host("h1")])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction(
+        name="install", ctx=ctx, kwargs=dict(recorded.parsed), recorded=recorded
+    )
+    assert project.gaps == []
+
+
+_ARGV_RECORDS = {
+    # What `otto run install [argv]` parses when its only `ensure` flag is
+    # AInstall's (default True): the parsed value, and whether it was given.
+    "": ({"ensure": True}, frozenset()),
+    "--ensure": ({"ensure": True}, frozenset({"ensure"})),
+    "--no-ensure": ({"ensure": False}, frozenset({"ensure"})),
+}
+
+
+@pytest.mark.parametrize("argv", list(_ARGV_RECORDS))
+def test_the_plan_agrees_with_the_run_when_every_project_overrides_with_another_default(
+    monkeypatch, argv
+):
+    """The plan shows the ensure gap exactly when the run's converge would run.
+
+    The only project overrides ``install`` with a class whose ``ensure``
+    defaults the other way, and the command offers that class and not otto's
+    ``InstallOptions``. An unset ``--ensure`` then reads otto's own default
+    on both paths: the walk the run is handed, and the plan.
+    """
+    from typing import Annotated
+
+    import typer
+
+    from otto import options
+    from otto.instructions import instruction
+    from otto.params import options_snapshot
+    from otto.project import orchestrator
+
+    @options
+    class AInstall(InstallOptions):
+        ensure: Annotated[bool, typer.Option(help="A's converge, on by default.")] = True
+
+    class A(ProjectActions):
+        @instruction(options=AInstall)
+        async def install(self, opts: AInstall):  # pragma: no cover — no body runs
+            return await super().install(opts)
+
+    with registering_project("a"):
+        register_project_actions(A, overwrite=True)
+    ctx = _Ctx([_Host("h1")])
+    _wire(monkeypatch, ["a"], ctx)
+    parsed, given = _ARGV_RECORDS[argv]
+    recorded = RecordedOptions(group="run", parsed=dict(parsed), given=given, offered=(AInstall,))
+    # As the `otto run install` leaf does: the walk from the record, its
+    # instances kept in the record, then the plan from the same record.
+    walk = orchestrator.prepare_project_instruction(
+        "install", ctx, dict(parsed), announce=False, source=options_snapshot(recorded)
+    )
+    for instance in walk.own:
+        recorded.instances[type(instance)] = instance
+    [project] = plan_instruction(
+        name="install", ctx=ctx, kwargs=dict(recorded.parsed), recorded=recorded
+    )
+    converges = walk.source.build(InstallOptions).ensure
+    assert converges is (argv == "--ensure")
+    assert (_ENSURE_RECOVER in project.gaps) is converges

@@ -220,13 +220,15 @@ def test_each_site_class_is_the_reason_the_shim_gives(param, frag):
 
 
 def test_a_multi_value_site_is_the_shims_nargs_handover():
-    """``multi`` has no class in the corpus (no otto site has ``nargs > 1``): it hands over."""
+    """A ``multi`` site hands over, bucketed as the differential buckets it."""
     from otto import _shim_complete as sc
+    from tests.unit.shim.test_differential import _reason_class
 
     [site] = completion_sites(_tree([_param("a", nargs=2, flags=("--a",))]))
     assert site.why == "multi"
-    with pytest.raises(sc.Handover, match=r"^nargs=2 "):
+    with pytest.raises(sc.Handover, match=r"^nargs=2 ") as raised:
         sc._reject_multi_value({"nargs": 2, "name": "a"})
+    assert _reason_class(raised.value.reason) == SITE_HANDOVER_CLASSES[site.why]
 
 
 # ── the maps against the real tree ─────────────────────────────────────────────

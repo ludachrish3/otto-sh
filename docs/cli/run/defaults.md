@@ -153,9 +153,14 @@ renders the same way (`skipped: already uninstalled`, `skipped: already clean`).
 
 ## Your project's flags on a default
 
-A project changes what one of the seven does — and what it takes on the command
-line — by declaring that method on its `ProjectActions` subclass, with an
-options class of its own:
+A project adds a flag to one of the seven with an options class registered
+for that command, such as `@otto.options(verbs=["run install"])`, and reads it
+with `otto.get_options` wherever it is needed: a product's `install` hook, a
+host method, a test. No override is involved; the example is
+[An option for one instruction](../../setup/options-classes.md#an-option-for-one-instruction).
+
+A project changes what one of the seven does by declaring that method on its
+`ProjectActions` subclass, with an options class of its own:
 
 ```{literalinclude} ../../examples/getting-started/libs/gs_example/actions.py
 :language: python
@@ -623,10 +628,12 @@ itself is not overrideable: a project customizes by overriding its own actions.
 ### One command, every project's flags
 
 `otto run <name>` shows the **union** of the fields every registered body's
-options class declares — every configured project's, active in this run or not, so
-that `--help` and the completion cache do not change shape with `-I`/`-E` or
-with the loaded lab. A value passed for a project the run skips is accepted and
-unused.
+options class declares, for every project that takes part in the command: the
+lab you select and `-I`/`-E` decide that, and a project that is out of scope
+offers none of its flags ([When a project is out of
+scope](../../setup/options-advanced.md#when-a-project-is-out-of-scope)). A
+project that takes part but has no host in the loaded lab still offers its
+flags, and a value passed for a project the run skips is accepted and unused.
 
 A project instruction is **not** refused the way an inactive project's standalone
 instruction is. A standalone instruction has one owning project, so switching that
@@ -635,22 +642,19 @@ project and no single owner, so it stays runnable. With every declaring project
 inactive, `otto run deploy` lists as usual, walks nothing, logs one skip
 warning per skipped project, and exits 0.
 
-Per field name, across the bodies of one instruction:
+The bodies' classes meet on one command, so the rule of [One flag per name
+on a command](../../setup/options-advanced.md#one-flag-per-name-on-a-command)
+decides between them. What is particular to project instructions:
 
-- **Same declaring class on every side** — one flag. Its value is delivered to
-  every body whose class carries that field. Two projects both inheriting
-  `--ensure` from `InstallOptions` is this case, which is why the first-party
-  flags stay single however many projects override the body.
-- **Different declaring classes** — a bootstrap error naming the instruction,
-  the field and the projects on each side, with the fix: *share one base class, in
-  a required dependency or a library package, or rename the field.* Two projects
-  that each wrote `lab_env: str` collide on this one command even when the type
-  and default match: a command has one flag per name, as an invocation has one
-  value per name.
-- **One project, two instructions, the same field** — no conflict at all. They are
+- Two projects both inheriting `--ensure` from `InstallOptions` share one
+  declaring class, which is why the first-party flags stay single however many
+  projects override the body. Its value reaches every body whose class carries
+  that field.
+- A clash between two projects' body classes names the instruction, the field
+  and the project on each side, with the fix: *share one base class, in a
+  required dependency or a library package, or rename the field.*
+- One project with the same field on two instructions has no conflict: they are
   separate commands.
-
-The failure is the whole invocation, not the project.
 
 **The field name is the key**, on this path as on every other: a value someone
 gave reaches every class with a field of that name, including the `status` and

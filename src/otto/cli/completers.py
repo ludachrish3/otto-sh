@@ -47,26 +47,13 @@ def selected_lab_names(ctx: typer.Context) -> list[str]:
 
     ``-l``/``--lab`` (and its ``OTTO_LAB`` envvar) are declared on the *root*
     ``otto`` callback, not on the sub-group whose context the completer
-    receives, so walk up the parent chain and return the first real ``labs``
-    list found. Click populates that param from both the flag and the envvar —
-    already split into a list — even during resilient (completion) parsing, so
-    this single read covers every way a lab can be chosen.
-
-    Defensive against non-Context objects (unit tests pass mocks): only a
-    genuine ``dict`` ``params`` carrying a non-empty ``list`` of ``str`` counts,
-    and the walk is depth-capped so a self-referential mock can't loop forever.
+    receives; :func:`otto.cli.invoke.scope_selection`, the selection's one
+    reader, reads them from the root context, where click has put them
+    (already split) even during resilient (completion) parsing.
     """
-    node: object = ctx
-    for _ in range(25):
-        if node is None:
-            break
-        params = getattr(node, "params", None)
-        if isinstance(params, dict):
-            labs = params.get("labs")
-            if isinstance(labs, list) and labs and all(isinstance(x, str) for x in labs):
-                return labs
-        node = getattr(node, "parent", None)
-    return []
+    from .invoke import scope_selection
+
+    return list(scope_selection(ctx).labs)
 
 
 def lab_scoped_host_ids(ctx: typer.Context) -> list[str]:
@@ -125,9 +112,9 @@ def host_group_request(ctx: typer.Context) -> HostGroupRequest:
     """Return the ``host_id`` and ``--term`` on ``otto host``, or ``HostGroupRequest("", None)``.
 
     The group callback returns early under ``ctx.resilient_parsing``, so
-    ``ctx.meta`` is empty during completion and this walk — the same
-    depth-capped, mock-tolerant shape as :func:`selected_lab_names` — is the
-    only source. Each key is taken from the innermost context carrying it.
+    ``ctx.meta`` is empty during completion and this walk — depth-capped and
+    mock-tolerant — is the only source. Each key is taken from the innermost
+    context carrying it.
     """
     found: dict[str, object] = {}
     node: object = ctx

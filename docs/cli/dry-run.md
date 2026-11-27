@@ -19,8 +19,8 @@ the command exists to do: an instruction, the tests, a host command):
 - the command's module imports
 - for `otto run`, and for any other `@cli_command(options=)` leaf, the
   command's own options build and validate exactly as a real run would; for
-  `otto run` and `otto test`, every option class registered for the verb
-  builds and validates too (see below)
+  every command that accepts registered options, every class that covers
+  the command builds and validates too (see below)
 - it prints what would run: the command, its target, and the arguments you gave
 
 ```console
@@ -73,17 +73,18 @@ The tree is the active projects' only; a project left out has none, and the
 command names it ([Tests and listings search only the active
 projects](projects.md#tests-and-listings-search-only-the-active-projects)).
 
-## `otto run` and `otto test` build and show their options
+## Commands build and show their options
 
-`run` and `test` are the verbs that take *registered* options
+Every command that accepts *registered* options
 (`@options(verbs=[...])` or `register_options`, see
-{doc}`../setup/options-classes`). Under `run` they sit alongside
+{doc}`../setup/options-classes`) builds and shows them under `-n`; `otto run`
+and `otto test` are the common case. Under `run` they sit alongside
 each command's own options: a standalone `@instruction`, and every one of
 otto's seven project instructions (`install`, `uninstall`, `cleanup`,
 `get-logs`, `install-tools`, `uninstall-tools`, `status`) alike. `otto test` has no options class
 of its own, only the registered ones, as the `otto -n test` example above
 shows. A dry run pays for them exactly as a real run would: the command's own
-options class and every class registered for the verb build and validate from
+options class and every class that covers the command build and validate from
 the flags you gave, so a bad value fails here with the identical exit-2 error
 a real run would give — and, once everything validates, the block shows the
 *resolved* value of every option that applies to the command:
@@ -104,20 +105,21 @@ with its own options class (inheriting `InstallOptions`, see
 {doc}`../setup/customizing-project-instructions`) shows the same
 way, its own fields included.
 
-The command's own options class is listed first, then any classes registered
-for the verb, in registration order. One rule decides what a field prints:
+The command's own options class is listed first, then the classes that
+cover the command, in registration order. One rule decides what a field prints:
 a field masks to `name=<hidden>` — never the raw value — when its type IS or
 CONTAINS `pydantic.SecretStr`/`SecretBytes` anywhere (including inside
 `Optional[...]`, a union, a container such as `list[...]`, or an `Annotated`
 wrapper), or when the field is declared `repr=False`. Every other field
 prints its real value. The `would run:` echo above masks that same flag's
 value too, so no line in the block ever carries it. A command with no
-options at all (its own or the verb's) prints no `options:` line.
+options at all (its own or registered ones) prints no `options:` line.
 
-A leaf built with `@cli_command(options=...)` on any OTHER top-level verb
+A leaf built with `@cli_command(options=...)` on any OTHER top-level command
 gets this same treatment — its own options class builds, validates and shows
-under `-n` exactly as above — even though that verb never takes registered
-options.
+under `-n` exactly as above. So does every class that covers a command that
+accepts registered options, `otto cov`, `otto docker` and a plugin's command
+included ([Naming commands](../setup/options-advanced.md#naming-commands)).
 
 ## The stop is uniform, and that will surprise you once
 
