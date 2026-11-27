@@ -20,6 +20,7 @@ from otto.lifecycle import (
     _CommandRun,
     _force_exit_hooks,
     _InterruptedCommand,
+    _is_late_interrupt,
     _run_force_exit_hooks,
     register_force_exit_hook,
     run_command,
@@ -288,6 +289,154 @@ def test_signal_during_teardown_of_successful_body_still_exits_130():
     assert exc_info.value.code == 130
     assert host.close_finished == 1  # graceful: sweep completed
     assert ctrl.forced is False
+
+
+def _exit_code_of(coro, ctrl: _CommandRun) -> "int | str | None":
+    """The ``SystemExit`` code ``run_command`` leaves with.
+
+    A ``KeyboardInterrupt`` that escapes instead fails the calling test:
+    left alone, pytest reads it as a person's Ctrl-C and ends the whole run.
+    """
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            run_command(coro, _controller=ctrl)
+    except KeyboardInterrupt:
+        pytest.fail("a KeyboardInterrupt left run_command")
+    return exc_info.value.code
+
+
+def _raise_keyboard_interrupt() -> None:
+    """What Python's default SIGINT handler does once the run gave its handlers back."""
+    raise KeyboardInterrupt
+
+
+class _InterruptedAgainAfterMain(_CommandRun):
+    """A controller whose loop meets a ``KeyboardInterrupt`` once ``_main`` has finished.
+
+    ``_main`` gives its signal handlers back in its ``finally``, so until
+    ``asyncio.run`` returns, a SIGINT is Python's default handler's: it raises
+    ``KeyboardInterrupt`` inside the loop. No real signal is sent here (see
+    the module docstring). The interrupt is a loop callback instead, placed on
+    one side or the other of the callback that stops the loop for the
+    finished command:
+
+    * ``before_stop``: scheduled from ``_main``'s last step, so it runs
+      first and the stop is still scheduled when ``asyncio.run``'s cleanup
+      runs the loop again. Whether that cleanup then finishes, or raises
+      ``RuntimeError: Event loop stopped before Future completed`` with the
+      ``KeyboardInterrupt`` as its context, depends on what the cleanup has
+      to do; both are accepted here, and
+      ``test_what_counts_as_a_late_interrupt`` pins the second shape.
+    * otherwise: a done-callback of the command's task, which runs after the
+      stop, so the ``KeyboardInterrupt`` itself leaves ``asyncio.run``.
+    """
+
+    def __init__(self, *, before_stop: bool) -> None:
+        super().__init__(teardown_deadline=RunPolicy().teardown_deadline, install_handlers=False)
+        self._before_stop = before_stop
+
+    async def _main(self, coro):  # type: ignore[no-untyped-def]
+        task = asyncio.current_task()
+        assert task is not None
+        if not self._before_stop:
+            task.add_done_callback(lambda _task: _raise_keyboard_interrupt())
+        try:
+            return await super()._main(coro)
+        finally:
+            if self._before_stop:
+                asyncio.get_running_loop().call_soon(_raise_keyboard_interrupt)
+
+
+@pytest.mark.parametrize("before_stop", [True, False], ids=["before-the-stop", "after-the-stop"])
+def test_an_interrupt_after_cleanup_finished_still_exits_130(before_stop: bool) -> None:
+    """A second SIGINT between the end of cleanup and the loop's return is the first one's exit.
+
+    The first signal was announced and its cleanup completed; the second
+    lands when the run no longer holds the signal. It must not surface as a
+    traceback with exit status 1.
+    """
+    host = _FakeHost()
+    ctrl = _InterruptedAgainAfterMain(before_stop=before_stop)
+
+    async def body() -> None:
+        register_duck(host, asyncio.get_running_loop())
+        asyncio.get_running_loop().call_soon(ctrl._on_signal, signal.SIGINT)
+        await asyncio.Event().wait()
+
+    assert _exit_code_of(body(), ctrl) == 130
+    assert host.close_calls == 1  # the cleanup had completed
+    assert ctrl.forced is False
+
+
+@pytest.mark.parametrize("before_stop", [True, False], ids=["before-the-stop", "after-the-stop"])
+def test_an_interrupt_after_a_forced_abandon_still_runs_the_force_hooks(before_stop: bool) -> None:
+    """A forced run that is interrupted again while its loop returns keeps its hooks and status."""
+    host = _SlowCloseHost()
+    hook_ran: list[bool] = []
+    unregister = register_force_exit_hook(lambda: hook_ran.append(True))
+    ctrl = _InterruptedAgainAfterMain(before_stop=before_stop)
+    background: "list[asyncio.Task[None]]" = []  # keeps the fire-and-forget task referenced
+
+    async def second_signal_when_sweep_starts() -> None:
+        await host.close_started.wait()
+        ctrl._on_signal(signal.SIGINT)
+
+    async def body() -> None:
+        register_duck(host, asyncio.get_running_loop())
+        background.append(asyncio.ensure_future(second_signal_when_sweep_starts()))
+        asyncio.get_running_loop().call_soon(ctrl._on_signal, signal.SIGINT)
+        await asyncio.Event().wait()
+
+    try:
+        code = _exit_code_of(body(), ctrl)
+    finally:
+        unregister()
+    assert code == 130
+    assert ctrl.forced is True
+    assert hook_ran == [True]
+
+
+@pytest.mark.parametrize("before_stop", [True, False], ids=["before-the-stop", "after-the-stop"])
+def test_a_keyboard_interrupt_with_no_signal_recorded_is_not_turned_into_an_exit(
+    before_stop: bool,
+) -> None:
+    """Only an interrupt the run already recorded becomes its exit status.
+
+    With no signal recorded, what leaves ``asyncio.run`` is left as it is: the
+    ``KeyboardInterrupt``, or the ``RuntimeError`` its cleanup raises.
+    """
+    ctrl = _InterruptedAgainAfterMain(before_stop=before_stop)
+
+    async def body() -> None:
+        return None
+
+    with pytest.raises((KeyboardInterrupt, RuntimeError)):
+        run_command(body(), _controller=ctrl)
+    assert ctrl.interrupted is None
+
+
+def test_what_counts_as_a_late_interrupt() -> None:
+    """A ``KeyboardInterrupt``, or asyncio's ``RuntimeError`` raised while handling one."""
+    stopped = RuntimeError("Event loop stopped before Future completed.")
+    stopped.__context__ = KeyboardInterrupt()
+    assert _is_late_interrupt(KeyboardInterrupt())
+    assert _is_late_interrupt(stopped)
+    assert not _is_late_interrupt(RuntimeError("Event loop stopped before Future completed."))
+
+
+def test_a_runtime_error_of_an_interrupted_run_that_no_interrupt_caused_propagates() -> None:
+    """An interrupted run's own ``RuntimeError`` is not mistaken for the late interrupt."""
+    ctrl = _controller()
+
+    async def body() -> None:
+        ctrl._on_signal(signal.SIGINT)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            raise RuntimeError("the body's own failure")
+
+    with pytest.raises(RuntimeError, match="the body's own failure"):
+        run_command(body(), _controller=ctrl)
 
 
 def test_forced_while_body_swallows_cancellation_skips_sweep():

@@ -117,7 +117,9 @@ def test_second_signal_still_exits_promptly(chaos_target, tmp_path) -> None:
     under load the second signal can land AFTER ``_main`` removed its
     handlers — the process dies to the OS default disposition, exit ``-2``
     (the documented third-signal window, reached at signal #2). The product
-    cannot atomically exit-and-keep-handlers; the contract this test pins
+    cannot atomically exit-and-keep-handlers. A signal that lands between the
+    handler removal and the loop's return used to end otto with a traceback
+    and exit 1; ``run_command`` now exits 130 for it. The contract this test pins
     is "prompt exit, never a wedge, 130 or signal-death — never 143, 1, or
     a hang". Discovered as a 2/2 load repro during Task 5's gate runs.
     """
