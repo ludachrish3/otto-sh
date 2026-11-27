@@ -626,8 +626,104 @@ def test_a_decline_is_reported_and_never_stops(tmp_path: Path):
 def test_a_shuffle_at_an_unchanged_total_needs_confirmation(tmp_path: Path):
     v = _judge(tmp_path, SHUFFLED)
     assert v.stop == []
-    assert v.shuffles == [f"3.10 {PLAIN} 500 moved {{'otto:*': -3, 'otto:x': 3}}"]
+    moved = f"3.10 {PLAIN} 500 moved {{'otto:*': -3, 'otto:x': 3}}"
+    assert v.shuffles == [f"{moved}: rose and is not approved"]
+    assert v.warranted == [Approval(PLAIN, "3.10", {"otto:x": 3}, delta.WARRANTED_WHY).entry()]
     assert v.reason == "a shuffle"
+
+
+BOOTSTRAP = "bootstrap_project"
+MYPYC_OLD, MYPYC_NEW = "site:955cd85d9c9a4f4b30d3__mypyc", "site:c787785866c7b801238d__mypyc"
+BOOTSTRAP_BASE = {
+    "stdlib": 663, "other": 348, "site:pydantic": 205, "site:rich": 123, "site:typer": 111,
+    "otto:config": 40, "otto:host": 60, "otto:project": 48, "site:tomli": 20, "site:*": 30,
+    "fd": 40, MYPYC_OLD: 2, "rest": 393,
+}  # fmt: skip
+"""A 2083-operation base of the 3.13 ``bootstrap_project`` the PR #1401 delta stopped on."""
+BOOTSTRAP_MOVED = {
+    "fd": -2, "other": -2, "otto:config": 4, "otto:host": 8, "otto:project": -4, "site:*": -1,
+    MYPYC_OLD: -2, MYPYC_NEW: 2, "site:tomli": -10, "site:typer": 8, "stdlib": -1,
+}  # fmt: skip
+"""Its move at the tip: approved rises cancelled exactly by declines, so the total holds."""
+BOOTSTRAP_RISES = {"otto:config": 4, "otto:host": 8, MYPYC_NEW: 2, "site:typer": 8}
+"""The rises the committed approval for that surface on 3.13 names."""
+
+
+def _bootstrap_shuffle(tmp_path: Path) -> "list[tuple[Path, Path]]":
+    """Two identical (base, tip) pairs of that shuffle on 3.13: it reproduces."""
+    names = {*BOOTSTRAP_BASE, *BOOTSTRAP_MOVED}
+    moved = {b: BOOTSTRAP_BASE.get(b, 0) + BOOTSTRAP_MOVED.get(b, 0) for b in names}
+    total = sum(BOOTSTRAP_BASE.values())
+    assert total == 2083
+    assert sum(moved.values()) == total
+    kw = {"minors": ("3.13",), "ops": {BOOTSTRAP: total}}
+    base = _side(tmp_path, "base", buckets={BOOTSTRAP: BOOTSTRAP_BASE}, **kw)
+    tip = _side(tmp_path, "tip", buckets={BOOTSTRAP: moved}, **kw)
+    return [(base, tip), (base, tip)]
+
+
+def test_a_reproduced_shuffle_whose_every_rise_is_approved_passes_and_is_reported(
+    tmp_path: Path, capsys
+):
+    """The 3.13 ``bootstrap_project`` of PR #1401: approved growth beside declines, not a stop."""
+    approvals = [Approval(BOOTSTRAP, "3.13", dict(BOOTSTRAP_RISES), WHY)]
+    v = decide(_bootstrap_shuffle(tmp_path), "3.13", approvals)
+    assert v.stop == []
+    assert v.shuffles == []
+    [named] = v.named
+    assert named.startswith(f"3.13 {BOOTSTRAP} 2083 moved ")
+    assert named.endswith(f": approved up to {BOOTSTRAP_RISES} ({WHY})")
+    assert v.used == approvals
+    in_force = delta.Approvals(base=BASE_TAG, in_force=approvals, spent=[])
+    assert delta.conclude(BASE_TAG, in_force, [("3.13", v)]) == 0
+    out = capsys.readouterr().out
+    assert "unused" not in out, "the entry was used, so it is no NOTE (unused)"
+    assert "to approve, write" not in out
+
+
+def _bootstrap_stop(tmp_path: Path, rises: "dict[str, int]") -> str:
+    """Return the one stop of the reproduced 3.13 shuffle under an entry naming *rises*."""
+    v = decide(_bootstrap_shuffle(tmp_path), "3.13", [Approval(BOOTSTRAP, "3.13", rises, WHY)])
+    assert v.named == []
+    assert v.warranted == [
+        Approval(BOOTSTRAP, "3.13", dict(BOOTSTRAP_RISES), delta.WARRANTED_WHY).entry()
+    ], "the entry warranted raises only what the move exceeds"
+    [stop] = v.stop
+    assert stop.startswith(f"3.13 {BOOTSTRAP} 2083 moved ")
+    return stop
+
+
+def test_a_reproduced_shuffle_with_one_unapproved_rise_stops(tmp_path: Path):
+    rises = {b: n for b, n in BOOTSTRAP_RISES.items() if b != "otto:host"}
+    stop = _bootstrap_stop(tmp_path, rises)
+    assert stop.endswith(f": rose beyond {rises} ({WHY}): reproduced")
+
+
+def test_a_reproduced_shuffle_with_a_rise_beyond_its_approved_amount_stops(tmp_path: Path):
+    rises = {**BOOTSTRAP_RISES, "otto:host": BOOTSTRAP_RISES["otto:host"] - 1}
+    stop = _bootstrap_stop(tmp_path, rises)
+    assert stop.endswith(f": rose beyond {rises} ({WHY}): reproduced")
+
+
+def test_an_approved_shuffle_seen_in_one_pair_stays_pending(tmp_path: Path):
+    """Approval does not stand in for reproduction: one pair cannot tell a shuffle from noise."""
+    approvals = [Approval(BOOTSTRAP, "3.13", dict(BOOTSTRAP_RISES), WHY)]
+    v = decide(_bootstrap_shuffle(tmp_path)[:1], "3.13", approvals)
+    assert (v.more, v.evidence) == (True, None)
+    assert v.stop == ["3.13 needs a second measurement to confirm a shuffle (judge --pair twice)"]
+
+
+def test_a_growth_beyond_the_entry_that_approves_its_shuffle_stops(tmp_path: Path):
+    """One entry, one surface and minor: it approves the move it names and nothing more."""
+    entry = Approval(PLAIN, "3.10", {"otto:x": 3}, WHY)
+    approvals = delta.Approvals(base=BASE_TAG, in_force=[entry], spent=[])
+    shuffled = _judge(tmp_path / "shuffled", SHUFFLED, approvals=approvals)
+    assert (shuffled.stop, shuffled.shuffles, shuffled.used) == ([], [], [entry])
+    grown = _judge(tmp_path / "grown", GROWN, approvals=approvals)
+    assert grown.stop == [
+        f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: grew beyond {{'otto:x': 3}} ({WHY})"
+    ]
+    assert grown.named == []
 
 
 def test_a_move_within_the_noise_at_an_unchanged_total_is_no_shuffle(tmp_path: Path):
@@ -977,7 +1073,8 @@ def test_two_agreeing_pairs_confirm_the_first_verdict(tmp_path: Path):
     assert (v.confirmed, v.evidence, v.more) == (2, 0, False)
     assert v.grown == [(PLAIN, "3.10")]
     s = decide(_pairs(tmp_path, SHUFFLED, SHUFFLED), "3.10", NONE)
-    assert s.stop == [f"3.10 {PLAIN} 500 moved {{'otto:*': -3, 'otto:x': 3}}: reproduced"]
+    moved = f"3.10 {PLAIN} 500 moved {{'otto:*': -3, 'otto:x': 3}}"
+    assert s.stop == [f"{moved}: rose and is not approved: reproduced"]
 
 
 def test_a_quiet_first_pair_is_no_veto_over_two_agreeing_grown_pairs(tmp_path: Path):
@@ -1805,7 +1902,9 @@ def test_a_shuffle_that_reproduces_stops(tmp_path: Path, capsys):
     assert measure(_settings(repo, tmp_path / "out"), Shuffling()) == 1
     text = capsys.readouterr().out
     assert "confirming 3.10: a shuffle appeared" in text
-    assert f"STOP:\n  3.10 {PLAIN} 500 moved {{'otto:*': -3, 'otto:x': 3}}: reproduced" in text
+    moved = f"3.10 {PLAIN} 500 moved {{'otto:*': -3, 'otto:x': 3}}"
+    assert f"STOP:\n  {moved}: rose and is not approved: reproduced" in text
+    assert f"to approve, write {delta.APPROVALS_PATH}:" in text, "its entry is printed"
 
 
 def _grows(*minors: str, ops: "dict[str, int] | None" = None) -> FakeRunner:

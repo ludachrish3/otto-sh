@@ -2528,7 +2528,12 @@ make import-snapshot ONLY=help_project_warm   # rewrite only these surfaces' ent
   inconclusive. One operation can land in a different bucket from run to
   run, so two measurements agree when their totals match and no bucket
   moved by more than two, and a move that small is no shuffle; growth
-  itself is exact. The base's records are cached under
+  itself is exact. A reproduced shuffle is judged by the surface's
+  approval as growth is: when every bucket that rose is within the entry
+  for that surface and minor, it is approved growth beside declines and
+  is reported, not a stop; a rise into a bucket no entry approves, or a
+  rise beyond what its entry approves, stops and prints the entry it
+  warrants. The base's records are cached under
   `reports/budget/<tag>/` of the checkout that measured them (per
   checkout, like every `reports/`) and reused while their measured tree,
   interpreter version and instrument (the harness, the `scripts/uv_env.py`
