@@ -88,6 +88,7 @@ register_options(TestOptions, verbs=["test"])
 
 - **Signature:** `register_options(cls_or_path, *, verbs: list[str]) -> None`. The first argument is an options class or a lazy `"package.module:Attr"` string, resolved when the verb is dispatched. The string is held as #455's `Ref` value type, not a second lazy mechanism. The registry entry keeps the `Ref` together with its verbs, so the verbs are known without importing the class.
 - **Verbs** must come from the set of verbs that accept registered options, `{"run", "test"}` today. An unknown verb, an empty list, or a repeated verb raises at registration. Another verb can opt in later without changing the call.
+  *(Amended 2026-11-27 by `2026-11-24-options-everywhere-design.md` §5.4 and §12: an entry names a command, `"test"`, `"run"`, `"run <name>"`, `"<command>"` or `"<command> <name>"` for any command that accepts registered options. Its form, a repeat and an entry covered by another are refused at registration; whether it names a command is checked once every project has loaded, and a late registration when it is made.)*
 - **One registration per class.** Registering the same class twice raises. A class used by two verbs names both in one call.
 - **Init modules only.** The registry records the registering module as its origin, like every otto registry. A registration made while test files load is refused (`RegistrationRefused`, §5.6).
 - **Home:** `otto.params`, next to `options_params`, `build_options` and `OptionsSource`. It is re-exported lazily as `otto.register_options`, alongside `otto.options`.
@@ -346,4 +347,4 @@ No backwards compatibility is kept, per `AGENTS.md`. Measured on `4ae54ca7`, the
 - **Renaming the `otto.suite` package.**
 - **File paths or pytest test IDs as names** (§3).
 - **Suite-wide monitoring** across a class.
-- **Verb-wide options for verbs other than `run` and `test`.**
+- **Verb-wide options for verbs other than `run` and `test`.** *(Amended 2026-11-27: taken up by `2026-11-24-options-everywhere-design.md` §5.4, for `host` and for every command that accepts registered options: a command that uses the lab, unless it says otherwise, and a lab-free one that says so.)*

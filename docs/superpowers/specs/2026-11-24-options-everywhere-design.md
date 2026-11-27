@@ -6,7 +6,16 @@ fresh Fable, four rounds each, the second a cross-review) on 2026-11-24, after a
 §14 records them. Amended on 2026-11-25 by the owner's ruling that there is an entry meaning
 every command, that any command can declare it accepts registered options, and that a project
 out of scope offers no flags (§5.4, §13 items 14 to 19); the amendment touches stages 2 and 3
-only.
+only. The owner ruled its one open point, the default of the declaration, the same day (§13
+item 16). A third review pass of the amendment that day left eleven findings; §14 lists them.
+The owner ruled the two that were his on 2026-11-26 (§13 items 20 and 21). The other nine, and
+the minor ones, were checked against the code and the scoping design and folded into the text
+on 2026-11-26 (§14 says where each went); one half of finding 2, a mistyped lab name, went to
+the owner as §13 item 24. Two independent reviewers read the fold the same day, and their findings
+are applied (§14, "Review of the fold"). The decisions no proposal dictated are §13 items 22
+to 29; the owner accepted them on 2026-11-26, and ruled item 24 the same day: an unknown
+lab is reported in place of `No such option`, checked only once the parse has failed.
+Stage 1 is built and merged; nothing in the fold changes it.
 **Issue:** #1331.
 **Amends:** `2026-09-26-plain-pytest-tests-and-verb-options-design.md` §4.1 (the verb
 vocabulary), §4.3 and §4.4 (construction and the errors `ctx.options` raises), §5.4 (what
@@ -190,7 +199,8 @@ one.
   cost is the one `defaults.md` already states, now workspace-wide: give a field the same name
   in two classes only when it means the same thing. Two unrelated classes that spell one name
   on the *same command* are still refused, as today (body classes at startup, registered
-  classes when the command is built).
+  classes when the command is built; stage 2 moves the body-class check to where the command
+  is built, §5.4).
 
   Round 2 found the sharp edge of this choice: otto's own classes use plain names (`dev`,
   `full`, `ensure`, `toolchain`), and Typer passes every unset flag as its default. If defaults
@@ -396,13 +406,22 @@ builder's.
 being parsed, and `otto host` builds the host during that parse. A read there would see
 defaults that the flags then contradict.
 
-- Every command that accepts registered options (`run`, `test`, `host` and any that joined,
-  §5.4), and a project's command that declares `options=`, mark
+- Every command that accepts registered options (§5.4), and a project's command that declares
+  `options=`, mark
   "flags pending" when the command is entered, and every such command records before its body
   runs, even when it records nothing. The
   mark is cleared at the one place every executed command passes, not only in the shared
   preparation, so a command registered directly on a group, and the `-n --probe` dial of a host
   command with no covering class, do not stay pending.
+  - **Which commands mark changes in stage 2.** Stage 1, as merged, marks `run`, `test`,
+    `host` and a command with its own `options=` class, from a fixed set in the command-line
+    layer. Stage 2 replaces that set with the one reader of §5.4, so every command that reader
+    says accepts marks: also `otto cov`, `otto docker` and every lab-bound plugin command that
+    has not said otherwise. The mark does not depend on whether any class covers the command.
+    Under those commands a read made while the lab is being built (a host's or a product's
+    constructor) raises, where stage 1 answers defaults, also for a project that registers no
+    class at all (§6 item 17). `otto link`, `otto tunnel` and `otto monitor` do not accept
+    (§13 item 20), so they never mark.
 - A read while pending raises `OptionsNotAvailableError` saying the command has not read its
   flags yet. `host_class_for_id` and `try_ensure_lab` catch every exception today; this one
   passes through them, so a constructor that reads an option fails loudly instead of quietly
@@ -482,8 +501,10 @@ with it. Nothing deeper than two words is written.
   the flags of classes covering `"run"` (§6 item 14). A two-word entry that names a sub-group
   covers the commands beneath it.
 - A host id is an argument, not part of the path: `otto host r1 install` is `"host install"`.
-- A Typer app that Typer flattens into its one command (`otto monitor` today) is a single
-  command and has the one-word entry.
+- A Typer app that Typer flattens into its one command is a single command and has the
+  one-word entry. (`otto monitor` is such an app today, and it does not accept registered
+  options, §13 item 20, so an entry naming it is refused; the rule is for a plugin's
+  one-command app that does accept.)
 - An instruction named `test` is `"run test"`; a second top-level command named `run` is
   refused at registration, as it is today.
 
@@ -492,7 +513,8 @@ with it. Nothing deeper than two words is written.
 - **`otto.EVERY_VERB` means every command** (owner, 2026-11-25; it reverses this design's first
   answer, §13 item 14). It is a named constant, written `verbs=otto.EVERY_VERB`, and it covers
   every command that accepts registered options: `otto test`, every `otto run` command, every
-  `otto host <id>` command, and every command that joins later, otto's or a plugin's. A project
+  `otto host <id>` command, `otto cov`, `otto docker`, and every command added later, otto's
+  or a plugin's, that uses the lab and does not say otherwise (the default below). A project
   never enumerates commands to say "everywhere".
   - It stands alone. `verbs=[otto.EVERY_VERB]` is accepted as the same thing; beside any other
     entry it is refused, as an entry covered by another is.
@@ -507,11 +529,12 @@ with it. Nothing deeper than two words is written.
     under the existing rule (one flag per name on a command, unless both inherit the field from
     one class). That is today's rule for `run` and `test`, now with a wider reach, and with
     one relief: only classes of projects that take part are merged (below), so it arises only
-    between projects used together. Among those it is reported once for the invocation, with
-    both owners named, for classes that are already imported, and not once per command; a
-    class not yet imported is found when the first command that needs it builds its flags. The advanced page
-    carries the prefix advice (`acme_debug_level`), which §5.2 already gives for names shared
-    across projects.
+    between projects that take part in the same invocation. With no lab selected and no `-E`
+    that is every project, so the relief needs a lab or an exclusion. The collision is found
+    only by the merge of the command being built, names both owners, and stops that command:
+    not at bootstrap, not for a listing, and not for a command that does not accept. The
+    advanced page carries the prefix advice (`acme_debug_level`), which §5.2 already gives for
+    names shared across projects.
   - A class registered lazily for every command is imported by each accepting command that
     builds its flags: a dispatch, that command's own `--help`, a cold cache rebuild. A warm TAB
     still imports nothing (§7).
@@ -529,25 +552,64 @@ third-party plugins use").
 
 - **The declaration.** `register_cli_command(..., accepts_options=...)` and
   `@cli_command(accepts_options=...)` set a field of `CommandSpec`, in the shape `lab_free`
-  and `gate` have and the scoping design's `scoped` will have: the field, a marker one command
+  and `gate` have today (`leaf_is_lab_free`, `leaf_is_gated`) and the scoping design's
+  `scoped` will have: the field, a marker one command
   under a group can carry to differ from its group, and one function that reads both. Its
   docstring says "flags of registered options classes", since every command accepts options
   in the plain sense. otto's `run`, `test` and `host` are registered through it like any
   plugin's command, and nothing in the command-line layer holds a second list of the commands
-  that accept options: the first-word check, the site that offers flags, the "flags pending"
+  that accept options: the entry check, the site that offers flags, the "flags pending"
   mark (§5.2) and the completion collectors ask that one reader.
-- **The default** (§13 item 16; the owner's to rule): a command that uses the lab accepts
+  - **The field has three states**: `accepts_options: bool | None = None`. `True` and
+    `False` are what a registration said; `None` is a registration that said nothing, which
+    is every registration that exists today. The marker on one command has the same three
+    states, an absent marker being `None`.
+  - **The one reader answers for one command**, from its registration and its callback, as
+    `leaf_is_lab_free` does: the command's own marker when it carries one; else the
+    registration's field when it was set; else the default below, which is "this command is
+    not lab-free", asked of `leaf_is_lab_free` and not of the registration alone.
+  - **The marker arm applies beneath a group only.** For a top-level command the
+    registration decides: its field when set, else "the registration is not `lab_free`".
+    That holds for a group and for a single command alike (a function, or an app Typer
+    flattens into its one command, which is the top-level command). A marker on such a
+    command that disagrees with its registration is a registration error, reported when
+    the command is resolved. A lab-free marker on a top-level command's callback (which
+    `leaf_is_lab_free` honours today) keeps its meaning for the lab and does not change
+    whether the command accepts: the registration's own `lab_free` is what the default
+    reads, and a top-level command that is lab-free by its marker alone and wants no
+    registered options says `accepts_options=False`. So whether a top-level command
+    accepts is known from its
+    `CommandSpec`, without importing it, which is what the entry check uses ("When an
+    entry is checked", below).
+- **The default** (ruled by the owner, §13 item 16): a command that uses the lab accepts
   registered options unless it says otherwise, and a `lab_free` command accepts them only if
-  it says so. The commands where a product's or a host's code runs are the lab-bound ones, so
+  it says so. Nearly every command where a product's or a host's code runs is lab-bound, so
   a plugin's command and one otto adds later are covered without their author knowing the
   keyword, which is what "every command" promises; a settings or schema command gains no
-  project flags and imports no project class. Consequences, stated because they follow:
+  project flags and imports no project class. A lab-free command that opens its own lab
+  (`otto monitor`) stays out until it says so. Consequences, stated because they follow:
+  - **The default is decided per command, not per group.** A group that uses the lab can
+    hold commands that do not: `otto cov` is lab-bound and six of its commands are marked
+    lab-free (`check-stamp`, `kmodcov export` and `check`, `embedded-gcov export`, `check`
+    and `finish`). Such a command does not accept unless its own marker says so, and
+    an entry that covers its group, or `otto.EVERY_VERB`, passes over it without an error. A
+    command under a lab-free group accepts only when its own marker, or the group's
+    registration, says so.
   - `otto cov` and `otto docker`, where product hooks run (§5.6), accept registered options.
     This reverses §13 item 8.
   - A lab-bound plugin command that exists today gains the flags of every-command classes and
     of classes that name it, in its `--help` too, when a project registers one (§6 item 15).
-  - The parameter names of every lab-bound command, otto's and plugins', are names an
-    every-command class should not spell.
+  - **`otto monitor`, `otto link` and `otto tunnel` do not accept registered options**
+    (ruled by the owner, §13 item 20). `link` and `tunnel` use the lab, so each says
+    otherwise (`accepts_options=False`); `monitor` is lab-free and does not say that it
+    accepts. None of the three offers a registered class's flags, in its `--help` or in
+    completion; an entry in `verbs=` that names one of them is refused like any command that
+    does not accept; `otto.EVERY_VERB` does not reach them; and their own parameter names
+    (`--verbose`, `--all`, `--port`, `--report`) are not reserved. A read with
+    `otto.get_options` under one of them answers as it does on any command that does not
+    offer the class (§5.3).
+  - The parameter names of every lab-bound command that accepts, otto's and plugins', are
+    names an every-command class should not spell.
 - **Acceptance belongs to the commands that do the work, not to a group's own callback.** A
   group that accepts options offers them on every command beneath it, at any depth. The
   group's own callback runs before its child's flags are parsed, so a read there raises the
@@ -572,12 +634,36 @@ third-party plugins use").
   class, which `run` adapts before the signature is converted, as today; `otto test`'s own
   flags; a host method's parameters. A plugin's command therefore needs no code of its own to
   receive `--debug-level`: its body, or anything it calls, reads `otto.get_options(Acme)`.
+- **What a command offers is decided per invocation, and nothing about it is kept on the
+  command.** The classes offered depend on which projects take part (below), so the same
+  command can offer different flags in two invocations. This changes how stage 1 holds the
+  answer. Stage 1, as merged, fixes it when the command is built: one `LeafOptionSpec` per
+  command, three markers stamped on the callback (`stamp_options_leaf`: the command records,
+  it finishes its own dry run, and the names to mask), and the set of injected parameters.
+  From stage 2:
+  - The offered classes, whether the command finishes its own dry run, and the names to mask
+    are read from what the shared preparation returned for this invocation (§5.5). None of
+    the three is stamped on the callback for a covering class. What is fixed for a command
+    stays where it is: its own `options=` class, and whether it accepts.
+  - The flags attached at the first moment are attached for this invocation. The root group
+    keeps a resolved command for as long as the registry does not change (`_OttoGroup`'s
+    cache), which is longer than one invocation when a process runs two (a test runner, an
+    embedding program), so the attachment must not be left on that object for the next one.
+  - A parameter annotated with a class that covers the command is taken out of the
+    command's signature and receives the instance whether or not this invocation offers the
+    class's flags. Coverage is a fact about the registrations; the offer is a fact about the
+    invocation. Otherwise a parameter whose class went out of scope would become a
+    command-line parameter of a type the parser cannot convert. Whether the annotation is
+    such a class is decided from the registry's entries, by `options_key(annotation)`, and
+    resolves nothing. The instance is `otto.get_options(Cls)`, which always answers (§5.3).
 - **A failure is contained to its command.** A collision or an import error found while one
   command's flags are built stops that command with its message, and nothing else: the
-  group's `--help` still lists the command with its name and help line, its siblings dispatch,
-  and both completion writers record the command by name without flags, as they do today for
-  a command that cannot be built. Today only dispatch and the tree writer's `get_command`
-  contain such an error; the containment moves to where the flags are built.
+  group's `--help` still lists the command with its name and help line, and its siblings
+  dispatch. Today only dispatch and the tree writer's `get_command` contain such an error; the
+  containment moves to where the flags are built. A completion writer never merges (§7), so
+  a collision cannot empty what it records, and it resolves each covering class on its own
+  (below), so a class that cannot be imported or built is left out of that command's rows
+  alone. A command whose own parameters cannot be built is recorded by name, as today.
 - `@cli_command(options=Cls)` is unchanged: it is the command's own class, as
   `@instruction(options=Cls)` is an instruction's, and it does not make the command accept
   other classes.
@@ -589,49 +675,177 @@ third-party plugins use").
 should NOT appear as a flag").
 
 - A class's flags are offered only when the project that registered it takes part in the
-  invocation, in the scoping design's sense (`-l`, `-I`, `-E` and the project's own patterns;
-  `2026-11-24-configuration-first-scope-design.md`).
+  invocation.
+- **A project takes part when the scoping design's answer keeps it, and that is the whole
+  question**: `participating(...)` for the invocation's selection (`-l`, `-I`, `-E` and the
+  project's own patterns; `2026-11-24-configuration-first-scope-design.md`), on a dispatch,
+  in help, on the completion fast path and in the shim. Whether a project's load error is
+  fatal is a different question and keeps its own answer: a project that a kept project
+  requires has fatal errors and is still not kept (`classify_load_errors` records its
+  inactive reason beside the fatal verdict), so its flags are not offered (§13 item 22).
 - **Whose class it is, is what the registry recorded when it was registered**, not where the
   class is defined. A registration the registry attributes to no project always applies: that
   is otto's own classes, which are registered under the existing first-party marker, and a
   class a script registers outside any project's init modules. An otto class a project
   registers for itself is that project's.
-- Typing the flag of a project that is out of scope is the parser's `No such option`, the same
-  answer as typing one of that project's hidden instructions. It comes back when the project
-  takes part again: named with `-I`, or no longer excluded with `-E` (an exclusion wins over
-  an inclusion, as it does for everything else).
+- **A body's own class is offered by the same answer.** A project instruction's flags are the
+  options classes of its bodies (`otto run install` merges every body's class), and each
+  body records the project that declared it. Today every project's body class is merged
+  whichever projects take part, so an out-of-scope project's body flag is on the command.
+  From stage 2 a body's class is offered only when its project takes part; otto's own
+  bodies always are. This is the tier of the flags (§7), not of the walk: which bodies are
+  built and run is still decided with the lab loaded (`_walk_order`, §5.5), so a body can
+  have its flags offered and not run, as a host-starved project's does.
+  - **The clash check between bodies leaves bootstrap.** Today
+    `check_project_instruction_options` merges every project instruction's body classes
+    once every project has loaded, across all projects, and a clash is an uncontained
+    bootstrap failure that stops every command. It cannot stay there: bootstrap runs before
+    the command line is read, so it cannot know which projects take part. From stage 2 the
+    clash is found by the same merge, after the same filter, when that project
+    instruction's flags are built. It names both projects as today, and stops that command
+    and no other (the containment above). Two projects whose body classes clash and that
+    never take part together no longer stop anything (§6 item 18, §13 item 23).
+- Typing the flag of a project that is out of scope is the parser's `No such option`, and
+  nothing more (ruled by the owner, §13 item 21): otto does not look the spelling up among
+  the classes it filtered out, and the message names no project. The flag comes back when the
+  project takes part again: with a lab its patterns match (`-l`), which is the common case;
+  named with `-I`; or no longer excluded with `-E`. An exclusion wins over a selected lab
+  whose patterns match the project, as it does for everything else: `-l <lab> -E <project>`
+  leaves the project out. A name given to both `-I` and `-E` is refused before any command
+  is parsed, as today, so the two switches never compete over one project.
+- **The selection is validated where it is first read.** A name given to `-I` or `-E` that no
+  discovered project carries is the existing usage error (`validate_project_switches`: exit
+  2, naming the name and the closest match). Today it is raised in the command's preamble,
+  after the command's flags are parsed. With flags that depend on the selection that is too
+  late: `-I acm` for `acme` leaves `acme` out of scope, and the user would be told
+  `No such option` for a flag that exists, where today the typo is named. So the check
+  also runs where the selection is first read, before any command's flags are built.
+  - **The check takes the selection it is handed.** Today `validate_project_switches` reads
+    the root callback's record itself and returns silently when the record is absent, so
+    calling it earlier, before the callback has recorded, would check nothing. It takes the
+    selection `scope_selection` returned (§7) as its argument, and both callers pass it: the
+    early read, and the preamble. Nothing but `scope_selection` reads the three root
+    parameters from a context's parameters (§9's guard).
+  - **The preamble's call stays, and for some commands it is the only check.** A command
+    that does not accept registered options and does not otherwise read the selection
+    before its body (`otto link`, `otto tunnel`, `otto monitor`, a lab-free command that
+    does not say it accepts) has no early read, so the preamble is where its
+    `-I` and `-E` names are checked, as today.
+  - Every help that reads the selection reports the typo too, where today help skips the
+    check on purpose (§6 item 20, §13 item 29).
+  - This is not the hint §13 item 21 rules out: it reports a wrong `-I` or `-E` name, and
+    looks no flag up.
+  - Completion never fails: under a completion parse nothing is validated, and a name no
+    project carries selects nothing.
+  - **A lab name is not validated there; an unknown lab is reported when the parse fails**
+    (ruled by the owner, §13 item 24). Whether a lab exists is known only by asking the lab
+    sources, which a command's `--help`, a TAB and a command line that works must not do
+    before their time. So `-l` with a name no source declares, on a line that also passes
+    the flag of a project whose patterns do not match that name, fails the parse with
+    `No such option`, and the check runs then:
+    - **Where.** The root group already wraps every command's parse and catches the
+      parser's `No such option` (to say that a global option goes before the command). By
+      then the root callback has run, so the selection and the projects exist. When the
+      selection names a lab (`-l` or `OTTO_LAB`; with none there is nothing to check),
+      that handler first runs the lab check.
+    - **What it calls.** The load step of `build_lab_and_view` (`otto.session.lab`): the
+      sources, the inventory view, `load_lab`, and the translation of its errors into
+      `LabBuildError`. That step is extracted into one function which
+      `build_lab_and_view` calls and the handler calls, so the unknown-lab error is built
+      at one site. The handler does not call `ensure_lab_context` (no context is bound, no
+      reservation gate is built, no close callback is registered) and does not register
+      container hosts, which `build_lab_and_view` does after its load step.
+    - **What replaces the parser's error.** Only `LabBuildError` of kind `unknown_lab`:
+      it is raised as it is on a line that parses, with the message and exit status the
+      lab load gives it today. Every other outcome leaves the parser's `No such option`
+      as it is: the load succeeds, the lab is out of reach, a source or the inventory
+      cannot be read, or anything else is raised. A lab that exists and that the
+      project's patterns do not match is therefore the bare `No such option` of §13
+      item 21.
+    - **Several labs.** The load reports its first error, as it does today, and that one
+      error decides: `-l a+labb` with `a` declared reports `labb`; a first lab that is out
+      of reach hides an unknown second one, and the parser's error stands. No order is
+      added here.
+    - **It asks nothing about the option.** Whenever the load step raises the
+      `unknown_lab` error, that error replaces `No such option`, whichever option failed
+      and whether or not the command accepts registered options; the user fixes the lab
+      and sees the option error next if there is one.
+    - **Failure path only, and it has a cost there.** A command line that parses, a
+      `--help` that parses and a completion parse never reach the handler, so none of
+      them asks the lab sources earlier than today. A line that fails with `No such
+      option` under a lab that exists pays one lab load before the parser's error is
+      printed; no cheaper question gives the lab load's own answer, since a source's
+      contribution is loaded before a name is found undeclared. A line that asks for
+      help and also fails its parse (`--typo --help`) is a failed line, and gets the
+      check.
+    - **Without otto's root group** (a sub-app driven directly by a test) there is no
+      handler, and the parser's error stands.
+    Without such a flag the parse succeeds and the lab load names the unknown lab, as
+    today.
 - Nothing else about the class changes. `otto.get_options(Cls)` still answers, with the class's
   defaults and any name someone gave (§5.3), so a hook shared with an in-scope project does
   not fail.
+  - **An environment variable of a class that is not offered is not read.** A field declared
+    with `envvar=` takes the variable through the parser, and the parser has no such
+    parameter when the class is out of scope. Nothing reports it: the variable stays set,
+    the name is given by nobody, and a read returns the class's default (§6 item 13). The
+    guide says so beside `envvar=`.
 - **The classes are filtered before anything is built from them.** The classes covering a
   command are narrowed to those taking part first; only then are they imported, merged and
   checked for collisions. So a collision, or an import error, in an out-of-scope project's
-  class cannot stop a command, and two projects never used together never collide.
+  class cannot stop a command, and two projects do not collide in an invocation that keeps
+  one of them out. With no lab selected and no `-E`, every project takes part (the scoping
+  design's rule: no lab, no inference), so two projects that are never used together still
+  collide on a command line that names no lab.
 - **Registration errors are not filtered.** A malformed entry, an unknown first word or an
   unknown command name is a fact about the project's files, not about this invocation. It
   keeps the attribution and the judgement §5.4 gives below (fatal for a project that takes
   part or is required by one that does, one warning otherwise), which the scoping design does
   not change.
-- It is one question, asked of the scoping design's own answer and never recomputed here
-  (§7 says which of its readers each caller uses).
+- **`scoped=False` does not change the filter** (§13 item 25). The scoping design lets a
+  command opt out of scoping so that its body sees every project and the whole lab. Which
+  flags a command offers is not read from that field: a class is offered by the answer
+  above on every command that accepts.
+- The answer is the scoping design's own and is never recomputed here (§7 says which of its
+  readers each caller uses).
 - This is a change for a project that relies on an inactive project's flags today (§6 item 13).
 
-**`verb_option_classes` becomes the one answer to "which classes cover this command"**, taking
-a command path. Flag synthesis, recording and the completion collectors all call it.
+**One coverage operation answers "which registrations cover this command", and it resolves
+nothing.** It works on the registry's entries as they were registered: it takes a command
+path and the projects kept, and yields the registrations that cover the path, each with the
+project the registry recorded for it, lazy references still unresolved. It asks nobody which
+projects are kept: the command-line layer passes them, and a caller that passes none (a
+library process, a cache writer) keeps every project. Flag synthesis, recording, injection
+and the completion collectors all start from it.
+
+**Resolving a registration is a second step, one registration at a time**, so each caller
+decides what a failure means. Today `verb_option_classes` does both at once: it resolves
+every reference as it goes, raises on the first that fails and returns nothing partial.
+
+- A dispatch, and a command's own `--help`, resolve each registration the operation yielded
+  and stop at the first failure: an import error in a class that is in scope stops the
+  command, as today. A class that was filtered out is never imported.
+- A completion writer resolves each and keeps the ones that succeed (§7).
+- Injection resolves none (above).
 
 **When an entry is checked.** Its form and overlaps are checked at registration. Whether it
 names a command is checked where the commands are known, without importing anything extra:
 
 - The first word of any entry: by the command-line layer, once every project's init modules
-  have run, against the registered commands. A one-word entry also requires that command's
-  registration to accept options, which is known without importing it; a command that exists
-  but does not accept gets its own message, which says so and lists the ones that do. A
-  two-word entry requires only that the first word exists: whether the command it names
-  accepts is judged by the one reader when that command is resolved, since one command under
-  a group can differ from its group, and a named command that does not accept is an error
-  there, reported like an unknown name.
-  The registry and its coverage resolver live below the command line and ask nobody: the
-  resolver takes a command path and answers from the entries, so a library process, which
+  have run, against the registered commands. This check imports nothing: a `CommandSpec` is
+  known without importing its command, lazily registered or not, group or single command.
+  - **A one-word entry is judged here, by the registration alone**: the first word must
+    exist and its registration must accept (the declaration above). So `verbs=["link"]` is
+    refused at startup without importing `link`. A command that exists and does not accept
+    gets its own message, which says so and lists the commands that do.
+  - **A two-word entry requires here only that the first word exists.** The command or
+    sub-group it names is judged by the one reader when it is resolved, since a command
+    beneath a group can differ from its group. A named command that does not accept is an
+    error there, reported like an unknown name, and so is a sub-group under which no
+    command accepts (`"cov kmodcov"`).
+
+  The registry and its coverage operation live below the command line and ask nobody: the
+  operation takes a command path and answers from the entries, so a library process, which
   never loads the command line, never judges a first word. (Today `verbs=["tset"]` raises at
   the decorator, because the two verbs are a fixed list; it is now found at this check, §6
   item 16.)
@@ -648,9 +862,25 @@ names a command is checked where the commands are known, without importing anyth
   for `host`, because a lazily registered group is imported only when it is used.
 - `otto.EVERY_VERB` names no command, so it has nothing to check.
 
-A registration made after its check has run is checked when it is made.
+A registration made after its check has run is checked when it is made. The lifecycle:
 
-Either way the error names the class, the entry and close matches, is attributed to the project
+- The startup check runs once for each bootstrap result, after bootstrap and before its
+  findings are printed and judged. It is not keyed on the registry's revision: a new
+  bootstrap result is checked again whatever the registry holds.
+- The registry holds one optional checker, a callable, and installs none itself. Once the
+  startup check has run, the command line sets it, and clears it when the invocation ends.
+  The checker is the entry check's own judgement, the same function the startup check
+  calls for each entry, called at a second moment.
+- While a checker is set, a registration calls it before it is recorded. A bad entry
+  raises `OptionsRegistrationError` at the registration call, as an unknown verb did at the
+  decorator in 0.20.0, and nothing is recorded. An error found this way is not appended to
+  the bootstrap result: its findings have been printed and judged by then.
+- A two-word entry under a group that is not resolved yet passes the checker and is judged
+  when the group is resolved, like one registered at startup.
+- A library process, which never loads the command line, installs no checker and judges
+  nothing (above).
+
+An error the startup check or a group's resolution finds names the class, the entry and close matches, is attributed to the project
 that registered the class, and is judged by the classifier that judges every project load error
 today (`otto.session.projects.check_projects`): fatal when the project is active, named by
 `-I`, or required by an active project; one warning otherwise. This design restates none of
@@ -667,7 +897,8 @@ that policy.
 
 **A command's flags** are its own (an instruction's `options=` class and plain parameters, a
 project instruction's body classes, a host method's parameters) followed by every class
-covering it, merged by `merge_option_params` under its existing rule.
+covering it, merged by `merge_option_params` under its existing rule. From stage 2 the body
+classes and the covering classes are those of the projects taking part (above).
 
 **Host commands** have three extra points:
 
@@ -717,12 +948,35 @@ A command is prepared once. Stage 1 calls the preparation from the existing wrap
 caller list above is stage 1's). From the stage that opens the declaration of §5.4, it is
 called at the second moment of §5.4's one implementation, for `run`, `test`, `host` and a
 plugin's command alike; a command tells it what is its own (an own class, a walk's body
-classes) and prepares nothing itself. The move itself changes nothing a user sees: on every
-`otto run` and `otto test` command that carries registered flags today, for projects that take
-part, the flags have the same spellings and help text, in the same order (a covering class's
-flags already come last), with defaults hidden where they are today, and complete the same
-way. What does change on those commands is listed in §6 (items 10, 13 and 14) and is made by
-its own commit, not by the move.
+classes) and prepares nothing itself.
+
+The shared implementation is handed the projects to keep. The move puts `run` and `test` on
+it keeping every project, whatever the selection, as they do in 0.20.0. So the move itself
+changes nothing a user of 0.20.0 sees: on every `otto run` and `otto test` command that
+carries registered flags today, under any selection (`-l`, `-I`, `-E` or none), the flags have
+the same spellings and help text, in the same order (a covering class's flags already come
+last), with defaults hidden where they are today, and complete the same way. One new input
+starts to work with the move: an entry that names one `run` instruction (`"run install"`)
+attaches its flags there.
+
+What does change on those commands is listed in §6 and is made by its own commit, not by the
+move:
+- item 10 by the commit that changes the shared merge, before the move;
+- item 14 by the commit that attaches covering flags to the commands already on the shared
+  implementation, before the move: a command hung on the `run` group is one of them;
+- items 13, 18 (among the projects that take part) and 19, for `run` and `test`, by one commit
+  after the move, which makes those two commands keep the invocation's projects in place of
+  every project. That commit is the breaking one. Item 18's other half, that a clash no
+  longer stops startup, is made by its own commit before the move.
+
+**From stage 2 the preparation's result is the invocation's only record of what the command
+offers** (§5.4). The table above and the rules below read "the classes covering it" as "the
+covering classes this invocation offers", and "each body's class" as "the class of each body
+whose project takes part". The preparation is given those classes for this invocation and
+returns, with the instances, the three answers stage 1 stamps on the callback when the command
+is built: that the command recorded, whether it finishes its own dry run, and the names to
+mask. The dry-run seam and the would-run line read them from that result. The preparation runs
+before the seam (§5.4, the second moment), so the result exists when the seam asks.
 
 **What is validated before any body runs** is what is validated today: the classes covering the
 command, a standalone instruction's own class, and the own class of each project body that
@@ -732,8 +986,9 @@ an exit-2 usage error. A class the command does not offer is built on first read
 **Dry run.** `-n` builds and shows the same classes and fails the same way. A host command
 that carries registered classes becomes a self-finishing leaf, as project instructions are, so
 its options are validated and shown; a host command with none keeps today's stop before the
-leaf. The registered fields are taken out before the method is called, so the method receives
-only its own parameters.
+leaf. "Carries" is this invocation's answer: a host command whose only covering class is out
+of scope carries none. The registered fields are taken out before the method is called, so the
+method receives only its own parameters.
 
 **The project walks.** A walk builds and validates every applicable body's class before its
 first body runs, and runs the bodies with those instances, for every caller: the command line,
@@ -770,7 +1025,8 @@ replaces what an action does.
 - A class attached with `options=` can be read with `otto.get_options(Cls)` from anything the
   instruction calls. Today only the function holds it, unless the class is also registered.
 - A standalone instruction's parameter annotated with a class covering the command receives the
-  instance. That is today's rule in the new vocabulary.
+  instance. That is today's rule in the new vocabulary. It holds whether or not the invocation
+  offers the class's flags (§5.4).
 - A plain parameter is not a class, so nothing below the function can look it up. A value a
   host method or product hook needs belongs in a class.
 
@@ -847,7 +1103,8 @@ No public name is removed, and no signature loses a parameter. `OptionsSource`,
 `verb_option_source`, `OptionsNotAvailableError`, `OptionsRegistrationError`, `ctx.options`,
 `ctx.verb`, `register_options` and `@otto.options(verbs=[...])` keep working.
 `register_cli_command` and `@cli_command` gain one optional keyword, `accepts_options`, and
-`CommandSpec` the matching field; what a command registered without it gains is item 15. Two independent
+`CommandSpec` the matching field (`bool | None`, §5.4); what a command registered without it
+gains is items 15 and 17. Two independent
 contexts keep independent bindings. `verb_option_source` is no longer used by otto and its
 docstring says to read with `ctx.options`.
 
@@ -877,6 +1134,12 @@ today, and a difference found later is a defect.
      not run on the class's own default, as pydantic does not validate defaults;
    - the field has a `default_factory`: it now runs for each class built instead of once for
      the command.
+
+   The `-n` plan of a project instruction follows the same rule from stage 2. When every
+   project overrides the instruction with a class of its own, an unset flag of otto's own
+   class (`--ensure` on `install`) is shown in the plan with otto's own default, the value
+   the run itself uses; 0.20.0's preview showed the parser's default, the overriding
+   class's. The plan now agrees with the run.
 5. **`run_instruction` and `run_tests` accept an instance of any options class**, where an
    unregistered one raised `OptionsRegistrationError`.
 6. **`otto.options(Cls)` on a class that was itself already decorated is refused.**
@@ -898,28 +1161,84 @@ today, and a difference found later is a defect.
     before the first project acts.
 
 13. **A class registered by a project that is out of scope no longer has its flags offered**
-    (stages 2 and 3). Today every registered class's flags are on the command whichever
-    projects take part. A command line that passes such a flag fails with `No such option`
-    until the project takes part (named with `-I`, or no longer excluded with `-E`). The
+    (stages 2 and 3), **and neither has the options class of a body that project declares**
+    for a project instruction (`otto run install` and the like). Today every registered
+    class's flags, and every project's body flags, are on the command whichever projects take
+    part. A command line that passes such a flag fails with `No such option` until the
+    project takes part: with a lab its patterns match, named with `-I`, or no longer excluded
+    with `-E`. A project that another requires is judged like any other: a shared library
+    project that is excluded, or outside the lab, loses its flags, and a hook that reads its
+    class receives defaults (§13 item 22). The
     decision is made from the command line and the projects' own patterns, before any lab is
     loaded, so a project whose lab matches but whose hosts do not is still offered its flags.
+    A field's `envvar=` is not read while its class is out of scope, and nothing says so: the
+    read returns the default.
     A collision or an import error in an out-of-scope project's class no longer stops a
     command; its registration errors are judged as before. This one is breaking in the commit
     sense.
 14. **A command hung directly on the `run` group** (`@run_app.command()`, a sub-group added
     with `add_typer`) gains the flags of classes registered for `"run"`. Today only
-    instructions and project instructions receive them.
+    instructions and project instructions receive them. It stops working in one case: one of
+    its own parameters spells a field of such a class, which is now a collision on that
+    command.
 15. **A command that accepts registered options and is not `run`, `test` or `host`** (otto's
-    `cov` and `docker`, a lab-bound plugin command) gains, when a project registers a class
+    `cov` and `docker`, a lab-bound plugin command; not `monitor`, `link` or `tunnel`, §13
+    item 20; not a lab-free command under a lab-bound group, such as `otto cov check-stamp`)
+    gains, when a project registers a class
     that covers it: the class's flags in its `--help` and completion, validation of them before
     its body, their display under `-n`, the "flags pending" error for a read in a group
     callback, and a collision error on the command if one of its own parameters spells a
-    covering field. A project with no such class sees no change.
+    covering field. A project with no such class sees no change but item 17.
 16. **An unknown first word in `verbs=`** is reported by the entry check, attributed and judged
     as §5.4 says, where it raised `OptionsRegistrationError` at the decorator. A library
     process that never loads the command line does not report it.
+17. **A read of an options class while the lab is being built raises under more commands**
+    (stage 2; it changes what stage 1 marks, §5.2). Stage 1 marks "flags pending" under
+    `run`, `test` and `host`. From stage 2 every command that accepts registered options
+    marks, so a host's or a product's constructor that reads an option under `otto cov`,
+    `otto docker` or a lab-bound plugin command raises `OptionsNotAvailableError`, where
+    stage 1 answers defaults. It does so whether or not any class covers the command, and for
+    a project that registers none. (In 0.20.0 the same read raised "no verb's options are
+    bound"; stage 1 made it answer. No release carries stage 1 alone, so for a user of
+    0.20.0 only the message changes and the item is not breaking: §13 item 28.) The fix is
+    the rule §5.2 already gives: read in bodies and hooks, not in constructors.
+18. **A clash between two projects' body classes is no longer a bootstrap failure** (stage
+    2). Today two bodies of one project instruction whose unrelated classes spell one name
+    stop every otto command at startup, whichever projects take part. From stage 2 the clash
+    is found when that project instruction's flags are built, among the bodies of the
+    projects taking part, and stops that command only. Two such projects that never take
+    part together no longer fail; a library process, which builds no flags, no longer reports
+    the clash at all.
+19. **What a command offers follows the invocation** (stage 2; it changes what stage 1
+    stamps, §5.4). The classes shown and masked under `-n`, and whether a host command
+    finishes its own dry run, are this invocation's. Two invocations in one process with
+    different `-l`, `-I` or `-E` each see their own flags. The three markers stage 1 stamps
+    on a command's callback (`__otto_records_options__`,
+    `__otto_dry_run_self_finishing__`, `__otto_sensitive_fields__`) no longer carry the
+    covering classes; they were never public, and no guide names them.
+20. **An unknown `-I` or `-E` name is reported earlier, and by every help that reads the
+    selection** (stage 2). It is the same usage error with the same text. Today the preamble
+    raises it after the command's flags are parsed, and help never reaches the preamble, so
+    `otto -I acm run install --help` prints help; from stage 2 it exits 2 naming `acm`. That
+    holds for the help of every command that accepts registered options, and for
+    `otto run --help` once the scoping design's phase 3 filters that listing by the
+    selection. A command line with a mistyped `-I` name and a second mistake after it now
+    reports the name first.
+21. **Completion offers the flags of a command that has an option of a type the cache cannot
+    describe** (stage 2). Today one such option, an enum for example, makes the writer record
+    the whole command with no flags (`serialize_options` returns nothing for the command).
+    From stage 2 every flag is recorded with its spellings, how many values it takes, and
+    the completion data the cache can represent (an enum's choices, a declared completion
+    source); only what it cannot represent (the values of a completion function that
+    declares no source) is missing (§7).
+22. **A command line that names an unknown lab and fails with `No such option` reports the
+    lab** (stage 2; §5.4, §13 item 24). With the flag of a project the unknown name puts out
+    of scope, this is the message 0.20.0 gives for that line, so nothing changes for it.
+    With an option no command has (`otto -l labb run install --typo`), 0.20.0 reports the
+    option and this reports the lab; the line failed either way. Not breaking.
 
-Whether any of these is breaking in the commit sense is the owner's (§13).
+Whether any of these is breaking in the commit sense is the owner's (§13). Item 13 is ruled
+(§13 item 19); §13 item 28 gives a recommendation for items 14 to 21.
 
 ## 7. Constraints
 
@@ -931,7 +1250,8 @@ Whether any of these is breaking in the commit sense is the owner's (§13).
   project with one they move only on the commands its classes cover.
 - **Completion has two readers and both must show host flags.** The shim's per-host-class
   views serialise whatever the live host command builds, so they gain the flags when the cache
-  is rebuilt. The Typer fast path rebuilds commands from cached options with no registry, as it
+  is rebuilt (as candidate rows, not a merged list: the rule below holds for them too). The
+  Typer fast path rebuilds commands from cached options with no registry, as it
   does for `test` and `run`; it needs the same for host commands, or an unknown flag's value
   shifts the positionals. Both reuse the existing serialisation and stub machinery, keep the
   per-class scoping, omit a command a class does not expose, contain a command whose flags
@@ -943,26 +1263,46 @@ Whether any of these is breaking in the commit sense is the owner's (§13).
   `run` and `test` through branches keyed on those two names, and the host-class view builds
   its commands by a route that skips the group. Flags attached by §5.4's implementation would
   be missing from all of them, and a flag the completer does not know shifts the positionals
-  after it. So: each writer serialises the command with its covering flags attached, for
-  every accepting command, by the one description the live path builds; each reader replays
-  the cached flags and resolves no class; no reader is keyed on a command's name. The writers
+  after it. So: each writer records, for every accepting command, the command's own
+  parameters and the rows of the classes covering it; each reader filters the cached rows
+  for the selection and resolves no class; no reader is keyed on a command's name to find
+  its flags (the root group's branch that attaches the cached instruction commands beneath
+  `run` is about child commands, stays, and belongs to the scoping design's phase 3). The writers
   and readers for `run`, `test` and plugin commands move in stage 2 and the host views in
   stage 3, each with a cache version bump.
   - Every accepting command is recorded, otto's own included. Today the collector that feeds
     the fast path leaves out every first-party command, which is why `run` and `test` have
     branches of their own.
   - What is recorded is enough to parse the line as the live command would: its arguments as
-    well as its options, a group's own parameters, and the completion data of each. Today's
-    stubs rebuild options only.
+    well as its options, a group's own parameters, and for each the declarative completion
+    data the cache can represent: what the completion tree's parameter row already records
+    (how many values it takes, its spellings and aliases, its choices, a declared completion
+    source). A plugin option's `autocompletion=` function that declares no source cannot run
+    on the warm path and is not offered there; the flag itself is still offered, so no flag
+    is hidden by this. Today's stubs rebuild options only.
   - **The cache holds the candidates, not the merged result.** A cache is built once and read
     under many selections, so it cannot hold flags already filtered for one. For each command
-    it records the command's own parameters and, per covering class, that class's flags with
-    its registering project and the identity that decides a collision. Each reader narrows
-    the candidates to the projects taking part and only then merges them, by the live path's
-    merge, so `-I B` on a later TAB shows B's flags, and two projects never used together do
-    not collide in the cache. A command whose flags cannot be merged under one selection is
-    not recorded as empty for all of them. This is the contributor-set convention the scoping
-    design uses for instructions.
+    it records the command's own parameters and, per covering class and per body class, that
+    class's rows with the project that registered it. This is the contributor-set convention
+    the scoping design uses for instructions.
+  - **A writer describes each class on its own.** It starts from the coverage operation of
+    §5.4, resolves each registration separately, and keeps the ones that succeed: a class
+    that cannot be imported or built at all is left out, and costs no other class its rows.
+    It never merges, so a collision cannot empty a command's record.
+  - **A row never drops a flag.** The row for a field always carries its spellings and
+    how many values it takes, which is what keeps the positionals after it in place, and the
+    completion data the cache can represent: an enum's choices and a declared completion
+    source are recorded. What the cache cannot represent about it (the values of a
+    completion function that declares no source) is left out of the row, and the flag stays. Today's writer does the opposite: one option of a
+    type it does not know, an enum for example, makes it record the command with no flags
+    at all (§6 item 21).
+  - **A reader filters the rows and unions them.** It keeps the rows of the projects the
+    selection keeps, and of registrations no project owns, adds them to the command's own
+    parameters, and where two rows share a spelling the first wins. So `-I B` on a later
+    TAB shows B's flags. It does not merge as the live path does and detects no collision:
+    the live path keeps `merge_option_params`, over classes, unchanged. The two differ only
+    where the live command refuses to build, and there completion over-offers, which a hint
+    may do; it never hides a flag the live command accepts.
 - **"Given" comes from the parser's own record.** Typer's vendored click keeps a source for
   every parameter (`Context.get_parameter_source`; checked on typer 0.29.2, which reports
   `DEFAULT` for an unset flag and `COMMANDLINE` for `--level 0` and `--no-flag`). It lives in a
@@ -975,28 +1315,63 @@ Whether any of these is breaking in the commit sense is the owner's (§13).
   `otto.EVERY_VERB` and the `accepts_options` keyword join them in the stage that adds each.
 - **One registration seam with the scoping design.** `2026-11-24-configuration-first-scope-design.md`
   adds `CommandSpec.scoped` in the same shape (a field set at registration, a per-command
-  marker, one reader). `accepts_options` follows that shape and is built on top of it, so the
-  two are one mechanism with two fields, not two mechanisms.
+  marker, one reader). That shape exists today for `lab_free` and `gate`
+  (`leaf_is_lab_free`, `leaf_is_gated`), and `accepts_options` needs nothing more than it:
+  it does not wait for `scoped`, and neither field reads the other (§5.4). The two are one
+  mechanism with two fields, not two mechanisms.
 - **A command that does not accept options pays nothing**, and a command that accepts them but
   is covered by no class imports no options module, as `run` and `test` do today.
 - **"Takes part" is the scoping design's answer, at its command-line tier** (agreed with that
-  design's session, 2026-11-25). Whether a class's flags are offered is always decided at
+  design's session, 2026-11-25): `participating(projects, selection=...)` in
+  `otto.config.scope`, asked once per invocation, with membership tested per class. Whether
+  a class's flags are offered is always decided at
   that tier, from the root's `-l`, `-I` and `-E` and the projects' own patterns, and never
   from a loaded lab, including on `otto host`, which has loaded one by the time its command's
   flags are built: a flag must not appear or vanish with the lab's contents. A project whose
   lab patterns match but whose host patterns match no host is therefore still offered its
-  flags, and its instructions then refuse, as that design documents. Each caller reads the
-  selection through the scoping design's reader for its path, and none parses the root flags
-  itself:
-  - a dispatch, or one command's `--help`: the root callback has recorded the selection by
-    the time a command's parameters are asked for; the answer is asked once per invocation
-    and membership is tested per class;
-  - TAB: no callback runs and the shim imports only the standard library, so it uses the
-    scoping design's standard-library predicate over the cached per-project patterns and the
-    root flags the shim carries;
-  - building the cache, on any path including a root `--help` that finds it cold: nothing is
+  flags, and its instructions then refuse, as that design documents.
+  - **The selection is read by `scope_selection`, from the root command's parsed
+    parameters.** The scoping design's `scope_selection(ctx)` (`otto.cli.invoke`, its phase
+    1) is the reader, and this design adds no other. As built there it reads the
+    record the root callback leaves (`root_options`), and that record is missing on two
+    paths this design needs. The root callback returns before it records when the parse is
+    a completion parse (`ctx.resilient_parsing`). And the root group resolves a top-level
+    command before it runs its own callback, so a command whose parameters are built when it
+    is resolved has no record yet. The parsed parameters of the root command (`labs`,
+    `include_projects`, `exclude_projects`; `OTTO_LAB` arrives through `labs`) are set by
+    the root's own parse on every path, under a completion parse too, and hold the values
+    the record would. So `scope_selection` must read them from the root context, and answer
+    "no selection" when that context is not otto's root command (a sub-app driven directly
+    by a test), in which case every project takes part. It serves a dispatch, a command's
+    `--help`, the in-process completion path, and a TAB that finds the cache cold. The
+    `-I` and `-E` names it returns are validated by the caller that reads it first (§5.4).
+    Stage 2 makes this change, on top of the scoping design's phase 1, in the way that
+    design's session asked for: every phase 1 caller runs after the root callback, and the
+    record is the seam that carries what the callback does with those parameters, so a
+    reader that works before the callback shares that work and does not restate it. One
+    pure function turns the root command's parsed parameters into a `ScopeSelection`
+    (suggested name `selection_from_params`); the root callback builds its record through
+    it and `scope_selection` calls it. `scope_selection(ctx)` stays the one named seam.
+  - **Two readers of those parameters exist today, and they move onto it.**
+    `selected_lab_names` (`otto.cli.completers`) reads `labs`, and `_collect_chain_params`
+    (`otto.cli.remote_completion`) reads `labs`, `include_projects` and `exclude_projects`
+    and builds a context from them; both walk `ctx.params` up the parent chain under a
+    completion parse. They become callers of `scope_selection`, so the root parameters are
+    read for scope in one place. Stage 2 makes that move if the scoping design's phases
+    have not made it first.
+  - **The shim mirrors the reader.** On a warm TAB no callback runs and the shim imports
+    only the standard library. It already mirrors `selected_lab_names` (`selected_labs` in
+    `otto._shim_complete`); from the scoping design's phase 3 it carries the root `-I` and
+    `-E` as well and applies that design's standard-library predicate over the cached
+    per-project patterns. The differential test holds it equal to the live reader.
+  - Building the cache, on any path including a root `--help` that finds it cold: nothing is
     filtered, as above.
-- **One decision, one place.** §5.2's name matching, §5.4's coverage resolver and merge, §5.5's
+- **Nothing decided for one invocation is kept past it.** The selection, the set of projects
+  taking part and the flags attached to a command are held for the invocation (the root
+  context's lifetime), never on a module, a registry entry or a resolved command object
+  (§5.4).
+- **One decision, one place.** §5.2's name matching, §5.4's coverage operation and merge, the
+  reader that says whether a command accepts, the reader of the selection, and §5.5's
   preparation and walk validation are each one function with every caller named.
 - **Secrets.** A field that hides its default from `--help` today does so on every command the
   class covers, host commands included, and its value is masked in the dry-run display.
@@ -1040,8 +1415,9 @@ common case hard to find. The rule for every page this work touches:
   the two ways out, the shared-namespace caution, the table of
   §5.6, the table of which commands run which hook with the rule beside it,
   `@instruction(options=...)`, `otto.use_options` for scripts and unit tests, the lazy string
-  form, the collision rule, the name-is-the-key rule, sharing fields by inheritance, and the
-  errors.
+  form, the collision rule, the name-is-the-key rule, sharing fields by inheritance, what a
+  project out of scope does to its flags and to a field's `envvar=` with the three ways back
+  (§5.4), and the errors.
 - **One home per topic.** Other pages link to these two and restate nothing.
 - **The reader test.** Each rewritten page is walked by a Haiku or Sonnet reader who is given
   only the main page and asked to add a project-wide flag, add a flag for one instruction, and
@@ -1060,7 +1436,8 @@ The pages:
 - `docs/setup/writing-instructions.md`, `writing-tests.md`: annotated `ctx`, the lookup.
 - `docs/extend/cli-exposed-verbs.md` and `docs/cli/host/`: registered flags on host commands.
 - The guide for adding a command (`register_cli_command`, `@cli_command`): one short section,
-  "A project's options on your command": which commands accept them without being asked,
+  "A project's options on your command": which commands accept them without being asked
+  (a lab-free command under a lab-bound group does not),
   the keyword to say otherwise for a command or for one command under a group, what the
   command's users then get, that the command's own parameter names share a namespace with
   those flags, and that a group's own callback cannot read them.
@@ -1107,8 +1484,11 @@ The entry points must agree, so the tests drive them through one input:
      through one input; a command registered after the class is covered; `[otto.EVERY_VERB]`
      is the same thing and `[otto.EVERY_VERB, "run"]` is refused; a collision with one
      command's own parameter stops that command with both owners named and leaves the others
-     working; two every-command classes that share a name are reported once, at the entry
-     check; plain `@otto.options` still registers nothing.
+     working; two every-command classes that share a name stop each accepting command that
+     is built, with both owners named, and nothing else: bootstrap passes, `otto --help`, the
+     `--list-*` listings and a command that does not accept (`otto link`, `otto schema`) work,
+     and so does every command when the selection keeps one of the two projects out; plain
+     `@otto.options` still registers nothing.
    - **The declaration**: a plugin group, a nested sub-group under it, a single plugin
      command, a lazily loaded one and a Typer app that flattens each receive a covering
      class's flags with no code of their own, record them, validate them before the body, show
@@ -1117,23 +1497,126 @@ The entry points must agree, so the tests drive them through one input:
      with the message that says so, and one command under an accepting group can opt out;
      a read in a group's own callback raises the pending error; no module of the command-line
      layer names `run`, `test` or `host` to decide whether a command accepts options.
+   - **The three states**: the one reader is driven over a table of registration field
+     (`True`, `False`, unset) by command marker (the same three) by lab-free or not, for a
+     command under a group, and answers the marker, else the field, else "not lab-free"; for
+     a top-level command it answers the field, else "the registration is not lab-free", and
+     a marker on a flattened command that disagrees with its registration is refused as a
+     registration error when the command is resolved, in both directions;
+     `otto cov check-stamp` and the other lab-free commands under
+     `otto cov` offer no registered flag while `otto cov get` does, under one class
+     registered with `otto.EVERY_VERB` and under one registered for `"cov"`, with no error
+     for the commands passed over.
+   - **The entry check**: `verbs=["link"]`, `["tunnel"]` and `["monitor"]` are refused at
+     startup, each with the message that says the command does not accept, and none of the
+     three modules is imported (an import counter); `"cov"` passes; a one-word entry naming
+     a lazily registered single command is judged from its registration, with no import;
+     `"cov check-stamp"` is an error when `cov`'s commands are resolved, and so is
+     `"cov kmodcov"`, a sub-group under which no command accepts, each reported like an
+     unknown name, while `"cov"` passes over those
+     commands silently; in stage 2 an entry naming `"host"` passes and offers nothing (§13
+     item 26).
+   - **The pending mark** (§6 item 17): a host class whose constructor reads an option fails
+     with the pending error under `otto cov get`, `otto docker` and a lab-bound plugin
+     command, with and without a class covering the command, and reads defaults under
+     `otto link`, `otto tunnel` and `otto monitor --live`; the body of each accepting command
+     reads its values after the mark clears. In stage 2 the same read under `otto host`
+     still raises, as it does in stage 1.
    - **Containment**: with one command of a group made to collide, that command fails with its
-     message, its siblings dispatch, the group's `--help` lists every command, and both
-     completion writers record the colliding command by name; nothing is built for a command
-     that was not asked for (a counting double proves `otto host r1 ls` and `otto host r1
-     --help` build no flags for `install`).
-   - **The move changes nothing**: for projects that take part and register `["run", "test"]`,
-     the flags, spellings, help text, order and hidden defaults of `otto test` and of every
-     instruction and project instruction, and their completion through both readers, match a
-     golden output captured before `run` and `test` move onto the shared implementation. The
-     commit that makes the move passes it unchanged; the changes of §6 items 10, 13 and 14
-     land in their own commits and update it there.
+     message, its siblings dispatch, the group's `--help` lists every command, and a
+     completion writer records the colliding command with its own parameters and the rows of
+     both classes; a command hung on `run` whose own parameter spells a field of a class
+     registered for `"run"` stops with the collision of §6 item 14 and its siblings run;
+     nothing is built for a command that was not asked for (a counting double proves
+     `otto host r1 ls` and `otto host r1 --help` build no flags for `install`).
+   - **Coverage, then resolution**: a dispatch imports no lazily registered class of a
+     project that is out of scope (an import counter), and an import error in a class that
+     is in scope stops the command; a writer given one class that cannot be imported and one
+     healthy class, from two projects, records the healthy one's rows, and a reader offers
+     them under a selection that keeps that project; a standalone instruction's parameter
+     annotated with a lazily registered covering class is recognised without importing the
+     class.
+   - **A row never drops a flag**: a covering class with an enum field and a field with
+     value completion has every flag offered through both completion readers, each taking a
+     value or not as the live command does, and the positionals after them complete in
+     place. What the cache can represent about a flag is recorded and offered: an enum's
+     choices are, and so is a declared completion source. Only what it cannot represent is
+     missing (the values of a completion function that declares no source), never the flag.
+   - **The move changes nothing**: for two projects that each register `["run", "test"]`
+     classes, the flags, spellings, help text, order and hidden defaults of `otto test` and of
+     every instruction and project instruction, and their completion through both readers,
+     match a golden output captured before `run` and `test` move onto the shared
+     implementation. The golden is taken with no selection and under `-l`, `-I` and `-E`,
+     where 0.20.0 offers every project's flags. The commit that makes the move passes it
+     unchanged. The commit after it, which makes `run` and `test` keep the invocation's
+     projects (§6 items 13, 18 and 19), updates the captures taken under a selection, and
+     its diff of the golden removes the out-of-scope project's flags and nothing else. Items
+     10 and 14 land before the golden is captured.
    - **Scope**: with two projects that each register a class, and one of them out of scope,
      the in-scope project's flag is offered and the other's is `No such option`, on `otto run`,
      `otto test`, an `otto host` command and a plugin's command, in `--help` and in completion
-     through both readers; `-I <project>` brings it back; a hook's `otto.get_options` of the
-     out-of-scope project's class returns its defaults; otto's own classes and a class
-     registered outside any project are offered either way.
+     through both readers; a lab the project's patterns match, and `-I <project>`, each bring
+     it back; `-E <project>` removes it under a lab the project's patterns match, and a name
+     given to both `-I` and `-E` is refused as today, before the flag is read; a hook's `otto.get_options` of the out-of-scope project's class returns its
+     defaults, also with the field's environment variable set; otto's own classes and a class
+     registered outside any project are offered either way; with no lab and no `-E` both
+     projects' flags are offered; a plugin command registered `scoped=False` offers the same
+     flags as one that is not.
+   - **A required project is judged like any other**: with a library project that a kept
+     project requires, `-E lib` (and a lab `lib`'s patterns do not match) removes `lib`'s
+     registered flag and its body flag on `otto run install`, a hook that reads its class
+     receives defaults, and `lib`'s load error is still fatal; the fast path and the shim
+     give the same flags.
+   - **A mistyped lab name** (§13 item 24), each through the root command:
+     - `-l` with a name no source declares, plus the flag of a project whose patterns do
+       not match it, reports the unknown lab with the lab load's message and exit status,
+       and the same line without the flag gives the identical error; so do `OTTO_LAB`
+       with that name, `-l a+labb` with `a` declared, and the line with `--help` added
+       after the flag;
+     - the same with an option no command has, and under a command that does not accept
+       (`otto link`), also reports the lab;
+     - a lab that exists and that the project's patterns do not match is the bare
+       `No such option`, with no mention of a lab or a project;
+     - a lab that is out of reach, a source that cannot be read, a first lab out of reach
+       ahead of an unknown second one, and a line with no lab selected leave `No such
+       option` as it is;
+     - the failure path binds no context, builds no reservation gate and registers no
+       container host, and `build_lab_and_view` reports an unknown lab through the same
+       function the handler calls;
+     - a sub-app driven without otto's root group gives the parser's error;
+     - a command line that parses, a `--help` that parses and a completion parse do not
+       ask the lab sources before the point where they do today (counted on a recording
+       repository).
+   - **Body classes**: with two projects that each override `install` with a class of their
+     own, the out-of-scope project's body flag is `No such option` on `otto run install` and
+     absent from its `--help` and completion; two such classes that spell one name do not
+     fail bootstrap, stop `otto run install` with both projects named when both take part,
+     stop nothing else, and stop nothing when one project is out of scope; a body whose
+     project is host-starved has its flags offered and is not built.
+   - **The selection's reader**: `scope_selection` returns the same selection from a
+     dispatch, a command's `--help`, a completion parse of the root (where the root callback
+     recorded nothing) and for a top-level command resolved before the root callback ran,
+     with `-l` given as a flag and through `OTTO_LAB`; a context whose root is not otto's
+     answers no selection; `otto -I acm run install --flag-of-acme 1` and the same line
+     ending in `--help` exit 2 naming `acm`, not `No such option`; `otto -I acm link ...`
+     still exits 2 naming `acm`, from the preamble; the validation called with a selection
+     and no root record still validates; the completion parse of those lines raises
+     nothing; `selected_lab_names` and `_collect_chain_params` return what `scope_selection`
+     returns, and a guard finds no module of the command-line layer but `scope_selection`'s
+     that reads `labs`, `include_projects` or `exclude_projects` from a context's
+     parameters (the shim is the one mirror, under the differential test).
+   - **Per invocation**: one process runs the same command three times through the root
+     app, with a project in scope, then out of scope, then in scope again, and checks each
+     run's parsing, `--help`, masking and, on a host command, the dry run: the first and
+     third offer, validate, show and mask the project's flags and the second does none of
+     it, so an implementation that leaves attached flags on the command fails; a standalone
+     instruction with a parameter annotated with a covering class receives the instance,
+     with defaults, when the class's project is out of scope, and the parameter is on
+     no run's command line.
+   - **The cache's readers**: under each selection the fast path and the shim offer the
+     union of the command's own flags and the rows of the kept projects (the differential
+     test); two kept classes that share a spelling offer it once, where the live command
+     refuses to build.
 6. **Validation before any body** on every walk caller (command, library, `ensure`) and on the
    `status` walk, each failing in its own way (usage error, exception, pytest setup error); a
    rewriting validator runs once under `otto test`; and the dry-run display on a host command
@@ -1160,18 +1643,54 @@ One design, built in stages that each leave `main` working:
    this stage a hook reads every class on every entry point; under
    `otto host` it reads defaults. Most of §6 lands here, so its release note does too.
 2. Where a class applies: the declaration, the shared implementation of §5.4 with its
-   containment, the coverage resolver, command entries (`"run <name>"`, and `"<command>"` /
+   containment, the coverage operation, command entries (`"run <name>"`, and `"<command>"` /
    `"<command> <name>"`), the entry check, the completion writers and readers for `run`,
-   `test` and plugin commands, and the out-of-scope rule. `host` is registered as not
-   accepting in this stage. The order inside it: the implementation is built and proved on a
-   plugin command first; `run` and `test` move onto it last, as their own commit, against the
-   golden output of §9, so that move can be reverted alone. This stage follows the scoping
-   design's work, whose answer the out-of-scope rule asks and whose `CommandSpec` shape it
-   shares (§7).
-3. The `host` group accepts: flags offered, recorded, validated, shown in a dry run and
-   completed. `otto.EVERY_VERB` is exported here, not in stage 2, so that "every command" is
+   `test` and plugin commands, and the out-of-scope rule. The order inside it: the
+   implementation is built and proved on a plugin command first; `run` and `test` then move
+   onto it as their own commit, keeping every project, against the golden output of §9. One
+   commit follows the move: it makes `run` and `test` keep the invocation's projects, and is
+   the breaking one (§5.5). The move can be reverted on its own once that commit is
+   reverted, and reverting the two gives back `run` and `test` as they were. The landing is
+   four commits: this specification, the implementation, the move, and the commit after it.
+   - **`host` accepts from this stage, and offers nothing until stage 3.** Stage 1 already
+     marks `host` "flags pending" (§5.2), and the mark is now read from the declaration, so
+     registering `host` as not accepting would drop the mark in stage 2 and bring it back in
+     stage 3. Instead `host` is registered as accepting, and the coverage operation yields
+     nothing for a path under `host` until stage 3 removes that one line. An entry that
+     names `host` therefore passes the entry check in stage 2 and offers nothing; no
+     release carries that state, since stages 2 and 3 ship together (§13 item 26).
+   - **This stage follows the scoping design's phase 3.** What it needs from that design, by
+     phase:
+     - *Phase 1* (its §3.2 to §3.4; built on `lab-patterns-scope`): `participating` and
+       `ScopeSelection` in `otto.config.scope`, and `scope_selection` in `otto.cli.invoke`.
+       These answer the out-of-scope rule on a dispatch and on a command's `--help`. Two
+       things are needed that phase 1 does not have, and stage 2 builds both on top of it
+       (agreed with that design's session): `scope_selection` reading the root context's
+       parsed parameters and answering "no selection" under a root that is not otto's
+       (§7), and the validation of `-I` and `-E` names taking a selection (§5.4).
+     - *Phase 3* (its §3.6): the cache's per-project record (lab patterns, or "undeclared"),
+       the root `-I` and `-E` carried through the shim's descents, the standard-library
+       predicate that `otto.config.scope` and the shim share, and the single cache writer
+       with contributor sets. The TAB half of the out-of-scope rule is built on these, so
+       it cannot land before them.
+     - *Nothing from phase 2*, and nothing from `CommandSpec.scoped`, in whichever phase it
+       lands: the declaration needs only the shape `lab_free` and `gate` have today (§7).
+3. Host commands receive their covering classes (the coverage operation answers for a `host`
+   path, and
+   `"host <name>"` entries are checked): flags offered, recorded, validated, shown in a dry
+   run and completed. `otto.EVERY_VERB` is exported here, not in stage 2, so that "every command" is
    never true without host commands; the main page and the scaffold switch to it here.
-   Stages 2 and 3 ship in one release.
+   Here too (owner, 2026-11-27; #1391), every quickstart project and the `otto init` template
+   define four classes, read together from their instruction and test bodies:
+   - one registered for `otto.EVERY_VERB`;
+   - one for `["test"]`;
+   - one for `["run"]`;
+   - one for `["run <name>"]`.
+
+   One instruction shows that it does not get another instruction's flags, and
+   `docs/setup/shared-setup.md` names the four kinds briefly, with a link to the options page.
+   Stages 2 and 3 ship in one release. By the owner's rule nothing is released until every
+   stage of this design has landed (§13 item 28), so that release carries stage 1 too.
 4. The guides, examples and scaffold that were not already rewritten with their stage.
 
 ## 11. Left to the builder
@@ -1179,11 +1698,17 @@ One design, built in stages that each leave `main` working:
 - The data shape of the recorded flags and the layers, within the observable rules of §5.2.
 - The wording of the errors and of the unknown-command suggestion.
 - The name and home of the shared preparation function.
-- The cache schema for host-command flags.
+- The cache schema for host-command flags, and for the rows of §7: their fields beyond the
+  three §7 requires (the registering project, the flag's spellings, whether it takes a
+  value).
 - The value of `otto.EVERY_VERB`, and how the shared implementation attaches flags to a
   command it did not build (on the function's signature before conversion, or on the built
-  command), within §5.4 and §7. Any new reach into Typer's internals goes through
-  `otto.config._typer`.
+  command), within §5.4 and §7, including how an attachment is kept from outliving its
+  invocation. Any new reach into Typer's internals goes through `otto.config._typer`.
+- The names of the one reader of the declaration (beside `leaf_is_lab_free`), of its
+  per-command marker, of the coverage operation and of the step that resolves one
+  registration (both in `otto.params`; whether `verb_option_classes` keeps its name on
+  either), and where the invocation holds the projects kept.
 
 ## 12. Amendments to other documents
 
@@ -1197,7 +1722,25 @@ One design, built in stages that each leave `main` working:
 - The `ensure` paragraph: an install body still sees only the flags `otto test` offers; a class
   that does not cover `test` reads as defaults instead of raising.
 - Its out-of-scope line "Verb-wide options for verbs other than `run` and `test`" is taken up
-  here for `host` and for any command that declares it accepts them.
+  here for `host` and for every command that accepts them (§5.4: a command that uses the lab,
+  unless it says otherwise, and a lab-free one that says so).
+
+`2026-11-24-configuration-first-scope-design.md` (on `lab-patterns-scope`; that design's
+session answered each point on 2026-11-26, and the first two are its own edits to make):
+
+- Its R7 ends "like typing a hidden instruction". The owner has since ruled the bare
+  `No such option` with no refusal that names `-I` (§13 item 21), so the comparison no longer
+  holds. That session changes the ending.
+- Its §8 does not say which phase adds `CommandSpec.scoped`; that session assigns it to its
+  phase 2. Nothing here waits for it (§10).
+- Its phase 3 cache records no required edges: cached flags follow what `participating`
+  keeps (§13 item 22). Agreed.
+- Stage 2 of this design changes three things in that design's phase 1 code, agreed with
+  its session: `scope_selection` reads the root context's parsed parameters through one
+  pure function the root callback shares, and answers "no selection" under a root that is
+  not otto's (§7); `validate_project_switches` takes the selection as its argument (§5.4);
+  `selected_lab_names` (`otto.cli.completers`) and `_collect_chain_params`
+  (`otto.cli.remote_completion`) read the selection through `scope_selection` (§7).
 
 `docs/cli/run/defaults.md`: the name-is-the-key paragraph becomes the rule for every path, with
 "only a value someone gave". Its line "Different declaring classes: a bootstrap error" is
@@ -1205,6 +1748,12 @@ narrowed to one command: one flag per name on a command, one value per name in a
 
 `otto.params.declaring_class`: its docstring ("two projects each spelling `lab_env` have two
 fields") is narrowed the same way; it still decides collisions on one command.
+
+`otto.project.commands.check_project_instruction_options`, the module docstring of
+`otto.project.commands` ("so a clash is a startup error") and the comment at the call in
+`otto.bootstrap` ("a cross-project options collision is a declared conflict the user must
+resolve"): stage 2 removes the bootstrap call (§5.4, §6 item 18), and the docstring of
+`merged_option_params` says where the clash is found instead.
 
 ## 13. Calls made in this draft, for the owner to check
 
@@ -1226,7 +1775,7 @@ Settled by both reviewers:
    by the existing project-error classifier; host names are checked when host commands are
    built.
 8. Flags are not offered under `otto cov` or `otto docker`, where product hooks also run.
-   (Reversed if the owner accepts item 16's default: both use the lab, so both accept.)
+   (Reversed by item 16's default, which the owner ruled: both use the lab, so both accept.)
 9. The flag name is the key on every path (§4).
 10. Only a value someone gave is shared by name (§4, §5.2). Both accepted it in the
     confirmation round; one called it better than its own proposal.
@@ -1239,9 +1788,12 @@ Decided by the owner, 2026-11-25 (the draft's recommendations, accepted with the
 12. `otto.options(Acme)` on a class that was itself already decorated is refused (§5.8). One
     reviewer would have left it to the guides and typing, as a break unrelated to the feature;
     the other accepted the narrowed refusal.
-13. Of §6, items 2, 3 and 4 are breaking changes in the commit sense: each can change what an
-    existing project's code receives. The rest are not: a call that raised now answers, a
-    command does more, or a name is refused that never did what it appeared to.
+13. Of §6 items 1 to 12, which were the whole list when this was decided, items 2, 3 and 4
+    are breaking changes in the commit sense: each can change what an existing project's code
+    receives. The rest of those twelve are not: a call that raised now answers, a command
+    does more, or a name is refused that never did what it appeared to. §6 item 13 came
+    later and is breaking (item 19 below); items 14 to 20 are not decided, and item 28 below
+    gives a recommendation.
 
 The owner also confirmed that `"run <name>"` takes any `otto run` command: otto's seven, a
 project's standalone instructions and its own project instructions alike.
@@ -1259,12 +1811,13 @@ Ruled by the owner after approval, 2026-11-25 (§5.4):
 
 Calls made in the amendment, for the owner to check:
 
-16. **The default, awaiting the owner.** The amendment's first draft made the declaration
-    opt-in. Both reviewers found that it empties the ruling: a plugin command whose author
-    never heard of the keyword stays outside `otto.EVERY_VERB`, and the project cannot bring
-    it in, since an entry naming it is refused. The draft now says: a command that uses the
-    lab accepts unless it says otherwise, and a `lab_free` command accepts only if it says so
-    (§5.4). The other two answers, and what each costs:
+16. **The default, ruled by the owner on 2026-11-25: a command that uses the lab accepts
+    registered options unless it says otherwise, and a `lab_free` command accepts only if it
+    says so** (§5.4). The amendment's first draft made the declaration opt-in. Both reviewers
+    found that it empties the ruling: a plugin command whose author never heard of the keyword
+    stays outside `otto.EVERY_VERB`, and the project cannot bring it in, since an entry naming
+    it is refused. The owner was shown the three answers and chose this one. The two he did
+    not choose, and what each would have cost:
     - *Every command accepts unless it says otherwise.* The simplest rule and the same default
       as the scoping design's `scoped`. Settings, schema and completion commands then show
       project flags and import project classes unless each is opted out by hand.
@@ -1287,7 +1840,108 @@ design's session directly):
 19. "An out of scope option should NOT appear as a flag." A covering class registered by a
     project that does not take part in the invocation offers no flags (§5.4, §6 item 13). The
     scoping design records the same ruling as its R7. It lands with stages 2 and 3, after the
-    scoping design's `participating` answer exists, and is a breaking change there.
+    scoping design's phase 3 (§10 says what is needed from which phase), and is a breaking
+    change there.
+
+Ruled by the owner, 2026-11-26, on the two findings of the third review pass that were his
+(§14):
+
+20. "Monitor, link, and tunnel do not get the options." None of the three accepts registered
+    options (§5.4). `link` and `tunnel` use the lab and declare `accepts_options=False`;
+    `monitor` is lab-free and makes no declaration. The reviewer had proposed the opposite
+    (`monitor` declares that it accepts, and `link` and `tunnel` are listed among the commands
+    that gain flags, which reserves their parameter names).
+21. "Out of scope flags say 'no such option'." The parser's bare message stands (§5.4). The
+    reviewer had proposed adding which project offers the flag and how to bring it into
+    scope; that lookup is not built.
+
+Calls made while folding the third pass's other findings into the text (§14), for the owner
+to check. Two reviewers read them (§14, "Review of the fold"), and item 22 was reversed by
+that review. Each is the plainest rule that closes its finding; where the reviewer's proposal
+went further, the item says what was left out. **Accepted by the owner on 2026-11-26** ("I'm
+okay with all of your recommendations"), item 28's recommendations on what is breaking
+included. Item 24 he ruled separately the same day, as it now reads.
+
+22. **Item 19 is read literally: a class is offered when `participating` keeps its project,
+    and a project that another requires gets no exception** (§5.4; finding 4). The cost: a
+    required library's shared class loses its flags under `-E lib`, or under a lab its own
+    patterns do not match, while its load errors stay fatal, and a hook that reads the class
+    receives defaults. The alternative is the third pass's proposal, a required arm: a
+    project that a kept project requires keeps its flags. It was folded first and taken out
+    by the review of the fold, for what it would cost:
+    - Whether an error is fatal and whether flags are offered are two questions.
+      `classify_load_errors` makes a required project's error fatal and still records why
+      the project is inactive; the scoping design's exception for a required project covers
+      instructions and root commands, and its R7 gives flags none. The arm would also undo
+      "an exclusion wins" (§5.4) for flags.
+    - `otto run install -E lib` would offer `lib`'s body flag while the walk drops `lib`'s
+      body: a flag offered, never validated, whose body never runs.
+    - The completion fast path and the shim would need each project's required edges, which
+      only bootstrap's dependency pass fills in, and a TAB runs discovery alone.
+23. **A body's own options class is offered by the same answer, and the clash check between
+    bodies leaves bootstrap** (§5.4, §6 items 13 and 18; finding 5). The first half is item
+    19 applied to the flags `otto run install` merges from every project's body. The second
+    half removes a refusal that is deliberate today: a clash between two projects' body
+    classes stops every command at startup, whichever projects take part. Bootstrap cannot
+    know the selection, so the check can either stay global (two projects never used together
+    must still rename a field) or move to where the command is built (this text). The
+    reviewer also proposed adding the clash to a once-per-invocation report; this text
+    leaves that out and lets the clash stop its own command only.
+24. **A mistyped lab name is not validated before the flags are built, and is reported when
+    the parse fails** (§5.4, §6 item 22; finding 2). Ruled by the owner on 2026-11-26. `-I`
+    and `-E` names are validated up front, because that costs nothing. A lab name is known
+    to be wrong only by asking the lab sources, which a command's `--help` and TAB must not
+    do. The fold first left `otto -l labb run install --debug-level 3` as `No such option`
+    when the project's patterns do not match `labb`. The owner found that odd ("I would
+    have thought that it would come back with saying that there was no lab matching") and
+    agreed to "only doing that extra work in the error case": when a parse fails with
+    `No such option` and a lab is named, the lab check runs then and an unknown lab is
+    reported in its place. It is not the lookup item 21 rules out: it asks nothing about
+    the option, and a lab that exists but does not match stays the bare message.
+25. **`scoped=False` does not change which flags a command offers** (§5.4; a minor finding).
+    The alternative is that a command which opts out of scoping is offered every project's
+    flags, as its body sees every project. No otto command is both `scoped=False` and
+    accepting, so this decides only a plugin's case, and the plain rule needs nothing from
+    the scoping design's field.
+26. **Between stages 2 and 3, `host` accepts and is offered nothing, and an entry that names
+    `host` passes the check and offers nothing** (§10; finding 9). The alternative, refusing
+    such an entry until stage 3, needs a temporary second list for a state no release
+    carries.
+27. **A parameter annotated with a class is injected by coverage, not by offer** (§5.4;
+    finding 10). The reviewer wrote "a registered class"; this text keeps today's narrower
+    rule, a class that covers the command, so a class registered for other commands only is
+    still an ordinary parameter, as it is today. Coverage is read from the entries, without
+    resolving the class.
+28. **Recommendation on which of §6 items 14 to 21 are breaking in the commit sense**, by
+    the rule that a change is breaking when a user's setup, inputs or parsed output stops
+    working:
+    - **The owner's rule, 2026-11-26: nothing is released until every stage has landed, so
+      a change is judged against 0.20.0, the last release, and never against a state that
+      only `main` held between stages.** A behaviour that is the same in 0.20.0 and in the
+      release that follows is not breaking, whatever stage 1 did in between.
+    - *Not breaking, by that rule*: item 17 (a constructor that reads an option under
+      `otto cov` or `otto docker` answers defaults in stage 1 and raises from stage 2; in
+      0.20.0 that read raised too, "no verb's options are bound", so across the release
+      only the message changes).
+    - *Breaking through a collision*: item 14. A class registered for `"run"` works in
+      0.20.0, and it can now collide with a command the user hung on the `run` group, which
+      then stops (ruled 2026-11-26).
+    - *Not breaking*: item 15. 0.20.0 refuses a registration that names any command but
+      `run` and `test` (`_check_verb_values`: "unknown verb"), so no setup that works in
+      0.20.0 has a class covering `cov`, `docker` or a plugin's command, and none can
+      collide there (ruled 2026-11-26).
+    - *Not breaking*: item 16 (a wrong registration is still refused, later), item 18 (a
+      refusal is relaxed), item 19 (nothing one command line shows changes), item 20 (a
+      command line that was already wrong fails sooner; help with a mistyped `-I` name now
+      exits 2, which is the one visible change) and item 21 (completion offers more).
+29. **An unknown `-I` or `-E` name stops every help that reads the selection** (§5.4, §6
+    item 20; finding 2). Today's skip is deliberate: `validate_project_switches` runs at
+    first use and not in the root callback because, its docstring says, under `--help`
+    "there is no invocation to validate". This reverses that for the help of a command
+    whose flags depend on the selection. It follows from validating where the selection is
+    first read. The alternative, help that prints with the flags the mistyped selection
+    leaves, hides the typo and shows a help screen that is missing flags for no stated
+    reason.
 
 ## 14. Review record
 
@@ -1366,7 +2020,7 @@ questions). All three confirmed §2 against the code and accepted approach A. Fo
 - A group's own callback runs before its child's flags exist: §5.4 says what it reads (both).
 - Two every-command classes that share a name fail every command: stated, and reported once
   (Fable).
-- Opt-in made "every command" untrue: §13 item 16, now the owner's (both).
+- Opt-in made "every command" untrue: §13 item 16, which the owner then ruled (both).
 - The constant arrived a stage before host commands accepted: §10 moves it to stage 3 (Fable).
 - §6 missed what the amendment changes: items 14 to 16 added, items 7 and 8 corrected (both).
 - Byte-for-byte parity was required of output the amendment changes on purpose: §9 now pins
@@ -1391,11 +2045,182 @@ findings closed or closed by this pass). Folded in:
 - Three stale sentences (the `@cli_command` row, `cov` and `docker`, the compatibility
   preamble) and the over-wide parity promise: corrected.
 
-Not yet reviewed by Fable: the out-of-scope rule and the two revisions. That pass follows the
-owner's ruling on §13 item 16.
+**Third pass on the amendment, 2026-11-25** (a fresh Fable, after the owner ruled §13 item 16;
+its scope was the out-of-scope rule, the two revisions above, and the ruled default walked over
+otto's own commands). It checked the claims about the scoping design, the library process, the
+root `--help`, ownership, and the staging of `otto.EVERY_VERB`, and found them sound. It left
+eleven important findings. The owner ruled the two that were his on 2026-11-26 (findings 3
+and 8; §13 items 20 and 21), and those rulings are in the text. **The other nine, and the
+minor ones, were folded in on 2026-11-26, except the lab-name half of finding 2, which is
+open.** Each factual claim was first checked against the code at
+`f63efffbe` and against the scoping design and its phase 1 code on `lab-patterns-scope`; every
+claim held. The note under each finding says where it went, and where the text departs from
+the proposal. The fold was then reviewed ("Review of the fold", below), and the notes say
+what that review changed. The calls made are §13 items 22 to 29. Stage 1 does not depend on
+any of it.
+
+1. *Where the selection is read (§7, "takes part").* The root callback returns under resilient
+   parsing before it records the selection, and Typer resolves a top-level command before the
+   root callback runs, so the in-process fast path and a cold TAB have nothing recorded.
+   Proposed: read the selection from the root context's parsed parameters (`labs`,
+   `include_projects`, `exclude_projects`), which are set under resilient parsing too; one
+   reader serves dispatch, help, the fast path and a cold TAB, and the shim's mirror is the
+   only other.
+   **Folded:** §7 ("Takes part"), §9, §10, §12. The reader is the scoping design's
+   `scope_selection`, which reads the callback's record as built in its phase 1 and has to
+   change; §12 lists the request. "The only other" was wrong: two completion readers of
+   those parameters exist today, and §7 moves them onto it.
+2. *An unvalidated selection (§5.4, the out-of-scope block).* `-I` and `-E` names are checked
+   after the leaf's parse and a lab name when the lab loads, so a mistyped project name would
+   answer `No such option` where today it names the typo. Proposed: the selection is validated
+   where it is first read, before any command's flags are built.
+   **Folded for `-I` and `-E`:** §5.4, §6 item 20, §7, §9, §13 item 29. **For a lab
+   name, ruled by the owner (§13 item 24):** not validated up front, since that means
+   asking the lab sources before a command's `--help` and before every parse; reported in
+   place of `No such option` once the parse has failed (§5.4, §6 item 22, §9).
+3. *The error for an out-of-scope flag (§5.4), for the owner.* The text likens it to typing a
+   hidden instruction, but the scoping design lets a hidden instruction reach dispatch and a
+   refusal that names `-I`; a bare `No such option` is a worse answer. Proposed: on `No such
+   option` only, the root group's existing handler looks the spelling up among the filtered
+   classes and adds which project offers it and how to bring it into scope. **Ruled by the
+   owner (§13 item 21): the bare `No such option` stands.** §5.4 no longer likens it to a
+   hidden instruction. Closed.
+4. *Two sets (§5.4).* Flags ask whether the registering project takes part; errors are fatal
+   for a project that takes part or is required by one that does. A shared class in a required
+   library project would lose its flags while its errors stay fatal. Proposed: a class is
+   offered when its project takes part or a project taking part requires it; flags and errors
+   ask one function.
+   **Settled the other way: see §13 item 22.** The claim holds, and the cost is accepted:
+   flags follow `participating` alone (§5.4, §6 item 13, §9).
+5. *Body classes (§13 item 19).* `otto run install` merges every project's body class and the
+   startup clash check runs across all projects, so an out-of-scope project's body flag still
+   appears and "two projects never used together never collide" is false. Proposed: a body's
+   own class is offered only when its project takes part, by the same question, and the
+   startup clash check joins the once-per-invocation report.
+   **Folded:** §4, §5.4 (a body's own class), §5.5, §6 items 13 and 18, §7, §9, §12, §13
+   item 23. One departure: the clash is found when that command's flags are built and stops
+   that command only. There is no once-per-invocation report, for body classes or for
+   every-command classes.
+6. *The completion cache (§5.4, §7).* Three sentences disagree on whether a writer records
+   flags, and "the live path's merge" cannot be called by a reader that resolves no class.
+   Proposed: the merge is two functions, describe a class as rows (name, spellings, declaring
+   class, project) and merge rows; the live path calls both, a writer the first with a failure
+   contained per class, a reader the second (the shim's copy under the differential test); a
+   reader whose merge collides offers the command's own flags.
+   **Folded, simplified after review:** §5.4 (containment; coverage, then resolution), §6
+   item 21, §7 (the candidates, a writer per class, a row never drops a flag, a reader that
+   filters and unions), §9, §11. The merge is not split and no reader detects a collision.
+7. *The default is undecidable for a leaf (§5.4).* `otto cov` has lab-free leaves under a
+   lab-bound group, and the field has three states. Proposed: `accepts_options: bool | None =
+   None`; the reader answers the leaf marker, else the spec field, else "not lab-free"; the
+   first-word check uses the spec alone.
+   **Folded:** §5.4 (the declaration, the default, "When an entry is checked"), §6 preamble
+   and item 15, §8, §9. The marker arm applies beneath a group only, so for a top-level
+   command the spec alone is the whole answer.
+8. *"Lab-bound" is not "where product or host code runs" (§5.4), partly for the owner.* `otto
+   monitor` is lab-free and reads hosts, yet §5.4 uses it as the one-word example, which the
+   ruled default refuses; `link` and `tunnel` are lab-bound, so they accept, and have
+   parameters of their own that become reserved (missing from §6 item 15). Proposed: `monitor`
+   declares that it accepts, `link` and `tunnel` join item 15, and the sentence becomes "a
+   lab-free command that opens its own lab stays out until it says so". **Ruled by the owner
+   (§13 item 20): none of the three accepts.** §5.4 says so, takes the proposed sentence, and
+   notes that the one-word example is refused for `monitor`. Closed.
+9. *The pending mark widens (§5.2, §6).* Under the default, `cov`, `docker`, `link`, `tunnel`
+   and every lab-bound plugin command mark "flags pending" (`link` and `tunnel` no longer, by
+   §13 item 20), so a constructor read during the
+   lab build raises where stage 1 answers defaults, even for a project with no such class. §6
+   needs the item. And §10 says `host` is registered as not accepting in stage 2, while stage
+   1 already marks `host`: in stage 2 `host` accepts and the resolver answers nothing for a
+   `host` path.
+   **Folded:** §5.2 (which commands mark changes in stage 2), §6 items 15 and 17, §9, §10,
+   §13 items 26 and 28.
+10. *What a command offers now varies per invocation (§5.4, §5.5).* Stage 1 fixes the offered
+    set when a command is built (`LeafOptionSpec`, the markers `stamp_options_leaf` sets, the
+    injected-parameter set). Proposed: the offered set, the self-finishing answer and the
+    masked names are read from the invocation's prepared result and never stamped on the
+    callback; a parameter annotated with a registered class is injected whether or not the
+    class is offered; `verb_option_classes` takes the projects to keep and filters before it
+    resolves.
+    **Folded:** §5.4 (decided per invocation; the coverage operation), §5.5, §5.6, §6 item
+    19, §7, §9, §13 item 27. One narrowing: injection follows a class that covers the
+    command, not any registered class. The filter works on unresolved entries and resolving
+    is a second step, so the filter and the injection import nothing.
+11. *Staging (§10, §13 item 19).* The TAB half needs the scoping design's phase 3 (cached
+    patterns, `-I` and `-E` in the shim), not only `participating`. Proposed: stage 2 follows
+    phase 3, and `accepts_options` needs only the `lab_free` shape that exists today.
+    **Folded:** §7 (one registration seam), §10, §13 item 19.
+
+Minor, folded with the nine. Each is listed with where it went:
+
+- the every-command collision is reported at the selection read, not at bootstrap: settled
+  as neither; it is found only when a command's flags are built (§5.4, §9);
+- §13 item 13's "the rest are not" predates the out-of-scope ruling: item 13 now names the
+  twelve items it covered;
+- §6 item 14 should say whether it is breaking: it now says what stops, and §13 item 28
+  gives a recommendation, which is the owner's to accept;
+- three stale opt-in phrases (§5.2 "any that joined", §5.4 "every command that joins later",
+  §12 "declares it accepts them"): each rewritten where it stood;
+- "never collide" holds only with a lab or `-E`: §5.4 (twice) and §7;
+- the commonest remedy, a lab the project's patterns match, and the silent drop of an
+  out-of-scope class's `envvar=` value were unstated: §5.4, §6 item 13, §8;
+- whether a `scoped=False` lab-bound command is filtered: it is, §5.4 and §13 item 25;
+- flag attachment is per invocation while the root group's command cache outlives one
+  in-process call: §5.4, §7, §9, §11.
+
+**Review of the fold, 2026-11-26** (Astra and a fresh Fable; six important findings each,
+overlapping). All applied:
+
+- The required arm changed the owner's ruling instead of implementing it, offered a body flag
+  whose body never runs, and needed data a TAB does not have: removed. Flags follow
+  `participating` alone, and §13 item 22 is the call (both).
+- "A class that cannot be described is left out" let completion hide a live flag: a row
+  never drops a flag, and §6 item 21 records what that changes (Astra).
+- "Contained per class" and "injected by coverage" could not come from a resolver that
+  raises on the first failure: one coverage operation over unresolved entries, resolution as
+  a second step per registration (both).
+- The existing validation reads the root callback's record and is silent without it: it
+  takes the selection it is handed, and the preamble's call is kept as the only check for
+  commands that never read the selection early (both).
+- A spec-only entry check misjudged a single command whose marker overrides its
+  registration: settled by making the registration decide for every top-level command, a
+  marker counting beneath a group only, so a one-word entry is judged from the registration
+  alone and a disagreeing marker on a flattened command is a registration error (Astra).
+- A collision report at the selection read would reach listings and commands that do not
+  accept: deleted; a collision stops the command being built and nothing else (both).
+- "One reader" was false: `selected_lab_names` and `_collect_chain_params` read the root
+  parameters today; §7 names them and moves them onto `scope_selection` (Fable).
+- Splitting the merge in two, with a copy in the shim, was more than a hint needs: a cache
+  reader filters rows and unions them, and `merge_option_params` is unchanged (Fable).
+- Minor: the per-invocation test runs in scope, out of scope and in scope again; §9 gains
+  the pins for §13 items 24 and 26 and for §6 item 14's collision; §11's count of row
+  fields and §12's list of docstrings are corrected.
 
 **Closing check on draft 4, 2026-11-24.** Astra: all three of its findings closed, no open
 important finding. Fable: all of its findings closed, no open important finding; four minors,
 each one sentence, folded in (the call site names the fields a body-built instance gives; the
 snapshot arm of `opts=`; a prepared instance inside a block that touches none of its names; the
 pending mark of a context-free command).
+
+**Plan check of stage 2, 2026-11-26** (Astra and a fresh Fable read the stage 2 plan against
+this document; the owner ruled on their findings). It changed:
+
+- §5.4, the out-of-scope rule: "an exclusion wins over an inclusion" could not be true of
+  `-I b -E b`, which is refused before any command parses; it now says an exclusion wins
+  over a lab whose patterns match.
+- §5.4, "When an entry is checked": the lifecycle of the check for a registration made
+  after startup was unstated; the registry holds a checker the command line sets, and the
+  registration call raises.
+- §5.5: "each change is made by its own commit, not by the move" and "the move comes last"
+  could not both hold; the move keeps every project, and one commit after it makes `run`
+  and `test` follow the selection.
+- §7: "the completion data of each" promised what a cache cannot hold (a plugin's
+  completion function); "no reader is keyed on a command's name" is about flags, not about
+  the instruction commands attached beneath `run`.
+- §9: the golden is taken under a selection too, and says which commit updates it; the
+  scope tests pin the reworded exclusion rule.
+- §10: the order and the landing's four commits, to match §5.5.
+- §13 item 28: items 14 and 15 were left to the owner; 14 is breaking, 15 is not.
+- §6 item 4: the `-n` plan now reads an unset flag as the run does when every project
+  overrides the instruction; it was an unlisted difference from 0.20.0.
+- §6 item 21, §7 and §9, "a row never drops a flag": they said an enum's choices are absent
+  from a row; the cache records what it can represent, choices included.
