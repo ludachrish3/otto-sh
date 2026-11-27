@@ -139,6 +139,68 @@ end**. If `west build` complains about an unknown symbol or binding, the fix
 is local to the affected `overlay.conf` / `app.overlay` — none of the other
 configs are affected.
 
+## Thread stack sizes
+
+The x86 telnet images (`v2_7_fat_ram`, `v3_7_fat_ram`, `v3_7_lfs`,
+`v3_7_no_fs`, `v4_4_lfs`) set three options at the end of their
+`overlay.conf`:
+
+```
+CONFIG_SHELL_STACK_SIZE=4096
+CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=2048
+CONFIG_HW_STACK_PROTECTION=y
+```
+
+With Zephyr's defaults (2048 and 1024 bytes, no guard) the telnet shell
+thread used its whole stack on the bed's workload
+([#1208](https://github.com/ludachrish3/otto-sh/issues/1208)). Measured on
+2026-11-27 with `kernel stacks` (`kernel thread stacks` on 4.4):
+
+| Guest | `shell_telnet` unused, of 2048 | `sysworkq` unused, of 1024 |
+|---|---|---|
+| `zephyr44_lfs` | 0 | 12 |
+| `zephyr37_lfs` | 0 | 72 |
+| `zephyr37_fat` | 28 | 72 |
+| `zephyr27_fat` | 272 | 256 |
+
+A stack grows downward. On the 4.4 image the linker placed the logging
+thread's stack directly below the shell's with nothing between them, so the
+shell's overrun overwrote the logging thread's saved registers and the guest
+halted with a page fault in `logging`.
+systemd restarted it each time (253 restarts by 2026-11-27), and otto's
+retry of a failed open hid most of those from the bed lanes.
+
+`CONFIG_HW_STACK_PROTECTION` puts a 4 KiB guard page below each stack
+(`CONFIG_X86_STACK_PROTECTION=y` in all four built configs, and the stacks
+are a page apart in each new image's symbol table). An overrun then hits the
+guard page and raises a fatal error, where before it wrote into a
+neighbour's stack. That fault has not been provoked on the bed, so what the
+guest prints for it is not recorded here. The guard also rounds every stack
+up to whole pages on 3.7 and 4.4, which is why `kernel stacks` reports
+4096 for each of them there.
+
+After the change, one full `make conformance-bed` run (1822 passed, 55
+minutes of guest uptime) left every guest with 0 restarts and these peaks:
+
+| Guest | `shell_telnet` used, of 4096 | `sysworkq` used |
+|---|---|---|
+| `zephyr44_lfs` | 2152 | 1016 |
+| `zephyr37_lfs` | 2116 | 956 |
+| `zephyr37_fat` | 2020 | 956 |
+| `zephyr27_fat` | 1776 | 768 |
+
+The 4.4 and 3.7 LittleFS peaks are above the old 2048 bytes, and the work
+queue's are within a few bytes of its old 1024.
+
+This is a defect of the image's configuration, not one of the Zephyr-side
+bugs the next section keeps on purpose. The ARM serial-console image
+(`v3_7_no_fs_arm`) is not changed: its shell thread had 1068 of 2048 bytes
+unused after 15 days.
+
+To check a guest, run `kernel stacks` on it (`kernel thread stacks` on 4.4)
+and read the `unused` column. The count is a high-water mark since boot, and
+0 means the thread has used its whole stack or more.
+
 ## Known guest defects (kept on purpose)
 
 The 3.7 guests carry two Zephyr-side bugs that otto users with real 3.7
