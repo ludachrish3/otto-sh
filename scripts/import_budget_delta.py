@@ -16,7 +16,10 @@ within its amount (an unnamed bucket may move by `BUCKET_NOISE`). The file
 names the release tag it was written against; against any other base its
 entries are spent (NOTE lines), never evidence. A stop prints the entry the
 measurement warrants, to paste once its `why` is written; an entry nothing
-grew for, over the whole span, is a NOTE (unused), never a stop.
+grew for, over the whole span, is a NOTE (unused), never a stop. A shuffle
+(buckets moved, total unchanged) is judged by the same entry: when every
+bucket that rose is within it, the shuffle is approved growth beside declines,
+named and not a stop; otherwise, once reproduced, it stops.
 
 File operations only, never wall clock. Serial, one interpreter at a time, the
 primary first. Every minor is judged, whatever an earlier one found: the run
@@ -69,9 +72,10 @@ shared by every checkout of the repository: never run two at once.
 
 Exit statuses, the worst over the minors. `measure` and `judge`: 0 accepted
 (nothing grew, or every growth is approved by an in-force entry; declines,
-unreproduced shuffles, surfaces the base cannot run and spent or unused
+unreproduced or approved shuffles, surfaces the base cannot run and spent or unused
 entries are reported); 1 a policy STOP (a line per reason: a growth nothing
-approved, for which the stops print the complete approvals file to write, or
+approved, for which the stops print the complete approvals file to write; a
+reproduced shuffle with a rise nothing approves, which prints its entry too; or
 a generated repo that does not run at the base, which no approval lifts);
 2 invalid evidence or an operational
 failure (a step, git or the filesystem failed, a record is not evidence, the
@@ -488,8 +492,9 @@ class Verdict:
     named: "list[str]" = field(default_factory=list)
     declined: "list[str]" = field(default_factory=list)
     shuffles: "list[str]" = field(default_factory=list)
+    """Each shuffle no entry approves, one line each with why: a stop once it is reproduced."""
     shuffled: "list[str]" = field(default_factory=list)
-    """Each surface whose buckets moved beyond the noise at an unchanged total."""
+    """Each surface whose buckets moved beyond the noise at an unchanged total, approved or not."""
     unmeasurable: "dict[str, str]" = field(default_factory=dict)
     """Each base surface not judged, by name, with why (sorted by surface)."""
     proofs_skipped: "dict[str, list[str]]" = field(default_factory=dict)
@@ -497,12 +502,13 @@ class Verdict:
     grown: "list[tuple[str, str]]" = field(default_factory=list)
     """Each (surface, minor) that grew in the deciding pair, approved or not; staleness reads it."""
     used: "list[Approval]" = field(default_factory=list)
+    """Each entry that approved a growth or a shuffle on this minor; staleness reads it."""
     attribution: "dict[str, list[str]]" = field(default_factory=dict)
     """Each grown surface -> the paths that moved (:func:`path_attribution`), for the tables."""
     growth_stops: "dict[int, str]" = field(default_factory=dict)
     """Index in `stop` of each growth stop line -> its surface (for the other environment)."""
     warranted: "list[dict]" = field(default_factory=list)
-    """The approvals-file entry each stopped growth warrants, to paste once its why is written."""
+    """The entry each unapproved growth or shuffle warrants, to paste once its why is written."""
     reason: "str | None" = None
     """Why a second pair is needed: "growth", "a shuffle", or None for a quiet pair."""
     more: bool = False
@@ -651,20 +657,24 @@ def _within_amounts(entry: Approval, moved: "dict[str, int]") -> bool:
     return all(n <= entry.buckets.get(b, BUCKET_NOISE) for b, n in moved.items())
 
 
-def _growth_line(
+def _judged_rise(
     v: Verdict, line: str, key: str, moved: "dict[str, int]", approvals: "list[Approval]"
-) -> None:
-    """Classify one surface's growth into a stop or a named approval."""
+) -> "str | None":
+    """Judge the rises in *moved* of surface *key* on *v*'s minor; ``None`` when approved.
+
+    The one approval judgement, for a growth and a shuffle alike. The entry
+    is :func:`_applicable`'s, and it approves *moved* when every bucket that
+    rose is within its amount (:func:`_within_amounts`; a bucket that fell
+    always fits): *line* is then named approved, the entry is used, and the
+    answer is ``None``. Otherwise the entry the measurement warrants is
+    recorded, to paste once its why is written, and the answer says why:
+    ``"and is not approved"`` or ``"beyond <buckets> (<why>)"``.
+    """
     entry = _applicable(approvals, key, v.minor)
     if entry is not None and _within_amounts(entry, moved):
         v.named.append(f"{line}: approved up to {entry.buckets} ({entry.why})")
         v.used.append(entry)
-        return
-    v.growth_stops[len(v.stop)] = key
-    if entry is None:
-        v.stop.append(f"{line}: grew and is not approved")
-    else:
-        v.stop.append(f"{line}: grew beyond {entry.buckets} ({entry.why})")
+        return None
     # Built from the applicable entry: its buckets stand (another environment's
     # allowance, or the generic entry this per-minor one shadows on v.minor),
     # and only the buckets this measurement exceeds are raised.
@@ -673,6 +683,20 @@ def _growth_line(
         if n > warranted.get(b, 0):
             warranted[b] = n
     v.warranted.append(Approval(key, v.minor, warranted, WARRANTED_WHY).entry())
+    if entry is None:
+        return "and is not approved"
+    return f"beyond {entry.buckets} ({entry.why})"
+
+
+def _growth_line(
+    v: Verdict, line: str, key: str, moved: "dict[str, int]", approvals: "list[Approval]"
+) -> None:
+    """Classify one surface's growth into a stop or a named approval (:func:`_judged_rise`)."""
+    why = _judged_rise(v, line, key, moved, approvals)
+    if why is None:
+        return
+    v.growth_stops[len(v.stop)] = key
+    v.stop.append(f"{line}: grew {why}")
 
 
 def path_attribution(before: Record, after: Record) -> "list[str]":
@@ -720,11 +744,17 @@ def judge_minor(base: Path, tip: Path, minor: str, approvals: "list[Approval]") 
         elif delta < 0:
             v.declined.append(f"{minor} {key} {b.file_ops} -> {a.file_ops}")
         elif not within_noise(b.by_bucket, a.by_bucket):
-            v.shuffles.append(f"{minor} {key} {b.file_ops} moved {moved}")
+            # A shuffle every rise of which an entry approves is approved growth
+            # beside declines: named, not a stop. Either way it is a shuffle the
+            # next pair must reproduce.
             v.shuffled.append(key)
+            shuffle = f"{minor} {key} {b.file_ops} moved {moved}"
+            why = _judged_rise(v, shuffle, key, moved, approvals)
+            if why is not None:
+                v.shuffles.append(f"{shuffle}: rose {why}")
     if v.grown:
         v.reason = "growth"
-    elif v.shuffles:
+    elif v.shuffled:
         v.reason = "a shuffle"
     return v
 
@@ -1016,7 +1046,7 @@ def conclude(
     """
     verdicts = [v for _minor, v in results if v is not None]
     unresolved = [m for m, v in results if v is None or v.evidence is None]
-    grown = [g for v in verdicts for g in v.grown]
+    grown = [g for v in verdicts for g in (*v.grown, *((a.surface, v.minor) for a in v.used))]
     measured = [m for m, _v in results]
     unjudged = {(k, v.minor) for v in verdicts for k in v.unmeasurable}
     stale = stale_approvals(approvals.in_force, grown, unresolved, measured, unjudged)
