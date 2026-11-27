@@ -1,9 +1,12 @@
 """The example the options guide (``docs/setup/options-classes.md``) shows.
 
 A product supports a debug level, and ``--debug-level 3`` on the command line
-must reach the function that installs the product on a host. The page
+must reach the function that installs the product on a host, and so must
+``--variant debug``, a flag of ``otto run install`` alone. The page
 includes the pieces between the ``# doc: begin`` and ``# doc: end`` markers;
-``tests/unit/docs/test_options_example.py`` runs them.
+``tests/unit/docs/test_options_example.py`` runs them. Its first step shows the
+``product`` snippet without the line that reads ``AcmeInstall`` (line 5 of
+the snippet), so that line stays on its own.
 """
 
 import logging
@@ -31,6 +34,15 @@ class Acme:
     # doc: end project-wide
 
 
+# doc: begin one-instruction
+@otto.options(verbs=["run install"])
+class AcmeInstall:
+    """The acme project's options for `otto run install` alone."""
+
+    variant: Annotated[str, typer.Option(help="Build variant.")] = "field"
+    # doc: end one-instruction
+
+
 class Agent(Product):
     """The agent the project installs on every host."""
 
@@ -42,9 +54,11 @@ class Agent(Product):
 
     # doc: begin product
     async def install(self, host: Host) -> Result:
-        """Install the agent, logging at --debug-level."""
+        """Install the agent with the options the user gave."""
         level = otto.get_options(Acme).debug_level
-        return await host.run(f"agent-install --log-level {level}")
+        args = f"--log-level {level}"
+        args += f" --variant {otto.get_options(AcmeInstall).variant}"
+        return await host.run(f"agent-install {args}")
         # doc: end product
 
     async def uninstall(self, host: Host) -> Result:

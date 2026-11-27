@@ -23,6 +23,7 @@ from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.result import CommandResult
 from otto.utils import DRY_RUN_HEADLINE, Status
+from tests._fixtures.clickctx import chain
 from tests._fixtures.dispatch import DispatchRunner
 from tests.conftest import active_context
 from tests.unit.cli.conftest import _flat
@@ -247,7 +248,8 @@ def warm_cache():
 
 
 def _ctx(**params):
-    return SimpleNamespace(params=params, parent=None, resilient_parsing=True)
+    """One context, otto's root, holding *params* (the verb's own ``--parent`` among them)."""
+    return chain("otto", root_params=params)
 
 
 def test_image_rm_completes_declared_names_then_the_parents_observed_refs(warm_cache):
@@ -259,11 +261,7 @@ def test_image_rm_completes_declared_names_then_the_parents_observed_refs(warm_c
 
 
 def _labs_ctx(*labs, **params):
-    return SimpleNamespace(
-        params={"labs": list(labs), **params} if labs else params,
-        parent=None,
-        resilient_parsing=True,
-    )
+    return _ctx(**({"labs": list(labs), **params} if labs else params))
 
 
 def test_image_rm_without_a_parent_offers_the_union_of_every_docker_hosts_refs(warm_cache):

@@ -26,7 +26,7 @@ from ..host.product import (
 )
 from ..host.toolchain import toolchain_removal_command
 from ..instruction_catalog import PREVIEWABLE_INSTRUCTIONS
-from ..params import OptionsSource
+from ..params import RecordedOptions, lookup_options
 from .actions import ProjectActions, _owned
 from .options import (
     CleanupOptions,
@@ -322,7 +322,20 @@ def _cleanup_host_plan(
     return host_plan
 
 
-def plan_lab_tail(*, name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> list[TailStep]:
+def _record_of(kwargs: "dict[str, Any]", recorded: "RecordedOptions | None") -> RecordedOptions:
+    """Return *recorded*, or a record of every flag in *kwargs* given."""
+    if recorded is not None:
+        return recorded
+    return RecordedOptions.all_given(kwargs)
+
+
+def plan_lab_tail(
+    *,
+    name: str,
+    ctx: "OttoContext",
+    kwargs: "dict[str, Any]",
+    recorded: "RecordedOptions | None" = None,
+) -> list[TailStep]:
     """Return the lab-wide steps *name* takes once after every project, in run order.
 
     Only ``cleanup`` has them: each fleet host's debug-log sweep (with
@@ -331,10 +344,11 @@ def plan_lab_tail(*, name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
     whether or not any project applies. A host class that replaces a step's
     host verb is named rather than guessed. Nothing here contacts a host, so
     which links are impaired and which hosts carry a tunnel stay unchecked.
+    The flags are read as :func:`plan_instruction` reads them.
     """
     if name != "cleanup":
         return []
-    opts = OptionsSource.from_kwargs(kwargs).build(CleanupOptions)
+    opts = lookup_options(CleanupOptions, _record_of(kwargs, recorded))
     steps: list[TailStep] = []
     for host in ctx.all_hosts():
         if opts.debug_logs:
@@ -363,29 +377,41 @@ def plan_lab_tail(*, name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
 
 
 def plan_instruction(
-    *, name: str, ctx: "OttoContext", kwargs: "dict[str, Any]"
+    *,
+    name: str,
+    ctx: "OttoContext",
+    kwargs: "dict[str, Any]",
+    recorded: "RecordedOptions | None" = None,
 ) -> list[ProjectPlan]:
     """Collect every project's plan for *name*, an instruction with a preview.
 
     *name* is one of :data:`~otto.instruction_catalog.PREVIEWABLE_INSTRUCTIONS`.
-    *kwargs* are the CLI's parsed flags, the same mapping the real run builds
-    its options from. ``--ensure``, the two log flags and ``--toolchain``
-    become gaps; ``--no-dev`` leaves every host's tool list empty, since the
-    real run installs (or removes) no dev tool then. ``cleanup`` plans each
-    project's products and then its dev tools; its lab-wide steps after every
-    project are :func:`plan_lab_tail`'s.
+    *kwargs* are the parsed flags. *recorded*, when given, is the command's
+    record (``otto run <name>`` passes it), and *kwargs* is then not read;
+    without it every flag in *kwargs* counts as given. Otto's options class
+    for *name* is read from the record with ``otto.params.lookup_options``, the one lookup: the
+    instance the command recorded, or else one it builds from the record (and
+    keeps there) by the rule every reader follows, with any ``use_options``
+    block around the caller laid over it. A flag nobody typed reaches otto's
+    class only when the command offered that class, so when every project
+    overrides *name* with a class of its own an unset flag reads otto's own
+    default, as the run does. ``--ensure``, the two log flags and
+    ``--toolchain`` become gaps; ``--no-dev`` leaves every host's tool list
+    empty, since the real run installs (or removes) no dev tool then.
+    ``cleanup`` plans each project's products and then its dev tools; its
+    lab-wide steps after every project are :func:`plan_lab_tail`'s.
 
     Raises:
         ValueError: *name* is not an instruction with a preview.
     """
     if name not in PREVIEWABLE_INSTRUCTIONS:
         raise ValueError(f"{name!r} has no install preview")
-    source = OptionsSource.from_kwargs(kwargs)
-    install = source.build(InstallOptions) if name == "install" else None
-    logs = source.build(UninstallOptions) if name == "uninstall" else None
-    cleanup = source.build(CleanupOptions) if name == "cleanup" else None
+    recorded = _record_of(kwargs, recorded)
+    install = lookup_options(InstallOptions, recorded) if name == "install" else None
+    logs = lookup_options(UninstallOptions, recorded) if name == "uninstall" else None
+    cleanup = lookup_options(CleanupOptions, recorded) if name == "cleanup" else None
     tools_cls = {"install-tools": InstallToolsOptions, "uninstall-tools": UninstallToolsOptions}
-    tools = source.build(tools_cls[name]) if name in tools_cls else None
+    tools = lookup_options(tools_cls[name], recorded) if name in tools_cls else None
     plans: list[ProjectPlan] = []
     for project, actions, body in _walk_order(name, ctx, ctx.ordered_projects, announce=False):
         project_plan = ProjectPlan(project.name)

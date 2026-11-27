@@ -17,6 +17,7 @@ from otto.cli.invoke import (
     root_options,
 )
 from otto.cli.registry import CommandSpec
+from tests._fixtures.clickctx import chain
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.rootoptions import make_root_options
 
@@ -69,19 +70,25 @@ class TestCommandSpec:
 
 
 class TestScopeSelection:
-    def test_reads_root_options_without_splitting(self):
+    def test_reads_the_root_parameters_without_splitting(self):
         from otto.cli.invoke import scope_selection
 
-        opts = make_root_options(
-            labs=["a", "b+c"], include_projects=("x",), exclude_projects=("y", "z")
+        ctx = chain(
+            "otto",
+            "test",
+            root_params={
+                "labs": ["a", "b+c"],
+                "include_projects": ["x"],
+                "exclude_projects": ["y", "z"],
+            },
         )
-        sel = scope_selection(_ctx({"_otto_root_options": opts}))
+        sel = scope_selection(ctx)
         assert (sel.labs, sel.include, sel.exclude) == (("a", "b+c"), ("x",), ("y", "z"))
 
     def test_no_lab_is_empty(self):
         from otto.cli.invoke import scope_selection
 
-        sel = scope_selection(_ctx({"_otto_root_options": make_root_options()}))
+        sel = scope_selection(chain("otto", "test", root_params={"labs": None}))
         assert sel.labs == ()
 
     def test_otto_lab_env_flows_through_the_root_callback(self, monkeypatch, real_main_mocks):
@@ -126,7 +133,7 @@ class TestListingParticipation:
             raise typer.Exit(2)
 
         monkeypatch.setattr(invoke, "validate_project_switches", refuse)
-        ctx = _ctx({"_otto_root_options": make_root_options(exclude_projects=("typo",))})
+        ctx = chain("otto", "test", root_params={"exclude_projects": ["typo"]})
         with pytest.raises(typer.Exit) as excinfo:
             invoke.listing_participation(ctx, [])
         assert excinfo.value.exit_code == 2
@@ -144,7 +151,7 @@ class TestListingParticipation:
             "otto.config.scope.participating",
             lambda projects, **kw: calls.append(("participating", kw)) or "out",
         )
-        ctx = _ctx({"_otto_root_options": make_root_options(labs=["bench"])})
+        ctx = chain("otto", "test", root_params={"labs": ["bench"]})
         assert invoke.listing_participation(ctx, []) == "out"
         # The gates are the inline lab load's own (stubbed here): not run twice.
         assert calls == ["lab", ("participating", {"ctx": sentinel})]
@@ -172,7 +179,7 @@ class TestListingParticipation:
         monkeypatch.setattr(invoke, "ensure_lab_context", lambda ctx: calls.append("lab"))
         monkeypatch.setattr("otto.run_context.get_context", object)
         monkeypatch.setattr("otto.config.scope.participating", lambda projects, **kw: "out")
-        ctx = _ctx({"_otto_root_options": make_root_options(labs=["bench"])})
+        ctx = chain("otto", "test", root_params={"labs": ["bench"]})
 
         assert invoke.listing_participation(ctx, []) == "out"
         assert calls == ["validate", "gate", "session", "lab"]
@@ -183,7 +190,7 @@ class TestListingParticipation:
 
         calls = []
         self._wire(monkeypatch, calls=calls)
-        ctx = _ctx({"_otto_root_options": make_root_options(exclude_projects=("acme",))})
+        ctx = chain("otto", "test", root_params={"exclude_projects": ["acme"]})
         projects = [fake_project("acme"), fake_project("other")]
         out = invoke.listing_participation(ctx, projects)
         assert calls == ["validate", "gate"]  # no inline lab load

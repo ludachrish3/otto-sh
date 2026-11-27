@@ -155,3 +155,27 @@ def test_the_merged_host_preferences_reach_the_load(tmp_path):
     )
     lab = build_lab([project], labs=["merged"])
     assert lab.hosts["alt1"].ssh_options.port == 2222
+
+
+def test_build_lab_and_view_reports_an_unknown_lab_through_the_load_step(tmp_path, monkeypatch):
+    from otto.session import LabBuildError, build_lab_and_view
+    from otto.session import lab as session_lab
+
+    raised: "list[BaseException]" = []
+    load = session_lab.load_lab_and_view
+
+    def counted(*args, **kwargs):
+        try:
+            return load(*args, **kwargs)
+        except LabBuildError as e:
+            raised.append(e)
+            raise
+
+    monkeypatch.setattr(session_lab, "load_lab_and_view", counted)
+    project = _project(
+        tmp_path / "r1", "r1", _SOURCES, {"lab/lab.json": [_host("alt1", "10.0.0.1")]}
+    )
+    with pytest.raises(LabBuildError) as exc:
+        build_lab_and_view([project], labs=["nope"])
+    assert exc.value.kind == "unknown_lab"
+    assert raised == [exc.value]

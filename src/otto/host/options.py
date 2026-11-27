@@ -23,16 +23,16 @@ Example::
 
 import logging
 import math
-import types
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import MISSING, dataclass, field, fields
-from typing import TYPE_CHECKING, Any, ClassVar, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import ConfigDict, SecretStr, ValidationInfo, field_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import final
 
 from ..models.base import as_secret
+from ..utils import unwrap_optional
 from .limitation import Limitation
 
 __all__ = [
@@ -194,17 +194,8 @@ def _numeric_kind(annotation: object) -> "type | None":
 
     ``| None`` is looked through: optionality is not the field's kind.
     """
-    args = (
-        get_args(annotation)
-        if get_origin(annotation) in (Union, types.UnionType)
-        else (annotation,)
-    )
-    rest = [a for a in args if a is not type(None)]
-    if rest == [int]:
-        return int
-    if rest == [float]:
-        return float
-    return None
+    kind = unwrap_optional(annotation)
+    return kind if kind in (int, float) else None
 
 
 def refuse_non_number(value: object, name: str, kind: type = float) -> "int | float":

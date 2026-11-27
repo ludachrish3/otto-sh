@@ -29,6 +29,7 @@ from otto.logger.mode import LogMode
 from otto.reservations import Reservation, ReservationBackendBase
 from otto.result import CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.clickctx import chain
 from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
@@ -1082,21 +1083,16 @@ class TestHostIdCompleter:
         assert argument.autocompletion is _host_id_completer
 
 
-def _ctx_with_labs(lab_names, *, on_child=False) -> SimpleNamespace:
-    """Build a Click-like context chain for completion.
+def _ctx_with_labs(lab_names):
+    """Build the context chain completion builds.
 
     Mirrors the real layout: ``-l/--lab`` lives on the root ``otto`` callback,
-    so ``labs`` sits on the *parent* context, while the ``otto host`` child ctx
-    (the one handed to the completer) carries only its own params. Set
-    ``on_child`` only to prove the completer reads the nearest context first.
+    so ``labs`` sits on otto's root context, while the ``otto host`` child ctx
+    (the one handed to the completer) carries only its own params.
     """
-    child_params = {"host_id": "", "hop": "", "term": None, "transfer": None}
-    root_params = {"labs": lab_names}
-    if on_child:
-        child_params["labs"] = lab_names
-        root_params = {"labs": None}
-    root = SimpleNamespace(info_name="otto", params=root_params, parent=None)
-    return SimpleNamespace(info_name="host", params=child_params, parent=root)
+    host = chain("otto", "host", root_params={"labs": lab_names})
+    host.params = {"host_id": "", "hop": "", "term": None, "transfer": None}
+    return host
 
 
 class TestHostIdCompleterLabFilter:

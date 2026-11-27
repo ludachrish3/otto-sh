@@ -51,6 +51,7 @@ mro	otto.cli.registry:CommandSpec	-
 call	otto.cli.registry:CommandSpec	sync	@manifest:construct=false
 member	otto.cli.registry:CommandSpec.__eq__	method	sync	PK:other:-
 member	otto.cli.registry:CommandSpec.__hash__	method	sync	-
+member	otto.cli.registry:CommandSpec.accepts_options	field
 member	otto.cli.registry:CommandSpec.async_leaves	field
 member	otto.cli.registry:CommandSpec.dry_run_preview	field
 member	otto.cli.registry:CommandSpec.gate	field
@@ -61,9 +62,9 @@ member	otto.cli.registry:CommandSpec.name	field
 member	otto.cli.registry:CommandSpec.output_dir	field
 abstract	otto.cli.registry:CommandSpec	@final @manifest:subclass=false
 name	otto.cli.registry:cli_command	function
-call	otto.cli.registry:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:dry_run_preview:B:false
+call	otto.cli.registry:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:dry_run_preview:B:false KO:accepts_options:N
 name	otto.cli.registry:register_cli_command	function
-call	otto.cli.registry:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:overwrite:B:false
+call	otto.cli.registry:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:accepts_options:N KO:overwrite:B:false
 name	otto.config:CacheSetting	class
 mro	otto.config:CacheSetting	-
 call	otto.config:CacheSetting	sync	@manifest:construct=false
@@ -205,7 +206,7 @@ call	otto.context:OttoContext	sync	KO:lab:- KO:cov_decision:N KO:include_project
 member	otto.context:OttoContext.__eq__	method	sync	PK:other:-
 member	otto.context:OttoContext.admissible_ids	method	sync	KO:owner:N KO:require_nonempty:B:true
 member	otto.context:OttoContext.all_hosts	method	sync	KO:pattern:N KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:overrides:-
-member	otto.context:OttoContext.bind_verb_options	method	sync	KO:verb:- KO:kwargs:-
+member	otto.context:OttoContext.bind_verb_options	method	sync	KO:verb:- KO:kwargs:- KO:command:N
 member	otto.context:OttoContext.claim_cleanup_warning	method	sync	-
 member	otto.context:OttoContext.collecting_coverage	property:gs-
 member	otto.context:OttoContext.cov	property:g--
@@ -5386,9 +5387,9 @@ call	otto.project:is_clean	coroutine	-
 name	otto.project:is_uninstalled	function
 call	otto.project:is_uninstalled	coroutine	-
 name	otto.project:plan_instruction	function
-call	otto.project:plan_instruction	sync	KO:name:- KO:ctx:- KO:kwargs:-
+call	otto.project:plan_instruction	sync	KO:name:- KO:ctx:- KO:kwargs:- KO:recorded:N
 name	otto.project:plan_lab_tail	function
-call	otto.project:plan_lab_tail	sync	KO:name:- KO:ctx:- KO:kwargs:-
+call	otto.project:plan_lab_tail	sync	KO:name:- KO:ctx:- KO:kwargs:- KO:recorded:N
 name	otto.project:register_project_actions	function
 call	otto.project:register_project_actions	sync	PK:cls:- KO:overwrite:B:false
 name	otto.project:status	function
@@ -6251,7 +6252,7 @@ call	otto:OttoContext	sync	KO:lab:- KO:cov_decision:N KO:include_projects:T:[] K
 member	otto:OttoContext.__eq__	method	sync	PK:other:-
 member	otto:OttoContext.admissible_ids	method	sync	KO:owner:N KO:require_nonempty:B:true
 member	otto:OttoContext.all_hosts	method	sync	KO:pattern:N KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:overrides:-
-member	otto:OttoContext.bind_verb_options	method	sync	KO:verb:- KO:kwargs:-
+member	otto:OttoContext.bind_verb_options	method	sync	KO:verb:- KO:kwargs:- KO:command:N
 member	otto:OttoContext.claim_cleanup_warning	method	sync	-
 member	otto:OttoContext.collecting_coverage	property:gs-
 member	otto:OttoContext.cov	property:g--
@@ -6386,7 +6387,7 @@ call	otto:all_hosts	sync	KO:pattern:N KO:include_containers:B:false KO:include_l
 name	otto:app	callable
 call	otto:app	sync	VP:args:- VK:kwargs:-
 name	otto:cli_command	function
-call	otto:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:dry_run_preview:B:false
+call	otto:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:dry_run_preview:B:false KO:accepts_options:N
 name	otto:get_context	function
 call	otto:get_context	sync	-
 name	otto:get_host	function
@@ -6402,7 +6403,7 @@ call	otto:open_context	asyncgen	KO:lab:- KO:include_projects:N KO:exclude_projec
 name	otto:options	function
 call	otto:options	sync	PO:cls:N KO:verbs:N KO:overwrite:B:false VK:dataclass_kwargs:-
 name	otto:register_cli_command	function
-call	otto:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:overwrite:B:false
+call	otto:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:accepts_options:N KO:overwrite:B:false
 name	otto:register_login_proxy	function
 call	otto:register_login_proxy	sync	PK:name:- PK:fn:- KO:undo:N KO:prompt:N KO:overwrite:B:false
 name	otto:register_options	function

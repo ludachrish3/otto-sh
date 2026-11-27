@@ -7,8 +7,14 @@ import typer
 
 from otto.cli.invoke import validate_project_switches
 from otto.cli.main import _project_completer, parse_project_list
+from otto.config.scope import ScopeSelection
 from tests._fixtures.fake_project import fake_project
-from tests.unit.cli.test_bootstrap_gate import _fake_ctx, _install_result
+from tests.unit.cli.test_bootstrap_gate import _install_result
+
+
+def _selection(*, include=(), exclude=()):
+    """The selection :func:`~otto.cli.invoke.scope_selection` hands the validation."""
+    return ScopeSelection(labs=(), include=tuple(include), exclude=tuple(exclude))
 
 
 class TestParseProjectList:
@@ -113,7 +119,7 @@ class TestUnknownName:
     def test_unknown_name_exits_2_with_a_suggestion(self, monkeypatch, capsys):
         _install_result(monkeypatch, projects=[fake_project("project2")])
         with pytest.raises(typer.Exit) as excinfo:
-            validate_project_switches(_fake_ctx(exclude=("projectt2",)))
+            validate_project_switches(_selection(exclude=("projectt2",)))
         assert excinfo.value.exit_code == 2
         assert "did you mean 'project2'" in capsys.readouterr().out
 
@@ -121,13 +127,13 @@ class TestUnknownName:
         """Both switches are validated; -I is not the untested half."""
         _install_result(monkeypatch, projects=[fake_project("project2")])
         with pytest.raises(typer.Exit) as excinfo:
-            validate_project_switches(_fake_ctx(include=("ghost",)))
+            validate_project_switches(_selection(include=("ghost",)))
         assert excinfo.value.exit_code == 2
         assert "no project 'ghost'" in capsys.readouterr().out
 
     def test_known_names_pass(self, monkeypatch):
         _install_result(monkeypatch, projects=[fake_project("project2")])
-        validate_project_switches(_fake_ctx(exclude=("project2",)))  # must not raise
+        validate_project_switches(_selection(exclude=("project2",)))  # must not raise
 
     def test_a_project_name_is_normalized_before_comparison(self, monkeypatch):
         """``-E proj-2`` names the project declared as ``Proj_2``.
@@ -136,7 +142,7 @@ class TestUnknownName:
         too or the only spelling the CLI can produce is rejected as unknown.
         """
         _install_result(monkeypatch, projects=[fake_project("Proj_2")])
-        validate_project_switches(_fake_ctx(exclude=("proj-2",)))  # must not raise
+        validate_project_switches(_selection(exclude=("proj-2",)))  # must not raise
 
     def test_no_switches_never_bootstraps(self, monkeypatch):
         """With nothing to validate, the validator looks nothing up.
@@ -144,12 +150,12 @@ class TestUnknownName:
         Not a user-code saving: ``entry()`` bootstraps before argv parsing and
         the gate on the next line of ``command_preamble`` bootstraps again, so
         by here the project set is built either way. What this pins is that the
-        function is a no-op when both tuples are empty — the branch every
-        switch-less invocation takes.
+        function is a no-op when the selection names no ``-I``/``-E`` — the
+        branch every switch-less invocation takes.
         """
 
         def _forbidden():
             raise AssertionError("validate_project_switches bootstrapped with no switch given")
 
         monkeypatch.setattr("otto.bootstrap.bootstrap", _forbidden)
-        validate_project_switches(_fake_ctx())  # must not raise
+        validate_project_switches(_selection())  # must not raise

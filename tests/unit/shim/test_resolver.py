@@ -468,3 +468,45 @@ def test_workspace_key_matches_the_product(tmp_path: Path, monkeypatch):
     ]
     for corpus in corpora:
         assert sc.workspace_key(corpus) == workspace_key([Path(p) for p in corpus])
+
+
+def _covered_leaf():
+    """A leaf naming two uses, and the candidates payload they index."""
+    leaf = _leaf(
+        "leaf",
+        [
+            _param(["--own"], "own"),
+            _param(["--help", "-h"], "help", takes_value=False),
+        ],
+    )
+    leaf["candidates"] = [0, 1]
+    candidates = {
+        "rows": {
+            "m:A": [_param(["--a"], "a"), _param(["--own"], "spelled_twice")],
+            "m:B": [_param(["--b"], "own"), _param(["--c", "-c"], "c")],
+        },
+        "uses": [
+            {"key": "m:A", "project": None, "entries": ["leaf"]},
+            {"key": "m:B", "project": "p", "entries": ["leaf"]},
+        ],
+    }
+    return leaf, candidates
+
+
+def test_candidate_rows_are_unioned_after_the_nodes_own_params():
+    """The node's own, then each use's rows, a taken name or spelling left out; help stays last."""
+    leaf, candidates = _covered_leaf()
+    flags = [p["flags"] for p in sc._options(leaf, candidates)]
+    assert flags == [["--own"], ["--a"], ["--c", "-c"], ["--help", "-h"]]
+    tree = {"name": "otto", "group": True, "params": [], "commands": {"leaf": leaf}}
+    res = sc.resolve(tree, ["leaf", "-c", "x"], {}, candidates)
+    assert res.option_values == {"c": "x"}
+    assert sc.complete(tree, res, "--", {}, sc.Payloads({})) == ["--own", "--a", "--help"]
+
+
+def test_a_node_with_no_candidates_key_reads_none():
+    leaf, candidates = _covered_leaf()
+    del leaf["candidates"]
+    assert sc._params(leaf, candidates) == leaf["params"]
+    leaf["candidates"] = [0]
+    assert sc._params(leaf, None) == leaf["params"]

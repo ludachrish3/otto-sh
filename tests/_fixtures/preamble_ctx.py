@@ -9,11 +9,11 @@ from types import SimpleNamespace
 from typing import Any
 
 from otto.cli.registry import CommandSpec
-from tests._fixtures.clickctx import chain
+from tests._fixtures.clickctx import ChainLeaf, chain
 from tests._fixtures.rootoptions import make_root_options
 
 
-class FakeLeafCtx:
+class FakeLeafCtx(ChainLeaf):
     """Minimal stand-in for a click leaf context the preamble inspects.
 
     ``callback`` is the leaf's real callback when a test asks about a real leaf

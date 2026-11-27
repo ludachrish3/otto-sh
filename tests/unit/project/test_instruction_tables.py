@@ -245,9 +245,10 @@ def test_a_project_claiming_install_through_the_decorator_gets_today_s_message(m
     assert "install" not in STANDALONE_INSTRUCTIONS
 
 
-def test_check_project_instruction_options_names_both_projects_on_a_clash():
-    from otto.params import OptionsCollisionError
-    from otto.project.commands import check_project_instruction_options
+def test_otto_run_install_names_both_projects_on_a_clash(capsys):
+    from typer.testing import CliRunner
+
+    from otto.cli.run import run_app
 
     @options
     class AInstall(InstallOptions):
@@ -271,9 +272,10 @@ def test_check_project_instruction_options_names_both_projects_on_a_clash():
         register_project_actions(A)
     with registering_project("b"):
         register_project_actions(B)
-    with pytest.raises(OptionsCollisionError) as excinfo:
-        check_project_instruction_options()
-    message = str(excinfo.value)
+    result = CliRunner().invoke(run_app, ["install", "--help"])
+    message = " ".join((result.output + capsys.readouterr().err).split())
+    assert result.exit_code == 1, message
+    assert "'lab_env'" in message
     assert "project 'a'" in message
     assert "project 'b'" in message
 
@@ -300,9 +302,11 @@ class {cls}(ProjectActions):
 """
 
 
-def test_post_loop_options_check_is_idempotent(tmp_path, monkeypatch):
+def test_otto_run_builds_a_two_project_command_twice(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
     from otto import bootstrap as bs
-    from otto.project.commands import check_project_instruction_options
+    from otto.cli.run import run_app
 
     dirs = []
     for project, cls, field in (("tables-a", "TablesA", "alpha"), ("tables-b", "TablesB", "beta")):
@@ -321,8 +325,11 @@ def test_post_loop_options_check_is_idempotent(tmp_path, monkeypatch):
         result = bs.bootstrap()
         assert result.errors == []
         assert sorted(PROJECT_ACTIONS.names()) == ["tables-a", "tables-b"]
-        check_project_instruction_options()
-        check_project_instruction_options()
+        for _ in range(2):
+            result = CliRunner().invoke(run_app, ["tables-smoke", "--help"])
+            assert result.exit_code == 0, result.output
+            assert "--alpha" in result.output
+            assert "--beta" in result.output
     finally:
         bs._reset()
     assert [b.project for b in PROJECT_INSTRUCTIONS.get("tables-smoke").bodies] == [

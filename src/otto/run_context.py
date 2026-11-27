@@ -388,8 +388,10 @@ class OttoContext:
     """
 
     verb: "str | None" = field(default=None, init=False)
-    """The verb this invocation dispatched (``"run"`` or ``"test"``), once bound.
+    """The top-level command this invocation dispatched, once bound.
 
+    ``"run"``, ``"test"``, ``"cov"``, ``"docker"``, a plugin's name: the
+    top-level command of every command that accepts registered options.
     ``None`` until :meth:`bind_verb_options` (or the command's record) sets
     it. A library context that never dispatches a verb keeps this ``None``;
     :meth:`options` still answers for every class, from defaults.
@@ -561,10 +563,16 @@ class OttoContext:
         """
         return self.policy.output_dir
 
-    def bind_verb_options(self, *, verb: str, kwargs: "dict[str, Any]") -> None:
+    def bind_verb_options(
+        self, *, verb: str, kwargs: "dict[str, Any]", command: str | None = None
+    ) -> None:
         """Record *kwargs* as this context's parsed flags for *verb*, every one of them given.
 
-        Every options class registered for *verb* is built from *kwargs* alone
+        The classes offered are those whose entries cover the command: with
+        *command*, the command ``otto <verb> <command>`` (a class registered
+        for ``"run install"`` is offered for ``verb="run", command="install"``,
+        as is one registered for ``"run"``); without it, *verb* as a whole.
+        Each offered class is built from *kwargs* alone
         (the task's ``use_options`` blocks play no part) and validated first,
         raising ``otto.params.OptionsValidationError`` (not a pydantic
         ``ValidationError``) on a bad value before anything is replaced; the
@@ -573,12 +581,11 @@ class OttoContext:
         Calling this a second time replaces the earlier record outright;
         nothing is merged across calls.
         """
-        from .params import RecordedOptions, build_offered, verb_option_classes
+        from .params import RecordedOptions, build_offered, covering, resolve_registration
 
-        offered = tuple(origin.cls for origin in verb_option_classes(verb))
-        recorded = RecordedOptions(
-            group=verb, parsed=dict(kwargs), given=frozenset(kwargs), offered=offered
-        )
+        path = (verb,) if command is None else (verb, command)
+        offered = tuple(resolve_registration(r).cls for r in covering(path))
+        recorded = RecordedOptions.all_given(kwargs, group=verb, offered=offered)
         recorded.instances = build_offered(recorded)
         record_options(self, recorded)
 

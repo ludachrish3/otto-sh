@@ -31,6 +31,7 @@ from otto.config.project import Project
 from otto.result import CommandResult, Results
 from otto.utils import Status
 from tests._fixtures.bootstrapstub import bootstrap_stub
+from tests._fixtures.entry_runner import otto_cli  # noqa: F401 — fixture, shared by the CLI tests
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.project_scaffold import make_project
 from tests._fixtures.run_projects import (  # noqa: F401 — fixtures, shared with tests/unit/suite
@@ -39,6 +40,10 @@ from tests._fixtures.run_projects import (  # noqa: F401 — fixtures, shared wi
     project_root,
     tmpfs_root,
     two_projects,
+)
+from tests._fixtures.scope_worlds import (  # noqa: F401 — fixtures, shared by the options-scope tests
+    recording_repository,
+    scope_world,
 )
 
 

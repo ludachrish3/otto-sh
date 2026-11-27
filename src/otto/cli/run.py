@@ -120,8 +120,8 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
                     # hard-wrapped.
                     text = render_plan(
                         name,
-                        plan_instruction(name=name, ctx=ctx, kwargs=kw),
-                        plan_lab_tail(name=name, ctx=ctx, kwargs=kw),
+                        plan_instruction(name=name, ctx=ctx, kwargs=kw, recorded=prepared.recorded),
+                        plan_lab_tail(name=name, ctx=ctx, kwargs=kw, recorded=prepared.recorded),
                     )
                     if text:  # nothing applies: print nothing, not a blank line
                         print_literal(text)
@@ -143,6 +143,17 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
     return _leaf
 
 
+def instruction_help(entry: InstructionEntry) -> str | None:
+    """Return the help ``otto run <name>`` shows for *entry*: the one place it is chosen.
+
+    A project instruction's declared help; else the entry's ``help=``, else
+    its handler's docstring.
+    """
+    if entry.project is not None:
+        return entry.project.spec.help
+    return entry.help or inspect.getdoc(entry.handler)
+
+
 def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
     """Build ``otto run <name>``'s Typer app from its registry entry, on resolution.
 
@@ -158,14 +169,14 @@ def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
     """
     app = typer.Typer()
     if entry.project is not None:
-        app.command(entry.name, help=entry.project.spec.help)(_project_leaf(entry.project))
+        app.command(entry.name, help=instruction_help(entry))(_project_leaf(entry.project))
         return app
     if entry.handler is None:  # unreachable: __post_init__ requires handler xor project
         raise ValueError(f"instruction {entry.name!r} has neither handler nor project set")
     target = prepare_command_target(
         entry.handler, entry.options_cls, verb="run", project=INSTRUCTIONS.project(name=entry.name)
     )
-    app.command(entry.name, help=entry.help)(target)
+    app.command(entry.name, help=instruction_help(entry))(target)
     return app
 
 
@@ -175,7 +186,7 @@ def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
 run_app = typer.Typer(
     name="run",
     no_args_is_help=True,
-    cls=make_registry_group(INSTRUCTIONS, app_of=build_instruction_app),
+    cls=make_registry_group(INSTRUCTIONS, app_of=build_instruction_app, help_of=instruction_help),
     context_settings={
         "help_option_names": ["-h", "--help"],
     },

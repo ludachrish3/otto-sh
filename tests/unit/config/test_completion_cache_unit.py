@@ -10,6 +10,7 @@ at runtime, and PEP 563 would stringify them, making the serializer skip the
 option entirely.
 """
 
+import enum
 import inspect
 import json
 import time
@@ -390,8 +391,22 @@ def test_serialize_options_handles_supported_kinds() -> None:
     assert kinds == ["str", "int", "float", "bool", "path", "str_list"]
 
 
-def test_serialize_options_returns_none_on_unsupported() -> None:
-    """An unsupported annotation drops the entire command schema."""
+def test_serialize_options_records_the_authored_flags_in_order() -> None:
+    """The cache stores what the author wrote (``otto.params.authored_flags``), not Typer names."""
+
+    def source(
+        level: Annotated[int, typer.Option("--level", "-l")] = 0,
+        cov: Annotated[bool, typer.Option("--cov/--no-cov")] = False,
+        debug: bool = False,
+    ) -> None: ...
+
+    schema = cc.serialize_options(source, command_name="source")
+    assert schema is not None
+    assert [entry["flags"] for entry in schema] == [["--level", "-l"], ["--cov/--no-cov"], []]
+
+
+def test_serialize_options_keeps_an_option_of_an_unsupported_type() -> None:
+    """An option of a type no kind names keeps its record, opaque; the others are as before."""
     from decimal import Decimal
 
     def source(
@@ -399,7 +414,131 @@ def test_serialize_options_returns_none_on_unsupported() -> None:
         bad: Annotated[Decimal, typer.Option("--bad")] = Decimal(0),
     ) -> None: ...
 
-    assert cc.serialize_options(source, command_name="source") is None
+    ok, bad = cc.serialize_options(source, command_name="source")
+    assert ok == {"name": "ok", "flags": ["--ok"], "kind": "str", "default": "", "help": ""}
+    assert (bad["name"], bad["flags"], bad["kind"]) == ("bad", ["--bad"], cc.OPAQUE_KIND)
+
+
+class Mode(enum.Enum):
+    fast = "fast"
+    slow = "slow"
+
+
+def test_a_command_with_an_option_the_cache_cannot_describe_keeps_every_flag() -> None:
+    def cmd(mode: Mode = Mode.fast, level: int = 0) -> None: ...
+
+    mode, level = cc.serialize_options(cmd, command_name="cmd")
+    assert (mode["name"], mode["kind"]) == ("mode", cc.OPAQUE_KIND)
+    assert mode["row"]["flags"] == ["--mode"]
+    assert mode["row"]["takes_value"] is True
+    assert mode["row"]["source"]["values"] == ["fast", "slow"]
+    assert level["kind"] == "int"
+    assert "row" not in level
+
+
+def test_a_tuple_option_records_its_row() -> None:
+    def cmd(size: Annotated[tuple[int, int], typer.Option(help="w h")] = (1, 1)) -> None: ...
+
+    [size] = cc.serialize_options(cmd, command_name="cmd")
+    assert size["kind"] == cc.OPAQUE_KIND
+    assert (size["row"]["nargs"], size["row"]["takes_value"]) == (2, True)
+
+
+def test_a_describable_own_option_is_recorded_as_today() -> None:
+    """The record a v33 cache held for an option a kind describes, key for key."""
+
+    def cmd(
+        ctx: typer.Context,
+        level: Annotated[int, typer.Option("--level", "-l", help="The level.")] = 3,
+        hidden: Annotated[str, typer.Option(show_default=False)] = "unshown",
+        tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+        loud: bool = False,
+    ) -> None: ...
+
+    assert cc.serialize_options(cmd, command_name="cmd") == [
+        {"name": "level", "flags": ["--level", "-l"], "kind": "int", "default": 3,
+         "help": "The level."},
+        {"name": "hidden", "flags": [], "kind": "str", "default": None, "help": ""},
+        {"name": "tags", "flags": ["--tag"], "kind": "str_list", "default": None, "help": ""},
+        {"name": "loud", "flags": [], "kind": "bool", "default": False, "help": ""},
+    ]  # fmt: skip
+
+
+def test_a_default_value_style_option_keeps_its_declarations_and_its_default() -> None:
+    """``x: int = typer.Option(0, "--lvl", "-l")``: the flags written, the info's own default."""
+
+    def cmd(x: int = typer.Option(0, "--lvl", "-l", help="A level.")) -> None: ...
+
+    assert cc.serialize_options(cmd, command_name="cmd") == [
+        {"name": "x", "flags": ["--lvl", "-l"], "kind": "int", "default": 0, "help": "A level."}
+    ]
+
+
+def test_a_default_value_style_argument_is_recorded_as_an_argument() -> None:
+    def cmd(host: str = typer.Argument(..., help="The host.")) -> None: ...
+
+    [host] = cc.serialize_options(cmd, command_name="cmd")
+    assert (host["flags"], host["help"]) == ([], "The host.")
+    assert host["row"]["flags"] == []
+
+
+def test_a_default_value_style_tuple_records_its_spelling_in_record_and_row() -> None:
+    def cmd(size: tuple[int, int] = typer.Option((1, 2), "--size")) -> None: ...
+
+    [size] = cc.serialize_options(cmd, command_name="cmd")
+    assert size["flags"] == ["--size"]
+    assert size["row"]["flags"] == ["--size"]
+    assert size["row"]["nargs"] == 2
+
+
+def test_a_counting_option_records_that_it_takes_no_value() -> None:
+    def cmd(verbose: Annotated[int, typer.Option("-v", count=True)] = 0) -> None: ...
+
+    [verbose] = cc.serialize_options(cmd, command_name="cmd")
+    assert verbose["kind"] == "int"
+    assert verbose["row"]["takes_value"] is False
+
+
+def test_the_two_schema_constants_move_together() -> None:
+    import otto._shim_complete
+
+    assert otto._shim_complete.SCHEMA == cc.SCHEMA_VERSION == 34
+
+
+def test_an_older_cache_is_not_served(tmp_path: Path, monkeypatch) -> None:
+    """A version-33 file, whatever it holds, is a miss."""
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    project = MagicMock()
+    project.root = tmp_path / "sut"
+    project.root.mkdir()
+    touch_settings(project.root)
+    project.init = []
+    project.libs = []
+    project.tests = []
+    project.settings = {}
+    cache_file = cc._cache_path()
+    cache_file.parent.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
+    current = _sections_file([project])
+    cache_file.write_text(json.dumps(current))  # type: ignore[union-attr]
+    assert cc.read_cache([project]) is not None
+    cache_file.write_text(json.dumps({**current, "schema": 33}))  # type: ignore[union-attr]
+    assert cc.read_cache([project]) is None
+
+
+def test_the_option_candidates_round_trip(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
+    project = MagicMock()
+    project.root = tmp_path / "sut"
+    project.root.mkdir()
+    touch_settings(project.root)
+    project.init = []
+    project.libs = []
+    project.tests = []
+    project.settings = {}
+    found = {"rows": {"m:C": [{"name": "x"}]}, "uses": [{"key": "m:C", "project": "a",
+                                                          "entries": ["flash"]}]}  # fmt: skip
+    cc.write_cache([project], [], [], option_candidates=found)
+    assert (cc.read_cache([project]) or {})["option_candidates"] == found
 
 
 # ---------------------------------------------------------------------------
@@ -460,8 +599,8 @@ class TestCollectCurrentCommands:
         assert entry["options"]
         assert entry["options"][0]["kind"] == "str"
 
-    def test_unserializable_options_cache_with_empty_options_list(self) -> None:
-        """A command whose options can't be serialized still completes by name."""
+    def test_an_option_of_an_unsupported_type_keeps_the_commands_flags(self) -> None:
+        """A command with an option no kind describes keeps that flag, opaque."""
         from decimal import Decimal
 
         from otto.instruction_catalog import STANDALONE_INSTRUCTIONS, InstructionEntry
@@ -477,7 +616,7 @@ class TestCollectCurrentCommands:
         instructions = cli_registry.collect_current_commands()
 
         entry = next(e for e in instructions if e["name"] == "_cc_probe_bad")
-        assert entry["options"] == []
+        assert [(o["name"], o["kind"]) for o in entry["options"]] == [("bad", cc.OPAQUE_KIND)]
 
 
 def test_collect_backend_names_includes_builtins():
@@ -545,20 +684,31 @@ def test_json_safe_default(value: object, expected: object) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_serialize_options_non_annotated_returns_none() -> None:
-    """A plain (non-Annotated) param annotation causes the whole callback to be skipped."""
+def test_serialize_options_records_a_plain_positional_argument() -> None:
+    """A parameter with no default and no ``typer.Option`` is the argument Typer makes of it."""
 
     def cb(x: int) -> None: ...
 
-    assert cc.serialize_options(cb, command_name="cb") is None
+    [x] = cc.serialize_options(cb, command_name="cb")
+    assert (x["name"], x["kind"], x["flags"]) == ("x", "int", [])
+    assert (x["row"]["flags"], x["row"]["takes_value"]) == ([], True)
 
 
-def test_serialize_options_annotated_without_option_returns_none() -> None:
-    """Annotated param without a typer.Option in metadata causes the callback to be skipped."""
+def test_serialize_options_records_an_annotated_argument_without_option_metadata() -> None:
+    """``Annotated`` with no Typer metadata and no default is an argument too."""
 
     def cb(x: Annotated[int, "meta-but-not-typer-Option"]) -> None: ...
 
-    assert cc.serialize_options(cb, command_name="cb") is None
+    [x] = cc.serialize_options(cb, command_name="cb")
+    assert x["row"]["flags"] == []
+
+
+def test_serialize_options_records_a_typer_argument_with_its_row() -> None:
+    def cb(target: Annotated[str, typer.Argument(help="The target.")]) -> None: ...
+
+    [target] = cc.serialize_options(cb, command_name="cb")
+    assert (target["kind"], target["help"]) == ("str", "The target.")
+    assert target["row"]["flags"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -576,7 +726,12 @@ def test_cache_round_trips_third_party_commands(tmp_path: Path, monkeypatch) -> 
         from otto.cli.registry import collect_cli_commands
 
         commands = collect_cli_commands()
-        assert {"name": "e2etool", "help": "Tool.", "lab_free": False} in commands
+        assert {
+            "name": "e2etool",
+            "help": "Tool.",
+            "lab_free": False,
+            "accepts_options": True,
+        } in commands
     finally:
         CLI_COMMANDS.unregister(name="e2etool")
 
@@ -634,6 +789,7 @@ def test_a_decorated_third_party_command_is_not_classified_built_in() -> None:
         "name": "acme-version",
         "help": "Acme version.",
         "lab_free": True,
+        "accepts_options": False,
     }
 
 

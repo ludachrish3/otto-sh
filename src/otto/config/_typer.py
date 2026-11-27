@@ -44,9 +44,13 @@ built on :class:`QuietCompletionGroup`, so every invocation imports it.
 """
 
 import contextlib
+import dataclasses
+import inspect
 import io
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
+
+import typer
 
 # Click's command, context and parameter base classes. Typer exposes its own
 # subclasses (``typer.core``), but ``TyperCommand.context_class`` is the
@@ -84,10 +88,12 @@ from typer._click.shell_completion import (
 # binds the name only as an incidental import of its own, not as an export. No
 # upstream request yet (#1118).
 from typer._completion_shared import Shells
-from typer.core import TyperGroup
+from typer.core import TyperGroup, TyperOption
 from typing_extensions import override
 
 __all__ = [
+    "OWN_PARAMS_ATTR",
+    "Carrier",
     "Command",
     "Context",
     "NoSuchOption",
@@ -98,9 +104,12 @@ __all__ = [
     "UsageError",
     "add_completion_class",
     "autocompletion_of",
+    "built_spellings",
+    "carrier",
     "get_completion_class",
     "get_current_context",
     "given_names",
+    "own_params",
     "pending_subcommand_args",
 ]
 
@@ -120,6 +129,85 @@ def given_names(ctx: Context | None, names: Iterable[str]) -> frozenset[str]:
     return frozenset(
         name for name in names if ctx.get_parameter_source(name) is not ParameterSource.DEFAULT
     )
+
+
+@dataclasses.dataclass(frozen=True)
+class Carrier:
+    """Typer's own parameters for a signature, and Typer's conversion of their values."""
+
+    params: "tuple[Parameter, ...]"
+    """The click parameters Typer builds for the signature, without the help option."""
+    convert: "Callable[[Mapping[str, Any]], dict[str, Any]]"
+    """Values the parser produced in, keyed by parameter name; exactly those names out."""
+
+
+def carrier(params: "Sequence[inspect.Parameter]") -> Carrier:
+    """Build Typer's parameters and value conversion for the signature *params*.
+
+    *params* goes through Typer itself: a throwaway function carrying them as
+    its ``__signature__`` and ``__annotations__`` is turned into a command by
+    ``typer.main.get_command``, which yields the click parameters (each one's
+    type parses its word: an ``Enum``, a ``Path``) and the wrapper Typer calls
+    a function through. ``convert`` hands that wrapper values the parser
+    produced and returns what the function would have received for them: a
+    collection in the shape Typer gives a function (a ``list`` for a repeated
+    option).
+
+    Typer's wrapper keeps one dictionary across calls and passes every
+    parameter, so ``convert`` returns only the names it was handed, and never
+    a value an earlier call left there. A name the signature lacks is a
+    caller's error (Typer's wrapper asserts on it).
+    """
+
+    def _carried(**values: Any) -> "dict[str, Any]":
+        return dict(values)
+
+    # Typer reads the signature, and the hints through get_type_hints.
+    _carried.__signature__ = inspect.Signature(list(params))  # ty: ignore[missing-attribute]
+    _carried.__annotations__ = {
+        p.name: p.annotation for p in params if p.annotation is not inspect.Parameter.empty
+    }
+    sub = typer.Typer(add_completion=False)
+    sub.command()(_carried)
+    command = typer.main.get_command(sub)
+    call = command.callback
+    assert call is not None  # noqa: S101 — Typer builds a callback for a command's function
+
+    def convert(values: "Mapping[str, Any]") -> "dict[str, Any]":
+        received = call(**values)
+        return {name: received[name] for name in values}
+
+    return Carrier(params=tuple(command.params), convert=convert)
+
+
+OWN_PARAMS_ATTR = "otto_own_params"
+"""The attribute a wrapped ``get_params`` carries: the command's own, unwrapped ``get_params``."""
+
+
+def own_params(cmd: Any, ctx: Any) -> "list[Parameter]":
+    """Return *cmd*'s parameters for *ctx* with nothing attached: what its own ``get_params`` says.
+
+    The help option included. A command whose ``get_params`` was wrapped to
+    add parameters for one invocation keeps its own on the wrapper as
+    :data:`OWN_PARAMS_ATTR`; a command never wrapped answers its
+    ``get_params``. The one reading of a command's own parameters, for the
+    CLI and for the completion cache's walk alike.
+    """
+    get_params = cmd.get_params
+    return getattr(get_params, OWN_PARAMS_ATTR, get_params)(ctx)
+
+
+def built_spellings(param: Parameter) -> "list[str]":
+    """Return the words that select the built option *param*; an argument has none.
+
+    The one reading of a built parameter's spellings, its secondary ones
+    (``--no-<name>``) included. An option is a ``TyperOption``, the class
+    Typer builds every option as; anything else (a ``TyperArgument``) is
+    selected by position and has no spelling.
+    """
+    if not isinstance(param, TyperOption):
+        return []
+    return [*param.opts, *param.secondary_opts]
 
 
 def autocompletion_of(param: Parameter) -> Any | None:

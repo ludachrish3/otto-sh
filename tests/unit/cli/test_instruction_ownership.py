@@ -44,7 +44,7 @@ from otto.labs.loader import Lab
 from otto.registry import registering_project
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.bootstrapstub import bootstrap_stub
-from tests._fixtures.clickctx import chain
+from tests._fixtures.clickctx import ChainLeaf, chain
 from tests._fixtures.rootoptions import make_root_options
 from tests._fixtures.scoping import verdict
 
@@ -492,7 +492,7 @@ class TestRefusalRendering:
         assert detail in capsys.readouterr().out
 
 
-class _PreambleCtx:
+class _PreambleCtx(ChainLeaf):
     """A leaf ctx the real ``command_preamble`` accepts, dispatched under ``run``."""
 
     def __init__(self, name: str, spec: CommandSpec) -> None:

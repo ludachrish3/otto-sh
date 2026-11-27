@@ -18,7 +18,6 @@ from typing import (
     Annotated,
     Any,
     ForwardRef,
-    Literal,
     TypeVar,
     cast,
     get_args,
@@ -30,8 +29,8 @@ from typing import (
 from typing_extensions import dataclass_transform
 
 from .errors import OttoError
-from .registry import Ref, Registry, registration_boundary
-from .utils import annotation_is_subclass
+from .registry import Ref, Registry, get_registering_project, registration_boundary
+from .utils import annotation_is_subclass, unwrap_optional
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Generator, Iterable, Mapping, Sequence
@@ -331,8 +330,8 @@ def _default_hidden(annotation: Any) -> Any:
     an existing ``typer.Option`` is copied, never mutated, since the same
     ``OptionInfo`` object is shared by every class that inherits the field.
 
-    ``typer`` is imported function-local: this is its only use in the module,
-    so ``import otto.params`` never loads it.
+    ``typer`` is imported function-local, as everywhere in this module, so
+    ``import otto.params`` never loads it.
     """
     import copy
 
@@ -533,24 +532,26 @@ class OptionsSource:
 
 # ── Per-verb options registry ────────────────────────────────────────────
 
-OptionVerb = Literal["run", "test"]
-"""A verb whose flags include every options class registered for it."""
+OptionVerb = Annotated[str, "one or two command names joined by one space"]
+"""An entry of ``verbs=``: one or two command names joined by one space (``"run install"``).
 
-OPTION_VERBS: list[str] = list(get_args(OptionVerb))
-"""The :data:`OptionVerb` values in order, as the CLI's help lists them."""
+A ``str`` to every type checker; spelled as an alias so the name stays the
+type alias it has always been.
+"""
 
 
 class OptionsRegistrationError(OttoError, ValueError):
     """An options registration that otto refuses.
 
-    It named a bad verb list, or a key that is not its class's own (a raw
-    record under the wrong key, or a string naming a re-export); or a string
-    registration did not import.
+    It named a bad verb list (not a list, empty, an entry that is not one or
+    two command names, or an entry repeated or covered by another), or a key
+    that is not its class's own (a raw record under the wrong key, or a
+    string naming a re-export); or a string registration did not import.
     """
 
 
 class OptionsCollisionError(OttoError):
-    """Two options classes declare one flag name from unrelated classes."""
+    """Two options classes declare one flag name, or one flag spelling, from unrelated classes."""
 
 
 class OptionsValidationError(OttoError, ValueError):
@@ -573,7 +574,10 @@ class OptionsNotAvailableError(OttoError, LookupError):
 
 @dataclasses.dataclass(frozen=True)
 class OptionsEntry:
-    """One registration: the class (or a lazy reference to it) and the verbs it serves.
+    """One registration: the class (or a lazy reference to it) and the entries it serves.
+
+    The entries are ``verbs=`` as registered: ``"run"``, ``"run install"``, a
+    plugin's ``"flash erase"``.
 
     The project that registered it is the engine's: ``OPTIONS.project(key)``.
     """
@@ -599,32 +603,66 @@ def options_key(cls_or_path: "type | str | Ref") -> str:
     return f"{cls_or_path.__module__}:{cls_or_path.__qualname__}"
 
 
+_ENTRY_MAX_WORDS = 2
+"""The most command names an entry holds: a top-level command and one beneath it."""
+
+_ENTRY_FORM = 'one or two command names joined by one space, such as "run" or "run install"'
+"""The accepted form of an entry, as every refusal of a mistyped one states it."""
+
+
 def _check_verbs(verbs: "list[OptionVerb]") -> None:
     """Refuse a verb list that is not a list, before any record is built."""
     if not isinstance(verbs, list):
         raise OptionsRegistrationError(
-            f'verbs must be a list of verb names, such as ["test"]; got {verbs!r}'
+            f'verbs must be a list of entries, such as ["run", "run install"]; got {verbs!r}'
         )
     _check_verb_values(verbs)
 
 
-def _check_verb_values(verbs: "Sequence[str]") -> None:
-    """Refuse an empty verb list, an unknown verb or a repeated one."""
+def _check_verb_values(verbs: "Sequence[object]") -> None:
+    """Refuse an empty list, a malformed entry, and an entry repeated or covered by another.
+
+    An entry is judged by its form alone: whether a command of that name
+    exists is not known when a class registers, so ``["tset"]`` is kept.
+    """
     if not verbs:
         raise OptionsRegistrationError("register_options(...) names no verbs")
-    for verb in verbs:
-        if verb not in OPTION_VERBS:
+    for entry in verbs:
+        if not isinstance(entry, str):
             raise OptionsRegistrationError(
-                f"unknown verb {verb!r}; verbs that accept options: {', '.join(OPTION_VERBS)}"
+                f"verbs entry {entry!r} is not a string; write {_ENTRY_FORM}"
             )
-        if verbs.count(verb) > 1:
-            raise OptionsRegistrationError(f"register_options(...) names {verb!r} twice")
+        words = entry.split()
+        if not 1 <= len(words) <= _ENTRY_MAX_WORDS or " ".join(words) != entry:
+            raise OptionsRegistrationError(f"verbs entry {entry!r} is not {_ENTRY_FORM}")
+    entries = cast("Sequence[str]", verbs)
+    for index, entry in enumerate(entries):
+        if entries.index(entry) != index:
+            raise OptionsRegistrationError(f"verbs names {entry!r} twice")
+        path = tuple(entry.split())
+        for other in entries:
+            if other != entry and entry_covers(other, path):
+                raise OptionsRegistrationError(
+                    f"verbs entry {entry!r} is covered by {other!r}; drop {entry!r}"
+                )
+
+
+def entry_covers(entry: str, path: "Sequence[str]") -> bool:
+    """Whether *entry*'s words are a prefix of the command *path*.
+
+    A path is the top-level command's name, then the command names beneath
+    it down to the leaf (``("run", "install")``); a host id is an argument
+    and is not in it. ``"run"`` covers every ``otto run`` command,
+    ``"run install"`` that one.
+    """
+    words = entry.split()
+    return tuple(path[: len(words)]) == tuple(words)
 
 
 def _check_options_entry(
     name: str, entry: OptionsEntry, proposed: "Proposed[OptionsEntry]"
 ) -> None:
-    """``OPTIONS``' validate: the key is the class's own, and the verbs are known and unrepeated."""
+    """``OPTIONS``' validate: the key is the class's own, and the entries are well formed."""
     del proposed
     key = options_key(entry.target)
     if name != key:
@@ -668,16 +706,31 @@ OPTIONS: "Registry[OptionsEntry]" = Registry(
 def register_options(
     cls_or_path: "type | str", *, verbs: "list[OptionVerb]", overwrite: bool = False
 ) -> None:
-    """Register an options class for the verbs whose flags it joins.
+    """Register an options class for the commands whose flags it joins.
 
-    Call it from an init module. *cls_or_path* is the class, or a
-    ``"package.module:Attr"`` string that is imported only when one of *verbs*
-    is dispatched. Each class registers once, naming every verb it serves; a
-    second registration raises :class:`~otto.registry.DuplicateRegistration`
-    unless *overwrite* is true, which replaces the verb list.
+    Call it from an init module. Each entry of *verbs* is a command as typed
+    after ``otto``, one or two command names joined by one space: ``"test"``,
+    ``"run"`` (every ``otto run`` command), ``"run install"`` (that one), a
+    plugin's ``"flash"``. An entry covers every command whose path starts
+    with it. A list that is not a list, is empty, holds an entry of another
+    form, or repeats an entry or one another covers (``["run", "run
+    install"]``) raises ``OptionsRegistrationError``; whether the command
+    exists is not judged here.
+
+    *cls_or_path* is the class, or a ``"package.module:Attr"`` string that is
+    imported only when a command it covers needs it. Each class registers
+    once, naming every entry it serves; a second registration raises
+    :class:`~otto.registry.DuplicateRegistration` unless *overwrite* is true,
+    which replaces the list.
+
+    While the command line has an entry checker installed (it installs one
+    once its startup check has run), it judges the entries first, and an entry
+    that names no command, or one that does not accept registered options,
+    raises ``OptionsRegistrationError`` here with nothing recorded.
     """
     _check_verbs(verbs)
     target: "type | Ref" = Ref(target=cls_or_path) if isinstance(cls_or_path, str) else cls_or_path
+    _judge_entries(options_key(target), verbs)
     OPTIONS.register(
         name=options_key(target),
         entry=OptionsEntry(target=target, verbs=tuple(verbs)),
@@ -725,7 +778,8 @@ def options(
 
     ``@options`` alone registers nothing: use it for an instruction's own
     options class or a shared base. ``@options(verbs=["run", "test"])`` is
-    ``register_options(Cls, verbs=[...])`` at the definition site, which
+    ``register_options(Cls, verbs=[...])`` at the definition site (the same
+    entries, refused for the same reasons, the entry checker's included), which
     imports the module at startup; the string form of ``register_options``
     stays the lazy choice. The registration is credited to the module that
     applies the decorator; *overwrite* is ``register_options``'.
@@ -790,6 +844,7 @@ def options(
         built = cast("type", pydantic.dataclasses.dataclass(target, **call_kwargs))
         if verbs is not None:
             _check_verbs(verbs)
+            _judge_entries(options_key(built), verbs)
             OPTIONS.register(
                 name=options_key(built),
                 entry=OptionsEntry(target=built, verbs=tuple(verbs)),
@@ -801,39 +856,129 @@ def options(
     return build if cls is None else build(cls)
 
 
-def verb_option_classes(verb: str) -> list[OptionsOrigin]:
-    """Every class registered for *verb*, resolved, in registration order.
+@dataclasses.dataclass(frozen=True)
+class Registration:
+    """One registration as registered: nothing about it is resolved or imported."""
 
-    A string registration is resolved here, the one point every string
-    registration is resolved for a verb, so a re-export
-    (``OPTIONS``' resolved check) is refused here rather than left for a
-    caller to discover as a silent double-registration.
+    key: str
+    """The registry key, ``"module:QualName"``."""
+    entries: "tuple[str, ...]"
+    """The ``verbs=`` entries, as registered."""
+    project: str | None
+    """The registering project; ``None`` for otto's own or a registration made outside one."""
+
+
+@dataclasses.dataclass
+class _EntryChecker:
+    """The one record the entry checker lives on, so no function rebinds a module global."""
+
+    check: "Callable[[Registration], None] | None" = None
+
+
+_ENTRY_CHECKER = _EntryChecker()
+
+
+def set_entry_checker(checker: "Callable[[Registration], None] | None") -> None:
+    """Install *checker* as the judge of every registration made from now on; ``None`` removes it.
+
+    The registry installs none itself, so a library process judges no entry
+    against the commands. The command line installs one once its startup
+    check has run and removes it when the invocation ends: a registration
+    made in between (a command body's, a lazily imported module's) is judged
+    when it is made. While one is set, :func:`register_options` and
+    ``@options(verbs=)`` call it with the registration they are about to make,
+    after their own form check and before the registry is written; what it
+    raises propagates and nothing is recorded.
+    """
+    _ENTRY_CHECKER.check = checker
+
+
+def _judge_entries(key: str, verbs: "list[OptionVerb]") -> None:
+    """Hand the registration about to be made to the installed entry checker, if any."""
+    check = _ENTRY_CHECKER.check
+    if check is not None:
+        check(Registration(key=key, entries=tuple(verbs), project=get_registering_project()))
+
+
+def registrations() -> list[Registration]:
+    """Every registration in ``OPTIONS``, in registration order, resolving nothing."""
+    return [
+        Registration(key=key, entries=tuple(stored.verbs), project=OPTIONS.project(name=key))
+        for key, stored in OPTIONS.raw_items()
+    ]
+
+
+def covering(
+    path: "Sequence[str]",
+    *,
+    kept: "Collection[str] | None" = None,
+    among: "Iterable[Registration] | None" = None,
+) -> list[Registration]:
+    """Return the registrations of *among* that cover the command *path*, in order.
+
+    *among* defaults to :func:`registrations`. A registration is kept when
+    one of its entries covers *path* (:func:`entry_covers`) and its project
+    is ``None`` (a registration no project owns always applies) or in
+    *kept*; ``kept=None`` keeps every project. Nothing is resolved or
+    imported, so a caller can tell which classes a command takes before it
+    pays for any of them.
+
+    A path under ``host`` is covered by nothing yet: host commands do not
+    take registered flags.
+    """
+    if path and path[0] == "host":
+        return []
+    pool = registrations() if among is None else among
+    return [
+        registration
+        for registration in pool
+        if (kept is None or registration.project is None or registration.project in kept)
+        and any(entry_covers(entry, path) for entry in registration.entries)
+    ]
+
+
+def resolve_registration(registration: Registration) -> OptionsOrigin:
+    """Resolve *registration* to its class and the project that registered it.
+
+    A string registration is imported here, the one point every string
+    registration is resolved, so a re-export (``OPTIONS``' resolved check)
+    is refused here rather than left for a caller to discover as a silent
+    double-registration.
 
     A string registration whose module or attribute fails to import raises
-    ``OptionsRegistrationError`` naming the target and the registering project,
-    with the import error chained.
+    ``OptionsRegistrationError`` naming the target, its entries and the
+    registering project, with the import error chained.
     """
-    found: list[OptionsOrigin] = []
-    for key, stored in OPTIONS.raw_items():
-        if verb not in stored.verbs:
-            continue
-        if isinstance(stored.target, Ref):
-            try:
-                stored.target.resolve()
-            except Exception as exc:  # any failure to import it, chained below
-                # An OttoError, so a reader that walks every command can
-                # contain it and `otto run` says it in one line.
-                raise OptionsRegistrationError(
-                    f"options class {key!r}, registered for {verb} by "
-                    f"{_who(OPTIONS.project(name=key))}, cannot be imported: {exc}"
-                ) from exc
-        cls = cast("type", OPTIONS.get(key).target)
-        found.append(OptionsOrigin(cls=cls, project=OPTIONS.project(name=key)))
-    return found
+    key = registration.key
+    stored = OPTIONS.peek(name=key)
+    if isinstance(stored.target, Ref):
+        try:
+            stored.target.resolve()
+        except Exception as exc:  # any failure to import it, chained below
+            # An OttoError, so a reader that walks every command can
+            # contain it and `otto run` says it in one line.
+            entries = ", ".join(repr(entry) for entry in registration.entries)
+            raise OptionsRegistrationError(
+                f"options class {key!r}, registered for {entries} by "
+                f"{_who(registration.project)}, cannot be imported: {exc}"
+            ) from exc
+    cls = cast("type", OPTIONS.get(key).target)
+    return OptionsOrigin(cls=cls, project=registration.project)
+
+
+def verb_option_classes(verb: str) -> list[OptionsOrigin]:
+    """Every class registered for the whole of *verb*, resolved, in registration order.
+
+    The classes whose entries cover the one-word path ``(verb,)``: a class
+    registered for ``"run"`` is here, one registered for ``"run install"``
+    alone is not. Each is resolved by ``resolve_registration``, which
+    raises ``OptionsRegistrationError`` for one that cannot be imported.
+    """
+    return [resolve_registration(registration) for registration in covering((verb,))]
 
 
 def verbs_for(cls: type) -> "list[OptionVerb] | None":
-    """Return the verbs *cls* is registered for, or ``None`` when it is not registered."""
+    """Return the entries *cls* is registered for, as registered, or ``None`` when it is not."""
     key = options_key(cls)
     return list(OPTIONS.peek(name=key).verbs) if key in OPTIONS else None
 
@@ -842,8 +987,131 @@ def _who(project: str | None) -> str:
     return "otto" if project is None else f"project {project!r}"
 
 
+def authored_flags(option_info: Any) -> list[str]:
+    """Return the user-authored flag strings from a ``typer.Option`` instance.
+
+    Typer stores the first positional flag as the info's ``default`` attribute
+    and the rest in ``param_decls``; concatenate them in declaration order so
+    the rebuilder reproduces the original call.
+    """
+    flags: list[str] = []
+    primary = getattr(option_info, "default", None)
+    if isinstance(primary, str) and (primary.startswith("-") or "/" in primary):
+        flags.append(primary)
+    flags.extend(getattr(option_info, "param_decls", ()) or ())
+    return flags
+
+
+@dataclasses.dataclass(frozen=True)
+class DeclaredParameter:
+    """How Typer reads one signature parameter before it builds the command."""
+
+    annotation: Any
+    """Its type, ``Annotated`` metadata stripped."""
+    info: Any
+    """The ``typer.Option``/``typer.Argument`` info that governs it, or ``None``."""
+    argument: bool
+    """Whether Typer makes it a positional argument rather than an option."""
+    declarations: "list[str]"
+    """The spellings its author wrote, in order (empty when Typer names it)."""
+    default: Any
+    """Its value's default: the info's own for the default-value style."""
+
+
+def declared_parameter(param: inspect.Parameter) -> DeclaredParameter:
+    """Read *param* as Typer reads it: the info that governs it, and whether it is an argument.
+
+    The one reading of a parameter before Typer has built it. Both of
+    Typer's styles are read: ``Annotated`` metadata, the form
+    :func:`options_params` produces (where the first declaration may sit in
+    the info's ``default``, :func:`authored_flags`), and a default that is
+    itself a ``typer.Option(...)``/``typer.Argument(...)`` (the default-value
+    style), whose declarations follow the default value
+    (``typer.Option(0, "--lvl", "-l")``) and whose ``default`` is that
+    value. A parameter with no info is an option when it has a default and
+    an argument when it has none.
+    """
+    from typer.models import OptionInfo, ParameterInfo
+
+    annotation = param.annotation
+    if get_origin(annotation) is Annotated:
+        annotation, *extras = get_args(annotation)
+        infos = [extra for extra in extras if isinstance(extra, ParameterInfo)]
+        info = infos[0] if infos else None
+        return DeclaredParameter(
+            annotation=annotation,
+            info=info,
+            argument=(
+                not isinstance(info, OptionInfo)
+                if info is not None
+                else param.default is inspect.Parameter.empty
+            ),
+            declarations=authored_flags(info) if isinstance(info, OptionInfo) else [],
+            default=param.default,
+        )
+    if isinstance(param.default, ParameterInfo):
+        info = param.default
+        return DeclaredParameter(
+            annotation=annotation,
+            info=info,
+            argument=not isinstance(info, OptionInfo),
+            # Here the info's own default is the value, never a declaration.
+            declarations=list(info.param_decls or ()) if isinstance(info, OptionInfo) else [],
+            default=info.default,
+        )
+    return DeclaredParameter(
+        annotation=annotation,
+        info=None,
+        argument=param.default is inspect.Parameter.empty,
+        declarations=[],
+        default=param.default,
+    )
+
+
+def flag_spellings(param: inspect.Parameter) -> list[str]:
+    """Return every word that selects *param*'s flag on the command Typer builds from it.
+
+    The one reading of a field's spellings before Typer has built the
+    command (``merge_option_params`` runs first), over
+    ``declared_parameter``. Each declaration the author wrote is split
+    on ``/``, so ``"--cov/--no-cov"`` is two words. With none written, Typer
+    generates ``--<name>`` from the parameter name, underscores turned to
+    dashes, and for a field it makes a flag, one annotated ``bool`` once
+    ``None`` is stripped from a union, adds ``--no-<name>``. That last rule
+    restates Typer's own (it has no public function for it); a parity test
+    holds the two together. A parameter Typer makes an argument has no
+    spelling.
+    """
+    import typer.main
+
+    declared = declared_parameter(param)
+    if declared.argument:
+        return []
+    declarations = [decl for decl in declared.declarations if not decl.isidentifier()]
+    if declarations:
+        return [word.strip() for decl in declarations for word in decl.split("/") if word.strip()]
+    name = typer.main.get_default_option_flag_name(param.name)
+    if unwrap_optional(declared.annotation) is bool:
+        return [f"--{name}", f"--no-{name}"]
+    return [f"--{name}"]
+
+
+def _class_owner(project: str | None, declared: type) -> str:
+    """Who declares a field, in a collision message: ``project 'a' (pkg.mod.Opts)``."""
+    return f"{_who(project)} ({declared.__module__}.{declared.__qualname__})"
+
+
+def _owner(origin: OptionsOrigin, declared: type, field: str) -> str:
+    """One field and who declares it, in a collision message."""
+    return f"field {field!r} of {_class_owner(origin.project, declared)}"
+
+
 def merge_option_params(
-    origins: list[OptionsOrigin], *, what: str, reserved: dict[str, str] | None = None
+    origins: list[OptionsOrigin],
+    *,
+    what: str,
+    reserved: dict[str, str] | None = None,
+    reserved_flags: "Mapping[str, str] | None" = None,
 ) -> list[inspect.Parameter]:
     """One keyword-only parameter per field, merged across *origins* by declaring class.
 
@@ -851,33 +1119,49 @@ def merge_option_params(
     introduced by two unrelated classes, or a name in *reserved*, raises
     ``OptionsCollisionError`` naming both owners, so a user learns before any
     body runs rather than by one project silently reading the other's value.
+
+    Spellings are checked the same way: two fields whose :func:`flag_spellings`
+    share a word (``--debug``, ``--no-debug``, ``-d``) collide unless they are
+    the one field of one declaring class, and so does a field spelled like a
+    key of *reserved_flags*, which maps a spelling to who owns it (a command's
+    own parameter).
     """
     reserved = reserved or {}
+    owned_flags: "dict[str, str]" = dict(reserved_flags or {})
     seen: dict[str, OptionsOrigin] = {}
     declared_by: dict[str, type] = {}
+    spelled_by: dict[str, str] = {}
     params: list[inspect.Parameter] = []
     for origin in origins:
         for param in options_params(cast("type[DataclassInstance]", origin.cls)):
             declared = declaring_class(origin.cls, param.name)
+            owner = _owner(origin, declared, param.name)
             if param.name in reserved:
                 raise OptionsCollisionError(
-                    f"{what}: field {param.name!r} of {_who(origin.project)} "
-                    f"({declared.__module__}.{declared.__qualname__}) collides with "
-                    f"{reserved[param.name]}; rename the field"
+                    f"{what}: {owner} collides with {reserved[param.name]}; rename the field"
                 )
             if param.name in seen:
                 if declared_by[param.name] is not declared:
-                    prior = seen[param.name]
-                    prior_cls = declared_by[param.name]
+                    prior = _class_owner(seen[param.name].project, declared_by[param.name])
                     raise OptionsCollisionError(
-                        f"{what}: field {param.name!r} is declared by both "
-                        f"{_who(prior.project)} ({prior_cls.__module__}.{prior_cls.__qualname__}) "
-                        f"and {_who(origin.project)} "
-                        f"({declared.__module__}.{declared.__qualname__}); "
+                        f"{what}: field {param.name!r} is declared by both {prior} "
+                        f"and {_class_owner(origin.project, declared)}; "
                         "share one base class, in a required dependency or a library "
                         "package, or rename the field"
                     )
                 continue
+            for spelling in flag_spellings(param):
+                if spelling in owned_flags:
+                    raise OptionsCollisionError(
+                        f"{what}: flag {spelling} of {owner} collides with "
+                        f"{owned_flags[spelling]}; respell the flag"
+                    )
+                if spelling in spelled_by:
+                    raise OptionsCollisionError(
+                        f"{what}: flag {spelling} is spelled by both {spelled_by[spelling]} "
+                        f"and {owner}; respell one of the flags"
+                    )
+                spelled_by[spelling] = owner
             seen[param.name] = origin
             declared_by[param.name] = declared
             params.append(param.replace(kind=inspect.Parameter.KEYWORD_ONLY))
@@ -923,12 +1207,28 @@ class RecordedOptions:
     """
 
     group: str | None = None
+    """The top-level command it was recorded under (``"run"``, ``"cov"``, a plugin's name).
+
+    Set for a command that accepts registered options; ``None`` for one that
+    records only its own class, and for a record no command made.
+    """
     parsed: dict[str, Any] = dataclasses.field(default_factory=dict)
     given: frozenset[str] = frozenset()
     offered: "tuple[type, ...]" = ()
     suppliers: "dict[str, type]" = dataclasses.field(default_factory=dict)
     instances: "dict[type, Any]" = dataclasses.field(default_factory=dict)
     pending: bool = False
+
+    @classmethod
+    def all_given(
+        cls,
+        kwargs: "Mapping[str, Any]",
+        *,
+        group: str | None = None,
+        offered: "tuple[type, ...]" = (),
+    ) -> "RecordedOptions":
+        """Record *kwargs* as values someone gave, every one of them: a caller's own values."""
+        return cls(group=group, parsed=dict(kwargs), given=frozenset(kwargs), offered=offered)
 
 
 @dataclasses.dataclass(eq=False)

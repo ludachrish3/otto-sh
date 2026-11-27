@@ -47,12 +47,17 @@ def test_the_project_comes_from_the_engine():
     assert verb_option_classes("run")[-1].project == "acme"
 
 
-def test_a_raw_entry_with_an_unknown_verb_is_refused():
-    with pytest.raises(OptionsRegistrationError, match="unknown verb 'deploy'"):
+def test_a_raw_entry_with_a_malformed_entry_is_refused():
+    with pytest.raises(OptionsRegistrationError, match="verbs entry 'run  install'"):
         OPTIONS.register(
-            name=f"{__name__}:Opts", entry=OptionsEntry(target=Opts, verbs=("deploy",))
+            name=f"{__name__}:Opts", entry=OptionsEntry(target=Opts, verbs=("run  install",))
         )
     assert f"{__name__}:Opts" not in OPTIONS
+
+
+def test_a_raw_entry_naming_a_command_otto_does_not_know_is_kept():
+    OPTIONS.register(name=f"{__name__}:Opts", entry=OptionsEntry(target=Opts, verbs=("deploy",)))
+    assert OPTIONS.peek(name=f"{__name__}:Opts").verbs == ("deploy",)
 
 
 def test_the_direct_decorator_call_credits_the_calling_module():

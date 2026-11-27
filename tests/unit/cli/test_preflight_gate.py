@@ -33,7 +33,7 @@ from otto.cli.registry import CommandSpec
 from otto.context import OttoContext
 from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
-from tests._fixtures.clickctx import chain
+from tests._fixtures.clickctx import ChainLeaf, chain
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.held_console import live_sinks_with_a_held_console
 from tests._fixtures.rootoptions import make_root_options
@@ -311,7 +311,7 @@ def test_a_warning_prints_after_the_log_lines_queued_before_it(
     assert out.index("logged before the warning") < out.index("project3 is inactive"), out
 
 
-class _PreambleCtx:
+class _PreambleCtx(ChainLeaf):
     """A leaf ctx the real ``command_preamble`` accepts."""
 
     def __init__(self, name: str, spec: CommandSpec, parent_name: str = "run") -> None:

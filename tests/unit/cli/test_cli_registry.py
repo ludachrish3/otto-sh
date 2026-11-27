@@ -274,7 +274,29 @@ def test_spec_defaults():
     assert spec.lab_free is False
     assert spec.output_dir is True
     assert spec.gate is True
+    assert spec.accepts_options is None
     assert CLI_COMMANDS.origin(name="d") == __name__
+
+
+@pytest.mark.parametrize("accepts", [True, False, None])
+def test_both_registration_paths_record_accepts_options(accepts):
+    register_cli_command("plain", typer.Typer(name="plain"), accepts_options=accepts)
+
+    @cli_command(name="decorated", lab_free=True, accepts_options=accepts)
+    def decorated() -> None:  # pragma: no cover — only registered
+        pass
+
+    assert CLI_COMMANDS.get("plain").accepts_options is accepts
+    assert CLI_COMMANDS.get("decorated").accepts_options is accepts
+
+
+def test_link_and_tunnel_say_they_do_not_accept_and_monitor_says_nothing():
+    from otto.cli.builtin_commands import register_builtin_commands
+
+    register_builtin_commands()
+    assert CLI_COMMANDS.get("link").accepts_options is False
+    assert CLI_COMMANDS.get("tunnel").accepts_options is False
+    assert CLI_COMMANDS.get("monitor").accepts_options is None
 
 
 def test_command_spec_is_frozen():

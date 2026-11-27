@@ -1,6 +1,5 @@
 """A TAB reads the default parent from the STORED names cache, never by loading a lab."""
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +7,7 @@ import pytest
 from otto import registry
 from otto.cli import docker as docker_cli
 from otto.config import completion_cache as cc
+from tests._fixtures.clickctx import chain
 from tests._fixtures.project_scaffold import touch_settings
 
 
@@ -40,8 +40,8 @@ def stored_names(tmp_path, monkeypatch):
 
 
 def _ctx(labs=None):
-    root = SimpleNamespace(params={"labs": labs} if labs else {}, parent=None)
-    return SimpleNamespace(params={}, parent=root, resilient_parsing=True)
+    """The ``otto docker`` context under otto's root, with ``-l`` parsed as *labs*."""
+    return chain("otto", "docker", root_params={"labs": labs} if labs else {})
 
 
 def test_the_selected_labs_entry_is_read_from_the_stored_map(stored_names):

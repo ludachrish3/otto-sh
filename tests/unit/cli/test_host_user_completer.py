@@ -10,6 +10,7 @@ from otto.cli.completers import (
     host_group_request,
     host_user_completer,
 )
+from tests._fixtures.clickctx import chain
 
 ENTRIES = [
     {"login": "root", "protocols": [], "proxy": True},
@@ -25,9 +26,9 @@ unscoped entry, `--term telnet` via both (deduped to one)."""
 
 def _ctx(host_id="dut1", term=None):
     """A leaf context under the host group, as Typer builds it during completion."""
-    root = SimpleNamespace(params={"labs": []}, parent=None)
-    group = SimpleNamespace(params={"host_id": host_id, "term": term, "hop": ""}, parent=root)
-    return SimpleNamespace(params={}, parent=group)
+    leaf = chain("otto", "host", "login", root_params={"labs": []})
+    leaf.parent.params = {"host_id": host_id, "term": term, "hop": ""}
+    return leaf
 
 
 @pytest.mark.parametrize(

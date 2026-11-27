@@ -18,15 +18,16 @@ import pytest
 from otto import _shim_complete as sc
 from otto import bootstrap as bs
 from otto import registry
-from otto.cli.main import _completion_collectors
+from otto.cli.main import write_completion_cache
 from otto.config import completion_cache as cc
-from otto.config.completion_tree import build_shim_payload
 from otto.config.project import PYTEST_CONFIG_NAMES
 from tests._fixtures.completion_sites import completion_nodes
+from tests._fixtures.entry_runner import bash_tab
 from tests._fixtures.shim_project import make_shim_project
 
 EXPECTED_HANDOVER_REASONS = {
     "live",  # a completer that must run product code (a live source)
+    "multi-value",  # `--size 1 ` : an option that takes two words, which the shim does not model
     "list fragment past its first separator",  # `--hosts dut1,` : live past the separator
     "value given to flag",  # `--debug=x` : click aborts the whole parse of that command
     "stacked short flags",  # `-hx` : click stacks them, the shim does not model it
@@ -68,43 +69,6 @@ and xdist. 3 000 is loose enough that adding a command or an option cannot fail
 it, tight enough that a generator change which turns real cases back into
 hand-overs does.
 """
-
-
-def _write_cache_like_entry(projects) -> None:
-    """The writer call ``otto.cli.main.entry()`` makes (src/otto/cli/main.py:997-1032).
-
-    The writer's two remaining keywords are deliberately absent: ``digests=`` is the
-    precomputed-digest optimisation ``cache_rebuild_is_worthwhile`` fills (this helper
-    does not call it, so write_cache recomputes — same entry), and ``tainted=`` is
-    ``bool(result.errors)``, which the ``world`` fixture asserts empty, i.e. the default.
-    """
-    cli = _completion_collectors()
-    instructions = cli.instructions()
-    backends = cc.collect_backend_names()
-    cc.write_cache(
-        projects,
-        instructions,
-        cc.collect_host_ids(projects),
-        docker_hosts=cc.collect_docker_capable_host_ids(projects),
-        docker_use_cases=cc.collect_docker_use_case_names(projects),
-        docker_images=cc.collect_docker_image_names(projects),
-        docker_services_by_use_case=cc.collect_docker_services_by_use_case(projects),
-        active_projects=cc.collect_active_project_names(projects),
-        term_backends=backends["term_backends"],
-        transfer_backends=backends["transfer_backends"],
-        usernames=cc.collect_reservation_usernames(projects),
-        commands=cli.commands(),
-        labs=cc.collect_lab_names(projects),
-        hosts_by_lab=cc.collect_host_ids_by_lab(projects),
-        host_drops=cc.collect_host_drops(projects),
-        host_classes_by_id=cc.collect_host_classes_by_id(projects),
-        projects=cc.collect_project_names(projects),
-        links=cc.collect_links(projects),
-        logins_by_host=cc.collect_logins_by_host(projects),
-        docker_default_parent_by_lab=cc.collect_docker_default_parent_by_lab(projects),
-        inventory_names=cc.collect_inventory_names(projects),
-        shim=build_shim_payload(projects, app=cli.app, pending_key=cli.pending_key),
-    )
 
 
 def _seed_observed(projects) -> None:
@@ -218,7 +182,7 @@ def world(tmp_path, monkeypatch):
             result = bs.bootstrap()
         assert not result.errors, result.errors
         projects = result.projects
-        _write_cache_like_entry(projects)
+        write_completion_cache(projects)  # the write entry() makes
         _seed_observed(projects)
         _seed_matching_tables(projects)
 
@@ -307,14 +271,19 @@ def _shim(words: str, cword: int, env: dict[str, str]) -> tuple[str | None, str]
     return (None if out.items is None else "\n".join(out.items)), out.reason
 
 
-def _node_cases(add, path: list[str], node: dict) -> None:
-    """Every fragment and complete-word shape this corpus knows, for one command."""
+def _node_cases(add, path: list[str], node: dict, candidates: dict | None) -> None:
+    """Every fragment and complete-word shape this corpus knows, for one command.
+
+    A command's parameters are the shim's: its own, then the candidate rows its
+    node names (``sc._params``).
+    """
+    params = sc._params(node, candidates)
     for frag in ("", "-", "--", "="):
         add(path, frag)
     for name in node["commands"]:
         add(path, name[:1])
-    value_flags = [p["flags"][0] for p in node["params"] if p["flags"] and p["takes_value"]]
-    for param in node["params"]:
+    value_flags = [p["flags"][0] for p in params if p["flags"] and p["takes_value"]]
+    for param in params:
         if param["flags"]:
             for flag in param["flags"]:
                 add(path, flag[:3])
@@ -366,7 +335,9 @@ def _view_ids(classes: dict[str, str]) -> dict[str | None, str]:
     return ids
 
 
-def _corpus(tree: dict, classes: dict[str, str]) -> list[tuple[str, int]]:
+def _corpus(
+    tree: dict, classes: dict[str, str], candidates: dict | None = None
+) -> list[tuple[str, int]]:
     """(COMP_WORDS, COMP_CWORD) per spec §6, generated from the tree itself.
 
     Every node of the shared enumeration (:func:`completion_nodes`), the scoped
@@ -387,7 +358,7 @@ def _corpus(tree: dict, classes: dict[str, str]) -> list[tuple[str, int]]:
     ids = _view_ids(classes)
     for entry in completion_nodes(tree):
         if entry.scope is None:
-            _node_cases(add, list(entry.path), entry.node)
+            _node_cases(add, list(entry.path), entry.node, candidates)
             continue
         host_id = ids.get(entry.host_class)
         if host_id is None:
@@ -396,7 +367,7 @@ def _corpus(tree: dict, classes: dict[str, str]) -> list[tuple[str, int]]:
         words = [*entry.scope, host_id, *entry.path[depth:]]
         if len(entry.path) == depth + 1:  # a verb of the view's own menu
             add(words[:-1], entry.path[-1][:2])
-        _node_cases(add, words, entry.node)
+        _node_cases(add, words, entry.node, candidates)
     return cases
 
 
@@ -404,6 +375,8 @@ def _reason_class(reason: str) -> str:
     """Bucket a hand-over reason by CLASS: the quoted name varies case by case."""
     if reason.startswith("live source for "):
         return "live"
+    if reason.startswith("nargs="):
+        return "multi-value"
     return reason.split("'", maxsplit=1)[0].strip()
 
 
@@ -537,8 +510,8 @@ ENVS = [{}, {"OTTO_LAB": "east"}, {"OTTO_LAB": "west east"}, {"OTTO_LAB": ""}]
 def _generated_corpus(world) -> list[tuple[str, int]]:
     data = json.loads(cc._cache_path().read_text())
     tree = data["sections"]["shim"]["payload"]["tree"]
-    classes = data["sections"]["names"]["payload"]["host_classes_by_id"]
-    return _corpus(tree, classes)
+    names = data["sections"]["names"]["payload"]
+    return _corpus(tree, names["host_classes_by_id"], names["option_candidates"])
 
 
 class _DecodeOnce:
@@ -1294,3 +1267,104 @@ def test_the_inventory_fingerprint_and_its_stored_triple_share_one_stat(
         src.fingerprint()
         [stat_triple(p) for p in src.stat_paths()]
     assert len(seen) == 1, seen
+
+
+# ── the flags of options classes: the shim reads them from the candidates ─────
+
+
+def _both(cli, words: str, monkeypatch) -> str:
+    """The shim's answer to *words* (it must answer), held equal to Typer's; returns it."""
+    cword = int(bash_tab(words)["COMP_CWORD"])
+    got, reason = _shim(words, cword, {})
+    assert got is not None, reason
+    assert got == _typer(cli, words, cword, {}, monkeypatch), words
+    return got
+
+
+def test_a_covering_flag_on_a_plugin_command_completes_from_the_shim(world, monkeypatch):
+    """``otto plug nest leaf --de`` offers the plugin class's flag, from the shim, as Typer does."""
+    _project, cli = world
+    assert _both(cli, "otto plug nest leaf --de", monkeypatch).split() == ["--debug"]
+
+
+@pytest.mark.parametrize(
+    ("line", "offered", "not_offered"),
+    [
+        ("otto plug nest leaf --mode ", {"fast", "slow"}, set()),  # an enum option: its choices
+        ("otto plug nest leaf --mode slow ", set(), set()),  # the positional after it
+        ("otto plug nest leaf --mode slow --", {"--debug"}, {"--mode"}),  # the value was taken
+        ("otto plug nest leaf -d 3 ", set(), set()),  # an alias takes its value
+        ("otto plug nest leaf -d 3 --", {"--mode"}, {"--debug"}),
+        # the value-taking flag eats the next word, so --debug was never given
+        ("otto plug nest leaf --plain --debug 3 --", {"--debug"}, {"--plain"}),
+        # a declared (payload) completion source: the host ids, sub-hosts included
+        ("otto plug nest leaf --source ", {"box", "dut1", "dut2", "dut3", "local"}, set()),
+    ],
+)
+def test_a_candidate_row_completes_as_the_live_parameter_does(
+    world, monkeypatch, line, offered, not_offered
+):
+    """A candidate's row parses and completes as the live parameter: shim == Typer."""
+    _project, cli = world
+    got = set(_both(cli, line, monkeypatch).split())
+    assert offered <= got, got
+    assert not (not_offered & got), got
+
+
+@pytest.mark.parametrize(
+    "line", ["otto plug nest leaf --size 1 ", "otto plug nest leaf --size 1 2 "]
+)
+def test_a_line_that_uses_a_tuple_candidate_is_handed_over(world, line):
+    """The shim models one value per option: a two-value candidate hands the line over."""
+    got, reason = _shim(line, len(line.split()), {})
+    assert got is None
+    assert reason == "nargs=2 option size"
+
+
+def test_two_classes_that_share_a_spelling_offer_it_once(world, monkeypatch):
+    """The fixture's colliding pair: the live command stops, both TABs offer ``--debug`` once.
+
+    The fixture's class that cannot be imported would stop the live command
+    first, so it is set aside for the live parse: what stops it is the collision.
+    """
+    from otto.params import OPTIONS, OptionsCollisionError, register_options
+    from otto.registry import registering_project
+
+    _project, cli = world
+    gone = "shimsut_gone:Missing"
+    OPTIONS.unregister(name=gone)
+    try:
+        with pytest.raises(OptionsCollisionError, match="--debug"):
+            cli.main(["plug", "nest", "leaf", "--help"], prog_name="otto", standalone_mode=False)
+    finally:
+        with registering_project("shimsut"):
+            register_options(gone, verbs=["plug"])
+    flags = _both(cli, "otto plug nest leaf --", monkeypatch).split()
+    assert flags.count("--debug") == 1
+    assert "--clash-only" in flags  # the second class still offers what it alone spells
+
+
+def test_a_class_that_cannot_be_imported_costs_the_tab_nothing(world, monkeypatch):
+    """A registration whose class does not import is left out; every other flag completes."""
+    _project, cli = world
+    data = json.loads(cc._cache_path().read_text())
+    recorded = data["sections"]["names"]["payload"]["option_candidates"]
+    assert not any(use["key"].startswith("shimsut_gone") for use in recorded["uses"])
+    flags = _both(cli, "otto plug nest leaf --", monkeypatch).split()
+    assert {"--debug", "--size", "--mode", "--clash-only"} <= set(flags)
+
+
+SHIM_KINDS = {
+    "static": "--mode",
+    "payload": "--source",
+    "tests": "--pick-test",
+    "markers": "--pick-marker",
+    "observed": "--pick-image",
+}
+
+
+@pytest.mark.parametrize("kind", list(SHIM_KINDS))
+def test_the_shim_answers_those_sources_for_a_candidate_from_its_row(world, monkeypatch, kind):
+    """A bash TAB gets a candidate's values from the shim, from its row: shim == cold Typer."""
+    _project, cli = world
+    assert _both(cli, f"otto plug nest leaf {SHIM_KINDS[kind]} ", monkeypatch)

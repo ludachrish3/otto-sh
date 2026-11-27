@@ -189,6 +189,19 @@ class CliCollectors:
     pending_key: str
     """The ``ctx.meta`` key the root group's dispatch protocol reads."""
 
+    option_candidates: Callable[[], dict[str, Any]]
+    """Every options class a command may offer, each described on its own.
+
+    ``{"rows": {key: [row, ...]}, "uses": [{"key", "project", "entries"}, ...]}``:
+    one row list per class, and one use per occurrence of a class (a
+    registration, or one body of one instruction), in enumeration order."""
+
+    leaf_candidates: Callable[[Any, Any], list[int]]
+    """For a command and its context, the indexes into ``option_candidates``' uses that cover it.
+
+    ``[]`` for a command that offers no registered options class's flags.
+    The ``shim`` section's tree records the answer on each leaf's node."""
+
 
 def _collect_names(projects: list[Project], cli: CliCollectors) -> dict[str, Any]:
     """Assemble the ``names`` payload from the live registries, *projects* and the CLI's walks.
@@ -220,13 +233,16 @@ def _collect_names(projects: list[Project], cli: CliCollectors) -> dict[str, Any
         "logins_by_host": _cc.collect_logins_by_host(projects),
         "docker_default_parent_by_lab": _cc.collect_docker_default_parent_by_lab(projects),
         "inventory_names": _cc.collect_inventory_names(projects),
+        "option_candidates": cli.option_candidates(),
     }
 
 
 def _collect_shim(projects: list[Project], cli: CliCollectors) -> dict[str, Any]:
     from .completion_tree import build_shim_payload  # lazy: the cold write path only
 
-    return build_shim_payload(projects, app=cli.app, pending_key=cli.pending_key)
+    return build_shim_payload(
+        projects, app=cli.app, pending_key=cli.pending_key, leaf_candidates=cli.leaf_candidates
+    )
 
 
 @dataclass(frozen=True)

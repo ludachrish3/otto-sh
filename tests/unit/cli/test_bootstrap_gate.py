@@ -2,17 +2,15 @@
 
 import re
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import typer
 
 from otto import bootstrap as bs
 from otto.cli.invoke import fail_loud_on_bootstrap_errors
-from otto.config.scope import ProjectScopeConfig
+from otto.config.scope import ProjectScopeConfig, ScopeSelection
 from tests._fixtures.bootstrap_seam import install_composed
 from tests._fixtures.fake_project import fake_project
-from tests._fixtures.rootoptions import make_root_options
 
 
 @pytest.fixture(autouse=True)
@@ -29,14 +27,9 @@ def _install_result(monkeypatch, *, errors=(), warnings=(), projects=()):
     return install_composed(monkeypatch, result)
 
 
-def _fake_ctx(*, labs=None, include=(), exclude=()):
-    """The one slice of a click ctx the gate reads: meta['_otto_root_options']."""
-    opts = make_root_options(
-        labs=labs,
-        include_projects=tuple(include),
-        exclude_projects=tuple(exclude),
-    )
-    return SimpleNamespace(meta={"_otto_root_options": opts})
+def _selection(*, labs=None, include=(), exclude=()):
+    """The selection the gate is handed: what ``scope_selection`` read for the invocation."""
+    return ScopeSelection(labs=tuple(labs or ()), include=tuple(include), exclude=tuple(exclude))
 
 
 def _broken_project(name, *, lab_patterns=None):
@@ -134,7 +127,7 @@ class TestDemotion:
             ],
             projects=[project],
         )
-        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("project2",)))  # must not raise
+        fail_loud_on_bootstrap_errors(_selection(exclude=("project2",)))  # must not raise
         err_out = capsys.readouterr().err
         assert "inactive for this run" in err_out
         assert "project2" in err_out
@@ -150,7 +143,7 @@ class TestDemotion:
             ],
             projects=[project],
         )
-        fail_loud_on_bootstrap_errors(_fake_ctx(labs=["unix"]))  # must not raise
+        fail_loud_on_bootstrap_errors(_selection(labs=["unix"]))  # must not raise
         assert "inactive for this run" in capsys.readouterr().err
 
     def test_the_demotion_line_goes_to_stderr_not_stdout(self, monkeypatch, capsys):
@@ -170,7 +163,7 @@ class TestDemotion:
             ],
             projects=[project],
         )
-        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("project2",)))
+        fail_loud_on_bootstrap_errors(_selection(exclude=("project2",)))
         captured = capsys.readouterr()
         assert "inactive for this run" in captured.err
         assert captured.out == ""
@@ -194,7 +187,7 @@ class TestDemotion:
             ],
             projects=[project],
         )
-        fail_loud_on_bootstrap_errors(_fake_ctx(labs=["unix"]))
+        fail_loud_on_bootstrap_errors(_selection(labs=["unix"]))
         assert "not applicable to lab(s) [unix]" in capsys.readouterr().err
 
     def test_active_projects_errors_stay_fatal(self, monkeypatch):
@@ -209,7 +202,7 @@ class TestDemotion:
             projects=[project],
         )
         with pytest.raises(typer.Exit) as excinfo:
-            fail_loud_on_bootstrap_errors(_fake_ctx(labs=["unix"]))
+            fail_loud_on_bootstrap_errors(_selection(labs=["unix"]))
         assert excinfo.value.exit_code == 1
 
     def test_include_forces_the_error_fatal(self, monkeypatch):
@@ -224,7 +217,7 @@ class TestDemotion:
             projects=[project],
         )
         with pytest.raises(typer.Exit) as excinfo:
-            fail_loud_on_bootstrap_errors(_fake_ctx(labs=["unix"], include=("project2",)))
+            fail_loud_on_bootstrap_errors(_selection(labs=["unix"], include=("project2",)))
         assert excinfo.value.exit_code == 1
 
     def test_discovery_errors_are_never_demoted(self, monkeypatch):
@@ -240,7 +233,7 @@ class TestDemotion:
             projects=[],
         )
         with pytest.raises(typer.Exit) as excinfo:
-            fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("ghost",)))
+            fail_loud_on_bootstrap_errors(_selection(exclude=("ghost",)))
         assert excinfo.value.exit_code == 1
 
     def test_no_ctx_keeps_the_strict_gate(self, monkeypatch):
@@ -273,7 +266,7 @@ class TestDemotion:
             ],
             projects=[project],
         )
-        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("proj-2",)))  # must not raise
+        fail_loud_on_bootstrap_errors(_selection(exclude=("proj-2",)))  # must not raise
         assert "inactive for this run" in capsys.readouterr().err
 
     def test_one_active_projects_error_is_still_fatal_beside_a_demoted_one(self, monkeypatch):
@@ -291,7 +284,7 @@ class TestDemotion:
             projects=[dead, alive],
         )
         with pytest.raises(typer.Exit) as excinfo:
-            fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("project2",)))
+            fail_loud_on_bootstrap_errors(_selection(exclude=("project2",)))
         assert excinfo.value.exit_code == 1
 
 
@@ -320,7 +313,7 @@ def test_the_refusal_says_why_a_switched_off_project_still_counts(monkeypatch, c
         projects=[app, fw],
     )
     with pytest.raises(typer.Exit) as excinfo:
-        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("fw",)))
+        fail_loud_on_bootstrap_errors(_selection(exclude=("fw",)))
     assert excinfo.value.exit_code == 1
     err_out = capsys.readouterr().err
     assert (
@@ -341,7 +334,7 @@ def test_the_refusal_names_every_requirer_of_an_out_of_scope_project(monkeypatch
         projects=[app, cli, fw],
     )
     with pytest.raises(typer.Exit) as excinfo:
-        fail_loud_on_bootstrap_errors(_fake_ctx(labs=["rig"]))
+        fail_loud_on_bootstrap_errors(_selection(labs=["rig"]))
     assert excinfo.value.exit_code == 1
     assert (
         "error: project 'fw' failed to load and is inactive for this run "

@@ -13,11 +13,11 @@ import pytest
 from otto.cli import invoke
 from otto.cli.registry import CommandSpec
 from tests._fixtures.bootstrapstub import bootstrap_stub
-from tests._fixtures.clickctx import chain
+from tests._fixtures.clickctx import ChainLeaf, chain
 from tests._fixtures.rootoptions import make_root_options
 
 
-class _FakeCtx:
+class _FakeCtx(ChainLeaf):
     """Minimal stand-in for a click leaf context the preamble inspects."""
 
     def __init__(self, spec: CommandSpec, command_name: str) -> None:

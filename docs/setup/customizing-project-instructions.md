@@ -29,8 +29,28 @@ test marked `@pytest.mark.ensure("installed")` all run the same bodies.
 
 ## A flag of your own
 
-The worked example's project ({doc}`../developing/bed-case-study/index`) installs an agent, and wants to choose which build
-variant goes on. It declares an options class that **inherits the first-party
+A flag for one of the seven is an options class registered for that command,
+read wherever it is needed. No override is involved:
+
+```{literalinclude} ../examples/options/acme_options.py
+:language: python
+:start-after: "# doc: begin one-instruction"
+:end-before: "# doc: end one-instruction"
+```
+
+`otto run install --variant debug` then reaches every hook and body that
+reads `otto.get_options(AcmeInstall)`, such as the product's `install`
+([An option for one instruction](options-classes.md#an-option-for-one-instruction)
+walks it through). The entry `"run install"` keeps the flag off every other
+command; [Naming commands](options-advanced.md#naming-commands) has the
+other entries.
+
+## Changing what the action does
+
+When the action itself must do different work, the project overrides its
+body. The worked example's project ({doc}`../developing/bed-case-study/index`)
+installs an agent, and records which build variant goes on every host before
+it installs. It declares an options class that **inherits the first-party
 one** for that instruction, then overrides the body:
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/actions.py
@@ -61,10 +81,11 @@ by side:
 
 ## Sharing a flag across projects
 
-`otto run install` shows the **union** of every configured project's flags, so two
-projects that both override `install` both add to one command. Two projects wanting
-the *same* flag must inherit it from one shared base class — otherwise otto
-refuses the pair at startup — and that base belongs in a project they **require**
+`otto run install` shows the **union** of the flags of every project that takes
+part, so two projects that both override `install` both add to one command. Two
+projects wanting the *same* flag must inherit it from one shared base class —
+otherwise `otto run install` refuses the pair when both take part — and that base
+belongs in a project they **require**
 or in a library package, never in an optional one. The rule and the error are in
 [One command, every project's flags](../cli/run/defaults.md#one-command-every-projects-flags).
 

@@ -39,6 +39,7 @@ class CompletionNode:
 SITE_HANDOVER_CLASSES: dict[str, str] = {
     "live": "live",
     "past_sep": "list fragment past its first separator",
+    "multi": "multi-value",
 }
 """Each :attr:`CompletionSite.why` the corpus produces -> the shim's hand-over reason class.
 
@@ -47,8 +48,8 @@ into (``_reason_class``), and ``tests/unit/import_budget/test_completion_coverag
 asserts that these and :data:`INPUT_HANDOVER_CLASSES` are exactly that file's
 ``EXPECTED_HANDOVER_REASONS``: a new hand-over class in the shim fails there
 until it is placed here, and a site class is then modelled by :func:`_shape`.
-``multi`` has no entry: otto has no ``nargs > 1`` site, so the corpus never
-produces its reason (``nargs=N option NAME``)."""
+``multi`` (reason ``nargs=N option NAME``) has no site in otto's own tree;
+the differential's corpus produces it from a project's two-value option."""
 
 INPUT_HANDOVER_CLASSES: frozenset[str] = frozenset(
     {"value given to flag", "stacked short flags", "unknown option", "unknown command"}

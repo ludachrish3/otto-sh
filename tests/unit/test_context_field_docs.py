@@ -25,7 +25,7 @@ FIELDS = {
     "cov_decision": "Whether coverage is on for this run, once decided",
     "include_projects": "Project names forced ACTIVE this invocation",
     "exclude_projects": "Project names forced INACTIVE this invocation",
-    "verb": "The verb this invocation dispatched",
+    "verb": "The top-level command this invocation dispatched",
 }
 
 

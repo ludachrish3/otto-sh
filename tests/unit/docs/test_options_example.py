@@ -3,22 +3,25 @@
 ``docs/setup/options-classes.md`` includes its snippets from
 ``docs/examples/options/acme_options.py``. This file loads that example by
 path and runs its product hook, so the page cannot drift from code that works:
-``--debug-level 3`` on a run command reaches ``Agent.install``.
+``--debug-level 3`` on a run command reaches ``Agent.install``, and so does
+``--variant debug`` on ``otto run install``.
 
 The example registers ``Acme`` (and an instruction) at import; the root
 conftest's registry isolation removes them again after each test.
 """
 
+import importlib.machinery
 import importlib.util
 import re
 import sys
+import types
 import warnings
 
 import pytest
 
 import otto
 from otto.context import reset_context, set_context
-from otto.params import verbs_for
+from otto.params import OPTIONS, covering, options_key, registrations, verbs_for
 from otto.result import CommandResult, Result, Results
 from otto.utils import Status
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -68,7 +71,40 @@ async def test_the_debug_level_reaches_the_install_hook_from_a_run_flag(example,
         await example.Agent().install(host)
     finally:
         reset_context(binding)
-    assert host.ran == ["agent-install --log-level 3"]
+    assert host.ran == ["agent-install --log-level 3 --variant field"]
+
+
+@pytest.mark.asyncio
+async def test_the_variant_reaches_the_install_hook_from_a_run_install_flag(
+    example, make_otto_context
+):
+    ctx = make_otto_context()
+    binding = set_context(ctx)
+    try:
+        ctx.bind_verb_options(
+            verb="run", command="install", kwargs={"debug_level": 3, "variant": "debug"}
+        )
+        host = _FakeHost()
+        await example.Agent().install(host)
+    finally:
+        reset_context(binding)
+    assert host.ran == ["agent-install --log-level 3 --variant debug"]
+
+
+@pytest.mark.asyncio
+async def test_under_another_command_the_hook_reads_the_variants_default(
+    example, make_otto_context
+):
+    """``otto run status`` offers ``--debug-level`` and no ``--variant``: the hook reads "field"."""
+    ctx = make_otto_context()
+    binding = set_context(ctx)
+    try:
+        ctx.bind_verb_options(verb="run", command="status", kwargs={"debug_level": 3})
+        host = _FakeHost()
+        await example.Agent().install(host)
+    finally:
+        reset_context(binding)
+    assert host.ran == ["agent-install --log-level 3 --variant field"]
 
 
 @pytest.mark.asyncio
@@ -77,14 +113,17 @@ async def test_the_same_read_works_in_a_block_with_no_context(example):
     with otto.use_options(example.Acme(debug_level=3)):
         await example.Agent().install(host)
         await example.AcmeHost.restart_agent(host)
-    assert host.ran == ["agent-install --log-level 3", "agent-restart --log-level 3"]
+    assert host.ran == [
+        "agent-install --log-level 3 --variant field",
+        "agent-restart --log-level 3",
+    ]
 
 
 @pytest.mark.asyncio
 async def test_with_nothing_given_the_hook_reads_the_default(example):
     host = _FakeHost()
     await example.Agent().install(host)
-    assert host.ran == ["agent-install --log-level 0"]
+    assert host.ran == ["agent-install --log-level 0 --variant field"]
 
 
 class _FleetHost:
@@ -139,17 +178,62 @@ def test_the_class_is_registered_for_run_and_test(example):
     assert verbs_for(example.Acme) == ["run", "test"]
 
 
+def test_the_one_instruction_class_is_registered_for_run_install(example):
+    assert verbs_for(example.AcmeInstall) == ["run install"]
+
+
+def test_it_covers_run_install_and_not_run_status(example):
+    assert [r.key for r in covering(("run", "install"))] == [
+        options_key(example.Acme),
+        options_key(example.AcmeInstall),
+    ]
+    assert [r.key for r in covering(("run", "status"))] == [options_key(example.Acme)]
+
+
 def test_every_snippet_marker_the_page_includes_exists_once():
     page = _PAGE.read_text(encoding="utf-8")
     source = _EXAMPLE.read_text(encoding="utf-8")
     assert "../examples/options/acme_options.py" in page
     markers = re.findall(r':(?:start-after|end-before): "(# doc: (?:begin|end) [\w-]+)"', page)
     names = {m.split()[-1] for m in markers}
-    assert names == {"project-wide", "product", "host-method", "test", "instruction"}
+    assert names == {
+        "project-wide",
+        "one-instruction",
+        "product",
+        "host-method",
+        "test",
+        "instruction",
+    }
     for name in names:
         for marker in (f"# doc: begin {name}", f"# doc: end {name}"):
             assert marker in markers, f"the page does not use {marker!r}"
             assert len(re.findall(rf"^\s*{re.escape(marker)}$", source, re.MULTILINE)) == 1, marker
+
+
+def _product_snippet() -> "list[str]":
+    """The ``product`` snippet's lines, as the page's includes see them."""
+    source = _EXAMPLE.read_text(encoding="utf-8").splitlines()
+    begin = next(i for i, line in enumerate(source) if line.strip() == "# doc: begin product")
+    end = next(i for i, line in enumerate(source) if line.strip() == "# doc: end product")
+    return source[begin + 1 : end]
+
+
+def test_step_two_shows_the_hook_without_the_step_three_read():
+    """Step 2 drops snippet line 5, the one read of ``AcmeInstall``; step 3 highlights it."""
+    page = _PAGE.read_text(encoding="utf-8")
+    includes = re.findall(
+        r"^```\{literalinclude\}[^\n]*\n:language: python\n"
+        r':start-after: "# doc: begin product"\n:end-before: "# doc: end product"\n(.*?)^```',
+        page,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert [":lines: 1-4,6" in i for i in includes] == [True, False]
+    assert ":emphasize-lines: 5" in includes[1]
+    snippet = _product_snippet()
+    assert [n for n, line in enumerate(snippet, 1) if "AcmeInstall" in line] == [5]
+    shown = [snippet[n - 1] for n in (1, 2, 3, 4, 6)]
+    assert "variant" not in "\n".join(shown)
+    assert shown[-1].strip() == 'return await host.run(f"agent-install {args}")'
 
 
 def test_the_validating_fields_block_rejects_a_negative_level_with_the_page_text():
@@ -192,3 +276,21 @@ def test_the_advanced_pages_dev_example_runs():
     """An instance gives its defaults too: the page's `dev` block runs as written."""
     source = _advanced_fence("class HookOptions")
     exec(compile(source, str(_ADVANCED), "exec"), {})  # noqa: S102
+
+
+_PLUGIN_CLASS = "acme_flash_options:AcmeFlash"
+
+
+def test_the_advanced_pages_plugin_command_example_runs(monkeypatch):
+    """The "Naming commands" block registers its class only when the plugin is installed."""
+    source = _advanced_fence("find_spec")
+    monkeypatch.delitem(sys.modules, "flash_tools", raising=False)
+    exec(compile(source, str(_ADVANCED), "exec"), {})  # noqa: S102
+    assert _PLUGIN_CLASS not in OPTIONS
+
+    plugin = types.ModuleType("flash_tools")
+    plugin.__spec__ = importlib.machinery.ModuleSpec("flash_tools", None)
+    monkeypatch.setitem(sys.modules, "flash_tools", plugin)
+    exec(compile(source, str(_ADVANCED), "exec"), {})  # noqa: S102
+    assert [r.entries for r in registrations() if r.key == _PLUGIN_CLASS] == [("flash",)]
+    assert "acme_flash_options" not in sys.modules

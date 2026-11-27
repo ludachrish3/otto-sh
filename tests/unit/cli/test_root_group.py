@@ -303,6 +303,7 @@ def test_get_command_prefers_real_registry_over_cache(monkeypatch):
         class _FakeCtx:
             def __init__(self) -> None:
                 self.meta: dict = {"_pending_subcmd_args": ["dupe-tool"]}
+                self.resilient_parsing = False  # a dispatch, as on a real context
 
         cmd = group.get_command(_FakeCtx(), "dupe-tool")
         assert cmd is not None
@@ -413,6 +414,7 @@ def test_completion_descent_target_resolves_real(monkeypatch):
     class _FakeCtx:
         def __init__(self) -> None:
             self.meta: dict = {"_pending_subcmd_args": ["run"]}
+            self.resilient_parsing = False  # a dispatch, as on a real context
 
     group.get_command(_FakeCtx(), "run")
     assert "otto.cli.run" in sys.modules
@@ -433,6 +435,7 @@ def test_completion_enumeration_stubs_command_named_as_option_value(monkeypatch)
     class _FakeCtx:
         def __init__(self) -> None:
             self.meta: dict = {"_pending_subcmd_args": ["run", "--host", "monitor"]}
+            self.resilient_parsing = False  # a dispatch, as on a real context
 
     cmd = group.get_command(_FakeCtx(), "monitor")
     assert cmd is not None
@@ -494,3 +497,91 @@ def test_option_value_equal_to_help_flag_is_not_sniffed(monkeypatch):
         assert "Usage" not in result.output
     finally:
         CLI_COMMANDS.unregister(name="scratch-help-value-echo")
+
+
+def _row(name: str, flags: "list[str]", *, takes_value: bool = True, nargs: int = 1) -> dict:
+    """One completion row, as the cache's tree and its candidates store it."""
+    return {
+        "flags": flags,
+        "name": name,
+        "takes_value": takes_value,
+        "multiple": False,
+        "nargs": nargs,
+        "sep": None,
+        "source": {"kind": "none"},
+    }
+
+
+_CACHED_GROUP = {
+    "name": "cached-grp",
+    "help": "G.",
+    "lab_free": False,
+    "accepts_options": True,
+    "options": [
+        {"name": "verbose", "flags": ["--verbose"], "kind": "bool", "default": False, "help": ""}
+    ],
+    "commands": [
+        {"name": "takes", "help": "", "options": [], "accepts_options": True},
+        {
+            "name": "refuses",
+            "help": "",
+            "accepts_options": False,
+            "options": [
+                {
+                    "name": "target",
+                    "flags": [],
+                    "kind": "opaque",
+                    "default": None,
+                    "help": "",
+                    "row": _row("target", []),
+                }
+            ],
+        },
+    ],
+}
+"""A cached plugin group: its own flag, a leaf that accepts, one that does not (it has an arg)."""
+
+_COVERING = {
+    "rows": {"m:Reach": [_row("reach", ["--reach"]), _row("size", ["--size"], nargs=2)]},
+    "uses": [{"key": "m:Reach", "project": None, "entries": ["cached-grp"]}],
+}
+
+
+def _cached(monkeypatch, commands: "list[dict]", candidates: dict) -> None:
+    names = {"commands": commands, "option_candidates": candidates}
+    monkeypatch.setattr("otto.registry.get_completion_names", lambda: names)
+
+
+def test_a_cached_stub_offers_the_flags_of_the_classes_that_cover_it(monkeypatch):
+    """A warm TAB on a cache-only command offers the recorded candidates its leaf accepts.
+
+    Each leaf judges by its own cached ``accepts_options``, as the live leaf
+    did: ``takes`` offers ``--reach``, ``refuses`` offers nothing beyond its own.
+    """
+    from tests._fixtures.entry_runner import complete
+
+    _cached(monkeypatch, [_CACHED_GROUP], _COVERING)
+    assert {"--reach", "--size"} <= set(complete("otto cached-grp takes --"))
+    assert "--reach" not in complete("otto cached-grp refuses --")
+
+
+def test_a_cached_candidate_takes_its_values_as_its_row_says(monkeypatch):
+    """A two-value candidate takes two words, so the line after them is the command's again."""
+    from tests._fixtures.entry_runner import complete
+
+    _cached(monkeypatch, [_CACHED_GROUP], _COVERING)
+    assert complete("otto cached-grp takes --size 1 ") == []
+    assert "--reach" in complete("otto cached-grp takes --size 1 2 --")
+
+
+def test_a_cached_stub_group_rebuilds_its_own_parameters_and_arguments(monkeypatch):
+    """The group's own flag completes on the group; an argument's row stays an argument."""
+    from otto.cli.main import _OttoGroup
+    from tests._fixtures.entry_runner import complete
+
+    _cached(monkeypatch, [_CACHED_GROUP], _COVERING)
+    assert "--verbose" in complete("otto cached-grp --")
+    cmd = _OttoGroup(name="otto").get_command(None, "cached-grp")
+    [target] = cmd.commands["refuses"].params
+    assert (target.param_type_name, target.name) == ("argument", "target")
+    assert "--target" not in complete("otto cached-grp refuses --")

@@ -1,0 +1,3778 @@
+{
+  "[]": {
+    "test": {
+      "help": [
+        {
+          "name": "list_markers",
+          "spellings": [
+            "--list-markers"
+          ],
+          "help": "List the markers available to --markers and exit.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "list_tests",
+          "spellings": [
+            "--list-tests"
+          ],
+          "help": "List what the names and --markers select, by project, module and class, and exit. With --lab, lists only the projects active for that lab; contacts no host.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "markers",
+          "spellings": [
+            "--markers",
+            "-m"
+          ],
+          "help": "pytest -m marker expression applied after collection. Narrows the named tests, or selects on its own when no name is given.",
+          "show_default": true,
+          "default": "",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "random_order",
+          "spellings": [
+            "--random",
+            "--no-random"
+          ],
+          "help": "Shuffle test order (pytest-randomly). On by default; the seed is logged at session start. --no-random runs tests in source order.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "seed",
+          "spellings": [
+            "--seed"
+          ],
+          "help": "Fix the random-order seed (the value a previous run logged). Implies --random.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "iterations",
+          "spellings": [
+            "--iterations",
+            "-i"
+          ],
+          "help": "Repeat each test N times within a single setup/teardown cycle (0 = disabled).",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "duration",
+          "spellings": [
+            "--duration",
+            "-d"
+          ],
+          "help": "Repeat tests for N seconds within a single setup/teardown cycle (0 = disabled).",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "threshold",
+          "spellings": [
+            "--threshold"
+          ],
+          "help": "Minimum per-test pass rate percentage required in stability mode (0-100).",
+          "show_default": true,
+          "default": 100.0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "results",
+          "spellings": [
+            "--results"
+          ],
+          "help": "Write test results (JUnit XML) to PATH (default: auto in log dir).",
+          "show_default": true,
+          "default": "",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov",
+          "spellings": [
+            "--cov",
+            "--no-cov"
+          ],
+          "help": "Collect coverage from the lab's instrumented products after the run finishes. Default: auto — on when a product built with coverage counters is detected and \\[coverage] is configured. --cov forces it on (an error if nothing is instrumented); --no-cov forces it off.",
+          "show_default": true,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_dir",
+          "spellings": [
+            "--cov-dir"
+          ],
+          "help": "Run directory to stage coverage in: writes PATH/cov, which `otto cov report PATH` reads. Implies --cov. Default: the run's own output dir, so coverage lands in <output_dir>/cov.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "overwrite_cov_dir",
+          "spellings": [
+            "--overwrite-cov-dir"
+          ],
+          "help": "Allow a non-empty PATH/cov (it is cleared before the run; the rest of PATH is kept).",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_clean",
+          "spellings": [
+            "--cov-clean",
+            "--no-cov-clean"
+          ],
+          "help": "Delete .gcda files on remote hosts before the test run.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_report",
+          "spellings": [
+            "--cov-report",
+            "-r"
+          ],
+          "help": "Generate an HTML coverage report after the run finishes. Implies --cov. Default location: <output_dir>/cov_report.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_report_dir",
+          "spellings": [
+            "--cov-report-dir"
+          ],
+          "help": "Directory to write the HTML coverage report to. Implies --cov-report (and --cov). Default when --cov-report is used alone: <output_dir>/cov_report.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "overwrite_cov_report_dir",
+          "spellings": [
+            "--overwrite-cov-report-dir"
+          ],
+          "help": "Allow --cov-report-dir to target an existing non-empty directory (its contents will be cleared before the report is rendered).",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "report_title",
+          "spellings": [
+            "--report-title"
+          ],
+          "help": "Title shown in the HTML report header (only used with --cov-report).",
+          "show_default": true,
+          "default": "Coverage Report",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_tickets_json",
+          "spellings": [
+            "--cov-tickets-json"
+          ],
+          "help": "Also write a machine-readable per-ticket coverage summary to this path. Implies --cov-report. Requires \\[coverage.tickets] to be configured (checked before the test run starts).",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor",
+          "spellings": [
+            "--monitor",
+            "--no-monitor"
+          ],
+          "help": "Collect host performance metrics for the entire test run.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_interval",
+          "spellings": [
+            "--monitor-interval"
+          ],
+          "help": "Sampling interval for --monitor (at least 1.0s).",
+          "show_default": true,
+          "default": 5.0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_output",
+          "spellings": [
+            "--monitor-output"
+          ],
+          "help": "Override the destination for monitor data. Format inferred from suffix (.json or .db). Implies --monitor. Default: <output_dir>/monitor.json.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_hosts",
+          "spellings": [
+            "--monitor-hosts"
+          ],
+          "help": "Regex matched against whole host IDs (fullmatch) to restrict --monitor: 'sensor' does not select 'sensor-1' — write 'sensor.*'. Implies --monitor.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_token",
+          "spellings": [
+            "--a-token"
+          ],
+          "help": "a's test token.",
+          "show_default": false,
+          "default": "s3cret",
+          "takes_value": true,
+          "origin": "test_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--list-markers",
+            "--list-tests",
+            "--markers",
+            "--random",
+            "--no-random",
+            "--seed",
+            "--iterations",
+            "--duration",
+            "--threshold",
+            "--results",
+            "--cov",
+            "--no-cov",
+            "--cov-dir",
+            "--overwrite-cov-dir",
+            "--cov-clean",
+            "--no-cov-clean",
+            "--cov-report",
+            "--cov-report-dir",
+            "--overwrite-cov-report-dir",
+            "--report-title",
+            "--cov-tickets-json",
+            "--monitor",
+            "--no-monitor",
+            "--monitor-interval",
+            "--monitor-output",
+            "--monitor-hosts",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-token",
+            "--b-level",
+            "--help"
+          ],
+          "--markers ": [],
+          "--seed ": [],
+          "--iterations ": [],
+          "--duration ": [],
+          "--threshold ": [],
+          "--results ": [],
+          "--cov-dir ": [],
+          "--cov-report-dir ": [],
+          "--report-title ": [],
+          "--cov-tickets-json ": [],
+          "--monitor-interval ": [],
+          "--monitor-output ": [],
+          "--monitor-hosts ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-token ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--list-markers",
+            "--list-tests",
+            "--markers",
+            "--random",
+            "--no-random",
+            "--seed",
+            "--iterations",
+            "--duration",
+            "--threshold",
+            "--results",
+            "--cov",
+            "--no-cov",
+            "--cov-dir",
+            "--overwrite-cov-dir",
+            "--cov-clean",
+            "--no-cov-clean",
+            "--cov-report",
+            "--cov-report-dir",
+            "--overwrite-cov-report-dir",
+            "--report-title",
+            "--cov-tickets-json",
+            "--monitor",
+            "--no-monitor",
+            "--monitor-interval",
+            "--monitor-output",
+            "--monitor-hosts",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-token",
+            "--b-level",
+            "--help"
+          ],
+          "--markers ": [
+            "ensure",
+            "retry"
+          ],
+          "--seed ": [],
+          "--iterations ": [],
+          "--duration ": [],
+          "--threshold ": [],
+          "--results ": [],
+          "--cov-dir ": [],
+          "--cov-report-dir ": [],
+          "--report-title ": [],
+          "--cov-tickets-json ": [],
+          "--monitor-interval ": [],
+          "--monitor-output ": [],
+          "--monitor-hosts ": [],
+          "--a-flavour ": [],
+          "--a-token ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-plain": {
+      "help": [
+        {
+          "name": "times",
+          "spellings": [
+            "--times"
+          ],
+          "help": "How often.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--times",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--times ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--times",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--times ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-owned": {
+      "help": [
+        {
+          "name": "a_count",
+          "spellings": [
+            "--a-count",
+            "-c"
+          ],
+          "help": "How many.",
+          "show_default": true,
+          "default": 2,
+          "takes_value": true,
+          "origin": "own_class",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--a-count",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--a-count ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--a-count",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--a-count ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-annotated": {
+      "help": [
+        {
+          "name": "label",
+          "spellings": [
+            "--label"
+          ],
+          "help": "A label.",
+          "show_default": true,
+          "default": "x",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--label",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--label ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--label",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--label ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run install": {
+      "help": [
+        {
+          "name": "ensure",
+          "spellings": [
+            "--ensure",
+            "--no-ensure"
+          ],
+          "help": "Converge: check state first, recover a partial install.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "body_class",
+          "project": null
+        },
+        {
+          "name": "recover_partial",
+          "spellings": [
+            "--recover-partial",
+            "--no-recover-partial"
+          ],
+          "help": "With --ensure: uninstall a PARTIAL lab before installing fresh.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "body_class",
+          "project": null
+        },
+        {
+          "name": "b_variant",
+          "spellings": [
+            "--b-variant"
+          ],
+          "help": "b's install variant.",
+          "show_default": true,
+          "default": "field",
+          "takes_value": true,
+          "origin": "body_class",
+          "project": "b"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--ensure",
+            "--no-ensure",
+            "--recover-partial",
+            "--no-recover-partial",
+            "--b-variant",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--b-variant ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--ensure",
+            "--no-ensure",
+            "--recover-partial",
+            "--no-recover-partial",
+            "--b-variant",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--b-variant ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    }
+  },
+  "[\"-l\", \"alpha1\"]": {
+    "test": {
+      "help": [
+        {
+          "name": "list_markers",
+          "spellings": [
+            "--list-markers"
+          ],
+          "help": "List the markers available to --markers and exit.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "list_tests",
+          "spellings": [
+            "--list-tests"
+          ],
+          "help": "List what the names and --markers select, by project, module and class, and exit. With --lab, lists only the projects active for that lab; contacts no host.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "markers",
+          "spellings": [
+            "--markers",
+            "-m"
+          ],
+          "help": "pytest -m marker expression applied after collection. Narrows the named tests, or selects on its own when no name is given.",
+          "show_default": true,
+          "default": "",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "random_order",
+          "spellings": [
+            "--random",
+            "--no-random"
+          ],
+          "help": "Shuffle test order (pytest-randomly). On by default; the seed is logged at session start. --no-random runs tests in source order.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "seed",
+          "spellings": [
+            "--seed"
+          ],
+          "help": "Fix the random-order seed (the value a previous run logged). Implies --random.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "iterations",
+          "spellings": [
+            "--iterations",
+            "-i"
+          ],
+          "help": "Repeat each test N times within a single setup/teardown cycle (0 = disabled).",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "duration",
+          "spellings": [
+            "--duration",
+            "-d"
+          ],
+          "help": "Repeat tests for N seconds within a single setup/teardown cycle (0 = disabled).",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "threshold",
+          "spellings": [
+            "--threshold"
+          ],
+          "help": "Minimum per-test pass rate percentage required in stability mode (0-100).",
+          "show_default": true,
+          "default": 100.0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "results",
+          "spellings": [
+            "--results"
+          ],
+          "help": "Write test results (JUnit XML) to PATH (default: auto in log dir).",
+          "show_default": true,
+          "default": "",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov",
+          "spellings": [
+            "--cov",
+            "--no-cov"
+          ],
+          "help": "Collect coverage from the lab's instrumented products after the run finishes. Default: auto — on when a product built with coverage counters is detected and \\[coverage] is configured. --cov forces it on (an error if nothing is instrumented); --no-cov forces it off.",
+          "show_default": true,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_dir",
+          "spellings": [
+            "--cov-dir"
+          ],
+          "help": "Run directory to stage coverage in: writes PATH/cov, which `otto cov report PATH` reads. Implies --cov. Default: the run's own output dir, so coverage lands in <output_dir>/cov.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "overwrite_cov_dir",
+          "spellings": [
+            "--overwrite-cov-dir"
+          ],
+          "help": "Allow a non-empty PATH/cov (it is cleared before the run; the rest of PATH is kept).",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_clean",
+          "spellings": [
+            "--cov-clean",
+            "--no-cov-clean"
+          ],
+          "help": "Delete .gcda files on remote hosts before the test run.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_report",
+          "spellings": [
+            "--cov-report",
+            "-r"
+          ],
+          "help": "Generate an HTML coverage report after the run finishes. Implies --cov. Default location: <output_dir>/cov_report.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_report_dir",
+          "spellings": [
+            "--cov-report-dir"
+          ],
+          "help": "Directory to write the HTML coverage report to. Implies --cov-report (and --cov). Default when --cov-report is used alone: <output_dir>/cov_report.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "overwrite_cov_report_dir",
+          "spellings": [
+            "--overwrite-cov-report-dir"
+          ],
+          "help": "Allow --cov-report-dir to target an existing non-empty directory (its contents will be cleared before the report is rendered).",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "report_title",
+          "spellings": [
+            "--report-title"
+          ],
+          "help": "Title shown in the HTML report header (only used with --cov-report).",
+          "show_default": true,
+          "default": "Coverage Report",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_tickets_json",
+          "spellings": [
+            "--cov-tickets-json"
+          ],
+          "help": "Also write a machine-readable per-ticket coverage summary to this path. Implies --cov-report. Requires \\[coverage.tickets] to be configured (checked before the test run starts).",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor",
+          "spellings": [
+            "--monitor",
+            "--no-monitor"
+          ],
+          "help": "Collect host performance metrics for the entire test run.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_interval",
+          "spellings": [
+            "--monitor-interval"
+          ],
+          "help": "Sampling interval for --monitor (at least 1.0s).",
+          "show_default": true,
+          "default": 5.0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_output",
+          "spellings": [
+            "--monitor-output"
+          ],
+          "help": "Override the destination for monitor data. Format inferred from suffix (.json or .db). Implies --monitor. Default: <output_dir>/monitor.json.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_hosts",
+          "spellings": [
+            "--monitor-hosts"
+          ],
+          "help": "Regex matched against whole host IDs (fullmatch) to restrict --monitor: 'sensor' does not select 'sensor-1' — write 'sensor.*'. Implies --monitor.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_token",
+          "spellings": [
+            "--a-token"
+          ],
+          "help": "a's test token.",
+          "show_default": false,
+          "default": "s3cret",
+          "takes_value": true,
+          "origin": "test_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--list-markers",
+            "--list-tests",
+            "--markers",
+            "--random",
+            "--no-random",
+            "--seed",
+            "--iterations",
+            "--duration",
+            "--threshold",
+            "--results",
+            "--cov",
+            "--no-cov",
+            "--cov-dir",
+            "--overwrite-cov-dir",
+            "--cov-clean",
+            "--no-cov-clean",
+            "--cov-report",
+            "--cov-report-dir",
+            "--overwrite-cov-report-dir",
+            "--report-title",
+            "--cov-tickets-json",
+            "--monitor",
+            "--no-monitor",
+            "--monitor-interval",
+            "--monitor-output",
+            "--monitor-hosts",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-token",
+            "--b-level",
+            "--help"
+          ],
+          "--markers ": [],
+          "--seed ": [],
+          "--iterations ": [],
+          "--duration ": [],
+          "--threshold ": [],
+          "--results ": [],
+          "--cov-dir ": [],
+          "--cov-report-dir ": [],
+          "--report-title ": [],
+          "--cov-tickets-json ": [],
+          "--monitor-interval ": [],
+          "--monitor-output ": [],
+          "--monitor-hosts ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-token ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--list-markers",
+            "--list-tests",
+            "--markers",
+            "--random",
+            "--no-random",
+            "--seed",
+            "--iterations",
+            "--duration",
+            "--threshold",
+            "--results",
+            "--cov",
+            "--no-cov",
+            "--cov-dir",
+            "--overwrite-cov-dir",
+            "--cov-clean",
+            "--no-cov-clean",
+            "--cov-report",
+            "--cov-report-dir",
+            "--overwrite-cov-report-dir",
+            "--report-title",
+            "--cov-tickets-json",
+            "--monitor",
+            "--no-monitor",
+            "--monitor-interval",
+            "--monitor-output",
+            "--monitor-hosts",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-token",
+            "--b-level",
+            "--help"
+          ],
+          "--markers ": [
+            "ensure",
+            "retry"
+          ],
+          "--seed ": [],
+          "--iterations ": [],
+          "--duration ": [],
+          "--threshold ": [],
+          "--results ": [],
+          "--cov-dir ": [],
+          "--cov-report-dir ": [],
+          "--report-title ": [],
+          "--cov-tickets-json ": [],
+          "--monitor-interval ": [],
+          "--monitor-output ": [],
+          "--monitor-hosts ": [],
+          "--a-flavour ": [],
+          "--a-token ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-plain": {
+      "help": [
+        {
+          "name": "times",
+          "spellings": [
+            "--times"
+          ],
+          "help": "How often.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--times",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--times ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--times",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--times ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-owned": {
+      "help": [
+        {
+          "name": "a_count",
+          "spellings": [
+            "--a-count",
+            "-c"
+          ],
+          "help": "How many.",
+          "show_default": true,
+          "default": 2,
+          "takes_value": true,
+          "origin": "own_class",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--a-count",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--a-count ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--a-count",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--a-count ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-annotated": {
+      "help": [
+        {
+          "name": "label",
+          "spellings": [
+            "--label"
+          ],
+          "help": "A label.",
+          "show_default": true,
+          "default": "x",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--label",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--label ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--label",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--label ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run install": {
+      "help": [
+        {
+          "name": "ensure",
+          "spellings": [
+            "--ensure",
+            "--no-ensure"
+          ],
+          "help": "Converge: check state first, recover a partial install.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "body_class",
+          "project": null
+        },
+        {
+          "name": "recover_partial",
+          "spellings": [
+            "--recover-partial",
+            "--no-recover-partial"
+          ],
+          "help": "With --ensure: uninstall a PARTIAL lab before installing fresh.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "body_class",
+          "project": null
+        },
+        {
+          "name": "b_variant",
+          "spellings": [
+            "--b-variant"
+          ],
+          "help": "b's install variant.",
+          "show_default": true,
+          "default": "field",
+          "takes_value": true,
+          "origin": "body_class",
+          "project": "b"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--ensure",
+            "--no-ensure",
+            "--recover-partial",
+            "--no-recover-partial",
+            "--b-variant",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--b-variant ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--ensure",
+            "--no-ensure",
+            "--recover-partial",
+            "--no-recover-partial",
+            "--b-variant",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--b-variant ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    }
+  },
+  "[\"-I\", \"b\"]": {
+    "test": {
+      "help": [
+        {
+          "name": "list_markers",
+          "spellings": [
+            "--list-markers"
+          ],
+          "help": "List the markers available to --markers and exit.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "list_tests",
+          "spellings": [
+            "--list-tests"
+          ],
+          "help": "List what the names and --markers select, by project, module and class, and exit. With --lab, lists only the projects active for that lab; contacts no host.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "markers",
+          "spellings": [
+            "--markers",
+            "-m"
+          ],
+          "help": "pytest -m marker expression applied after collection. Narrows the named tests, or selects on its own when no name is given.",
+          "show_default": true,
+          "default": "",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "random_order",
+          "spellings": [
+            "--random",
+            "--no-random"
+          ],
+          "help": "Shuffle test order (pytest-randomly). On by default; the seed is logged at session start. --no-random runs tests in source order.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "seed",
+          "spellings": [
+            "--seed"
+          ],
+          "help": "Fix the random-order seed (the value a previous run logged). Implies --random.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "iterations",
+          "spellings": [
+            "--iterations",
+            "-i"
+          ],
+          "help": "Repeat each test N times within a single setup/teardown cycle (0 = disabled).",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "duration",
+          "spellings": [
+            "--duration",
+            "-d"
+          ],
+          "help": "Repeat tests for N seconds within a single setup/teardown cycle (0 = disabled).",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "threshold",
+          "spellings": [
+            "--threshold"
+          ],
+          "help": "Minimum per-test pass rate percentage required in stability mode (0-100).",
+          "show_default": true,
+          "default": 100.0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "results",
+          "spellings": [
+            "--results"
+          ],
+          "help": "Write test results (JUnit XML) to PATH (default: auto in log dir).",
+          "show_default": true,
+          "default": "",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov",
+          "spellings": [
+            "--cov",
+            "--no-cov"
+          ],
+          "help": "Collect coverage from the lab's instrumented products after the run finishes. Default: auto — on when a product built with coverage counters is detected and \\[coverage] is configured. --cov forces it on (an error if nothing is instrumented); --no-cov forces it off.",
+          "show_default": true,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_dir",
+          "spellings": [
+            "--cov-dir"
+          ],
+          "help": "Run directory to stage coverage in: writes PATH/cov, which `otto cov report PATH` reads. Implies --cov. Default: the run's own output dir, so coverage lands in <output_dir>/cov.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "overwrite_cov_dir",
+          "spellings": [
+            "--overwrite-cov-dir"
+          ],
+          "help": "Allow a non-empty PATH/cov (it is cleared before the run; the rest of PATH is kept).",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_clean",
+          "spellings": [
+            "--cov-clean",
+            "--no-cov-clean"
+          ],
+          "help": "Delete .gcda files on remote hosts before the test run.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_report",
+          "spellings": [
+            "--cov-report",
+            "-r"
+          ],
+          "help": "Generate an HTML coverage report after the run finishes. Implies --cov. Default location: <output_dir>/cov_report.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_report_dir",
+          "spellings": [
+            "--cov-report-dir"
+          ],
+          "help": "Directory to write the HTML coverage report to. Implies --cov-report (and --cov). Default when --cov-report is used alone: <output_dir>/cov_report.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "overwrite_cov_report_dir",
+          "spellings": [
+            "--overwrite-cov-report-dir"
+          ],
+          "help": "Allow --cov-report-dir to target an existing non-empty directory (its contents will be cleared before the report is rendered).",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "report_title",
+          "spellings": [
+            "--report-title"
+          ],
+          "help": "Title shown in the HTML report header (only used with --cov-report).",
+          "show_default": true,
+          "default": "Coverage Report",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_tickets_json",
+          "spellings": [
+            "--cov-tickets-json"
+          ],
+          "help": "Also write a machine-readable per-ticket coverage summary to this path. Implies --cov-report. Requires \\[coverage.tickets] to be configured (checked before the test run starts).",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor",
+          "spellings": [
+            "--monitor",
+            "--no-monitor"
+          ],
+          "help": "Collect host performance metrics for the entire test run.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_interval",
+          "spellings": [
+            "--monitor-interval"
+          ],
+          "help": "Sampling interval for --monitor (at least 1.0s).",
+          "show_default": true,
+          "default": 5.0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_output",
+          "spellings": [
+            "--monitor-output"
+          ],
+          "help": "Override the destination for monitor data. Format inferred from suffix (.json or .db). Implies --monitor. Default: <output_dir>/monitor.json.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_hosts",
+          "spellings": [
+            "--monitor-hosts"
+          ],
+          "help": "Regex matched against whole host IDs (fullmatch) to restrict --monitor: 'sensor' does not select 'sensor-1' — write 'sensor.*'. Implies --monitor.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_token",
+          "spellings": [
+            "--a-token"
+          ],
+          "help": "a's test token.",
+          "show_default": false,
+          "default": "s3cret",
+          "takes_value": true,
+          "origin": "test_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--list-markers",
+            "--list-tests",
+            "--markers",
+            "--random",
+            "--no-random",
+            "--seed",
+            "--iterations",
+            "--duration",
+            "--threshold",
+            "--results",
+            "--cov",
+            "--no-cov",
+            "--cov-dir",
+            "--overwrite-cov-dir",
+            "--cov-clean",
+            "--no-cov-clean",
+            "--cov-report",
+            "--cov-report-dir",
+            "--overwrite-cov-report-dir",
+            "--report-title",
+            "--cov-tickets-json",
+            "--monitor",
+            "--no-monitor",
+            "--monitor-interval",
+            "--monitor-output",
+            "--monitor-hosts",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-token",
+            "--b-level",
+            "--help"
+          ],
+          "--markers ": [],
+          "--seed ": [],
+          "--iterations ": [],
+          "--duration ": [],
+          "--threshold ": [],
+          "--results ": [],
+          "--cov-dir ": [],
+          "--cov-report-dir ": [],
+          "--report-title ": [],
+          "--cov-tickets-json ": [],
+          "--monitor-interval ": [],
+          "--monitor-output ": [],
+          "--monitor-hosts ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-token ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--list-markers",
+            "--list-tests",
+            "--markers",
+            "--random",
+            "--no-random",
+            "--seed",
+            "--iterations",
+            "--duration",
+            "--threshold",
+            "--results",
+            "--cov",
+            "--no-cov",
+            "--cov-dir",
+            "--overwrite-cov-dir",
+            "--cov-clean",
+            "--no-cov-clean",
+            "--cov-report",
+            "--cov-report-dir",
+            "--overwrite-cov-report-dir",
+            "--report-title",
+            "--cov-tickets-json",
+            "--monitor",
+            "--no-monitor",
+            "--monitor-interval",
+            "--monitor-output",
+            "--monitor-hosts",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-token",
+            "--b-level",
+            "--help"
+          ],
+          "--markers ": [
+            "ensure",
+            "retry"
+          ],
+          "--seed ": [],
+          "--iterations ": [],
+          "--duration ": [],
+          "--threshold ": [],
+          "--results ": [],
+          "--cov-dir ": [],
+          "--cov-report-dir ": [],
+          "--report-title ": [],
+          "--cov-tickets-json ": [],
+          "--monitor-interval ": [],
+          "--monitor-output ": [],
+          "--monitor-hosts ": [],
+          "--a-flavour ": [],
+          "--a-token ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-plain": {
+      "help": [
+        {
+          "name": "times",
+          "spellings": [
+            "--times"
+          ],
+          "help": "How often.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--times",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--times ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--times",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--times ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-owned": {
+      "help": [
+        {
+          "name": "a_count",
+          "spellings": [
+            "--a-count",
+            "-c"
+          ],
+          "help": "How many.",
+          "show_default": true,
+          "default": 2,
+          "takes_value": true,
+          "origin": "own_class",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--a-count",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--a-count ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--a-count",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--a-count ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-annotated": {
+      "help": [
+        {
+          "name": "label",
+          "spellings": [
+            "--label"
+          ],
+          "help": "A label.",
+          "show_default": true,
+          "default": "x",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--label",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--label ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--label",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--label ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run install": {
+      "help": [
+        {
+          "name": "ensure",
+          "spellings": [
+            "--ensure",
+            "--no-ensure"
+          ],
+          "help": "Converge: check state first, recover a partial install.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "body_class",
+          "project": null
+        },
+        {
+          "name": "recover_partial",
+          "spellings": [
+            "--recover-partial",
+            "--no-recover-partial"
+          ],
+          "help": "With --ensure: uninstall a PARTIAL lab before installing fresh.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "body_class",
+          "project": null
+        },
+        {
+          "name": "b_variant",
+          "spellings": [
+            "--b-variant"
+          ],
+          "help": "b's install variant.",
+          "show_default": true,
+          "default": "field",
+          "takes_value": true,
+          "origin": "body_class",
+          "project": "b"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--ensure",
+            "--no-ensure",
+            "--recover-partial",
+            "--no-recover-partial",
+            "--b-variant",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--b-variant ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--ensure",
+            "--no-ensure",
+            "--recover-partial",
+            "--no-recover-partial",
+            "--b-variant",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--b-variant ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    }
+  },
+  "[\"-E\", \"b\"]": {
+    "test": {
+      "help": [
+        {
+          "name": "list_markers",
+          "spellings": [
+            "--list-markers"
+          ],
+          "help": "List the markers available to --markers and exit.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "list_tests",
+          "spellings": [
+            "--list-tests"
+          ],
+          "help": "List what the names and --markers select, by project, module and class, and exit. With --lab, lists only the projects active for that lab; contacts no host.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "markers",
+          "spellings": [
+            "--markers",
+            "-m"
+          ],
+          "help": "pytest -m marker expression applied after collection. Narrows the named tests, or selects on its own when no name is given.",
+          "show_default": true,
+          "default": "",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "random_order",
+          "spellings": [
+            "--random",
+            "--no-random"
+          ],
+          "help": "Shuffle test order (pytest-randomly). On by default; the seed is logged at session start. --no-random runs tests in source order.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "seed",
+          "spellings": [
+            "--seed"
+          ],
+          "help": "Fix the random-order seed (the value a previous run logged). Implies --random.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "iterations",
+          "spellings": [
+            "--iterations",
+            "-i"
+          ],
+          "help": "Repeat each test N times within a single setup/teardown cycle (0 = disabled).",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "duration",
+          "spellings": [
+            "--duration",
+            "-d"
+          ],
+          "help": "Repeat tests for N seconds within a single setup/teardown cycle (0 = disabled).",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "threshold",
+          "spellings": [
+            "--threshold"
+          ],
+          "help": "Minimum per-test pass rate percentage required in stability mode (0-100).",
+          "show_default": true,
+          "default": 100.0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "results",
+          "spellings": [
+            "--results"
+          ],
+          "help": "Write test results (JUnit XML) to PATH (default: auto in log dir).",
+          "show_default": true,
+          "default": "",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov",
+          "spellings": [
+            "--cov",
+            "--no-cov"
+          ],
+          "help": "Collect coverage from the lab's instrumented products after the run finishes. Default: auto — on when a product built with coverage counters is detected and \\[coverage] is configured. --cov forces it on (an error if nothing is instrumented); --no-cov forces it off.",
+          "show_default": true,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_dir",
+          "spellings": [
+            "--cov-dir"
+          ],
+          "help": "Run directory to stage coverage in: writes PATH/cov, which `otto cov report PATH` reads. Implies --cov. Default: the run's own output dir, so coverage lands in <output_dir>/cov.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "overwrite_cov_dir",
+          "spellings": [
+            "--overwrite-cov-dir"
+          ],
+          "help": "Allow a non-empty PATH/cov (it is cleared before the run; the rest of PATH is kept).",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_clean",
+          "spellings": [
+            "--cov-clean",
+            "--no-cov-clean"
+          ],
+          "help": "Delete .gcda files on remote hosts before the test run.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_report",
+          "spellings": [
+            "--cov-report",
+            "-r"
+          ],
+          "help": "Generate an HTML coverage report after the run finishes. Implies --cov. Default location: <output_dir>/cov_report.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_report_dir",
+          "spellings": [
+            "--cov-report-dir"
+          ],
+          "help": "Directory to write the HTML coverage report to. Implies --cov-report (and --cov). Default when --cov-report is used alone: <output_dir>/cov_report.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "overwrite_cov_report_dir",
+          "spellings": [
+            "--overwrite-cov-report-dir"
+          ],
+          "help": "Allow --cov-report-dir to target an existing non-empty directory (its contents will be cleared before the report is rendered).",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "report_title",
+          "spellings": [
+            "--report-title"
+          ],
+          "help": "Title shown in the HTML report header (only used with --cov-report).",
+          "show_default": true,
+          "default": "Coverage Report",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "cov_tickets_json",
+          "spellings": [
+            "--cov-tickets-json"
+          ],
+          "help": "Also write a machine-readable per-ticket coverage summary to this path. Implies --cov-report. Requires \\[coverage.tickets] to be configured (checked before the test run starts).",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor",
+          "spellings": [
+            "--monitor",
+            "--no-monitor"
+          ],
+          "help": "Collect host performance metrics for the entire test run.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_interval",
+          "spellings": [
+            "--monitor-interval"
+          ],
+          "help": "Sampling interval for --monitor (at least 1.0s).",
+          "show_default": true,
+          "default": 5.0,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_output",
+          "spellings": [
+            "--monitor-output"
+          ],
+          "help": "Override the destination for monitor data. Format inferred from suffix (.json or .db). Implies --monitor. Default: <output_dir>/monitor.json.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "monitor_hosts",
+          "spellings": [
+            "--monitor-hosts"
+          ],
+          "help": "Regex matched against whole host IDs (fullmatch) to restrict --monitor: 'sensor' does not select 'sensor-1' — write 'sensor.*'. Implies --monitor.",
+          "show_default": true,
+          "default": null,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": null
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_token",
+          "spellings": [
+            "--a-token"
+          ],
+          "help": "a's test token.",
+          "show_default": false,
+          "default": "s3cret",
+          "takes_value": true,
+          "origin": "test_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--list-markers",
+            "--list-tests",
+            "--markers",
+            "--random",
+            "--no-random",
+            "--seed",
+            "--iterations",
+            "--duration",
+            "--threshold",
+            "--results",
+            "--cov",
+            "--no-cov",
+            "--cov-dir",
+            "--overwrite-cov-dir",
+            "--cov-clean",
+            "--no-cov-clean",
+            "--cov-report",
+            "--cov-report-dir",
+            "--overwrite-cov-report-dir",
+            "--report-title",
+            "--cov-tickets-json",
+            "--monitor",
+            "--no-monitor",
+            "--monitor-interval",
+            "--monitor-output",
+            "--monitor-hosts",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-token",
+            "--b-level",
+            "--help"
+          ],
+          "--markers ": [],
+          "--seed ": [],
+          "--iterations ": [],
+          "--duration ": [],
+          "--threshold ": [],
+          "--results ": [],
+          "--cov-dir ": [],
+          "--cov-report-dir ": [],
+          "--report-title ": [],
+          "--cov-tickets-json ": [],
+          "--monitor-interval ": [],
+          "--monitor-output ": [],
+          "--monitor-hosts ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-token ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--list-markers",
+            "--list-tests",
+            "--markers",
+            "--random",
+            "--no-random",
+            "--seed",
+            "--iterations",
+            "--duration",
+            "--threshold",
+            "--results",
+            "--cov",
+            "--no-cov",
+            "--cov-dir",
+            "--overwrite-cov-dir",
+            "--cov-clean",
+            "--no-cov-clean",
+            "--cov-report",
+            "--cov-report-dir",
+            "--overwrite-cov-report-dir",
+            "--report-title",
+            "--cov-tickets-json",
+            "--monitor",
+            "--no-monitor",
+            "--monitor-interval",
+            "--monitor-output",
+            "--monitor-hosts",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-token",
+            "--b-level",
+            "--help"
+          ],
+          "--markers ": [
+            "ensure",
+            "retry"
+          ],
+          "--seed ": [],
+          "--iterations ": [],
+          "--duration ": [],
+          "--threshold ": [],
+          "--results ": [],
+          "--cov-dir ": [],
+          "--cov-report-dir ": [],
+          "--report-title ": [],
+          "--cov-tickets-json ": [],
+          "--monitor-interval ": [],
+          "--monitor-output ": [],
+          "--monitor-hosts ": [],
+          "--a-flavour ": [],
+          "--a-token ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-plain": {
+      "help": [
+        {
+          "name": "times",
+          "spellings": [
+            "--times"
+          ],
+          "help": "How often.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--times",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--times ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--times",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--times ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-owned": {
+      "help": [
+        {
+          "name": "a_count",
+          "spellings": [
+            "--a-count",
+            "-c"
+          ],
+          "help": "How many.",
+          "show_default": true,
+          "default": 2,
+          "takes_value": true,
+          "origin": "own_class",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--a-count",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--a-count ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--a-count",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--a-count ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run a-annotated": {
+      "help": [
+        {
+          "name": "label",
+          "spellings": [
+            "--label"
+          ],
+          "help": "A label.",
+          "show_default": true,
+          "default": "x",
+          "takes_value": true,
+          "origin": "own_parameter",
+          "project": "a"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--label",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--label ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--label",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--label ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    },
+    "run install": {
+      "help": [
+        {
+          "name": "ensure",
+          "spellings": [
+            "--ensure",
+            "--no-ensure"
+          ],
+          "help": "Converge: check state first, recover a partial install.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "body_class",
+          "project": null
+        },
+        {
+          "name": "recover_partial",
+          "spellings": [
+            "--recover-partial",
+            "--no-recover-partial"
+          ],
+          "help": "With --ensure: uninstall a PARTIAL lab before installing fresh.",
+          "show_default": true,
+          "default": true,
+          "takes_value": false,
+          "origin": "body_class",
+          "project": null
+        },
+        {
+          "name": "b_variant",
+          "spellings": [
+            "--b-variant"
+          ],
+          "help": "b's install variant.",
+          "show_default": true,
+          "default": "field",
+          "takes_value": true,
+          "origin": "body_class",
+          "project": "b"
+        },
+        {
+          "name": "a_flavour",
+          "spellings": [
+            "--a-flavour",
+            "-F"
+          ],
+          "help": "a's flavour.",
+          "show_default": true,
+          "default": "mild",
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_loud",
+          "spellings": [
+            "--a-loud",
+            "--no-a-loud"
+          ],
+          "help": "a speaks up.",
+          "show_default": true,
+          "default": false,
+          "takes_value": false,
+          "origin": "run_and_test_class",
+          "project": "a"
+        },
+        {
+          "name": "a_run_level",
+          "spellings": [
+            "--a-run-level"
+          ],
+          "help": "a's run level.",
+          "show_default": true,
+          "default": 1,
+          "takes_value": true,
+          "origin": "run_class",
+          "project": "a"
+        },
+        {
+          "name": "b_level",
+          "spellings": [
+            "--b-level"
+          ],
+          "help": "b's level.",
+          "show_default": true,
+          "default": 0,
+          "takes_value": true,
+          "origin": "run_and_test_class",
+          "project": "b"
+        },
+        {
+          "name": "help",
+          "spellings": [
+            "--help",
+            "-h"
+          ],
+          "help": "Show this message and exit.",
+          "show_default": false,
+          "default": null,
+          "takes_value": false,
+          "origin": "own_parameter",
+          "project": null
+        }
+      ],
+      "tab": {
+        "shim": {
+          "--": [
+            "--ensure",
+            "--no-ensure",
+            "--recover-partial",
+            "--no-recover-partial",
+            "--b-variant",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--b-variant ": [],
+          "--a-flavour ": [
+            "mild",
+            "hot"
+          ],
+          "--a-run-level ": [],
+          "--b-level ": []
+        },
+        "fast_path": {
+          "--": [
+            "--ensure",
+            "--no-ensure",
+            "--recover-partial",
+            "--no-recover-partial",
+            "--b-variant",
+            "--a-flavour",
+            "--a-loud",
+            "--no-a-loud",
+            "--a-run-level",
+            "--b-level",
+            "--help"
+          ],
+          "--b-variant ": [],
+          "--a-flavour ": [],
+          "--a-run-level ": [],
+          "--b-level ": []
+        }
+      }
+    }
+  }
+}

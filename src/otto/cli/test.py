@@ -684,21 +684,15 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
 
 
 def _flag_name(param: inspect.Parameter) -> str:
-    """Return the flag a run-flag parameter is typed as, for a collision message.
+    """Return the long flag a run-flag parameter is typed as, for a collision message.
 
-    Read off the ``typer.Option`` declaration (``--random/--no-random``), so
-    a verb field named ``random_order`` is told which flag it collides with
+    The first long spelling :func:`otto.params.flag_spellings` reads, so a
+    verb field named ``random_order`` is told it collides with ``--random``
     rather than a ``--random-order`` that does not exist.
     """
-    for meta in getattr(param.annotation, "__metadata__", ()):
-        # Inside `Annotated`, typer.Option's first declaration lands in
-        # `default`; the rest are `param_decls`.
-        first = getattr(meta, "default", None)
-        decls = [first, *(getattr(meta, "param_decls", None) or [])]
-        longs = [d for d in decls if isinstance(d, str) and d.startswith("--")]
-        if longs:
-            return longs[0]
-    return f"--{param.name.replace('_', '-')}"
+    from ..params import flag_spellings
+
+    return next(s for s in flag_spellings(param) if s.startswith("--"))
 
 
 def _check_selection(ctx: Any, params: "dict[str, Any]") -> None:
@@ -885,16 +879,28 @@ _PATH_FIELD_NAMES = frozenset(p.name for p in _run_params() if _is_path_annotati
 def test_verb_params() -> "list[inspect.Parameter]":
     """Return every ``test``-verb option as a parameter, checked against the run flags.
 
-    A verb field whose name is a run flag's, or ``names``, raises
+    A verb field whose name is a run flag's, or ``names``, or whose flag
+    shares a spelling with a run flag (``--random``, ``-m``), raises
     ``OptionsCollisionError``. The completion cache serialises exactly this
     list, so the fast path can offer the verb's flags without the registry.
     """
-    from ..params import merge_option_params, verb_option_classes
+    from ..params import flag_spellings, merge_option_params, verb_option_classes
 
-    reserved = {p.name: f"otto test's {_flag_name(p)}" for p in _run_params()} | {
+    run_params = _run_params()
+    reserved = {p.name: f"otto test's {_flag_name(p)}" for p in run_params} | {
         "names": "otto test's NAMES"
     }
-    return merge_option_params(verb_option_classes("test"), what="otto test", reserved=reserved)
+    reserved_flags = {
+        spelling: f"otto test's {_flag_name(p)}"
+        for p in run_params
+        for spelling in flag_spellings(p)
+    }
+    return merge_option_params(
+        verb_option_classes("test"),
+        what="otto test",
+        reserved=reserved,
+        reserved_flags=reserved_flags,
+    )
 
 
 def build_test_app(cached_options: "list[dict[str, Any]] | None" = None) -> typer.Typer:

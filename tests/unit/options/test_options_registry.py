@@ -56,16 +56,24 @@ def test_registering_names_the_verbs_and_keeps_order():
 @pytest.mark.parametrize(
     ("verbs", "match"),
     [
-        (["deploy"], "unknown verb 'deploy'; verbs that accept options: run, test"),
         ([], "names no verbs"),
         (["run", "run"], "names 'run' twice"),
-        ("test", r'verbs must be a list of verb names, such as \["test"\]; got \'test\''),
+        (
+            "test",
+            r"verbs must be a list of entries, such as \[\"run\", \"run install\"\]; got 'test'",
+        ),
     ],
 )
 def test_bad_verbs_raise_at_registration(verbs, match):
     with pytest.raises(OptionsRegistrationError, match=match):
         register_options(Base, verbs=verbs)
     assert options_key(Base) not in OPTIONS
+
+
+def test_a_first_word_no_command_has_is_registered_as_written():
+    """Which commands exist is not known at registration; the entry is kept as written."""
+    register_options(Base, verbs=["deploy"])
+    assert verbs_for(Base) == ["deploy"]
 
 
 def test_registering_one_class_twice_raises_even_through_its_string_form():

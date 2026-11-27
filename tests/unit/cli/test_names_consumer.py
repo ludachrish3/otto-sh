@@ -15,10 +15,16 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.env import is_otto_env_var
 from tests._fixtures.generated_project import generate_project
-
-_ENTRY = [sys.executable, "-c", "from otto._shim import main; main()"]
+from tests._fixtures.warm_tab import (
+    TYPER_ENTRY,
+    cli_env,
+    cold_tab,
+    run_otto,
+    shim_tab,
+    typer_tab,
+    without_installers,
+)
 
 _PLUGIN_INIT = '''
 """Init module for the generated project: registers third-party CLI commands."""
@@ -136,29 +142,13 @@ raise RuntimeError("genrepo init is broken on purpose")
 '''
 
 
-def _env(project: Path, home: Path) -> dict:
-    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
-    env["OTTOPATH"] = str(project)
-    env["OTTO_HOME"] = str(home)
-    # Never write bytecode into the fixture tree: it would make the second run
-    # differ from the first for a reason that has nothing to do with the cache.
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    # Pin the render width so cold and warm help are comparable byte for byte.
-    env["COLUMNS"] = "100"
-    return env
-
-
-def _run(env: dict, *argv: str) -> subprocess.CompletedProcess:
-    return subprocess.run([*_ENTRY, *argv], env=env, capture_output=True, text=True, check=False)
-
-
 @pytest.fixture
 def plugin_project(tmp_path):
     """A generated project whose init module registers third-party CLI commands."""
     project = generate_project(tmp_path, files=20, dirs=3)
     (project / "pylib" / "genproject_instructions.py").write_text(_PLUGIN_INIT)
     (project / "pylib" / "genrepo_lazy.py").write_text(_PLUGIN_LAZY)
-    return project, _env(project, tmp_path / "home")
+    return project, cli_env(project, tmp_path / "home")
 
 
 def _arm_marker(project: Path) -> Path:
@@ -180,7 +170,7 @@ def broken_project(tmp_path):
     """A generated project whose init module raises after registering one command."""
     project = generate_project(tmp_path, files=10, dirs=2)
     (project / "pylib" / "genproject_instructions.py").write_text(_BROKEN_INIT)
-    return project, _env(project, tmp_path / "home")
+    return project, cli_env(project, tmp_path / "home")
 
 
 def _cache_file(home: Path) -> Path:
@@ -198,7 +188,7 @@ def test_cold_cache_help_still_lists_third_party_commands(plugin_project):
     help screen missing every third-party command and still exit 0.
     """
     _project, env = plugin_project
-    result = _run(env, "--help")
+    result = run_otto(env, "--help")
     assert result.returncode == 0, result.stderr
     assert "plug" in result.stdout
     assert "A plugin group registered directly" in result.stdout
@@ -212,9 +202,9 @@ def test_warm_help_is_byte_identical_to_cold_help(plugin_project):
     from one helper precisely so this can hold.
     """
     _project, env = plugin_project
-    cold = _run(env, "--help")
+    cold = run_otto(env, "--help")
     assert cold.returncode == 0, cold.stderr
-    warm = _run(env, "--help")
+    warm = run_otto(env, "--help")
     assert warm.returncode == 0, warm.stderr
 
     # Non-vacuity, and the two registration shapes BY NAME: the direct-call
@@ -239,11 +229,11 @@ def test_warm_help_runs_no_user_code(plugin_project):
     """
     project, env = plugin_project
     marker = _arm_marker(project)
-    _run(env, "--help")
+    run_otto(env, "--help")
     assert marker.is_file(), "the cold run did not import the init module at all"
     marker.unlink()
 
-    _run(env, "--help")
+    run_otto(env, "--help")
     assert not marker.exists(), "warm root help still imported the project's init module"
 
 
@@ -252,10 +242,10 @@ def test_every_root_help_spelling_takes_the_fast_path(plugin_project, argv):
     """Bare ``otto``, ``--help`` and ``-h`` all render the root screen."""
     project, env = plugin_project
     marker = _arm_marker(project)
-    _run(env, "--help")  # seed
+    run_otto(env, "--help")  # seed
     marker.unlink()
 
-    result = _run(env, *argv)
+    result = run_otto(env, *argv)
     assert "plug" in result.stdout
     assert not marker.exists(), f"{argv} bootstrapped instead of reading the names section"
 
@@ -270,10 +260,10 @@ def test_subcommand_help_still_takes_the_full_path(plugin_project, argv):
     """
     project, env = plugin_project
     marker = _arm_marker(project)
-    _run(env, "--help")  # seed the cache so the fast path is available at all
+    run_otto(env, "--help")  # seed the cache so the fast path is available at all
     marker.unlink()
 
-    _run(env, *argv)
+    run_otto(env, *argv)
     assert marker.is_file(), f"{argv} took the root-help fast path"
 
 
@@ -288,7 +278,7 @@ def test_a_broken_init_module_writes_a_tainted_cache(broken_project):
     because the full path re-prints the framed warning).
     """
     _project, env = broken_project
-    first = _run(env, "--help")
+    first = run_otto(env, "--help")
     assert first.returncode == 0, first.stderr
     assert "failed to load genproject_instructions" in first.stderr
 
@@ -296,7 +286,7 @@ def test_a_broken_init_module_writes_a_tainted_cache(broken_project):
     assert data["sections"]["names"]["tainted"] is True
     assert data["sections"]["shim"]["tainted"] is True
 
-    second = _run(env, "--help")
+    second = run_otto(env, "--help")
     assert second.returncode == 0, second.stderr
     assert "failed to load genproject_instructions" in second.stderr, (
         "the tainted names section was served — the warning went silent"
@@ -314,7 +304,7 @@ def _corrupt_names(env: dict, key: str, value) -> None:
     thing standing between a corrupt entry and click's help/completion
     pipeline.
     """
-    assert _run(env, "--help").returncode == 0
+    assert run_otto(env, "--help").returncode == 0
     cache = _cache_file(Path(env["OTTO_HOME"]))
     data = json.loads(cache.read_text())
     data["sections"]["names"]["payload"][key] = value
@@ -347,7 +337,7 @@ def test_a_corrupt_names_payload_falls_back_to_the_full_load(plugin_project, com
     _project, env = plugin_project
     _corrupt_names(env, "commands", commands)
 
-    result = _run(env, "--help")
+    result = run_otto(env, "--help")
     assert result.returncode == 0, result.stderr
     assert "Traceback" not in result.stderr
     assert "plug" in result.stdout, "the full load should have re-registered the plugin"
@@ -447,7 +437,7 @@ def test_a_corrupt_names_payload_never_tracebacks_into_the_shell(
     _project, env = request.getfixturevalue(project_fixture)
     control = None
     if compare_to_control:
-        _run(env, "--help")  # warm the cache before it is corrupted
+        run_otto(env, "--help")  # warm the cache before it is corrupted
         control = _complete(env, comp_words, comp_cword)
 
     _corrupt_names(env, key, value)
@@ -478,11 +468,11 @@ def test_a_tainted_cache_is_not_rewritten_on_every_invocation(broken_project):
     moment a user is TABbing repeatedly to work out what broke.
     """
     _project, env = broken_project
-    _run(env, "--help")
+    run_otto(env, "--help")
     cache = _cache_file(Path(env["OTTO_HOME"]))
     first = cache.stat().st_mtime_ns
 
-    second = _run(env, "--help")
+    second = run_otto(env, "--help")
     # The warning still prints — the taint keeps the FULL PATH, and only the
     # redundant write is skipped.
     assert "failed to load genproject_instructions" in second.stderr
@@ -498,14 +488,14 @@ def test_editing_the_broken_init_still_rewrites_the_tainted_cache(broken_project
     fixing the file could never take effect.
     """
     project, env = broken_project
-    _run(env, "--help")
+    run_otto(env, "--help")
     cache = _cache_file(Path(env["OTTO_HOME"]))
     first = cache.stat().st_mtime_ns
 
     init = project / "pylib" / "genproject_instructions.py"
     init.write_text(init.read_text() + "\n# edited, still broken\n")
 
-    _run(env, "--help")
+    run_otto(env, "--help")
     assert cache.stat().st_mtime_ns != first, "a moved digest did not rewrite the tainted entry"
 
 
@@ -525,7 +515,7 @@ def test_completion_serves_names_despite_a_stale_tests_section(plugin_project):
     """
     project, env = plugin_project
     marker = _arm_marker(project)
-    _run(env, "--help")  # seed
+    run_otto(env, "--help")  # seed
     assert marker.is_file()
     marker.unlink()
 
@@ -556,8 +546,6 @@ class FirmwareOpts:
     firmware: str = "latest"
 """
 
-_TYPER_ENTRY = "import sys; sys.argv = ['otto']; from otto.cli.main import entry; entry()"
-
 
 def test_the_typer_fast_path_completes_the_test_verbs_flags(tmp_path):
     """`otto test --fi<TAB>` on a warm cache offers the verb's flag without a bootstrap.
@@ -573,13 +561,13 @@ def test_the_typer_fast_path_completes_the_test_verbs_flags(tmp_path):
     (project / "pylib" / "genproject_instructions.py").write_text(
         _TEST_VERB_INIT + f"\nopen({str(marker)!r}, 'a').close()\n"
     )
-    env = _env(project, tmp_path / "home")
-    _run(env, "--help")  # seed
+    env = cli_env(project, tmp_path / "home")
+    run_otto(env, "--help")  # seed
     assert marker.is_file()
     marker.unlink()
 
     result = subprocess.run(
-        [sys.executable, "-c", _TYPER_ENTRY],
+        [sys.executable, "-c", TYPER_ENTRY],
         env={
             **env,
             "_OTTO_COMPLETE": "complete_bash",
@@ -592,3 +580,304 @@ def test_the_typer_fast_path_completes_the_test_verbs_flags(tmp_path):
     )
     assert not marker.exists(), "the TAB bootstrapped instead of reading the cache"
     assert "--firmware" in result.stdout.split(), result.stdout + result.stderr
+
+
+# ── the flags of options classes, warm ─────────────────────────────────────────
+
+_COVERING_INIT = '''
+from typing import Annotated
+
+import typer
+
+import otto
+
+
+@otto.options
+class Debugging:
+    debug_level: Annotated[int, typer.Option(help="How loud.")] = 0
+
+
+otto.register_options(Debugging, verbs=["cov", "plug"])
+
+plug = typer.Typer(help="A plugin group.")
+nest = typer.Typer(help="A nested group.")
+plug.add_typer(nest, name="nest")
+
+
+@nest.command("leaf")
+def leaf() -> None:
+    """A nested leaf."""
+
+
+@nest.command("other")
+def other() -> None:
+    """A second leaf, so the nested group stays a group."""
+
+
+otto.register_cli_command("plug", plug)
+'''
+
+_BROKEN_COVERING = {
+    "two_classes_that_collide": """
+
+@otto.options
+class Clash:
+    louder: Annotated[int, typer.Option("--debug-level")] = 0
+    clash_only: Annotated[int, typer.Option()] = 0
+
+
+otto.register_options(Clash, verbs=["plug"])
+""",
+    "a_class_that_cannot_be_imported": """
+otto.register_options("genproject_gone:Missing", verbs=["plug"])
+""",
+}
+"""What a project adds to :data:`_COVERING_INIT` so the live ``otto plug nest leaf`` stops."""
+
+_SHARED = """
+from typing import Annotated
+
+import typer
+
+import otto
+
+
+@otto.options
+class Shared:
+    reach: Annotated[int, typer.Option(help="How far.")] = 0
+"""
+
+
+def _body(project: str, name: str) -> str:
+    """An init module that declares, as *project*, the body of *name* over ``Shared``."""
+    return f'''
+from otto.instructions import instruction
+from otto.project import ProjectActions, register_project_actions
+
+
+@register_project_actions
+class {project.title()}Actions(ProjectActions):
+    @instruction(options=Shared, help="{name.title()}.")
+    async def {name}(self, opts: Shared) -> None:
+        """{name.title()} the bed."""
+'''
+
+
+def _armed(project: Path, init: str) -> Path:
+    """Write *init* as *project*'s init module, touching a marker when it is imported."""
+    marker = project / "init-ran"
+    (project / "pylib" / "genproject_instructions.py").write_text(
+        init + f"\nopen({str(marker)!r}, 'a').close()\n"
+    )
+    return marker
+
+
+def test_the_typer_fast_path_completes_a_covering_flag_on_cov_and_on_a_plugin_command(tmp_path):
+    """A warm TAB offers a registered class's flag on a built-in and on a plugin command.
+
+    Driven through ``otto.cli.main.entry()``, the path the shim hands over
+    to: the cache records the class's rows and the uses that cover each
+    command, and the TAB rebuilds them without a bootstrap (the init marker
+    is not recreated).
+    """
+    project = generate_project(tmp_path, files=4, dirs=1)
+    marker = _armed(project, _COVERING_INIT)
+    env = cli_env(project, tmp_path / "home")
+    run_otto(env, "--help")  # seed
+    assert marker.is_file()
+    marker.unlink()
+
+    assert "--debug-level" in typer_tab(env, "otto cov get --de")
+    assert "--debug-level" in typer_tab(env, "otto plug nest leaf --de")
+    assert not marker.exists(), "the TAB bootstrapped instead of reading the cache"
+
+
+@pytest.mark.parametrize("broken", list(_BROKEN_COVERING))
+def test_a_warm_tab_and_a_cold_tab_agree_where_the_live_command_would_stop(tmp_path, broken):
+    """Two classes that collide, or one that cannot be imported, stop the live command only.
+
+    The command's own parse and ``--help`` refuse; a TAB, warm or cold,
+    offers the union of what can be described, and both offer the same.
+    """
+    project = generate_project(tmp_path, files=4, dirs=1)
+    _armed(project, _COVERING_INIT + _BROKEN_COVERING[broken])
+    env = cli_env(project, tmp_path / "home")
+    assert run_otto(env, "plug", "nest", "leaf", "--help").returncode != 0
+
+    words = "otto plug nest leaf --"
+    cold = cold_tab(env, tmp_path / "cold-home", words)
+    run_otto(env, "--help")  # seed
+    warm = typer_tab(env, words)
+    assert warm == cold
+    assert warm.count("--debug-level") == 1, warm
+
+
+def _one_class_on_two_bodies(tmp_path: Path) -> "tuple[dict, list[str]]":
+    alpha = generate_project(tmp_path / "a", files=2, dirs=1, name="alpha")
+    beta = generate_project(tmp_path / "b", files=2, dirs=1, name="beta")
+    (alpha / "pylib" / "alpha_shared.py").write_text(_SHARED)
+    (alpha / "pylib" / "alpha_instructions.py").write_text(
+        "from alpha_shared import Shared\n" + _body("alpha", "provision")
+    )
+    (beta / "pylib" / "beta_instructions.py").write_text(
+        "from alpha_shared import Shared\n" + _body("beta", "deploy")
+    )
+    env = {**cli_env(alpha, tmp_path / "home"), "OTTOPATH": f"{alpha}{os.pathsep}{beta}"}
+    return env, ["otto run provision --", "otto run deploy --"]
+
+
+def _a_body_class_also_registered_for_a_plugin_command(tmp_path: Path) -> "tuple[dict, list[str]]":
+    project = generate_project(tmp_path, files=2, dirs=1)
+    plugin = _COVERING_INIT.replace("Debugging, verbs", "Shared, verbs").replace('"cov", ', "")
+    (project / "pylib" / "genproject_instructions.py").write_text(
+        _SHARED + _body("genproject", "provision") + plugin
+    )
+    return cli_env(project, tmp_path / "home"), ["otto run provision --", "otto plug nest leaf --"]
+
+
+_REUSE_WORLDS = {
+    "one_class_on_two_instruction_bodies_of_different_projects": _one_class_on_two_bodies,
+    "a_body_class_also_registered_for_a_plugin_command": (
+        _a_body_class_also_registered_for_a_plugin_command
+    ),
+}
+
+
+@pytest.mark.parametrize("reuse", list(_REUSE_WORLDS))
+def test_a_reused_class_is_offered_warm_on_every_command_that_uses_it(tmp_path, reuse):
+    """Each command that uses one class offers its flags, warm through the shim and the fast path.
+
+    Each answer equals the cold TAB's, Typer's completion installers aside
+    (see the note in the body). A ``run`` instruction prepares its own
+    options, so its flags are its node's own; a plugin command takes them from
+    the cache's recorded candidates.
+    """
+    env, lines = _REUSE_WORLDS[reuse](tmp_path)
+    cold = {words: cold_tab(env, tmp_path / "cold-home", words) for words in lines}
+    run_otto(env, "--help")  # seed
+    for words in lines:
+        warm = typer_tab(env, words)
+        assert "--reach" in warm, (words, warm)
+        # On a project's new `run` instruction the three answers disagree on
+        # Typer's own --install-completion and --show-completion: a
+        # difference that exists without options classes, held apart here
+        # until it is fixed. Refs #1383
+        shim = shim_tab(env, words)
+        assert without_installers(shim) == without_installers(cold[words]), words
+        assert without_installers(warm) == without_installers(cold[words]), words
+
+
+_REPEATED_SWITCH = "import dataclasses\n" + _COVERING_INIT.replace(
+    'debug_level: Annotated[int, typer.Option(help="How loud.")] = 0',
+    "feature: Annotated[list[bool], typer.Option('--feature/--no-feature')] = "
+    "dataclasses.field(default_factory=list)",
+)
+""":data:`_COVERING_INIT` whose covering class holds one repeated switch instead."""
+
+
+def test_a_repeated_switch_is_offered_again_after_it_is_given_on_every_path(tmp_path):
+    """A ``list[bool]`` switch stays repeatable: live, the shim and the fast path offer it again.
+
+    Click offers an option already given only when it repeats, so a stub of
+    the switch that did not repeat would hide both spellings after the first.
+    """
+    project = generate_project(tmp_path, files=4, dirs=1)
+    assert _REPEATED_SWITCH != _COVERING_INIT
+    _armed(project, _REPEATED_SWITCH)
+    env = cli_env(project, tmp_path / "home")
+    words = "otto plug nest leaf --feature --"
+    cold = cold_tab(env, tmp_path / "cold-home", words)
+    assert {"--feature", "--no-feature"} <= set(cold), cold
+    run_otto(env, "--help")  # seed
+    assert without_installers(typer_tab(env, words)) == without_installers(cold)
+    assert without_installers(shim_tab(env, words)) == without_installers(cold)
+
+
+KINDS = {
+    "none": "--plain",
+    "echo": "--file",
+    "static": "--mode",
+    "payload": "--source",
+    "tests": "--pick-test",
+    "markers": "--pick-marker",
+    "observed": "--pick-image",
+    "live": "--undeclared",
+}
+"""One flag of the shim fixture's plugin class per completion source kind.
+
+``blink_all``'s own class declares each as ``--run-<name>``, with the same type
+and completer. The observed kind's completer is the fleet image completer: a
+container completer falls back to the default parent, which a cold TAB outside
+``otto docker`` cannot read."""
+
+
+@pytest.fixture(scope="module")
+def shim_world(tmp_path_factory) -> "tuple[dict, Path]":
+    """The shim fixture project with a written cache, and its init marker unarmed."""
+    from tests._fixtures.shim_project import make_shim_project
+
+    root = tmp_path_factory.mktemp("shim-world")
+    project = make_shim_project(root)
+    init = project / "pylib" / "shimsut_init" / "__init__.py"
+    marker = project / "init-ran"
+    init.write_text(init.read_text() + f"\nopen({str(marker)!r}, 'a').close()\n")
+    env = cli_env(project, root / "home")
+    assert run_otto(env, "--help").returncode == 0  # seed
+    assert marker.is_file()
+    marker.unlink()
+    return env, marker
+
+
+@pytest.mark.parametrize(("kind", "flag"), KINDS.items())
+def test_an_attached_flags_value_gets_what_a_run_options_value_gets_today(shim_world, kind, flag):
+    """On the fast path a candidate flag's value is completed as a ``run`` option's of its kind.
+
+    A differential, not a fixed expectation: ``otto run blink-all
+    --run-<name>`` is a cached ``run`` option of the same type and completer.
+    """
+    env, marker = shim_world
+    attached = typer_tab(env, f"otto plug nest leaf {flag} ")
+    own = typer_tab(env, f"otto run blink-all --run-{flag[2:]} ")
+    assert attached == own, kind
+    assert not marker.exists(), "the TAB bootstrapped instead of reading the cache"
+
+
+@pytest.mark.parametrize(("kind", "flag"), KINDS.items())
+def test_the_attached_flag_is_offered_whatever_its_source(shim_world, kind, flag):
+    """The flag is offered, and it takes its value: the word after it is that value.
+
+    ``--debug`` after the flag is the flag's value, so it was never given and
+    is offered again; the flag itself was.
+    """
+    env, marker = shim_world
+    assert flag in typer_tab(env, "otto plug nest leaf --"), kind
+    after = typer_tab(env, f"otto plug nest leaf {flag} --debug 3 --")
+    assert "--debug" in after, (kind, after)
+    assert flag not in after, (kind, after)
+    assert not marker.exists(), "the TAB bootstrapped instead of reading the cache"
+
+
+@pytest.mark.parametrize(
+    ("line", "debug_given"),
+    [
+        ("otto plug nest leaf --size 1 ", None),
+        ("otto plug nest leaf --size 1 2 ", None),
+        ("otto plug nest leaf --size 1 --debug 3 --", False),  # --debug is the second value
+        ("otto plug nest leaf --size 1 2 --debug 3 --", True),
+    ],
+)
+def test_the_handed_over_tuple_line_completes_warm_as_it_does_cold(
+    shim_world, tmp_path, line, debug_given
+):
+    """The shim hands a two-value option over; the fast path then answers as a cold TAB does.
+
+    The option takes two words: after one it still wants one, after two the
+    line is the command's again.
+    """
+    env, marker = shim_world
+    warm = typer_tab(env, line)
+    cold = cold_tab(env, tmp_path / "cold-home", line)
+    marker.unlink(missing_ok=True)  # the cold TAB's full load imported the init module
+    assert warm == cold
+    if debug_given is not None:
+        assert ("--debug" not in warm) is debug_given, warm

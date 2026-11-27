@@ -32,6 +32,7 @@ from otto.config.home import workspace_key
 from otto.utils import WaitTimeoutError, wait_for
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures.clickctx import chain
 from tests._fixtures.labdata import lab_json_v2
 from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import PROJECT1, run_otto
@@ -81,17 +82,15 @@ def _must_run_on_host(host_id: str, command: str, xdir: Path) -> None:
 
 
 def _ctx(host_id: str, lab: str = _LAB, holder: "str | None" = None, term: "str | None" = None):
-    """Build the Click-context chain the completer walks (``SimpleNamespace`` is enough).
+    """Build the Click-context chain the completer walks, under otto's root.
 
     *term* mirrors the real ``otto host <id> --term ssh`` override, which the
     completer honours through ``_apply_option_overrides`` exactly as
     ``resolve_cli_host`` does — see the listing test for why it must.
     """
-    from types import SimpleNamespace
-
-    root = SimpleNamespace(params={"labs": [lab], "holder": holder}, parent=None)
-    group = SimpleNamespace(params={"host_id": host_id, "hop": "", "term": term}, parent=root)
-    return SimpleNamespace(params={}, parent=group)
+    leaf = chain("otto", "host", "get", root_params={"labs": [lab], "holder": holder})
+    leaf.parent.params = {"host_id": host_id, "hop": "", "term": term}
+    return leaf
 
 
 @pytest.fixture
