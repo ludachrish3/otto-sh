@@ -385,8 +385,10 @@ def _serialize_cli_children(app: Any) -> list[dict[str, Any]]:
     :func:`otto.config.completion_stubs.build_stub_command` on the fast
     path). A child whose options don't round-trip degrades to name+help —
     the name still tab-completes, only ``--<TAB>`` falls back. Nested groups
-    recurse; a nested single-command app serializes as the flattened leaf it
-    would natively become (see ``_typer_app_flattens``).
+    recurse. A sub-app added with a name stays a group whatever it holds
+    (Typer flattens only the top-level app, ``_typer_app_flattens``); one
+    added with no name has its commands merged into its parent's, as Typer
+    merges them.
     """
     from typer.main import get_command_name
 
@@ -406,14 +408,12 @@ def _serialize_cli_children(app: Any) -> list[dict[str, Any]]:
         sub = grp_info.typer_instance
         if sub is None:
             continue
-        if _typer_app_flattens(sub):
-            children.extend(_serialize_cli_children(sub))
-            continue
         gname = next(
             (n for n in (grp_info.name, sub.info.name) if isinstance(n, str) and n),
             None,
         )
         if gname is None:
+            children.extend(_serialize_cli_children(sub))
             continue
         ghelp = next((h for h in (grp_info.help, sub.info.help) if isinstance(h, str)), "")
         children.append({"name": gname, "help": ghelp, "commands": _serialize_cli_children(sub)})
