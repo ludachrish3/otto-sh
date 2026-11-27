@@ -55,3 +55,51 @@ Verification (2026-07-02, dev VM, patched trees):
 - Both patches `git apply` cleanly onto pristine `v2.7-branch` /
   `v3.7-branch` trees and pass the provisioner's reverse-check idempotency
   path.
+
+## `v3_7-socket-service-stale-revents.patch`
+
+Fixes a defect in Zephyr 3.7's socket service
+(`subsys/net/lib/sockets/sockets_service.c`) that froze a telnet shell
+session when a second client connected to the same device.
+
+The telnet shell backend serves one client. One service thread polls the
+listening socket and the client socket and calls the backend for each one
+that is ready. After every callback, 3.7 copies the service's saved events
+back into the poll array, and the saved event of the client socket still
+carries the "readable" flag from the last data that client sent. So after
+the listening socket's callback has refused a second client, the same poll
+round calls the backend's receive function for the client socket with
+nothing to read. That function takes the backend's receive lock and blocks
+in `recv`. Until the connected client sends something or disconnects:
+
+- no further connection is accepted, so a refused client's next attempt
+  waits unanswered;
+- the shell thread cannot take the receive lock, so a command the connected
+  client has already sent is never run.
+
+The patch clears the copied-back flag. A socket that really is readable is
+reported again by the next poll. Zephyr 4.4's socket service no longer has
+the copy-back (it restores only the descriptor of the socket whose callback
+ran), so only the 3.7 images need it. This patch is not a backport of that
+change: it is the smallest edit that stops the replay. Of those, only the two that
+use the telnet shell backend are affected (`v3_7_fat_ram`, `v3_7_lfs`); the
+ARM instances reach their shell over an emulated serial line.
+
+On the bed this showed as
+`test_concurrent_clients_to_one_console_contend_and_recover` running past
+its 30-second timeout about once in many gate runs (otto issue 1366): whether it
+stalled depended on which side of the winner's first byte the loser's
+connection was refused.
+
+Verification (2026-11-27 UTC, `zephyr37_fat` on the bed, each step timed):
+
+| Sequence | Stock 3.7 | Patched |
+|---|---|---|
+| A client runs a command and stays connected; a second client connects | second client fails after 17.4 s (6 of 6 rounds) | 2.2 s (4 of 4) |
+| The same, and the first client sends one more command at +6 s | that command gets no reply for 30 s (3 of 3) | it returns at once (4 of 4) |
+| A third client holds the console; two more connect at once | 17.4 s and 32.6 s, and the holder's next command fails (3 of 3) | 2.2 s each, the holder's next command succeeds (8 of 8) |
+
+With the patch the guest logs one `Telnet client already connected` line
+for every refused connection and no `Telnet accept error` or `Out of
+buffers` line. The patch applies cleanly to the `v3.7-branch` tree both
+provisioners use and passes the reverse-check path.

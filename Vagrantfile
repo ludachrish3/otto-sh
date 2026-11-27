@@ -878,6 +878,11 @@ Vagrant.configure("2") do |config|
                 #     (guard before allocating + free on failure). This is
                 #     what slowly drained the FAT instance's 16 KB heap; 4.4
                 #     already ships the fix upstream.
+                #   - v3_7-socket-service-stale-revents: 3.7's socket service
+                #     replayed a socket's old "readable" event after another
+                #     socket's callback, so the telnet backend blocked reading
+                #     the connected client once it had refused a second one.
+                #     4.4's socket service no longer has that code.
                 # The glob is version-gated, so each iteration finds only its
                 # own version's patches.
                 #
