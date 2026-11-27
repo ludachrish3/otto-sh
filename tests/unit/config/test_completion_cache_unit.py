@@ -761,6 +761,37 @@ class TestCollectCliCommandChildren:
         finally:
             CLI_COMMANDS.unregister(name="solotool")
 
+    def test_a_named_single_command_sub_app_stays_a_group_and_a_nameless_one_merges(self) -> None:
+        """Typer flattens only the top-level app: ``tool nest leaf`` keeps its ``nest``.
+
+        A sub-app added with no name has its commands merged into its parent's,
+        as Typer merges them.
+        """
+        from otto.cli.registry import CLI_COMMANDS, register_cli_command
+
+        tool, nest, nameless = typer.Typer(), typer.Typer(), typer.Typer()
+
+        @nest.command("leaf")
+        def leaf() -> None: ...
+
+        @nameless.command("merged")
+        def merged() -> None: ...
+
+        @tool.command("top")
+        def top() -> None: ...
+
+        tool.add_typer(nest, name="nest")
+        tool.add_typer(nameless)
+        register_cli_command("nesttool", tool)
+        try:
+            children = self._collect_entry("nesttool")["commands"]
+            assert [c["name"] for c in children] == ["top", "nest", "merged"]
+            assert [c["name"] for c in children[1]["commands"]] == ["leaf"]
+            live = typer.main.get_command(tool)
+            assert set(live.commands) == {"top", "nest", "merged"}
+        finally:
+            CLI_COMMANDS.unregister(name="nesttool")
+
 
 def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> None:
     """write_cache/read_cache carry the 'commands' key through a round trip."""
