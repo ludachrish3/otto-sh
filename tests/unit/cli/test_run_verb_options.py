@@ -1120,26 +1120,35 @@ def test_run_cli_without_ottos_root_still_offers_a_run_class(run_cli):
     assert seen == ["prod"]
 
 
-@pytest.mark.parametrize("argv", [["-l", "alpha1"], ["-E", "b"]])
-def test_the_move_keeps_every_projects_flags_under_a_selection(argv, tmp_path):
-    """Project ``b`` out of scope: its registered and install body flags still parse, as on 0.20.0.
+@pytest.mark.parametrize(
+    ("argv", "back"),
+    [(["-l", "alpha1"], ["-l", "alpha1", "-I", "b"]), (["-E", "b"], [])],
+    ids=["lab", "excluded"],
+)
+def test_an_out_of_scope_projects_flags_leave_run_and_test(argv, back, tmp_path):
+    """Project ``b`` out of scope: its registered and install body flags are ``No such option``.
 
     The world is the golden's (:mod:`tests._fixtures.options_golden_world`):
     ``b`` registers ``--b-level`` for ``run`` and ``test`` and gives ``install``
     a body class with ``--b-variant``. Each line ends in ``--help``, so a flag
-    that did not parse would stop it with ``No such option`` and nothing runs.
+    that parses prints the help and nothing runs. *back* brings ``b`` back
+    (``-I b``, or no exclusion), and an unknown ``-I`` name is the usage
+    error it is on every command.
     """
     from tests._fixtures.options_golden_world import options_golden_world
     from tests._fixtures.warm_tab import run_otto
 
     world = options_golden_world(tmp_path)
-    for words in (["run", "install", "--b-variant", "x"], ["test"]):
-        done = run_otto(world.env, *argv, *words, "--b-level", "2", "--help")
-        assert done.returncode == 0, done.stdout + done.stderr
-        assert "No such option" not in done.stdout + done.stderr
-    helped = run_otto(world.env, "-I", "acm", "run", "install", "--help")
-    assert helped.returncode == 0, helped.stdout + helped.stderr
-    assert "--b-variant" in helped.stdout
+    for words in (["run", "install", "--b-variant", "x"], ["run", "install"], ["test"]):
+        refused = run_otto(world.env, *argv, *words, "--b-level", "2", "--help")
+        assert refused.returncode == 2, refused.stdout + refused.stderr
+        assert "No such option" in refused.stdout + refused.stderr
+        kept = run_otto(world.env, *back, *words, "--b-level", "2", "--help")
+        assert kept.returncode == 0, kept.stdout + kept.stderr
+    unknown = run_otto(world.env, "-I", "acm", "run", "install", "--help")
+    assert unknown.returncode == 2, unknown.stdout + unknown.stderr
+    assert "no project 'acm'" in unknown.stdout + unknown.stderr
+    assert "--b-variant" not in unknown.stdout
 
 
 def test_run_install_help_keeps_the_flag_order_of_0_20_0(run_cli):

@@ -89,14 +89,31 @@ def _shim_words(env: "dict[str, str]", line: str) -> "list[str] | dict[str, str]
     return without_installers(out.items)
 
 
-def _command(env: "dict[str, str]", selection: "list[str]", words: "list[str]") -> "dict[str, Any]":
-    rows = [
+def _rows(
+    env: "dict[str, str]", selection: "list[str]", words: "list[str]"
+) -> "list[dict[str, Any]]":
+    """The rows ``otto <selection> <words> --help`` shows, attributed, installers left out."""
+    return [
         _attributed(row)
         for row in help_rows(env, *selection, *words, "--help")
         if not set(row["spellings"]) & set(INSTALLERS)
     ]
-    prefix = " ".join(["otto", *selection, *words])
-    tails = ["--", *(f"{_spelled(row)} " for row in rows if row["takes_value"])]
+
+
+def probed_tails(base_rows: "list[dict[str, Any]]") -> "list[str]":
+    """The tails a TAB is asked about on a command: ``--``, and the word after each value flag.
+
+    A property of the world, not of the selection: *base_rows* are the
+    command's rows with no selection, so every selection probes the same
+    tails and can change only the answers.
+    """
+    return ["--", *(f"{_spelled(row)} " for row in base_rows if row["takes_value"])]
+
+
+def _command(
+    env: "dict[str, str]", prefix: str, rows: "list[dict[str, Any]]", tails: "list[str]"
+) -> "dict[str, Any]":
+    """One command's capture: its help *rows*, and the TAB answers after *prefix* for *tails*."""
     return {
         "help": rows,
         "tab": {
@@ -114,14 +131,23 @@ def capture(world: World, selections: "list[list[str]]" = SELECTIONS) -> "dict[s
     The caches are seeded first, so every TAB is answered warm and in any
     order: the names cache by a first ``otto``, the test-names tables by the
     first TAB that reads them (a cold table blocks that TAB until it is
-    written). The world's root is written as ``<world>``.
+    written). Every selection probes the same tails, those of the command's
+    help with no selection (:func:`probed_tails`). The world's root is
+    written as ``<world>``.
     """
     seeded = run_otto(world.env, "--help")
     assert seeded.returncode == 0, seeded.stderr
     typer_tab(world.env, "otto test --markers ")
+    base = {name: _rows(world.env, [], words) for name, words in COMMANDS.items()}
     got = {
         key(selection): {
-            name: _command(world.env, selection, words) for name, words in COMMANDS.items()
+            name: _command(
+                world.env,
+                " ".join(["otto", *selection, *words]),
+                _rows(world.env, selection, words) if selection else base[name],
+                probed_tails(base[name]),
+            )
+            for name, words in COMMANDS.items()
         }
         for selection in selections
     }
@@ -149,10 +175,31 @@ def test_the_golden_holds_every_kind_of_flag_from_both_projects():
     assert {r["project"] for r in rows} >= {"a", "b", None}
 
 
-def test_on_this_commit_a_selection_changes_no_flag():
-    """``run`` and ``test`` keep every project's flags whatever the selection, for now."""
+GONE = {key(["-l", "alpha1"]): "b", key(["-E", "b"]): "b", key(["-I", "b"]): None, key([]): None}
+"""The project each selection leaves out of the command; ``None``: every project takes part."""
+
+
+def kept_rows(rows: "list[dict[str, Any]]", gone: "str | None") -> "list[dict[str, Any]]":
+    """*rows* without those of project *gone*; a row of no project (otto's own) is always kept."""
+    return [row for row in rows if gone is None or row["project"] != gone]
+
+
+def test_a_selection_removes_exactly_the_out_of_scope_projects_flags_from_help():
     data = golden_data()
-    assert all(data[key(s)] == data[key([])] for s in SELECTIONS)
+    assert set(GONE) == {key(s) for s in SELECTIONS}
+    for selection, gone in GONE.items():
+        for name, command in data[key([])].items():
+            assert data[selection][name]["help"] == kept_rows(command["help"], gone), (
+                selection,
+                name,
+            )
+
+
+def test_a_selection_changes_no_completion_yet():
+    """TAB still offers every project's flags; the change that filters TAB replaces this test."""
+    data = golden_data()
+    base = data[key([])]
+    assert all(data[s][n]["tab"] == base[n]["tab"] for s in data for n in base)
 
 
 def _generate() -> None:

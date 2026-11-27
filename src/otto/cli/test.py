@@ -890,13 +890,13 @@ def _build_test_app() -> typer.Typer:
 
     Built on each access of ``test_app`` (the module ``__getattr__``). The
     flags of every class covering ``otto test`` are attached for each
-    invocation, like every command's (``otto.cli.invoke.offered_options``),
-    and the invocation prepares them before the leaf runs
-    (``otto.cli.invoke.prepare_command_options``); nothing is resolved
-    here. A class whose field is named like a run flag or ``names``, or
-    spelled like one (``--random``, ``-m``), raises ``OptionsCollisionError``
-    from that parse, naming the run flag (``OwnOptions.reserved``), before
-    any test runs.
+    invocation, a project's only when it takes part, like every command's
+    (``otto.cli.invoke.offered_options``), and the invocation prepares them
+    before the leaf runs (``otto.cli.invoke.prepare_command_options``);
+    nothing is resolved here. A class whose field is named like a run flag
+    or ``names``, or spelled like one (``--random``, ``-m``), raises
+    ``OptionsCollisionError`` from that parse, naming the run flag
+    (``OwnOptions.reserved``), before any test runs.
 
     The leaf reads that preparation (``otto.cli.invoke.leaf_preparation``;
     called by other code, it prepares every class covering ``otto test``
@@ -911,7 +911,6 @@ def _build_test_app() -> typer.Typer:
     reserved = {p.name: f"otto test's {_flag_name(p)}" for p in run_params}
     own = OwnOptions(
         finishes_dry_run=True,
-        every_project=True,
         reserved={**reserved, "names": "otto test's NAMES"},
     )
 

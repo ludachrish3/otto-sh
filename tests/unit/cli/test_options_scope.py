@@ -6,9 +6,11 @@ switches (``otto.config.scope.participating`` at its command-line tier), never a
 loaded lab, asked once per invocation. :func:`~otto.cli.invoke.offered_options`
 passes it to ``otto.params.covering`` and keeps a body class only when its
 project is kept, so a project out of scope has nothing imported and nothing
-offered. The world is ``tests/_fixtures/scope_worlds.py``'s.
+offered: on a plugin's command, and on ``otto run`` and ``otto test`` alike.
+The world is ``tests/_fixtures/scope_worlds.py``'s.
 """
 
+import dataclasses
 import inspect
 import sys
 from typing import Annotated, Any
@@ -24,6 +26,7 @@ from otto.cli.invoke import OWN_OPTIONS_ATTR, OwnOptions
 from otto.cli.main import app
 from otto.cli.registry import CLI_COMMANDS, register_cli_command
 from otto.params import OptionsOrigin
+from otto.project import InstallOptions
 from tests._fixtures import plugin_commands
 from tests._fixtures.entry_runner import complete
 from tests._fixtures.scope_worlds import B_FLAGS_MODULE, ENV, LibFlags
@@ -365,11 +368,241 @@ def test_a_body_whose_project_is_out_of_scope_has_no_flag_on_a_command_that_decl
     assert [r.command for r in plugin_commands.RECEIVED] == ["rig go"]
 
 
-def test_a_leaf_that_keeps_every_project_ignores_the_selection(monkeypatch, scope_world, rig):
-    rig(OwnOptions(every_project=True), accepts_options=True)
+def test_a_leaf_that_says_what_is_its_own_follows_the_selection(monkeypatch, scope_world, rig):
+    """No :class:`OwnOptions` keeps every project: its leaf asks :func:`kept_projects` too."""
+    rig(OwnOptions(), accepts_options=True)
     scope_world.register(BBoard, ["rig"], project="b")
     asked = _calls(monkeypatch, "kept_projects")
-    _ok(["-l", "alpha1", "rig", "go", "--b-board", "1"])
-    assert "--b-board" in _ok(["-l", "alpha1", "rig", "go", "--help"]).output
+    _no_such_option(["-l", "alpha1", "rig", "go", "--b-board", "1"])
+    assert "--b-board" not in _ok(["-l", "alpha1", "rig", "go", "--help"]).output
+    assert asked
+    _ok(["-l", "beta1", "rig", "go", "--b-board", "1"])
     assert [r.command for r in plugin_commands.RECEIVED] == ["rig go"]
-    assert asked == []
+    assert "every_project" not in {f.name for f in dataclasses.fields(OwnOptions)}
+
+
+# --- otto run and otto test follow the selection too (§6 items 13, 18, 19, 20) ---------
+
+
+@otto.options
+class BRunTest:
+    b_run: Annotated[int, typer.Option(help="b's run and test level.")] = 0
+
+
+@otto.options
+class BInstall(InstallOptions):
+    b_variant: Annotated[str, typer.Option(help="b's install variant.")] = "field"
+
+
+@otto.options
+class LibRun:
+    lib_run: Annotated[int, typer.Option(envvar="LIB_RUN", help="lib's run level.")] = 0
+
+
+@otto.options
+class LibInstall(InstallOptions):
+    lib_variant: Annotated[str, typer.Option(help="lib's install variant.")] = "field"
+
+
+@otto.options
+class ARun:
+    a_run: Annotated[int, typer.Option(help="a's install level.")] = 0
+
+
+@otto.options
+class AVariant(InstallOptions):
+    variant: Annotated[str, typer.Option(help="a's variant.")] = "a"
+
+
+@otto.options
+class BVariant(InstallOptions):
+    variant: Annotated[str, typer.Option(help="b's variant.")] = "b"
+
+
+@pytest.fixture
+def run_world(scope_world):
+    """The world, with ``b`` giving ``otto run`` and ``otto test`` flags of its own.
+
+    ``b`` registers :class:`BRunTest` for ``run`` and ``test`` and overrides
+    ``install`` with :class:`BInstall`; ``otto run show`` is a standalone
+    instruction no project owns.
+    """
+    from otto.instructions import instruction
+
+    scope_world.register(BRunTest, ["run", "test"], project="b")
+    scope_world.override_install(BInstall, project="b")
+
+    @instruction()
+    async def show() -> None:  # pragma: no cover — only parsed
+        """Show."""
+
+    return scope_world
+
+
+OUT_OF_SCOPE = [["-l", "alpha1"], ["-l", "beta1", "-E", "b"]]
+"""Selections that leave ``b`` out: a lab its patterns do not match, and an exclusion."""
+
+IN_SCOPE = [["-l", "alpha1", "-I", "b"], ["-l", "beta1"]]
+"""Selections that bring ``b`` back: an inclusion, and a lab its patterns match."""
+
+
+@pytest.mark.parametrize(
+    "argv", [["run", "show"], ["run", "install"], ["test"]], ids=["standalone", "install", "test"]
+)
+def test_run_and_test_follow_the_selection(argv, run_world):
+    """Each line ends in ``--help``: a flag that did not parse stops it with ``No such option``."""
+    for selection in OUT_OF_SCOPE:
+        _no_such_option([*selection, *argv, "--b-run", "1", "--help"])
+        assert "--b-run" not in _ok([*selection, *argv, "--help"]).output, selection
+    for selection in IN_SCOPE:
+        _ok([*selection, *argv, "--b-run", "1", "--help"])
+        assert "--b-run" in _ok([*selection, *argv, "--help"]).output, selection
+
+
+def test_an_out_of_scope_projects_install_flag_is_not_on_otto_run_install(run_world):
+    """§6 item 13, the body half: ``b``'s ``install`` body class follows ``b``."""
+    for selection in OUT_OF_SCOPE:
+        _no_such_option([*selection, "run", "install", "--b-variant", "x", "--help"])
+        shown = _ok([*selection, "run", "install", "--help"]).output
+        assert "--b-variant" not in shown, selection
+        assert "--ensure" in shown, selection  # otto's own body class is always offered
+    for selection in IN_SCOPE:
+        _ok([*selection, "run", "install", "--b-variant", "x", "--help"])
+        assert "--b-variant" in _ok([*selection, "run", "install", "--help"]).output
+
+
+@pytest.mark.parametrize("argv", [["-E", "lib"], ["-l", "alpha1"]], ids=["excluded", "lab"])
+def test_a_required_librarys_registered_flag_and_body_flag_leave_otto_run_install(
+    argv, scope_world, otto_cli
+):
+    scope_world.register(LibRun, ["run"], project="lib")
+    scope_world.override_install(LibInstall, project="lib")
+    _no_such_option([*argv, "run", "install", "--lib-run", "1"])
+    _no_such_option([*argv, "run", "install", "--lib-variant", "x"])
+    shown = _ok([*argv, "run", "install", "--help"]).output
+    assert "--lib-run" not in shown
+    assert "--lib-variant" not in shown
+
+    # ``otto run install`` uses the lab: a dispatch selects one, and ``lib`` stays out.
+    line = argv if "-l" in argv else ["-l", "alpha1", *argv]
+    scope_world.skip_install_bodies()
+    seen = scope_world.install_reads(LibRun, LibInstall)
+    ran = otto_cli([*line, "run", "install"], LIB_RUN="4")
+    assert ran.code == 0, ran
+    assert seen == [{"LibRun": LibRun(), "LibInstall": LibInstall()}]
+
+    scope_world.fail_to_load(scope_world.lib)
+    run = otto_cli([*line, "run", "install"])
+    assert run.code == 1, run
+    assert "project 'lib' failed to load and is inactive for this run" in run.text
+    assert "active project 'a' requires it" in run.text
+
+
+def test_two_clashing_install_classes_stop_nothing_when_one_project_is_out_of_scope(
+    scope_world, otto_cli
+):
+    """§6 item 18 on ``otto run install``: only the projects that take part are compared."""
+    scope_world.override_install(AVariant, project="a")
+    scope_world.override_install(BVariant, project="b")
+
+    for words in (["run", "install"], ["run", "install", "--help"]):
+        stopped = otto_cli(words)
+        assert stopped.code == 1, stopped
+        assert stopped.text.startswith("error: "), stopped.text
+        assert "project 'a'" in stopped.text
+        assert "project 'b'" in stopped.text
+
+    for selection, variant in ((["-E", "b"], "a's variant"), (["-l", "beta1"], "b's variant")):
+        shown = otto_cli([*selection, "run", "install", "--help"])
+        assert shown.code == 0, (selection, shown)
+        assert shown.stdout.count("--variant") == 1, shown.stdout
+        assert variant in shown.text, shown.text
+    assert otto_cli(["-E", "b", "run", "--help"]).code == 0
+
+
+def test_a_host_starved_projects_body_has_its_flags_offered_and_is_not_built(
+    monkeypatch, run_world, otto_cli
+):
+    """``b`` takes part under ``beta1``, which gives it no host: its flag parses, nothing builds.
+
+    A characterization of docs/cli/run/defaults.md's line: a project that takes
+    part with no host in the loaded lab still offers its flags, and a value
+    passed for it is accepted and unused. The real body walk runs, watched.
+    """
+    from otto.project import orchestrator
+
+    real = orchestrator.project_instruction_body_options
+    built: "list[list[str]]" = []
+
+    def body_options(*args: Any, **kwargs: Any) -> "list[Any]":
+        instances = real(*args, **kwargs)
+        built.append([type(instance).__name__ for instance in instances])
+        return instances
+
+    monkeypatch.setattr(orchestrator, "project_instruction_body_options", body_options)
+    runs = run_world.install_reads()
+
+    assert "--b-variant" in _ok(["-l", "beta1", "run", "install", "--help"]).output
+    ran = otto_cli(["-l", "beta1", "run", "install", "--b-variant", "x"])
+    assert ran.code == 0, ran
+    assert runs == [{}], "the run never reached its walk"
+    assert built, "the body walk never ran"
+    assert all("BInstall" not in names for names in built), built
+
+
+def test_an_annotated_parameter_receives_defaults_when_its_class_is_out_of_scope(
+    run_world, otto_cli
+):
+    """In, out, in: the instance has the value, then defaults, then the value again."""
+    from otto.instructions import instruction
+
+    seen: "list[int]" = []
+
+    @instruction()
+    async def peek(board: BRunTest) -> None:
+        seen.append(board.b_run)
+
+    for selection in (["-l", "beta1"], ["-l", "alpha1"], ["-l", "beta1"]):
+        shown = _ok([*selection, "run", "peek", "--help"]).output
+        assert "--board" not in shown, shown
+        if selection == ["-l", "alpha1"]:
+            _no_such_option([*selection, "run", "peek", "--b-run", "5"])
+            ran = otto_cli([*selection, "run", "peek"])
+        else:
+            ran = otto_cli([*selection, "run", "peek", "--b-run", "5"])
+        assert ran.code == 0, (selection, ran)
+    assert seen == [5, 0, 5]
+
+
+def test_an_unknown_include_name_is_reported_by_run_install_and_its_help(run_world, otto_cli):
+    """§6 item 20 on ``otto run`` and ``otto test``: the name, before any flag is read."""
+    for words in (
+        ["run", "install", "--b-variant", "x"],
+        ["run", "install", "--help"],
+        ["run", "show", "--help"],
+        ["test", "--b-run", "1"],
+        ["test", "--help"],
+    ):
+        run = otto_cli(["-I", "acm", *words])
+        assert run.code == 2, (words, run)
+        assert (run.stdout + run.stderr).splitlines() == ["no project 'acm'"], (words, run)
+
+
+def test_three_invocations_of_otto_run_install_each_see_their_own_flags(scope_world, otto_cli):
+    """§6 item 19 on ``otto run``: in, out, in, in one process."""
+    scope_world.register(ARun, ["run install"], project="a")
+    scope_world.skip_install_bodies()
+    seen = scope_world.install_reads(ARun)
+
+    for excluded in (False, True, False):
+        selection = ["-l", "alpha1", *(["-E", "a"] if excluded else [])]
+        shown = _ok([*selection, "run", "install", "--help"]).output
+        if excluded:
+            assert "--a-run" not in shown
+            _no_such_option([*selection, "run", "install", "--a-run", "3"])
+            ran = otto_cli([*selection, "run", "install"])
+        else:
+            assert "--a-run" in shown
+            ran = otto_cli([*selection, "run", "install", "--a-run", "3"])
+        assert ran.code == 0, (selection, ran)
+    assert [read["ARun"].a_run for read in seen] == [3, 0, 3]
