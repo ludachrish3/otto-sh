@@ -26,7 +26,9 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-pytestmark = pytest.mark.hostless
+# The loop below collects thirty times in the test body; the fixture's
+# docstring says why that needs the worker's heap frozen.
+pytestmark = [pytest.mark.hostless, pytest.mark.usefixtures("frozen_worker_heap")]
 
 runner = CliRunner()
 

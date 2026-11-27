@@ -36,6 +36,9 @@ def _logging_app(logger_name: str) -> typer.Typer:
     return app
 
 
+# The loop collects thirty times in the test body; the fixture's docstring
+# says why that needs the worker's heap frozen.
+@pytest.mark.usefixtures("frozen_worker_heap")
 def test_invoke_survives_non_otto_logger_during_invoke():
     """A non-otto logger record mid-invoke must not corrupt the runner's stream."""
     app = _logging_app("thirdparty.deep")

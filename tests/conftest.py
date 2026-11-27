@@ -285,6 +285,7 @@ from tests._fixtures._coverage_preinit import (
     force_coverage_schema_init,
     preinit_failure_message,
 )
+from tests._fixtures._gc_freeze import frozen_worker_heap  # noqa: F401 — a fixture, registered here
 from tests._fixtures._gc_freeze import install as install_frozen_heap_windows
 from tests._fixtures._lazy_exports import (
     evict_leaked_lazy_exports,
