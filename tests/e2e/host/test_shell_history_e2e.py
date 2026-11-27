@@ -12,9 +12,11 @@ Two observations per case, because either alone is weak:
 - ``$HISTFILE`` **as the live shell sees it** — the mechanism, read back
   through the very session under test.
 - the **sha256 of the history file on disk**, sampled before and after through
-  a *separate* connection. It must be sampled over ``exec`` rather than the
-  session: an ``exec`` channel has no PTY and bash disables history there
-  outright, so the measurement cannot perturb what it measures.
+  a *separate* connection. It must be sampled over ``exec(...,
+  terminal=False)`` rather than the session: that session has no PTY and bash
+  disables history there outright, so the measurement cannot perturb what it
+  measures. An unset ``exec`` now runs under a terminal, in an interactive
+  bash, so every sample here passes ``terminal=False``.
 
 ``test_opting_in_still_records`` is the positive control. Without it the
 suppression assertions could pass against a bed where nothing writes history
@@ -128,12 +130,12 @@ async def make_host():
 async def _history_digest(host, element: str) -> str:
     """sha256 of ~/.bash_history, measured over a PTY-less exec channel.
 
-    ``exec`` is deliberate: it is non-interactive, so bash keeps no history
+    ``exec(..., terminal=False)`` is deliberate: it is non-interactive, so bash keeps no history
     there and the measurement cannot pollute the thing being measured. A
     missing file reads as a stable sentinel rather than an error — a fresh VM
     legitimately has none yet.
     """
-    result = await host.exec("cat ~/.bash_history 2>/dev/null | sha256sum || true")
+    result = await host.exec("cat ~/.bash_history 2>/dev/null | sha256sum || true", terminal=False)
     if result.status is not Status.Success:
         raise AssertionError(f"{element}: could not sample history file: {result!r}")
     return result.value
@@ -216,7 +218,7 @@ async def _await_writer_exit(host, pid: str, element: str) -> None:
     """
 
     async def _shell_is_gone() -> bool:
-        alive = await host.exec(f"test -d /proc/{pid} && echo ALIVE || echo GONE")
+        alive = await host.exec(f"test -d /proc/{pid} && echo ALIVE || echo GONE", terminal=False)
         return alive.value == "GONE"
 
     await wait_for_async(
@@ -272,7 +274,7 @@ async def _restore_history(
     none.
     """
     restore = f"cp {backup} ~/.bash_history" if existed == "yes" else "rm -f ~/.bash_history"
-    await host.exec(f"{restore}; rm -f {backup}")
+    await host.exec(f"{restore}; rm -f {backup}", terminal=False)
     # No writer-exit wait here: the restore is a synchronous `cp` over an exec
     # channel that has already returned.
     after = await _history_digest(host, element)
@@ -300,7 +302,9 @@ async def _history_restored(host, element: str) -> AsyncIterator[str]:
     # digest wouldn't notice (both hash as empty) but the bed would be altered.
     # An answer that is neither word would pick the `rm` restore and delete a
     # real history file, so it stops the test here instead.
-    existed = (await host.exec("test -f ~/.bash_history && echo yes || echo no")).value
+    existed = (
+        await host.exec("test -f ~/.bash_history && echo yes || echo no", terminal=False)
+    ).value
     assert existed in ("yes", "no"), (
         f"{element}: could not tell whether ~/.bash_history exists: {existed!r}"
     )
@@ -308,7 +312,9 @@ async def _history_restored(host, element: str) -> AsyncIterator[str]:
     if existed == "yes":
         # The backup is proven a byte-exact copy before anything may write:
         # a failed `cp` would otherwise "restore" garbage over the real file.
-        copied = await host.exec(f"cp ~/.bash_history {backup} && sha256sum < {backup}")
+        copied = await host.exec(
+            f"cp ~/.bash_history {backup} && sha256sum < {backup}", terminal=False
+        )
         assert copied.status is Status.Success, (
             f"{element}: could not back up ~/.bash_history: {copied!r}"
         )
@@ -351,7 +357,7 @@ async def _busy_until_released(host, element: str) -> AsyncIterator[str]:
     removes the gate itself (:func:`_release`) so bash can reach the line.
     """
     gate = f"/tmp/otto-gate-{uuid.uuid4().hex[:8]}"
-    made = await host.exec(f"touch {gate}")
+    made = await host.exec(f"touch {gate}", terminal=False)
     assert made.status is Status.Success, f"{element}: could not create {gate}: {made!r}"
     try:
         yield gate
@@ -361,7 +367,7 @@ async def _busy_until_released(host, element: str) -> AsyncIterator[str]:
 
 async def _release(host, gate: str) -> None:
     """Remove the gate file, letting a busy ``PROMPT_COMMAND`` loop finish."""
-    await host.exec(f"rm -f {gate}")
+    await host.exec(f"rm -f {gate}", terminal=False)
 
 
 def _gate_prompt(gate: str) -> str:
@@ -376,7 +382,9 @@ async def _marker_recorded(host, marker: str) -> bool:
     match, so any `|| fallback` fires too and the output is ambiguous.
     """
     found = await host.exec(
-        f"if grep -q -F {marker} ~/.bash_history 2>/dev/null; then echo FOUND; else echo ABSENT; fi"
+        f"if grep -q -F {marker} ~/.bash_history 2>/dev/null; "
+        "then echo FOUND; else echo ABSENT; fi",
+        terminal=False,
     )
     verdict = found.value
     assert verdict in ("FOUND", "ABSENT"), f"could not grep ~/.bash_history: {found!r}"
@@ -390,16 +398,47 @@ async def _shells_histfile(host) -> str:
     return result.value
 
 
+def _terminal_exec_sessions(host) -> list:
+    """The idle pooled sessions with a terminal an unset ``exec`` left on *host*."""
+    pools = host._session_mgr._exec_pools
+    return [s for (_key, plain), idle in pools.items() if not plain for s in idle if s.alive]
+
+
+async def _typed(host, verb: str, cmd: str) -> tuple[str, str]:
+    """Type *cmd* through *verb* (``run``, or ``exec`` with the terminal unset).
+
+    Returns the command's output and the pid of the shell it was typed into:
+    ``$$`` inside an ``exec``'s subshell is the session's shell.
+    """
+    line = f'{cmd}; echo "pid=$$"'
+    if verb == "run":
+        result = (await host.run(line)).only
+    else:
+        result = await host.exec(line)
+    assert result.status is Status.Success, f"{verb} failed: {result!r}"
+    *output, pid = result.value.splitlines()
+    assert pid.startswith("pid="), f"{verb}: no shell pid in {result.value!r}"
+    return "\n".join(output), pid.removeprefix("pid=")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ending", ["exit", "hangup"])
-async def test_default_host_leaves_history_untouched(leased_host, make_host, ending):
+@pytest.mark.parametrize("verb", ["run", "exec"])
+async def test_default_host_leaves_history_untouched(leased_host, make_host, verb, ending):
     """The whole point: a default UnixHost writes nothing to ~/.bash_history.
+
+    Driven through ``run`` and through an ``exec`` with the terminal unset:
+    each types into an interactive login shell on a terminal (``exec`` on a
+    pooled session of its own), and the suppression is the handshake both
+    sessions share.
 
     Checked on both ways a session can end, because bash can save on either:
 
     - ``exit``: bash's exit builtin, which always reaches the save. This is
       the strict case -- if suppression ever broke, this ending is certain to
-      write, so a clean digest here cannot be luck.
+      write, so a clean digest here cannot be luck. For ``exec`` the
+      ``exit`` goes to every pooled session with a terminal, and every shell
+      a command was typed into must be one of them.
     - ``hangup``: leaving ``async with host:``, which is how otto itself ends
       a session. A hangup while bash is idle in readline saves too, so this
       proves suppression holds on the path users actually get. (A hangup
@@ -413,16 +452,31 @@ async def test_default_host_leaves_history_untouched(leased_host, make_host, end
 
     # A marker unique per run, so a failure names exactly which run leaked.
     marker = f"otto-history-probe-{uuid.uuid4().hex[:8]}"
+    shells: set[str] = set()
     async with host:
-        assert await _shells_histfile(host) == "HISTFILE=[/dev/null]"
+        seen, pid = await _typed(host, verb, 'echo "HISTFILE=[$HISTFILE]"')
+        assert seen == "HISTFILE=[/dev/null]", f"{element}: {verb} sees {seen!r}"
+        shells.add(pid)
         for _ in range(3):
-            assert (await host.run(f"echo {marker}")).only.status is Status.Success
-        pid = await _session_pid(host)
+            _, pid = await _typed(host, verb, f"echo {marker}")
+            shells.add(pid)
         if ending == "exit":
-            await _exit_shell(host, pid, element)
-    # Whatever the ending, nothing is sampled until the shell is gone: from
+            if verb == "run":
+                await host.send("exit\n")
+            else:
+                pooled = _terminal_exec_sessions(host)
+                assert len(pooled) == len(shells), (
+                    f"{element}: {len(shells)} shells ran a command but "
+                    f"{len(pooled)} idle sessions with a terminal are left to end"
+                )
+                for session in pooled:
+                    await session.send("exit\n")
+            for shell in shells:
+                await _await_writer_exit(host, shell, element)
+    # Whatever the ending, nothing is sampled until the shells are gone: from
     # then on bash can write nothing more, so both checks below are final.
-    await _await_writer_exit(host, pid, element)
+    for shell in shells:
+        await _await_writer_exit(host, shell, element)
 
     after = await _history_digest(host, element)
     assert after == before, f"{element}: otto's commands reached ~/.bash_history"
@@ -587,7 +641,9 @@ async def test_root_history_untouched_across_elevation(leased_host, make_host):
     host = make_host(ip, element)
 
     async def _root_digest() -> str:
-        result = await host.exec("sudo cat /root/.bash_history 2>/dev/null | sha256sum || true")
+        result = await host.exec(
+            "sudo cat /root/.bash_history 2>/dev/null | sha256sum || true", terminal=False
+        )
         # Same guard `_history_digest` carries: without it a failed sample
         # hashes to a different string and reports as "otto polluted root's
         # history", blaming the feature for a broken measurement.

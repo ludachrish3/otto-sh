@@ -363,13 +363,15 @@ def _live_listing(host: "Any", directory: str) -> "list[ListingEntry] | None":
     Note that ``LogMode`` governs command I/O only; :func:`_silenced` is what
     keeps non-command records off the user's terminal.
     """
+    from ..host.host import exec_own
     from ..lifecycle import run_command
     from ..logger.mode import LogMode
 
     async def _run() -> "Any":
         try:
             return await asyncio.wait_for(
-                host.exec(
+                exec_own(
+                    host,
                     listing_command(directory),
                     timeout=LIST_DEADLINE_SECONDS,
                     log=LogMode.NEVER,

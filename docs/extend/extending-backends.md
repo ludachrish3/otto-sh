@@ -623,9 +623,11 @@ recovery fails, and the open fails as
 
 ### Consequences
 
-- `exec` on a hooked Unix host takes a pooled session with a terminal (as it
-  does for a proxied login): the hook is written for a terminal, so a session
-  without one cannot run it ({ref}`host-exec-on-sessions`).
+- A hooked Unix host, like one whose login is proxied, has no session
+  without a terminal: the hook is written for a terminal, so a session without
+  one cannot run it. Every `exec` there, otto's own commands included, takes a pooled
+  session with a terminal, and `terminal=False` is refused
+  ({ref}`terminal-switch`).
 - `close()` on the handle refuses while the session is being established.
 - On the `login` bridge, the hook runs before the pumps start; the landing
   frame's echo is restored before the hook (so a hook that leaves the landing

@@ -1317,7 +1317,7 @@ async def _clear_gcda(product: Product, host: "Host") -> Result:
     """Reset the counters: remove every ``.gcda`` under the product's ``cov_dir``, then check.
 
     Validates :attr:`Product.name` first. Runs :func:`gcda_delete_cmd`, then
-    :func:`gcda_check_cmd`, both through the same runner — ``host.exec``, or
+    :func:`gcda_check_cmd`, both through the same runner — :func:`~otto.host.host.exec_own`, or
     for a kind whose :attr:`~Product.cov_dir_root_owned` is set,
     :func:`~otto.host.privilege.run_sh_elevated`, which wraps each line whole
     in ``sh -c`` (sudo takes an argv tail, so unwrapped it would run only
@@ -1335,12 +1335,14 @@ async def _clear_gcda(product: Product, host: "Host") -> Result:
 
     async def _run(script: str) -> "CommandResult | None":
         """*script*'s one command result, or ``None`` when the session declined it."""
+        from .host import exec_own  # function-local: off the host import path
+
         if sudo:
             from .privilege import run_sh_elevated  # function-local: off the host import path
 
             results = await run_sh_elevated(host, script, timeout=60)
             return None if results.status is Status.NotRun else results.only
-        result = await host.exec(script, timeout=60)
+        result = await exec_own(host, script, timeout=60)
         return None if result.status is Status.NotRun else result
 
     removal = await _run(gcda_delete_cmd(cov_dir, keep_cov_dir=type(product).cov_dir_bind_mounted))

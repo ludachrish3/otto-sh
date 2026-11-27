@@ -189,11 +189,14 @@ def test_compose_logs_prints_the_services_log_lines_the_daemon_holds(
     # line written between the two calls cannot make the comparison flaky. Its output
     # arrives through the console relay (a prefix per line), so both sides are compared
     # with whitespace collapsed, a printed line as a substring of the relay.
+    # `--no-terminal`: under a terminal `docker compose logs` colours its
+    # service prefixes, and the escapes would split the text compared here.
     daemon = _run_otto(
         "host",
         docker_host,
         "exec",
         f"docker compose -p {project} logs",
+        "--no-terminal",
         xdir=tmp_path,
         env=_WIDE,
     )

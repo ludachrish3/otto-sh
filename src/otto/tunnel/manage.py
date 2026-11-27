@@ -15,7 +15,7 @@ from typing_extensions import final
 
 from ..host.daemon import kill_command, launch_command, rescan_until_exited
 from ..host.errors import HostCommandError, HostUnreachableError
-from ..host.host import is_dry_run
+from ..host.host import exec_own, is_dry_run
 from ..logger.mode import LogMode
 from ..utils import PerLoop
 from .carrier import DEFAULT_CARRIER, TunnelCarrier, build_carrier
@@ -577,8 +577,8 @@ async def _kill_tunnel_on(hosts: list[Any], tunnel_id: str) -> None:
     for host_id, pids in by_host.items():
         kill_cmd = kill_command(pids)
         try:
-            await host_by_id[host_id].exec(
-                kill_cmd, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET
+            await exec_own(
+                host_by_id[host_id], kill_cmd, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET
             )
         except Exception as e:  # noqa: BLE001 — rollback is best-effort by design
             logger.warning(f"otto tunnel: rollback reap failed on {host_id!r}: {e}")
@@ -1071,7 +1071,8 @@ async def add_tunnel(
                 # below bounds the ack, not the send, so the command may have
                 # already reached the host even if we never see success.
                 launched = True
-                result = await host.exec(
+                result = await exec_own(
+                    host,
                     launch_command(sentinel, proc.argv),
                     timeout=_TUNNEL_HOST_TIMEOUT,
                     log=LogMode.QUIET,
@@ -1156,7 +1157,7 @@ async def _reap(lab: "Lab", predicate: Any) -> RemovedReport:
         host = lab.hosts[host_id]
         kill_cmd = kill_command(pids)
         try:
-            result = await host.exec(kill_cmd, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET)
+            result = await exec_own(host, kill_cmd, timeout=_TUNNEL_HOST_TIMEOUT, log=LogMode.QUIET)
         except Exception as e:  # noqa: BLE001 — transparent partial reap
             logger.warning(f"otto tunnel: could not reap on host {host_id!r}: {e}")
             unreachable.add(host_id)

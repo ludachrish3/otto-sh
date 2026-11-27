@@ -97,7 +97,9 @@ from .host import (
     SuppressCommandOutput,
     _ConsoleReset,
     _validate_user,
+    exec_own,
     is_dry_run,
+    own_exec_needs_shell,
     runs_stock_exec,
 )
 from .interact import run_ssh_login, run_telnet_login
@@ -431,14 +433,15 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
         The lambda is deliberate, and matches :meth:`_build_file_transfer`'s:
         binding the runner eagerly would freeze out a test (or a subclass)
-        that swaps the method afterwards. The runner is :meth:`exec`, which
-        picks its primitive per call (on a ``console`` term, the default
-        session), so this cached instance stays right across a ``term`` change.
+        that swaps the method afterwards. The runner is :func:`exec_own`, the
+        entry for a command otto wrote, which picks its primitive per call (on
+        a ``console`` term, the default session), so this cached instance
+        stays right across a ``term`` change.
         """
         if self._userland_cache is None:
             self._userland_cache = Userland(
                 self.userland_options,
-                lambda *a, **kw: self.exec(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
+                lambda *a, **kw: exec_own(self, *a, **kw),
                 line_turn=lambda: self._host_entry("exec"),
                 command_frame=self.command_frame.type_name if self.command_frame else None,
             )
@@ -597,7 +600,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         run as *user* too. The backend class itself is unchanged; only the
         identity underneath it is (spec 2026-09-01 §4).
 
-        ``exec_cmd`` is :meth:`exec`, which on a ``console`` term runs each
+        ``exec_cmd`` is :func:`exec_own` on this host, which on a ``console`` term runs each
         command on the default session (the line serves one client). That
         one session is logged in as one user, so a console transfer for
         anyone else is refused by name (:meth:`_refuse_console_transfer`),
@@ -614,9 +617,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             else cast("ConnectionManager", _UserConnections(self._connections, user))
         )
         exec_cmd = (
-            (lambda *a, **kw: self.exec(*a, **kw))  # noqa: PLW0108 — late-bind self for monkeypatching
+            (lambda *a, **kw: exec_own(self, *a, **kw))
             if user is None
-            else (lambda *a, **kw: self.exec(*a, user=user, **kw))
+            else (lambda *a, **kw: exec_own(self, *a, user=user, **kw))
         )
         return cast(
             "UnixFileTransfer",
@@ -639,8 +642,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                         if runs_stock_exec(self)
                         else None
                     ),
-                    # Asked of `_exec_plain`, the session mode `exec_cmd`'s
-                    # `exec` runs by, with the same effective user: `user=None`
+                    # Asked of `_exec_plain`, the session mode `exec_cmd`
+                    # runs by, with the same effective user: `user=None`
                     # is an enclosing `as_user()`'s identity on both, read
                     # when the budget is asked. Never predicted from
                     # `self.term` alone: whether `exec` types into a terminal
@@ -663,7 +666,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return self._session_mgr.line_room(
             cmd=cmd,
             shared=self._shares_one_line(),
-            plain=self._exec_plain(user=user, needs_shell=False),
+            plain=self._exec_plain(user=user, needs_shell=own_exec_needs_shell(self)),
         )
 
     def _refuse_console_transfer(self, user: "str | None", name: str) -> None:
@@ -1036,8 +1039,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         Decided here and nowhere else (asked through ``BaseHost._exec_plain``,
         which resolves *user* first): no terminal when the host does not
         share one line between ``run`` and ``exec`` (:meth:`_shares_one_line`),
-        the call needs no shell (no ``terminal=True``, no prompt, no
-        elevation), runs as the login or as a user with a direct credential
+        the call needs no shell (``terminal=False`` or a command otto wrote,
+        no prompt, no elevation), runs as the login or as a user with a direct credential
         (no switch), and the manager can open a session without a terminal
         at all (ssh, with no proxied login and no ``session_setup`` hook:
         :meth:`~otto.host.session.SessionManager.no_terminal_limitation`).
@@ -1050,7 +1053,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             user: The effective user of the call, or ``None`` for the login
                 target.
             needs_shell: The call needs a shell with a terminal (*expects*,
-                *sudo*, ``terminal=True``).
+                *sudo*, ``terminal=True``, or a user's unset ``terminal``).
         """
         mgr = self._live_session_mgr()
         return (
@@ -1311,7 +1314,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """
         if is_dry_run():
             return self._dry_run_result("cat /proc/modules", LogMode.QUIET)
-        result = await self.exec("cat /proc/modules", log=LogMode.QUIET)
+        result = await exec_own(self, "cat /proc/modules", log=LogMode.QUIET)
         if not result.status.is_ok:
             return Result(
                 status=Status.Error,
@@ -1346,7 +1349,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """
         if self.cached_login_home is not None:
             return self.cached_login_home
-        probe = await self.exec('printf %s "$HOME"', log=LogMode.QUIET)
+        probe = await exec_own(self, 'printf %s "$HOME"', log=LogMode.QUIET)
 
         def refused(answer: str | None) -> HostCommandError:
             return HostCommandError(
@@ -1513,7 +1516,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         # reset mid-handshake) is just "not yet", never an error.
         async def shell_answered() -> bool:
             try:
-                result = await self.exec("true", timeout=_RECOVERY_PROBE_TIMEOUT, log=LogMode.QUIET)
+                result = await exec_own(
+                    self, "true", timeout=_RECOVERY_PROBE_TIMEOUT, log=LogMode.QUIET
+                )
             except Exception:  # noqa: BLE001 — probe failure means "not booted yet"; the deadline is the arbiter
                 return False
             return result.status.is_ok

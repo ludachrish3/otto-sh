@@ -30,8 +30,9 @@ is refused with a `TypeError`. The parent owns:
 - The hop chain — so a container behind a multi-hop SSH path "just
   works" with no special-casing in the docker code path
 
-`exec(cmd)` on a container becomes
-`parent.exec(f"docker exec -i {ctr} sh -c {shlex.quote(cmd)}")`.
+`exec(cmd)` on a container sends
+`docker exec -i {ctr} sh -c {shlex.quote(cmd)}` to the parent's `exec` as a
+command otto wrote ({ref}`otto-own-exec`).
 `login()` opens a PTY-backed `docker exec -it ctr /bin/sh` over the
 parent's SSH conn (we extended `run_ssh_login()` with an optional
 `command=` kwarg). `get`/`put` are two-step: `parent.put` to a per-call

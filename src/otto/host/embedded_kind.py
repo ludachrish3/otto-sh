@@ -132,12 +132,14 @@ class EmbeddedProduct(ShellProduct):
         is not an install. The loader is resolved BEFORE the load, so a host
         that cannot carry this product is refused without touching it.
         """
+        from .host import exec_own  # function-local: off the host import path
+
         loader = self._loader(host)
         result = await host.load(self.artifact, name=self.name)  # ty: ignore[missing-attribute]
         if not result.is_ok:
             return result
         for fn in self.call_after_load:
-            call = await host.exec(loader.call_command(self.name, fn), timeout=_CALL_TIMEOUT)
+            call = await exec_own(host, loader.call_command(self.name, fn), timeout=_CALL_TIMEOUT)
             if call.status is not Status.Success:
                 return Result(
                     status=Status.Error, msg=f"{self.name}: {fn} failed after load: {call.value}"
@@ -193,8 +195,10 @@ class EmbeddedProduct(ShellProduct):
         with silently empty coverage. Not-installed is the safe answer: the
         caller re-installs, which is idempotent.
         """
+        from .host import exec_own  # function-local: off the host import path
+
         loader = self._loader(host)
-        listing = await host.exec(loader.list_command(), timeout=_LIST_TIMEOUT)
+        listing = await exec_own(host, loader.list_command(), timeout=_LIST_TIMEOUT)
         if listing.status is not Status.Success:
             return False
         return loader.is_loaded(self.name, listing.value)
@@ -220,8 +224,12 @@ class EmbeddedProduct(ShellProduct):
         clean``'s report, :class:`~otto.coverage.errors.CoverageCleanError`)
         prefixes the host and product itself.
         """
+        from .host import exec_own  # function-local: off the host import path
+
         loader = self._loader(host)
-        call = await host.exec(loader.call_command(self.name, self.reset_fn), timeout=_CALL_TIMEOUT)
+        call = await exec_own(
+            host, loader.call_command(self.name, self.reset_fn), timeout=_CALL_TIMEOUT
+        )
         if call.status is Status.NotRun:
             return Result(status=Status.NotRun)
         output = call.value or ""

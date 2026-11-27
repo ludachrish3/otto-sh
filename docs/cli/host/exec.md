@@ -48,11 +48,13 @@ otto --lab my_lab host router1 exec "test -t 1 && echo terminal || echo pipe" --
 otto --lab my_lab host router1 exec "test -t 1 && echo terminal || echo pipe" --no-terminal
 ```
 
-Without either flag the host chooses, and nothing is refused. `--terminal`
-runs the command on a shell session that has a terminal; `--no-terminal`
-insists on none. A host that cannot give what is asked refuses and says why.
-Which host gives which is in {ref}`terminal-switch`; which shell runs the
-command, on every kind of host, is in {ref}`host-exec-on-sessions`.
+Without either flag the command runs under a terminal where the host offers
+one, as for `run`, and nothing is refused. `--terminal` asks for a terminal;
+`--no-terminal` insists on none. A host that cannot give what is asked
+refuses and says why. Which host gives which, and what a command meets under
+a terminal, is in {ref}`terminal-switch`; which shell runs the command, on
+every kind of host, is in {ref}`host-exec-on-sessions`; what changed since
+0.20 is in {ref}`exec-moving-from-0-20`.
 
 ## `exec` options
 

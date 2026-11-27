@@ -231,8 +231,10 @@ class _CommandPowerController(PowerController):
         return template.format(**values)
 
     async def _exec(self, template: str, host: "Host") -> "CommandResult":
+        from .host import exec_own  # function-local: off the host import path
+
         runner = await self._runner(host)
-        return await runner.exec(self._fmt(template, host))
+        return await exec_own(runner, self._fmt(template, host))
 
     @override
     async def on(self, host: "Host") -> Result:

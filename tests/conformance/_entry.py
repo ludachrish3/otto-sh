@@ -10,14 +10,14 @@ WHAT A CONTRACT EXPECTS IS READ OFF THE LAB ENTRY'S FACTS, never off the
 host's own resolver. A prediction computed by the code under test agrees with
 that code by construction, so it could never go red. :func:`has_terminal`
 says whether the session a command is typed into reads a terminal from the
-cell's facts -- its family and term, whether it is hooked, whether its login
-is proxied -- and the call's (whether it needs a shell, whether its user is
-switched to).
+cell's facts; :func:`offers_no_terminal` says whether the host can open one
+without a terminal at all -- its family and term, whether it is hooked,
+whether its login is proxied.
 
 THE HOOKED-SSH CELL KIND. An ``ssh`` cell whose login is not proxied has two
-pooled ``exec`` sessions to check: the one without a terminal its plain host
-takes, and the one WITH a terminal that any declared ``session_setup`` hook
-sends it to. So :func:`space_for` adds, beside such a cell's ``exec`` leg, a
+pooled ``exec`` sessions to check: the one its plain host takes, and the one
+that any declared ``session_setup`` hook sends it to, which is set up by the
+hook. So :func:`space_for` adds, beside such a cell's ``exec`` leg, a
 :attr:`~tests.conformance._resolved.ResolvedCell.hooked` leg, opened through
 the venue's ``open_shell_host`` with the marking hook (:data:`HOOK_MARK`): a
 cell kind, not an entry, since what is issued is the same ``exec``. Its label
@@ -143,31 +143,35 @@ def entries_of(resolved: ResolvedCell) -> "list[str]":
     return [RUN, EXEC]
 
 
-def has_terminal(
-    resolved: ResolvedCell, *, needs_shell: bool = False, switched_user: bool = False
-) -> bool:
-    """Whether the session *resolved*'s entry types a command into reads a terminal.
+def offers_no_terminal(resolved: ResolvedCell) -> bool:
+    """Whether *resolved*'s host can open a session without a terminal, from the cell's facts.
 
-    From the cell's facts and the call's, never from the host's own resolver
-    (the module docstring says why):
-
-    * the local host: never; every session it opens reads a pipe;
-    * ``run``, a console, an embedded host: always; the host's one session;
-    * ``exec`` over ``telnet``: always; telnet has one mode;
-    * ``exec`` over ``ssh``: without a terminal exactly when the host can open
-      one (its login is not proxied and it is not :attr:`~ResolvedCell.hooked`)
-      and the call needs none -- *needs_shell* (``expects=``, ``sudo=True``)
-      False, and *switched_user* (a user reached by switching, not by a login
-      of their own) False.
+    The local host: always; every session it opens reads a pipe. A unix host
+    over ``ssh``: exactly when its login is not proxied and it is not
+    :attr:`~ResolvedCell.hooked`. Any other cell (``telnet``, a console, an
+    embedded host) has one mode, a terminal.
     """
     if resolved.family == LOCAL_FAMILY:
-        return False
-    if resolved.entry == RUN or resolved.family == EMBEDDED or on_console(resolved):
         return True
-    can_open_without = (
-        resolved.cell.term == _SSH and not resolved.proxied_login and not resolved.hooked
+    return (
+        resolved.family == UNIX
+        and resolved.cell.term == _SSH
+        and not resolved.proxied_login
+        and not resolved.hooked
     )
-    return not (can_open_without and not needs_shell and not switched_user)
+
+
+def has_terminal(resolved: ResolvedCell) -> bool:
+    """Whether the session *resolved*'s entry types a command into reads a terminal.
+
+    From the cell's facts, never from the host's own resolver (the module
+    docstring says why). The call here is a user's, with ``terminal`` unset:
+
+    * the local host: never; every session it opens reads a pipe;
+    * any other host, ``run`` or ``exec``: always. An unset ``terminal`` is a
+      terminal where the host offers one, and every other host offers one.
+    """
+    return resolved.family != LOCAL_FAMILY
 
 
 def project(space: "list[ResolvedCell]") -> "list[ResolvedCell]":

@@ -38,6 +38,9 @@ controller itself is built only when the host is; a controller that fails to
 build fails that host's construction with
 {class}`~otto.host.PowerConstructionError`, naming the stage and the host.
 
+A power command runs through the controller's `exec` with no `terminal`
+choice; which mode it gets is in {ref}`otto-own-exec`.
+
 See {doc}`../../cli/host/capabilities/power` for the runtime API (`host.power()`,
 `host.reboot(hard=True)`), and {ref}`power-controllers` for registering a
 custom controller.

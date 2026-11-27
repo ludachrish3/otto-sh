@@ -71,7 +71,9 @@ class _Recording(BaseHost):
         )
         return CommandResult(status=Status.Success, value="out", command=cmd, retcode=0)
 
-    async def _run_one(self, cmd, timeout, expects=None, log=LogMode.NORMAL, user=None):
+    async def _run_one(
+        self, cmd, timeout, expects=None, log=LogMode.NORMAL, user=None, exec_escapes=False
+    ):
         self.run_calls.append(
             {"cmd": cmd, "timeout": timeout, "log": log, "user": user, "expects": expects}
         )
@@ -132,12 +134,14 @@ class TestTheSharedCore:
         assert host.exec_calls[0]["expects"] == [("more", " ")]
 
     @pytest.mark.asyncio
-    async def test_a_plain_command_needs_no_shell(self):
+    async def test_a_users_plain_command_wants_a_terminal_and_otto_s_needs_no_shell(self):
+        """A user's unset ``terminal`` wants a terminal, as on ``run``; otto's own needs none."""
         host = _Recording()
         await host.exec("id")
-        call = host.exec_calls[0]
-        assert call["expects"] is None
-        assert call["needs_shell"] is False
+        await host._exec_own("id")
+        user, own = host.exec_calls
+        assert (user["expects"], own["expects"]) == (None, None)
+        assert (user["needs_shell"], own["needs_shell"]) == (True, False)
 
     @pytest.mark.asyncio
     async def test_sudo_rewrites_the_command_and_always_needs_a_shell(self):

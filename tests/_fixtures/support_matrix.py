@@ -231,6 +231,16 @@ SURFACES: "tuple[Surface, ...]" = (
         ),
     ),
     Surface(
+        id="terminal-switch",
+        title=(
+            "terminal switch: gives a command the mode it asked for, or refuses the value by name"
+        ),
+        contract=(
+            "tests/conformance/test_terminal_contract.py"
+            "::test_a_command_sees_the_terminal_mode_it_asked_for"
+        ),
+    ),
+    Surface(
         id="transfer-roundtrip",
         title="transfer: put/get roundtrip preserves content",
         contract=(

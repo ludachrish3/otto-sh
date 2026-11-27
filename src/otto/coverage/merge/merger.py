@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import Self
 
+from ...host.host import exec_own
 from ...host.local_host import LocalHost
 from ...host.toolchain import shell_unsafe
 from ...host.toolchain_discovery import ensure_gcov_tool, is_llvm_cov
@@ -171,7 +172,7 @@ class LcovMerger:
         logger.info(
             "lcov capture%s -> %s", f": {count} file(s)" if count is not None else "", output
         )
-        result = await self.localhost.exec(cmd, timeout=300, log=LogMode.QUIET)
+        result = await exec_own(self.localhost, cmd, timeout=300, log=LogMode.QUIET)
         if result.status != Status.Success:
             raw = result.value or ""
             detail = short_failure(raw, verbose_log_path())

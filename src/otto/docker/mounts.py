@@ -12,7 +12,7 @@ import re
 import shlex
 from pathlib import Path
 
-from ..host.host import Host, refuse_declined_fact
+from ..host.host import Host, exec_own, refuse_declined_fact
 from ..host.mount import Mount
 
 logger = logging.getLogger(__name__)
@@ -100,8 +100,8 @@ async def inspect_mounts(parent: Host, container_ids: "list[str]") -> "dict[str,
     # exists, but plain `inspect` falls back to images on a miss and
     # `{{json .Mounts}}` against an image errors rather than producing a
     # row -- pinning the type makes a miss "no such container" instead.
-    result = await parent.exec(
-        f"docker inspect --type container --format {shlex.quote(INSPECT_FORMAT)} {joined}"
+    result = await exec_own(
+        parent, f"docker inspect --type container --format {shlex.quote(INSPECT_FORMAT)} {joined}"
     )
     refuse_declined_fact(result, asked=f"inspect_mounts({len(container_ids)} container(s))")
 

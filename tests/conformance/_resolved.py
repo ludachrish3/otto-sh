@@ -113,9 +113,9 @@ class ResolvedCell:
     hooked: bool = False
     """Whether this cell's host is the one :attr:`open_shell_host` opens: the
     HOOKED-SSH cell kind (``tests/conformance/_entry.py``, :func:`space_for`).
-    Its ``exec`` takes a pooled session WITH a terminal where the same cell's
-    plain host takes one without, and its sessions carry the marking hook's
-    mark, so a contract can prove the hook ran as the user a session is for."""
+    Its ``exec`` takes a pooled session the hook set up, which cannot be one
+    without a terminal, and its sessions carry the marking hook's mark, so a
+    contract can prove the hook ran as the user a session is for."""
 
     family: str = ""
     """``"unix"``, ``"embedded"`` or ``"local"``: the host family the venue

@@ -36,6 +36,7 @@ from otto.host.command_frame import FRAME_CLASSES
 from otto.host.element import Element
 from otto.host.embedded_filesystem import build_filesystem
 from otto.host.embedded_host import EmbeddedHost
+from otto.host.errors import terminal_refusal
 from otto.host.host import BaseHost
 from otto.host.options import UNESCAPED_IAC, ConsoleOptions
 from otto.host.remote_host import RemoteHost
@@ -72,6 +73,7 @@ from tests.conformance import test_exec_contract as _exec_contract
 from tests.conformance import test_options_contract as _options_contract
 from tests.conformance import test_output_contract as _output_contract
 from tests.conformance import test_state_contract as _state_contract
+from tests.conformance import test_terminal_contract as _terminal_contract
 from tests.conformance import test_timeout_contract as _timeout_contract
 from tests.conformance._bed import (
     _POSIX_SCRATCH_DIR,
@@ -2338,6 +2340,9 @@ CONTRACTS = {
     "output": lambda cell, notes: _output_contract.test_a_commands_value_is_its_exact_output(
         cell, notes.append
     ),
+    "terminal": lambda cell, notes: (
+        _terminal_contract.test_a_command_sees_the_terminal_mode_it_asked_for(cell, notes.append)
+    ),
 }
 
 #: Each driven contract's function, so its entries are read off its own marker
@@ -2348,6 +2353,7 @@ CONTRACT_FUNCTIONS = {
     "sequence": _exec_contract.test_a_failing_command_is_not_reported_as_success,
     "timeout": _timeout_contract.test_a_command_exceeding_its_budget_fails_the_documented_way,
     "output": _output_contract.test_a_commands_value_is_its_exact_output,
+    "terminal": _terminal_contract.test_a_command_sees_the_terminal_mode_it_asked_for,
 }
 
 
@@ -2391,6 +2397,8 @@ LIES: dict[str, set[str]] = {
     "leaves_the_command_running": {"timeout"},
     # Every command answered with a value one character off its case's.
     "garbles_the_output": {"output"},
+    # Every explicit `terminal=` refused, also where the host can give the mode.
+    "refuses_the_terminal_switch": {"terminal"},
 }
 
 
@@ -2438,27 +2446,44 @@ class _ScriptedHost:
         words: Vocabulary,
         lie: "str | None",
         witnesses: "FakeWitnesses | None" = None,
+        *,
+        hooked: bool = False,
     ) -> None:
         self._words = words
         self._lie = lie
+        self._hooked = hooked
         self._timed_out = False
         # Shared by every host one cell opens: the witness observer reads the
         # process the host under test started through a second host.
         self._witnesses = witnesses or fake_witnesses(words)
 
-    async def run(self, command, timeout=None) -> Results:
+    async def run(self, command, timeout=None, terminal=None) -> Results:
         commands = [command] if isinstance(command, str) else list(command)
-        entries = [self._answer(one, timeout) for one in commands]
+        self._check_terminal(terminal)
+        entries = [self._answer(one, timeout, terminal=terminal, default=True) for one in commands]
         if self._lie == "stops_after_the_failure":
             entries = self._truncate_at_the_failure(entries)
         return Results.collect(items=entries)
 
-    async def exec(self, command, timeout=None) -> CommandResult:
-        result = self._answer(command, timeout)
+    async def exec(self, command, timeout=None, terminal=None) -> CommandResult:
+        self._check_terminal(terminal)
+        result = self._answer(command, timeout, terminal=terminal, default=True)
         if self._lie == "exec_strips":
             # ast-grep-ignore: no-stripped-command-value -- the lie this host tells
             return dataclasses.replace(result, value=result.value.strip())
         return result
+
+    def _check_terminal(self, terminal: "bool | None") -> None:
+        """Refuse *terminal* where this cell cannot give it, as otto does, by name.
+
+        An ``ssh`` cell whose login is not proxied gives either mode, except
+        that its hooked leg has a terminal only; unset, both entries have a
+        terminal. The lying host refuses every explicit value.
+        """
+        if terminal is None:
+            return
+        if self._lie == "refuses_the_terminal_switch" or (self._hooked and not terminal):
+            raise terminal_refusal(host="scripted", terminal=terminal, reason="is refused here")
 
     @staticmethod
     def _truncate_at_the_failure(entries: "list[CommandResult]") -> "list[CommandResult]":
@@ -2469,8 +2494,21 @@ class _ScriptedHost:
                 break
         return kept
 
-    def _answer(self, command: str, timeout: "float | None") -> CommandResult:
+    def _answer(
+        self,
+        command: str,
+        timeout: "float | None",
+        *,
+        terminal: "bool | None" = None,
+        default: bool = True,
+    ) -> CommandResult:
         words = self._words
+        if words.terminal_read_command is not None and command == words.terminal_read_command:
+            tty = default if terminal is None else terminal
+            value = words.terminal_baseline_answer if tty else _terminal_contract.UNREAD
+            return CommandResult(
+                status=Status.Success, value=value or "", command=command, retcode=0
+            )
         witnessed = self._witnesses.long_running_path(command)
         long_running = {words.long_running_command, words.detached_long_running_command}
         if timeout is not None and (command in long_running or witnessed is not None):
@@ -2568,6 +2606,10 @@ def _scripted_cell(
     async def opener():
         yield _ScriptedHost(words, lie, witnesses)
 
+    @contextlib.asynccontextmanager
+    async def shell_opener():
+        yield _ScriptedHost(words, lie, witnesses, hooked=True)
+
     plain = ResolvedCell(
         cell=Cell("scripted", "ssh", "transfer"),
         kind="scripted",
@@ -2576,7 +2618,7 @@ def _scripted_cell(
         vocabulary=words,
         entry=entry,
         family="unix",
-        open_shell_host=opener,
+        open_shell_host=shell_opener,
     )
     if not hooked:
         return plain

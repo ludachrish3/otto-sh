@@ -20,6 +20,7 @@ from ...models.base import cred_identity
 from ...result import CommandResult
 from ...utils import Status
 from ..connections import TERM_BACKENDS, TermMetadata
+from ..host import exec_own
 from ..login_proxy import cred_for
 from ..options import NcOptions, SnmpOptions
 from ..transfer.nc import (
@@ -250,11 +251,11 @@ async def _run_only(host: "BaseHost", cmd: str, *, sudo: bool = False) -> "Comma
 
 
 async def _exec_only(host: "BaseHost", cmd: str, *, user: "str | None") -> "CommandResult":
-    """Run *cmd* the way a netcat transfer runs its control scripts: ``host.exec``.
+    """Run *cmd* as a netcat transfer runs its control scripts: :func:`~otto.host.host.exec_own`.
 
     Never ``host.run``: over ssh that is a different shell and ``PATH``.
     """
-    return await host.exec(cmd, timeout=INVENTORY_TIMEOUT_S, log=LogMode.NEVER, user=user)
+    return await exec_own(host, cmd, timeout=INVENTORY_TIMEOUT_S, log=LogMode.NEVER, user=user)
 
 
 class _BudgetSpent(Exception):  # noqa: N818 — a private signal, not an error a caller sees

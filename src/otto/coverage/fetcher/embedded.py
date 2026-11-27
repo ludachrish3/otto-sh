@@ -135,6 +135,8 @@ async def _dump_one_product(
         ProductFetchError: The product declares no dump function, or its dump
             command failed (already logged).
     """
+    from ...host.host import exec_own  # function-local: off the import path until a command runs
+
     # Only an embedded product exports a dump function; the default lives on
     # EmbeddedProduct, so anything without one is a product this collector
     # cannot dump rather than one to guess a function name for.
@@ -157,7 +159,7 @@ async def _dump_one_product(
         host.id,
         repr(dump_command),
     )
-    result = await host.exec(dump_command, timeout=_DUMP_TIMEOUT)
+    result = await exec_own(host, dump_command, timeout=_DUMP_TIMEOUT)
     if result.status != Status.Success:
         logger.error(
             "%s failed on %s: %s",

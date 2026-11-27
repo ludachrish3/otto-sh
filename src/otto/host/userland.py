@@ -488,7 +488,7 @@ def _applet_probe_command(applets: "list[str]") -> str:
     the module asks its presence questions one way.
 
     A PROBE IS NOT EXEMPT FROM THE LINE BOUNDS, which is why the length is
-    guarded rather than eyeballed. Probes go out through ``Host.exec``, which
+    guarded rather than eyeballed. Probes go out through :func:`~otto.host.host.exec_own`, which
     types into a shell session; where that session reads a terminal,
     :data:`PTY_TYPED_LINE_MAX` (4095, minus otto's own BEGIN/END framing)
     applies instead. The shipped seven names emit 135 characters, so the slack
@@ -3134,11 +3134,11 @@ GAPS: list[Gap] = [
             "refuses against it once the session is open, before typing anything. "
             f"{PTY_TYPED_LINE_MAX} is the Linux terminal's bound, measured on BusyBox "
             "guests, not on bash and not on a Zephyr board. "
-            "`Host.exec()` over ssh, with no terminal asked for, runs on a pooled session "
+            "`Host.exec(..., terminal=False)` over direct ssh runs on a pooled session "
             "without a pty, is unaffected, and is NOT refused: it is the way to send this "
-            "command there. `exec()` on a "
-            "telnet or proxied-login host has no stateless primitive and types into a "
-            "pooled shell session, so it is refused like `run()`, measured in the exec "
+            "command there. Every other `exec()` (`terminal` unset or `True`, or on a "
+            "telnet, proxied-login or hooked host) types into a pooled shell session "
+            "with a terminal, so it is refused like `run()`, measured in the exec "
             "frame it types; `ShellFileTransfer` sizes its chunk lines to the same "
             "budget. One path stays unguarded deliberately -- a named session's "
             "`HostSession.run()`, which `ShellFileTransfer` rides"
@@ -3227,12 +3227,13 @@ GAPS: list[Gap] = [
                     "`exec()` (`_exec_on_pooled`): on an open session that reads a "
                     "terminal it refuses a line over that session's bound before typing "
                     "it, measured in the frame the call types (the exec frame for an "
-                    "`exec()`). A pooled `exec()` reads a terminal on a `term: telnet` "
-                    "host, on ANY host whose login is proxied, and where a terminal is "
-                    "asked for; there the call is line-edited like a typed command and "
-                    "the message does not advise `exec()`, which is no escape. An unset "
-                    "ssh `exec()` borrows a session WITHOUT a terminal, which has no "
-                    "typed-line limit and is not refused"
+                    "`exec()`). A pooled `exec()` reads a terminal unless it is "
+                    "`terminal=False` on direct ssh (or a command otto wrote that needs "
+                    "none); there the call is line-edited like a typed command, and the "
+                    "message advises `exec(..., terminal=False)` only where the same call "
+                    "would be accepted with it (`BaseHost._exec_plain` for the call's user, "
+                    "sudo and expects). A session WITHOUT a terminal has no typed-line "
+                    "limit and is not refused"
                 ),
                 pinned_by=(
                     "tests/unit/host/test_run_line_length.py::TestTheRefusalIsScoped"

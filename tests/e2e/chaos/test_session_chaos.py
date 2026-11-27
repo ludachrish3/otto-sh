@@ -5,10 +5,14 @@ host is left clean; here we add the remote-reaped / remote-survives assertions t
 hygiene diff cannot express (a foreground child reaped by the teardown's HUP is
 gone either way, and so is a nohup'd one, which carries the session's mark).
 
-These scenarios drive the ``exec`` verb, which on a hop-less ssh host runs on
-a pooled session without a terminal: a teardown stops everything that session
-started by its ``OTTO_SESSION`` mark (``otto.host.process_stop.reap_marked_script``)
-instead of the pty hangup the ``run`` verb's persistent shell gets. Either way
+These scenarios drive the ``exec`` verb. On a hop-less ssh host an ``exec``
+with the terminal unset runs on a pooled session with a terminal: a stop
+types Ctrl-C, which reaches the foreground, and the session is then closed,
+so its pty hangs up. With ``--no-terminal`` it runs on a pooled session
+without one, and a teardown stops everything that session started by its
+``OTTO_SESSION`` mark (``otto.host.process_stop.reap_marked_script``). The
+two ``nohup`` scenarios below measure both: the child is stopped with the
+session without a terminal, and outlives the session with one. Either way
 a *shell* parses each command line like any interactive shell would --
 including stripping everything after a
 ``#`` -- before exec'ing it, so a trailing ``# marker`` comment is invisible
@@ -50,6 +54,10 @@ pytestmark = [
 # that tier-2 suite is ever pointed at the same live bed concurrently.
 _SLEEP = "sleep 311"  # seeded-SIGINT test: HUP-reaped foreground child
 _GUEST_SLEEP = "sleep 315"  # busybox guest twin of _SLEEP; 315 is clear of 311-314 above
+# The terminal twin of the nohup test: 316 its nohup'd child, 317 its foreground
+# hold, clear of 311-315 above for the same reasons.
+_TERMINAL_CHILD = "sleep 316"
+_TERMINAL_HOLD = "sleep 317"
 
 
 def _remote_pids(element: str, needle: str) -> list:
@@ -144,14 +152,17 @@ def test_sigint_immune_remote_hits_deadline_force(chaos_bed, tmp_path):
 
 
 def test_nohup_remote_is_stopped_with_its_session_on_graceful_teardown(chaos_bed, tmp_path):
-    """Characterization: an ``exec`` on ssh runs on a pooled session without a
-    terminal, and a graceful teardown stops everything that session started
-    by its ``OTTO_SESSION`` mark (``STOP`` then ``KILL``,
+    """Characterization: an ``exec --no-terminal`` on ssh runs on a pooled
+    session without a terminal, and a graceful teardown stops everything that
+    session started by its ``OTTO_SESSION`` mark (``STOP`` then ``KILL``,
     ``otto.host.process_stop.reap_marked_script``), a ``nohup``'d child
-    included: ignoring ``HUP`` no longer helps, since no ``HUP`` is sent. A
+    included: ignoring ``HUP`` does not help, since no ``HUP`` is sent. A
     process meant to survive is started with ``OTTO_SESSION`` unset
     (``otto.host.daemon.detached_command``). Teardown must clean up otto's
-    OWN session state regardless.
+    OWN session state regardless. ``--no-terminal`` is what this test is
+    about: with the terminal unset the session has a terminal, no mark and no
+    sweep, and the child outlives it
+    (:func:`test_nohup_remote_outlives_the_stop_and_the_close_of_a_terminal_session`).
 
     Deviation from the brief's literal transcription (recorded per the live-bed
     rule: root-cause first, never paper over with a widened assertion): a bare
@@ -189,7 +200,7 @@ def test_nohup_remote_is_stopped_with_its_session_on_graceful_teardown(chaos_bed
     marker = "otto-chaos-nohup"
     survivor = f"nohup sleep 313 >/dev/null 2>&1 & echo LAUNCHED-{marker}; sleep 314"
     p = spawn_otto(
-        ["host", chaos_bed.target.host_id, "exec", survivor, "--timeout", "300"],
+        ["host", chaos_bed.target.host_id, "exec", survivor, "--timeout", "300", "--no-terminal"],
         xdir=tmp_path,
         target=chaos_bed.target,
     )
@@ -222,6 +233,82 @@ def test_nohup_remote_is_stopped_with_its_session_on_graceful_teardown(chaos_bed
                 timeout=30,
                 log=LogMode.QUIET,
             ),
+        )
+
+
+def _shell_is_gone(element: str, pid: str) -> bool:
+    """Whether the process *pid* has left the bed's process table."""
+    return probe_text(element, f"test -d /proc/{pid} && echo ALIVE || echo GONE") == "GONE"
+
+
+def test_nohup_remote_outlives_the_stop_and_the_close_of_a_terminal_session(chaos_bed, tmp_path):
+    """The terminal twin of the test above: the same command, with the terminal unset.
+
+    It runs on a pooled session with a terminal, which carries no
+    ``OTTO_SESSION`` mark, so nothing sweeps by it. The graceful teardown
+    stops the command with Ctrl-C, which reaches the foreground (the
+    ``sleep 317`` hold), and then closes the session, whose pty hangs up its
+    shell. The ``nohup``'d child is in the background, where Ctrl-C does not
+    reach, and ignores the hang-up, so it is still running after both. That
+    is the stop the release notes state for an ``exec`` under a terminal: the
+    foreground only, a background process may keep running, the session is
+    then closed.
+
+    The command prints its shell's pid (``$$`` inside the exec's subshell is
+    the session's shell). Its exit is the proof that the session was closed,
+    and only then is the child looked at, so "still running" is read after the
+    close, not before it. Both processes are waited for by argv before the
+    signal, for the reason the test above gives.
+    """
+    marker = "otto-chaos-tty"
+    survivor = (
+        f"nohup {_TERMINAL_CHILD} >/dev/null 2>&1 & echo LAUNCHED-{marker}-$$; {_TERMINAL_HOLD}"
+    )
+    p = spawn_otto(
+        ["host", chaos_bed.target.host_id, "exec", survivor, "--timeout", "300"],
+        xdir=tmp_path,
+        target=chaos_bed.target,
+    )
+    try:
+        launched = p.wait_for_log(rf"LAUNCHED-{marker}-\d+", timeout=120.0)
+        shell = launched.rsplit("-", 1)[1]
+        _wait_remote_running(chaos_bed.element, _TERMINAL_CHILD)
+        _wait_remote_running(chaos_bed.element, _TERMINAL_HOLD)
+        p.signal(15)  # SIGTERM
+        rc = p.wait(timeout=60.0)
+        assert rc == 143, p.stderr_text()
+        p.assert_no_process_group()
+        wait_for(
+            lambda: _shell_is_gone(chaos_bed.element, shell),
+            20.0,
+            interval=0.2,
+            on_timeout=f"the terminal session's shell (pid {shell}) outlived its close",
+        )
+        assert not _remote_pids(chaos_bed.element, _TERMINAL_HOLD), (
+            "the foreground command outlived the stop"
+        )
+        assert _remote_pids(chaos_bed.element, _TERMINAL_CHILD), (
+            "the nohup'd background child did not outlive the stop and the close"
+        )
+    finally:
+        if p.proc.poll() is None:
+            p.signal(9)
+        # The child is meant to survive, so this is the test's own cleanup, and
+        # the bed's hygiene bracket must not see it.
+        run_probe(
+            chaos_bed.element,
+            lambda h: h.exec(
+                f"pkill -f '{argv_pattern(_TERMINAL_CHILD)}' || true; "
+                f"pkill -f '{argv_pattern(_TERMINAL_HOLD)}' || true",
+                timeout=30,
+                log=LogMode.QUIET,
+            ),
+        )
+        wait_for(
+            lambda: not _remote_pids(chaos_bed.element, _TERMINAL_CHILD),
+            20.0,
+            interval=0.2,
+            on_timeout="the nohup'd child outlived its cleanup",
         )
 
 

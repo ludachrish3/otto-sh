@@ -1,6 +1,6 @@
 """Impair/repair/list orchestration — kernel qdisc state is the ONLY state.
 
-Reads go through ``host.exec`` (no privilege needed); mutations through
+Reads go through :func:`~otto.host.host.exec_own` (no privilege needed); mutations through
 ``host.run(cmd, sudo=...)``, sudo'd unless the session user is root. Every host call passes
 ``timeout=_IMPAIR_HOST_TIMEOUT`` and a down host is a loud, host-named
 :class:`LinkHostUnreachableError` — never a skip (spec §9, dev-VM rule). A

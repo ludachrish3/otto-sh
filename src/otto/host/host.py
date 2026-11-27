@@ -42,7 +42,7 @@ from typing import (
 )
 
 from pydantic import SecretStr
-from typing_extensions import Never, Self, final, override
+from typing_extensions import Never, Self, Unpack, final, override
 
 from .. import layout
 from ..logger.mode import ExecLogContext, LogMode, effective_mode
@@ -139,7 +139,9 @@ class CredentialExpect:
     """
 
 
-_TERMINAL_HELP = "Run under a terminal, or insist on none. Unset leaves the choice to the host."
+_TERMINAL_HELP = (
+    "Run under a terminal, or insist on none. Unset: a terminal where the host offers one."
+)
 
 _NO_TERMINAL_SWITCH = (
     "cannot switch users (user=, sudo=True, as_user(), switch_user()): the password prompt is "
@@ -162,6 +164,31 @@ def _terminal_choice(terminal: bool | None) -> _TerminalChoice:
     hook) sees the call it always saw.
     """
     return {} if terminal is None else {"terminal": terminal}
+
+
+def _needs_for_itself(
+    *, sudo: bool, expects: "Expect | Sequence[Expect | CredentialExpect] | None"
+) -> bool:
+    """Whether a command needs a shell for itself: an elevation, or a prompt to answer.
+
+    The one answer, read before the call's *terminal*, for a ``run`` command
+    and an ``exec`` alike: each wants a session with a terminal where the
+    transport has one (:meth:`BaseHost._exec_plain` reads it as
+    *needs_shell*). *expects* are the command's own pairs; an elevation's
+    answer added to them changes nothing, since *sudo* already says yes.
+    """
+    return sudo or bool(expects)
+
+
+def _exec_needs_shell(*, for_itself: bool, terminal: bool | None, own: bool) -> bool:
+    """Return one ``exec``'s *needs_shell*: what it needs *for_itself*, or the terminal it asks for.
+
+    The one rule for an unset *terminal*: from a user it wants a terminal, as
+    ``terminal=True`` does; from otto's own entry (*own*,
+    :meth:`BaseHost._exec_own`) it wants nothing, so the call takes only
+    what it needs for itself.
+    """
+    return for_itself or terminal is True or (terminal is None and not own)
 
 
 def exec_stdin_eof(expects: "Sequence[Expect | CredentialExpect] | None") -> bool:
@@ -1110,11 +1137,12 @@ class Host(Protocol):
                 Which families accept it, and how, is declared per family on
                 :class:`~otto.host.capability_grid.HostCapabilities`.
             terminal: Whether the command runs under a terminal. ``None`` (the
-                default) leaves the choice to the host (on ssh, no terminal
-                where the call needs none) and never refuses. ``True`` runs it on a shell
+                default) is a terminal where the host offers one, as on
+                ``run``, and never refuses. ``True`` runs it on a shell
                 session with a terminal; ``False`` insists on none, and is
-                refused where the call needs one (a prompt to answer, an
-                elevation, a switched user) — see :ref:`terminal-switch`.
+                refused where the host has no session without one or the call
+                needs a terminal (a prompt to answer, an elevation, a switched
+                user) — see :ref:`terminal-switch`.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
@@ -2428,10 +2456,11 @@ class BaseHost(ABC):
                 :func:`~otto.host.session.refuse_if_typed_line_would_be_cut`.
                 The command is refused before anything is sent, because the
                 alternative is the device silently running a SHORTER command
-                and reporting its success as this one's. :meth:`exec` allocates
-                no pty, is not subject to the bound, and is the way to send
-                such a command — except on a ``console`` term, where ``exec``
-                shares ``run``'s session and its bound, so split the command.
+                and reporting its success as this one's. Where
+                ``exec(..., terminal=False)`` would carry the same call (direct
+                ssh, no elevation, no prompt to answer, no switched user), it is
+                not subject to the bound and the refusal names it; anywhere
+                else, the refusal says to split the command.
             ~otto.host.errors.SessionSetupError: a ``session_setup`` hook
                 called this while the session it sets up is opening.
             ~otto.host.errors.UnsupportedOptionError: *terminal* asks for a
@@ -2525,20 +2554,6 @@ class BaseHost(ABC):
             # a STATEMENT-POSITION rule plus a behavioural test driving both
             # shapes, in `tests/unit/host/test_privilege.py`.
             await self._prepare_elevation()
-        if single:
-            one = self._apply_sudo(resolved[0]) if sudo else _prepared(resolved[0])
-            result = await self._run_one(
-                one.cmd,
-                expects=one.expects,
-                # _resolve_command collapsed the None sentinel into a concrete float.
-                timeout=one.timeout if one.timeout is not None else timeout,
-                log=one.log,
-                user=user,
-                **_terminal_choice(terminal),
-            )
-            return Results.collect(items=[result])
-
-        prepared = [self._apply_sudo(sc) if sudo else _prepared(sc) for sc in resolved]
 
         async def _run_pc(pc: _PreparedCommand, t: float) -> CommandResult:
             return await self._run_one(
@@ -2547,9 +2562,22 @@ class BaseHost(ABC):
                 timeout=t,
                 log=pc.log,
                 user=user,
+                # Whether a refusal of this command's typed line may advise
+                # `exec(..., terminal=False)`: the answer `_refuse_exec_on_a_terminal`
+                # gives that call, for this command's own prompts.
+                exec_escapes=self._exec_plain(
+                    user=user, needs_shell=_needs_for_itself(sudo=sudo, expects=pc.expects)
+                ),
                 **_terminal_choice(terminal),
             )
 
+        if single:
+            one = self._apply_sudo(resolved[0]) if sudo else _prepared(resolved[0])
+            # _resolve_command collapsed the None sentinel into a concrete float.
+            result = await _run_pc(one, one.timeout if one.timeout is not None else timeout)
+            return Results.collect(items=[result])
+
+        prepared = [self._apply_sudo(sc) if sudo else _prepared(sc) for sc in resolved]
         return await _run_cmds_with_budget(_run_pc, prepared, timeout)
 
     def _session_fold(self) -> "Callable[[LogMode], LogMode]":
@@ -2585,6 +2613,7 @@ class BaseHost(ABC):
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
         terminal: bool | None = None,
+        exec_escapes: bool = False,
     ) -> CommandResult:
         """Run one command on the persistent shell session: the one policy for every family.
 
@@ -2619,6 +2648,9 @@ class BaseHost(ABC):
             terminal: The caller's choice of session mode, already checked by
                 :meth:`run` (``_refuse_terminal``); ``None`` is the host's
                 own session.
+            exec_escapes: Whether ``exec(..., terminal=False)`` would carry this
+                call (:meth:`_exec_plain`), so a refusal of its typed line may
+                advise it.
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
@@ -2633,6 +2665,7 @@ class BaseHost(ABC):
                 expects=expects,
                 timeout=timeout,
                 log=self._effective_log(log),
+                exec_escapes=exec_escapes,
                 **_terminal_choice(terminal),
             )
 
@@ -2680,8 +2713,8 @@ class BaseHost(ABC):
         ``run`` is the same execution on the session it does keep; this is
         the single-command shape of ``run``'s signature, parameter for
         parameter. On ssh, telnet and the local host it runs on a pooled
-        shell session, one no other call holds (with or without a terminal,
-        as the host decides) — that is what makes ``exec``
+        shell session, one no other call holds (a terminal where the host
+        offers one, as for ``run``, unless *terminal* says otherwise) — that is what makes ``exec``
         concurrency-safe where ``run`` is not; a container hands it to its
         parent as ``docker exec``, and a family with a single console runs it
         on the default session. The result's ``value`` is the command's
@@ -2710,11 +2743,12 @@ class BaseHost(ABC):
                 Which families accept it, and how, is declared per family on
                 :class:`~otto.host.capability_grid.HostCapabilities`.
             terminal: Whether the command runs under a terminal. ``None`` (the
-                default) leaves the choice to the host (on ssh, no terminal
-                where the call needs none) and never refuses. ``True`` runs it on a shell
+                default) is a terminal where the host offers one, as on
+                ``run``, and never refuses. ``True`` runs it on a shell
                 session with a terminal; ``False`` insists on none, and is
-                refused where the call needs one (a prompt to answer, an
-                elevation, a switched user) — see :ref:`terminal-switch`.
+                refused where the host has no session without one or the call
+                needs a terminal (a prompt to answer, an elevation, a switched
+                user) — see :ref:`terminal-switch`.
 
         Raises:
             ~otto.host.errors.PasswordRefusedError: ``sudo=True`` and the
@@ -2724,6 +2758,13 @@ class BaseHost(ABC):
                 called this while the session it sets up is opening.
             ~otto.host.errors.UnsupportedOptionError: *terminal* asks for a
                 mode this host, or this call on it, cannot have.
+            ~otto.host.errors.UnsupportedOnUserlandError: the command is typed
+                into a terminal on an ash host and a line of it is over what
+                that terminal delivers intact, as for :meth:`run`; nothing is
+                sent.
+            ~otto.host.errors.UntypableCommandError: the command is typed
+                into a terminal and holds a control character the terminal
+                would act on; nothing is sent.
         """
         async with self._host_entry("exec"):
             return await self._exec_in_turn(
@@ -2734,6 +2775,39 @@ class BaseHost(ABC):
                 sudo=sudo,
                 user=user,
                 **_terminal_choice(terminal),
+            )
+
+    async def _exec_own(
+        self,
+        cmd: str | ShellCommand,
+        *,
+        expects: Expect | list[Expect] | None = None,
+        timeout: float = DEFAULT_COMMAND_TIMEOUT,
+        log: LogMode = LogMode.NORMAL,
+        sudo: bool = False,
+        user: str | None = None,
+        exec_log: "ExecLogContext | None" = None,
+        on_typed: "Callable[[], None] | None" = None,
+    ) -> CommandResult:
+        """Run a command otto itself wrote, with :meth:`exec`'s entry and turn.
+
+        The same body as :meth:`exec`, with no *terminal*: the host picks the
+        mode by what the call needs (no terminal where it needs none), where a
+        user's unset *terminal* is a terminal where the host offers one.
+        Reach it through :func:`exec_own`, which keeps a host's public
+        ``exec`` where that is not otto's own.
+        """
+        async with self._host_entry("exec"):
+            return await self._exec_in_turn(
+                cmd,
+                expects=expects,
+                timeout=timeout,
+                log=log,
+                sudo=sudo,
+                user=user,
+                own=True,
+                exec_log=exec_log,
+                on_typed=on_typed,
             )
 
     async def _exec_delegated(
@@ -2752,16 +2826,9 @@ class BaseHost(ABC):
         call's ``ExecInput`` to whichever session runs it, so a
         ``_run_exec`` override with the usual signature forwards it unawares.
         """
-        async with self._host_entry("exec"):
-            return await self._exec_in_turn(
-                cmd,
-                expects=expects,
-                timeout=timeout,
-                log=exec_log.mode,
-                sudo=False,
-                user=None,
-                exec_log=exec_log,
-            )
+        return await self._exec_own(
+            cmd, expects=expects, timeout=timeout, log=exec_log.mode, exec_log=exec_log
+        )
 
     async def _exec_spawned(
         self,
@@ -2801,16 +2868,7 @@ class BaseHost(ABC):
                 on_typed()
 
         async def _call() -> CommandResult:
-            async with self._host_entry("exec"):
-                return await self._exec_in_turn(
-                    cmd,
-                    expects=None,
-                    timeout=timeout,
-                    log=log,
-                    sudo=False,
-                    user=user,
-                    on_typed=_typed,
-                )
+            return await self._exec_own(cmd, timeout=timeout, log=log, user=user, on_typed=_typed)
 
         task = asyncio.create_task(_call())
         waiter = asyncio.ensure_future(typed.wait())
@@ -2833,10 +2891,15 @@ class BaseHost(ABC):
         sudo: bool,
         user: str | None,
         terminal: bool | None = None,
+        own: bool = False,
         exec_log: "ExecLogContext | None" = None,
         on_typed: "Callable[[], None] | None" = None,
     ) -> CommandResult:
         """Run :meth:`exec`'s body, inside the turn :meth:`exec` took.
+
+        *own* marks a command otto wrote (:meth:`_exec_own`). What an unset
+        *terminal* means for it and for a user's command is
+        ``_exec_needs_shell``'s.
 
         The sudo probe (``_prepare_exec_elevation``) runs here, so on a
         shared line the probe and the command it serves are one turn.
@@ -2847,8 +2910,9 @@ class BaseHost(ABC):
         self._refuse_options(
             [sc], call_expects=_normalize_expects(expects), sudo=sudo, user=user, verb="exec"
         )
+        for_itself = _needs_for_itself(sudo=sudo, expects=sc.expects)
         # A terminal is a reason to want a shell, as a prompt or an elevation is.
-        needs_shell = sudo or bool(sc.expects) or terminal is True
+        needs_shell = _exec_needs_shell(for_itself=for_itself, terminal=terminal, own=own)
         self._refuse_terminal(terminal, verb="exec")
         if terminal is False:
             self._refuse_exec_on_a_terminal(
@@ -2867,6 +2931,8 @@ class BaseHost(ABC):
             stdin_eof=exec_stdin_eof(_normalize_expects(sc.expects)),
             exec_log=exec_log,
             on_typed=on_typed,
+            # The answer `_refuse_exec_on_a_terminal` gives this call without one.
+            exec_escapes=self._exec_plain(user=user, needs_shell=for_itself),
         )
         pc = self._apply_sudo(sc, user, exec_input=exec_input) if sudo else _prepared(sc)
         exec_input = replace(exec_input, credential=pc.reads_credential_fd)
@@ -2878,7 +2944,8 @@ class BaseHost(ABC):
             log=pc.log,
             user=user,
             expects=pc.expects,
-            needs_shell=needs_shell or bool(pc.expects),
+            # The elevation's own pairs add nothing: *sudo* is in it already.
+            needs_shell=needs_shell,
             exec_input=exec_input,
         )
 
@@ -3105,9 +3172,10 @@ class BaseHost(ABC):
         host's configuration and its transport's current state, so a query
         (the transfer line budget) can ask it without running anything.
         *needs_shell* is the call's reason for a session with a terminal (a
-        prompt, an elevation, ``terminal=True``); ``terminal=False`` is
-        answered as an unset call is, and is refused before running where it
-        cannot be honoured.
+        prompt, an elevation, ``terminal=True``, a user's unset ``terminal``);
+        ``terminal=False`` and a command otto wrote need none for themselves,
+        and ``terminal=False`` is refused before running where it cannot be
+        honoured.
         """
         return False
 
@@ -4339,10 +4407,10 @@ class BaseHost(ABC):
             installed = path_operand(tool.dest / tool.name)
             async with self.as_user(user=ROOT_LOGIN):
                 if tool.name != tool.source.name:
-                    moved = await self.exec(f"mv {landed} {installed}")
+                    moved = await exec_own(self, f"mv {landed} {installed}")
                     if not moved.is_ok:
                         return moved
-                chown = await self.exec(f"chown {shlex.quote(tool.user)} {installed}")
+                chown = await exec_own(self, f"chown {shlex.quote(tool.user)} {installed}")
                 if not chown.is_ok:
                     return chown
         return Result(status=Status.Success)
@@ -4371,7 +4439,7 @@ class BaseHost(ABC):
         for tc_tool in self.toolchain.tools:
             # dest/name, NOT dest/source.name: install_toolchain_tools renames
             # each tool to its declared name, and that is what is on the host.
-            result = await self.exec(toolchain_removal_command(tc_tool))
+            result = await exec_own(self, toolchain_removal_command(tc_tool))
             if not result.is_ok and first_failure is None:
                 first_failure = result
         return first_failure if first_failure is not None else Result(status=Status.Success)
@@ -4392,7 +4460,7 @@ class BaseHost(ABC):
         from .shell_quote import path_operand  # function-local: see install_toolchain_tools
 
         for tc_tool in self.toolchain.tools:
-            present = await self.exec(f"test -e {path_operand(tc_tool.dest / tc_tool.name)}")
+            present = await exec_own(self, f"test -e {path_operand(tc_tool.dest / tc_tool.name)}")
             refuse_declined_fact(present, asked=f"toolchain_tools_absent({tc_tool.name!r})")
             if present.status.is_ok:
                 return False
@@ -5017,7 +5085,48 @@ def runs_stock_exec(host: object) -> "TypeGuard[BaseHost]":
     override of ``exec`` (one that refuses, audits or redirects commands)
     would be bypassed by it. Either keeps the host's public ``exec``.
     """
-    return isinstance(host, BaseHost) and type(host).exec is BaseHost.exec
+    return (
+        isinstance(host, BaseHost)
+        and getattr(getattr(host, "exec", None), "__func__", None) is BaseHost.exec
+    )
+
+
+class ExecOwnOptions(TypedDict, total=False):
+    """The keywords :func:`exec_own` forwards; each is :meth:`BaseHost.exec`'s."""
+
+    timeout: float
+    log: LogMode
+    expects: "Expect | list[Expect] | None"
+    sudo: bool
+    user: str | None
+
+
+async def exec_own(
+    host: object, cmd: "str | ShellCommand", **options: Unpack[ExecOwnOptions]
+) -> CommandResult:
+    """Run *cmd*, a command otto wrote, on *host*.
+
+    On a host whose ``exec`` is otto's own (:func:`runs_stock_exec`) it takes
+    the private entry, which leaves the mode to what the call needs (no
+    terminal where it needs none); on any other host it is that host's public
+    ``exec``, whose unset ``terminal`` is a terminal where the host offers one. Either way only the
+    keywords the caller passed are forwarded, so each default stays the
+    callee's.
+    """
+    if runs_stock_exec(host):
+        return await host._exec_own(cmd, **options)  # noqa: SLF001 — the private entry this function owns
+    return await cast("Any", host).exec(cmd, **options)
+
+
+def own_exec_needs_shell(host: object) -> bool:
+    """Return the ``needs_shell`` a command otto wrote has on *host*, for want of a choice.
+
+    A command with no prompt and no elevation, sent by :func:`exec_own`: it
+    takes the private entry where :func:`runs_stock_exec` holds, and reaches
+    the public ``exec`` with *terminal* unset anywhere else. What each entry
+    makes of that is ``_exec_needs_shell``'s.
+    """
+    return _exec_needs_shell(for_itself=False, terminal=None, own=runs_stock_exec(host))
 
 
 def output_log_prefix(name: str) -> str:

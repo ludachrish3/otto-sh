@@ -85,11 +85,10 @@ def _terminal_arm(resolved: ResolvedCell) -> bool:
     """Whether *resolved*'s ``exec`` is typed into a terminal whose settings this contract reads.
 
     Read off the cell's facts (:func:`~tests.conformance._entry.has_terminal`),
-    never the route: a pooled session over ``telnet``, a hooked or proxied
-    ``ssh`` cell's, and the default session read a terminal, and the exec
-    frame puts it back after each ``exec``. A plain ``ssh`` cell's pooled
-    session and the local host's have none, and a Zephyr shell is outside
-    this contract's domain.
+    never the route: a user's unset ``exec`` reads a terminal on every unix
+    host but the local one, and the exec frame puts it back after each
+    ``exec``. The local host's sessions have none, and a Zephyr shell is
+    outside this contract's domain.
     """
     return (
         resolved.family == UNIX
@@ -213,7 +212,7 @@ async def test_an_exec_starts_from_its_own_state_and_leaves_none(
     elif resolved_cell.switch_user_stand_in:
         state += "; exec as another user not run: the second user here is a stand-in"
     if terminal is None:
-        note_observable(f"{state}; no terminal on this route")
+        note_observable(f"{state}; no terminal on this session")
         return
     tty = f"`{terminal.read}` by exec after `{terminal.change}`"
     if console:

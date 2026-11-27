@@ -734,10 +734,10 @@ def refuse_if_typed_line_would_be_cut(
     ``None`` for a ``run``'s frame, an ``exec``'s for the exec frame, whose
     opening is longer, so each entry is measured against its own line.
 
-    *exec_escapes* says whether the message may advise ``exec()``. It is
-    ``False`` on a ``console`` term, where ``exec`` runs on the default
-    session, and on a pooled exec with a terminal, which is typed into a
-    session with the same bound; both are refused the same way.
+    *exec_escapes* says whether the message may advise ``exec(...,
+    terminal=False)``: the host's answer for the call
+    (``BaseHost._exec_plain`` with the call's user, elevation and prompts),
+    the same decision that would refuse that ``terminal=False``.
 
     Raises:
         ~otto.host.errors.UnsupportedOnUserlandError: *frame* is ash and the
@@ -760,10 +760,10 @@ def refuse_if_typed_line_would_be_cut(
         else "a terminal delivers intact on one line"
     )
     way_out = (
-        "Over ssh, an `exec()` without a terminal (the default there) types into a "
-        "session with no line limit; otherwise split it"
+        "`exec(..., terminal=False)` types into a session with no terminal and no "
+        "line limit; otherwise split it"
         if exec_escapes
-        else "`exec()` types into a session with a terminal on this host too, so split it"
+        else "an `exec()` of this call has a terminal too, so split it"
     )
     refuse_if_gapped(
         "run-command-line-length",
@@ -5525,6 +5525,7 @@ class SessionManager:
         write_progress: Callable[[int, int], None] | None = None,
         exec_input: ExecInput | None = None,
         terminal: bool | None = None,
+        exec_escapes: bool = False,
     ) -> CommandResult:
         """Run *cmd* on the default session, creating it if needed.
 
@@ -5545,8 +5546,9 @@ class SessionManager:
         ``_run_framed``, the step it shares with this method; a named
         session's ``HostSession.run`` is the one path left unguarded,
         deliberately, because ``ShellFileTransfer`` rides it
-        (see the ``run-command-line-length`` gap record). On a console
-        there is no unguarded path, so the refusal does not advise ``exec()``.
+        (see the ``run-command-line-length`` gap record). The refusal
+        advises ``exec(..., terminal=False)`` only where the host says that
+        call would be carried (*exec_escapes*, from ``BaseHost._exec_plain``).
 
         The refusal is checked twice, through the same function. BEFORE
         ``_ensure_session`` against the widest ceiling any session here can
@@ -5563,7 +5565,9 @@ class SessionManager:
         :meth:`ShellSession.run_cmd` runs it in that frame. ``None`` for a ``run``.
         """
         exec_input = self._with_restore_for(True, exec_input)
-        exec_escapes = getattr(self._connections, "term", None) != "console"
+        # The host's answer for this call: a run's (*exec_escapes*), or the exec's own.
+        if exec_input is not None:
+            exec_escapes = exec_input.exec_escapes
         # Before the open the mode asked for answers; an open session
         # answers for itself, here as below.
         plain = self._checked_plain(terminal)
@@ -5858,7 +5862,7 @@ class SessionManager:
                 expects=expects,
                 timeout=timeout,
                 exec_input=exec_input,
-                exec_escapes=False,
+                exec_escapes=exec_input is not None and exec_input.exec_escapes,
             )
         finally:
             await self._release_pooled(session, key, plain=plain)

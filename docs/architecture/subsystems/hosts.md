@@ -117,9 +117,14 @@ line-length limit, and one typed into a terminal has the limits
 
 A session is reused (the pool, {ref}`host-exec-pool`), so a background
 process an `exec` leaves running that still holds the session's output
-writes into a later command's output. Redirect a background process's
-output (`cmd >/dev/null 2>&1 &`). Which background processes a timed-out
-or cancelled `exec` stops, per family, is on
+writes into a later command's output: redirect its output. Redirecting does
+not make it outlive the session. On an ssh session without a terminal, a
+later timed-out or cancelled command on the same session stops every process
+carrying its `OTTO_SESSION` token, this one included. On a session with a
+terminal, the session is closed after such a stop, and what the close does to
+the process is the transport's. A process that must outlive its session is
+started {ref}`detached <exec-detached-launch>`. Which background processes a
+timed-out or cancelled `exec` stops, per family, is on
 {ref}`the results page <exec-stop-reach>`.
 
 Both return the command's exact output, on every session;
@@ -130,14 +135,14 @@ get there.
 
 ### With or without a terminal
 
-`run()`, `exec()` and `open_session()` take `terminal=`. Left unset, nothing
-is refused and each host uses its own kind of session, as the table's
-"Unset" column says: on ssh that is a terminal for `run` and named sessions,
-and no terminal for an `exec` that does not need one.
+`run()`, `exec()` and `open_session()` take `terminal=`. Left unset, it means
+the same for all three: a terminal where the host offers one, and nothing is
+refused. The commands otto writes itself (file operations, transfers, probes)
+keep the mode they need instead ({ref}`otto-own-exec`).
 
 | Host | Unset | `terminal=True` | `terminal=False` |
 | --- | --- | --- | --- |
-| ssh | `run` and named sessions have a terminal; `exec` takes a pooled session without one where it can ({ref}`above <host-exec-on-sessions>`) | a session with a terminal | a session without one |
+| ssh | a terminal | the same | a session without one, where it is accepted ({ref}`below <terminal-false-per-host>`) |
 | telnet, console, embedded | a terminal | the same | refused: the transport is a terminal |
 | local host | a pipe | refused: its sessions read a pipe | the same as unset, in every respect |
 | container | `run` and named sessions have a terminal; `exec` has none (`docker exec -i`) | `exec` is refused | `run` and `open_session` are refused |
@@ -146,14 +151,70 @@ and no terminal for an `exec` that does not need one.
 probe = "test -t 1 && echo terminal || echo pipe"
 await host.run(probe)  # terminal
 await host.run(probe, terminal=False)  # pipe
-await host.exec(probe)  # pipe
-await host.exec(probe, terminal=True)  # terminal
+await host.exec(probe)  # terminal
+await host.exec(probe, terminal=False)  # pipe
 aux = await host.open_session("aux", terminal=False)
 ```
+
+`otto host <id> exec` takes the same choice as `--terminal` and
+`--no-terminal` ({doc}`../../cli/host/exec`). What changed for an `exec`
+since 0.20 is {ref}`below <exec-moving-from-0-20>`.
 
 A refusal is an {exc}`~otto.host.errors.UnsupportedOptionError` that names
 the value and the reason. It is raised before anything is opened, sent or
 logged, and under a dry run too.
+
+(terminal-what-a-command-meets)=
+**What a command meets under a terminal.** It is typed into the user's login
+shell, which is interactive, as a person's command is:
+
+- Aliases and interactive settings apply. With `alias rm='rm -i'` in the
+  shell's startup files, `exec("rm f")` asks its question, reads the end of
+  its input as no, and keeps the file. Write `command rm f`, or pass
+  `terminal=False`.
+- Programs that check for a terminal print for a person. `ls` prints its
+  names in columns, `ps aux` and `systemctl status` cut each line at the
+  terminal's width, and a progress bar redraws its line with carriage
+  returns, which stay in `value`. Ask the tool for plain output (`ls -1`,
+  `ps auxww`, `systemctl status -l`), or pass `terminal=False`.
+- A pager waits for a key, so the call waits until its timeout. `git log`
+  does this. Pass the tool's own option (`git --no-pager log`), or
+  `terminal=False`.
+- A control character the terminal would act on (ESC, Ctrl-C, a lone
+  carriage return) is refused with
+  {class}`~otto.host.errors.UntypableCommandError` before anything is sent.
+  Spell the byte in the command instead: `printf '\033[1m'`
+  ({ref}`what a command string is <typed-command-text>`).
+- On a BusyBox ash host, a line longer than the terminal delivers intact is
+  refused with {class}`~otto.host.errors.UnsupportedOnUserlandError`, which
+  names the most a line of the call may be
+  ([the line-length record](busybox-support.md#run-command-line-length)).
+- `OTTO_SESSION` is not set: `exec("echo ${OTTO_SESSION:-unset}")` gives
+  `unset`.
+- A timeout or a cancel stops the command with Ctrl-C, which reaches its
+  foreground processes only, so a process left in the background may keep
+  running. The pooled session is then closed, and what that close does to a
+  background process is the transport's
+  ({ref}`what the stop reaches <exec-stop-reach>`). The session without a
+  terminal stops instead every process that carries its token, within the
+  limits {ref}`below <terminal-switch-stop>`.
+
+(terminal-false-per-host)=
+**`terminal=False` is per host.** It gives the session without a terminal
+on a direct ssh host: one with no proxied login and no `session_setup` hook.
+There `exec(..., terminal=False)` is still refused together with
+`sudo=True`, `expects=` or a user reached only by switching; a user with a
+direct ssh login is accepted (what `run` refuses is below). On the local
+host, and for a container's `exec`, it is what the call gets anyway.
+Everywhere else it is refused by name: on a telnet, console or embedded
+host, and on an ssh host whose login is proxied or that has a
+`session_setup` hook. So a call made across many hosts, such as an
+`asyncio.gather` over a lab, passes `terminal=False` only to the hosts that
+offer it; on the others the call is refused before anything is sent. A
+tool's own option (`git --no-pager`, `ls -1`) works in either mode, on every
+host. The same conditions decide where otto's own commands run without a
+terminal ({ref}`otto-own-exec`) and where the line-length refusal advises
+`terminal=False`.
 
 **Two sessions.** On an ssh host `run(..., terminal=False)` uses a second
 default session, opened the first time it is asked for. The two do not share
@@ -164,27 +225,27 @@ raises `ValueError`.
 **What a session without a terminal cannot do, on an ssh host.** Switching
 users answers a password prompt on a terminal. So `run(..., terminal=False)` refuses
 `user=`, `sudo=True` and a call inside `as_user()` or after `switch_user()`, and a named session
-opened without a terminal refuses `as_user()` and `switch_user()`.
-`exec(..., terminal=False)` refuses `sudo=True`, `expects=` and a user
-reached only by switching; a user with a direct ssh login is accepted. An
-ssh host whose login is proxied through another user, or that has a
-`session_setup` hook, has no session without a terminal at all.
+opened without a terminal refuses `as_user()` and `switch_user()`. What
+`exec(..., terminal=False)` refuses is {ref}`above <terminal-false-per-host>`.
 
 **What it changes for the command.** Without a terminal there is no line
 discipline: nothing is echoed, a TAB arrives as a TAB, and the length of a
 line is not limited ({ref}`the run contract <command-contract-run>` has the
-limits a terminal sets). An ssh session without a terminal (`run`'s, a
-named one, or an `exec`'s) runs the login shell of the user, started with
+limits a terminal sets). An ssh session without a terminal (one asked for
+with `terminal=False`, and the one otto's own commands take) runs the login
+shell of the user, not interactive, started with
 `OTTO_SESSION=<token>` in its environment, which every command it starts
 inherits and can read. No other session sets it.
 
-`terminal=True` gives an `exec` command a terminal on its output. Its input
-is still at end of file unless the call answers prompts (`expects=`), as for
-every `exec`.
+Under a terminal, an `exec` command has the terminal on its output. Its
+input is still at end of file unless the call answers prompts (`expects=`),
+as for every `exec`; a program that reads the terminal itself, as a pager
+does, still waits for a key.
 
 (terminal-switch-stop)=
 **On an ssh session without a terminal, a timed-out or cancelled command ends the session.** With a terminal otto
-types Ctrl-C and the session lives on. Without one Ctrl-C is only a byte, and
+types Ctrl-C ({ref}`what it reaches <exec-stop-reach>`): `run`'s session
+lives on, and a pooled `exec` session is closed. Without one Ctrl-C is only a byte, and
 closing the channel leaves the command running. otto instead opens a second
 channel and stops every process that carries the session's token with
 `STOP`, then `KILL` (`otto.host.process_stop.reap_marked_script`), then kills
@@ -198,6 +259,66 @@ or one that removed the token from its environment. It needs `/proc` and a
 second channel on the host: without them only the shell is killed, and on a
 dropbear server the command it was running is then left behind.
 
+(exec-moving-from-0-20)=
+
+### Moving from 0.20
+
+In 0.20 an `exec()` on a direct ssh host (no proxied login, no
+`session_setup` hook), with no `sudo=`, `expects=` or user reached by
+switching, ran `$SHELL -c` on an ssh channel of its own: no login profile and
+no terminal. Every other ssh `exec()` had a terminal in 0.20 and still does.
+Now every `exec()` is typed into a shell session, and that one has a
+terminal unless the call says `terminal=False`:
+
+| That `exec()` | 0.20 | Now, `terminal` unset | Now, `terminal=False` |
+| --- | --- | --- | --- |
+| Shell | `$SHELL -c`, on a channel of its own | the user's login shell, interactive, on a pooled session ({ref}`host-exec-pool`) | the user's login shell, not interactive, on a pooled session |
+| Login profile | not read | read | read |
+| Aliases, interactive settings | none | apply | none |
+| Terminal | none | yes ({ref}`what a command meets <terminal-what-a-command-meets>`) | none |
+| `OTTO_SESSION` | not set | not set | set |
+| A timeout or a cancel | `TERM` (a cancel: `HUP`), then `KILL`, to the command | Ctrl-C, which reaches the foreground only; the session is then closed | `STOP`, then `KILL`, to everything the session started that carries its token ({ref}`the ssh stop <terminal-switch-stop>`) |
+
+Telnet, console and embedded hosts already ran an `exec` under a terminal in
+0.20 and still do. On a console an `exec` now runs in a subshell of `run`'s
+shell, so a `cd` or a variable it sets no longer reaches a later `run`:
+set state that must persist with `run()` ({ref}`exec-session`). The local
+host runs an `exec` in a `bash` session opened for the call, where 0.20 ran
+`/bin/sh` ({ref}`host-exec-on-sessions`); a container's `exec` is still
+`docker exec -i`. What a stop leaves running, per session, is on
+{ref}`the results page <exec-stop-reach>`.
+
+To upgrade:
+
+- A command that parses `ls` or `ps` columns, runs a tool that pages, or
+  depends on no alias applying: pass the tool's own option, which works on
+  every host, or `terminal=False` (`--no-terminal` on the command line) where
+  the host offers it ({ref}`where it is accepted <terminal-false-per-host>`).
+  A call across a lab passes `terminal=False` only to those hosts.
+- A command that is now refused (a control character, or on BusyBox ash a
+  line over the terminal's limit): pass `terminal=False` where the host
+  offers it, or change the command as the refusal says.
+- A background child of a command that times out or is cancelled may now
+  keep running: Ctrl-C reaches the foreground only, and what the close of
+  the session that follows does to the child is the transport's
+  ({ref}`what the stop reaches <exec-stop-reach>`). Pass `terminal=False`,
+  whose stop reaches every process the session started that carries its
+  token ({ref}`with its limits <terminal-switch-stop>`), or stop the child
+  yourself.
+- A host class that overrides `exec`, or a container whose parent's `exec`
+  is not otto's own: otto's own commands (`rm`, `exists`, `ls`, transfers,
+  probes, the container's `docker exec`) reach that `exec` with `terminal`
+  unset, so they now run under a terminal and aliases apply. With `alias rm='rm -i'`, `host.rm()` keeps the file. Have
+  the override pass `terminal=False` to `super().exec()` where the call can
+  take it: no `sudo=`, no `expects=` and no user reached by switching
+  ({ref}`otto-own-exec`).
+- A login profile that prints, changes directory or changes `PATH` now
+  affects every ssh `exec`, in either mode.
+- A background process that must outlive the call: start it
+  {ref}`detached <exec-detached-launch>`.
+- `SessionManager.exec_on`, the ssh channel otto used for `exec`, is
+  removed: call `host.exec()`.
+
 (host-exec-pool)=
 
 ### The exec pool: one free-list per user
@@ -206,7 +327,9 @@ On ssh, telnet and the local host an `exec` runs on a pooled shell session,
 and `SessionManager` keeps one free-list of idle ones per user and per mode
 (`_exec_pools`, keyed by `_pool_key`: the call's `user`, else the login, so
 `exec()` and `exec(user=<the login>)` share one; and by whether the session
-has a terminal, so the two modes never share a session). A call that finds an
+has a terminal, so the two modes never share a session; on a direct ssh host
+a user's `exec` takes the one with a terminal by default and otto's own
+commands the other, so both are usually there). A call that finds an
 idle session reuses it and opens nothing; one that finds none (the first, a
 concurrent one, every call on the local host) opens a session.
 A session for another user

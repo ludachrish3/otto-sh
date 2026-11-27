@@ -28,6 +28,7 @@ from tests.conformance._entry import (
     entries_of_node,
     has_terminal,
     hooked_leg,
+    offers_no_terminal,
     password_sudo_on,
     project,
     proxied_on,
@@ -74,11 +75,11 @@ def test_a_network_hop_keeps_the_hooked_leg():
     assert (leg.entry, leg.hooked) == (EXEC, True)
 
 
-def test_a_proxied_login_expects_an_exec_session_with_a_terminal():
+def test_an_ssh_exec_expects_a_terminal_proxied_or_not():
     plain = next(r for r in bed_space() if r.cell.term == "ssh")
     proxied = dataclasses.replace(plain, proxied_login=True)
     assert has_terminal(with_entry(proxied, EXEC)) is True
-    assert has_terminal(with_entry(plain, EXEC)) is False
+    assert has_terminal(with_entry(plain, EXEC)) is True
 
 
 def space_for_all(resolved: ResolvedCell) -> "list[ResolvedCell]":
@@ -89,22 +90,44 @@ def space_for_all(resolved: ResolvedCell) -> "list[ResolvedCell]":
 
 
 @pytest.mark.parametrize(
-    ("facts", "call", "terminal"),
+    ("facts", "terminal"),
     [
-        pytest.param({}, {}, False, id="plain-ssh-exec"),
-        pytest.param({"hooked": True}, {}, True, id="hooked"),
-        pytest.param({"proxied_login": True}, {}, True, id="proxied"),
-        pytest.param({}, {"needs_shell": True}, True, id="needs-shell"),
-        pytest.param({}, {"switched_user": True}, True, id="switched-user"),
-        pytest.param({"entry": RUN}, {}, True, id="run"),
-        pytest.param({"family": LOCAL_FAMILY}, {}, False, id="local-exec"),
-        pytest.param({"family": LOCAL_FAMILY, "entry": RUN}, {}, False, id="local-run"),
+        pytest.param({}, True, id="plain-ssh-exec"),
+        pytest.param({"hooked": True}, True, id="hooked"),
+        pytest.param({"proxied_login": True}, True, id="proxied"),
+        pytest.param({"entry": RUN}, True, id="run"),
+        pytest.param({"family": LOCAL_FAMILY}, False, id="local-exec"),
+        pytest.param({"family": LOCAL_FAMILY, "entry": RUN}, False, id="local-run"),
     ],
 )
-def test_has_terminal_is_read_off_the_cells_facts_and_the_calls(facts, call, terminal):
-    """Each fact moves the answer alone, so none of them stands in for another."""
+def test_has_terminal_is_read_off_the_cells_facts(facts, terminal):
+    """An unset ``terminal`` is a terminal on every host but the local one, whatever else holds."""
     plain = with_entry(next(r for r in bed_space() if r.cell.term == "ssh"), EXEC)
-    assert has_terminal(dataclasses.replace(plain, **facts), **call) is terminal
+    assert has_terminal(dataclasses.replace(plain, **facts)) is terminal
+
+
+@pytest.mark.parametrize(
+    ("facts", "offers"),
+    [
+        pytest.param({}, True, id="plain-ssh"),
+        pytest.param({"entry": RUN}, True, id="plain-ssh-run"),
+        pytest.param({"hooked": True}, False, id="hooked"),
+        pytest.param({"proxied_login": True}, False, id="proxied"),
+        pytest.param({"family": EMBEDDED}, False, id="embedded"),
+        pytest.param({"family": LOCAL_FAMILY}, True, id="local"),
+        pytest.param({"family": LOCAL_FAMILY, "hooked": True}, True, id="local-whatever-else"),
+    ],
+)
+def test_whether_a_cell_offers_no_terminal_is_read_off_its_facts(facts, offers):
+    """Each fact moves the answer alone; the entry does not, it is the host's ability."""
+    plain = with_entry(next(r for r in bed_space() if r.cell.term == "ssh"), EXEC)
+    assert offers_no_terminal(dataclasses.replace(plain, **facts)) is offers
+
+
+@pytest.mark.parametrize("term", ["telnet", "console"])
+def test_a_unix_telnet_or_console_cell_offers_no_session_without_a_terminal(term):
+    resolved = next(r for r in bed_space() if r.family == "unix" and r.cell.term == term)
+    assert offers_no_terminal(resolved) is False
 
 
 @pytest.mark.parametrize("term", ["telnet", "console"])

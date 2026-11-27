@@ -1,6 +1,6 @@
 """``terminal=`` on ``run()``, ``exec()`` and ``open_session()``: the public switch.
 
-Unset, every call runs where it ran before the switch existed and nothing
+Unset, a call runs under a terminal where the host offers one, and nothing
 refuses. ``False`` on an ssh host is a second session without a pty, with
 its own shell state; a mode a host cannot give is refused by name before
 anything is opened, sent or logged. The no-terminal session itself (its
@@ -15,6 +15,7 @@ import os
 import secrets
 import shutil
 import signal
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -37,6 +38,7 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status, wait_for_async
 from scripts.process_group import process_state
+from tests._fixtures.controlling_pty import ControllingPty, spawn_on_controlling_pty
 from tests.conftest import active_context
 from tests.unit.host.test_session_terminal_mode import _PipeConnection
 
@@ -71,6 +73,79 @@ class _EitherConnection(_PipeConnection):
         process = await super().create_process(*(args or (self._terminal_shell,)), **kwargs)
         self.opened[-1] = args
         return process
+
+
+class _PtyProcess:
+    """An asyncssh process over a shell that runs on a pty it controls.
+
+    What a server's ``pty-req`` gives a session: one stream, typed into a
+    real line discipline, so a Ctrl-C byte is a SIGINT to the foreground job.
+    """
+
+    def __init__(self, pty: ControllingPty) -> None:
+        self._pty = pty
+        self.pid = pty.proc.pid
+        self.stdout = asyncio.StreamReader()
+        self.stdin = SimpleNamespace(write=self._write)
+        self.written: list[bytes] = []
+        self._loop = asyncio.get_running_loop()
+        self._loop.add_reader(pty.controller, self._readable)
+
+    def _readable(self) -> None:
+        try:
+            data = os.read(self._pty.controller, 65536)
+        except OSError:  # the shell's side is gone: the pty reads EIO
+            data = b""
+        if data:
+            self.stdout.feed_data(data)
+            return
+        self._loop.remove_reader(self._pty.controller)
+        self.stdout.feed_eof()
+
+    def _write(self, data: bytes) -> None:
+        self.written.append(data)
+        os.write(self._pty.controller, data)
+
+    def send_signal(self, name: str) -> None:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(self.pid, getattr(signal, f"SIG{name}"))
+
+    def close(self) -> None:
+        with contextlib.suppress(ValueError, OSError):
+            self._loop.remove_reader(self._pty.controller)
+        self._pty.close()
+
+
+class _PtyConnection(_EitherConnection):
+    """:class:`_EitherConnection` whose terminal session is an interactive shell on a real pty.
+
+    The session without a terminal is the same login shell on two pipes; the
+    one with a terminal is ``bash -il``, an interactive login shell, as a
+    server's pty shell is. Its ``.profile`` sources the interactive rc file
+    (``.bashrc`` in *home*, written from *rc*) when the shell is interactive,
+    as a person's profile does.
+    """
+
+    def __init__(self, home: Path, *, rc: str = "", **kwargs: Any) -> None:
+        super().__init__(home, **kwargs)
+        (home / ".bashrc").write_text(rc)
+        (home / ".profile").write_text('case $- in *i*) . "$HOME/.bashrc";; esac\n')
+        self._ptys: list[_PtyProcess] = []
+
+    async def create_process(self, *args: Any, **kwargs: Any) -> Any:
+        if args or kwargs.get("request_pty") is False:
+            return await super().create_process(*args, **kwargs)
+        self.opened.append(args)
+        self.asked.append(kwargs)
+        env = {**self._env, "TERM": "dumb"}
+        process = _PtyProcess(spawn_on_controlling_pty([env["SHELL"], "-il"], env=env))
+        self._ptys.append(process)
+        return process
+
+    async def reap(self) -> None:
+        for process in self._ptys:
+            process.close()
+        await super().reap()
 
 
 def _proxied() -> UnixHost:
@@ -487,9 +562,20 @@ async def test_a_named_session_without_a_terminal_refuses_a_user_switch(piped, s
 
 
 @pytest.mark.asyncio
-async def test_an_unset_exec_on_ssh_runs_on_a_session_without_a_terminal(piped):
+async def test_an_unset_exec_on_ssh_runs_on_a_session_with_a_terminal(piped):
+    """As ``run`` does: the pty is asked for, and the no-terminal session's token is not set."""
     host, conn = piped
-    result = await host.exec('test -t 1 && echo tty || echo pipe; echo "${OTTO_SESSION:+set}"')
+    result = await host.exec('echo "${OTTO_SESSION:-unset}"')
+    assert (result.status, result.value) == (Status.Success, "unset")
+    assert [asked.get("request_pty") for asked in conn.asked] == [None]
+
+
+@pytest.mark.asyncio
+async def test_exec_without_a_terminal_on_ssh_runs_on_a_session_without_one(piped):
+    host, conn = piped
+    result = await host.exec(
+        'test -t 1 && echo tty || echo pipe; echo "${OTTO_SESSION:+set}"', terminal=False
+    )
     assert (result.status, result.value) == (Status.Success, "pipe\nset")
     assert [asked.get("request_pty") for asked in conn.asked] == [False]
 
@@ -505,8 +591,7 @@ async def test_eight_held_execs_are_on_eight_sessions_and_one_stays_idle(piped, 
     calls = [
         asyncio.create_task(
             host.exec(
-                f"touch {gate}/started.{i}; "
-                f"while [ ! -e {gate}/go ]; do sleep 0.05; done; echo $OTTO_SESSION"
+                f"touch {gate}/started.{i}; while [ ! -e {gate}/go ]; do sleep 0.05; done; echo $$"
             )
         )
         for i in range(8)
@@ -523,7 +608,7 @@ async def test_eight_held_execs_are_on_eight_sessions_and_one_stays_idle(piped, 
         (gate / "go").touch()
         results = await asyncio.gather(*calls)
     assert len({r.value for r in results}) == 8
-    (idle,) = host._session_mgr._exec_pools[("user", True)]
+    (idle,) = host._session_mgr._exec_pools[("user", False)]
     assert idle.alive
     assert [s for s in host._session_mgr._named_sessions.values() if s.alive] == [idle]
     assert len(conn.processes) == 8
@@ -531,7 +616,12 @@ async def test_eight_held_execs_are_on_eight_sessions_and_one_stays_idle(piped, 
 
 @pytest.mark.parametrize("frame", [None, "ash"], ids=["bash", "ash"])
 @pytest.mark.asyncio
-async def test_a_long_line_arrives_byte_identical_on_an_unset_exec(piped, frame):
+async def test_a_long_line_arrives_byte_identical_on_an_exec_without_a_terminal(piped, frame):
+    """``terminal=False``: the session without a terminal has no line editor to cut the line.
+
+    On ash a terminal refuses a line this long; that refusal is
+    ``test_run_line_length.py``'s.
+    """
     host, _conn = piped
     if frame is not None:
         from otto.host.command_frame import build_command_frame
@@ -542,19 +632,27 @@ async def test_a_long_line_arrives_byte_identical_on_an_unset_exec(piped, frame)
         "cksum", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE
     )
     expected = (await cksum.communicate(payload.encode()))[0].decode().strip()
-    result = await host.exec(f"printf %s '{payload}' | cksum", timeout=60)
+    result = await host.exec(f"printf %s '{payload}' | cksum", timeout=60, terminal=False)
     assert (result.status, result.value) == (Status.Success, expected)
 
 
 @pytest.mark.asyncio
-async def test_a_printing_profile_sets_its_value_and_prints_into_no_output(piped, tmp_path, caplog):
-    host, _conn = piped
+async def test_a_printing_profile_sets_its_value_and_prints_into_no_output(tmp_path, caplog):
+    """A user's unset exec, on a terminal shell that is a login shell, as a server's is."""
+    host = _unix()
+    conn = _EitherConnection(tmp_path, login=True)
+    host._connections.ssh = AsyncMock(return_value=conn)  # ty: ignore[invalid-assignment]
     (tmp_path / ".profile").write_text("echo PROFILE-BANNER\nexport FROM_PROFILE=yes\n")
     caplog.set_level("DEBUG")
-    cold = await host.exec("echo $FROM_PROFILE", log=LogMode.NORMAL)
-    warm = await host.exec("echo $FROM_PROFILE", log=LogMode.NORMAL)
-    assert (cold.value, warm.value) == ("yes", "yes")
-    assert host._session_mgr._exec_pool_count == 1, "the warm call reused the session"
+    try:
+        cold = await host.exec("echo $FROM_PROFILE", log=LogMode.NORMAL)
+        warm = await host.exec("echo $FROM_PROFILE", log=LogMode.NORMAL)
+        assert (cold.value, warm.value) == ("yes", "yes")
+        assert host._session_mgr._exec_pool_count == 1, "the warm call reused the session"
+    finally:
+        await host.close()
+        await conn.reap()
+    assert [asked.get("request_pty") for asked in conn.asked] == [None]
     assert "PROFILE-BANNER" not in caplog.text
 
 
@@ -588,9 +686,11 @@ async def test_exec_without_a_terminal_on_a_hooked_host_is_refused_before_any_op
         await h.exec("true", terminal=False)
 
 
-@pytest.mark.parametrize("terminal", [None, False])
+@pytest.mark.parametrize(("terminal", "pty"), [(None, None), (False, False)], ids=str)
 @pytest.mark.asyncio
-async def test_a_direct_login_user_s_exec_is_a_session_over_their_own_login(tmp_path, terminal):
+async def test_a_direct_login_user_s_exec_is_a_session_over_their_own_login(
+    tmp_path, terminal, pty
+):
     h = _unix(creds=[Cred(login="user", password="pass"), Cred(login="root", password="pw")])
     own = _EitherConnection(tmp_path)
     h._connections.ssh = AsyncMock(side_effect=AssertionError("the host's own login was used"))  # ty: ignore[invalid-assignment]
@@ -599,7 +699,7 @@ async def test_a_direct_login_user_s_exec_is_a_session_over_their_own_login(tmp_
         result = await h.exec("echo hi", user="root", terminal=terminal)
         assert result.value == "hi"
         assert h._connections.ssh_as.await_args.kwargs["user"] == "root"
-        assert [asked.get("request_pty") for asked in own.asked] == [False]
+        assert [asked.get("request_pty") for asked in own.asked] == [pty]
     finally:
         await h.close()
         await own.reap()
@@ -661,30 +761,38 @@ async def test_a_stopped_exec_without_a_terminal_stops_everything_its_session_st
     token and is stopped with it, detached into a session of its own
     (``setsid``) or not. Only one started without the token survives.
     The stopped session is closed, and the next exec runs on another.
+    Every call passes ``terminal=False``: this is the rule of the session
+    without a terminal, whose token (``OTTO_SESSION``) a terminal session
+    does not set.
     """
     host = piped_either_server
     unmarked, marked, plain, started = (tmp_path / n for n in ("um", "mk", "pl", "st"))
     tail = tmp_path / "tail"
     duration = 10**6 + secrets.randbelow(10**6)
     try:
-        first = await host.exec("echo $OTTO_SESSION")
+        first = await host.exec("echo $OTTO_SESSION", terminal=False)
         await host.exec(
             f"env -u OTTO_SESSION setsid sh -c 'echo $$ > {unmarked}; exec sleep 600' "
-            f">/dev/null 2>&1 </dev/null &"
+            f">/dev/null 2>&1 </dev/null &",
+            terminal=False,
         )
         survivor = await _pid_of(unmarked)
         await host.exec(
-            f"setsid sh -c 'echo $$ > {marked}; exec sleep 600' >/dev/null 2>&1 </dev/null &"
+            f"setsid sh -c 'echo $$ > {marked}; exec sleep 600' >/dev/null 2>&1 </dev/null &",
+            terminal=False,
         )
-        await host.exec(f"sh -c 'echo $$ > {plain}; exec sleep 600' >/dev/null 2>&1 </dev/null &")
+        await host.exec(
+            f"sh -c 'echo $$ > {plain}; exec sleep 600' >/dev/null 2>&1 </dev/null &",
+            terminal=False,
+        )
         earlier = [await _pid_of(marked), await _pid_of(plain)]
         cmd = f"sh -c 'echo $$ > {started}; exec sleep {duration}'; touch {tail}"
         if how == "timeout":
-            result = await host.exec(cmd, timeout=5)
+            result = await host.exec(cmd, timeout=5, terminal=False)
             assert result.timed_out
             assert started.exists(), "the command never started within its budget"
         else:
-            running = asyncio.ensure_future(host.exec(cmd, timeout=60))
+            running = asyncio.ensure_future(host.exec(cmd, timeout=60, terminal=False))
             await _pid_of(started)
             running.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -696,7 +804,7 @@ async def test_a_stopped_exec_without_a_terminal_stops_everything_its_session_st
             )
         assert _sleeping(duration) == []
         assert _running(survivor)
-        nxt = await host.exec("echo $OTTO_SESSION")
+        nxt = await host.exec("echo $OTTO_SESSION", terminal=False)
         assert nxt.value != first.value
         mgr = host._session_mgr
         alive = [s for idle in mgr._exec_pools.values() for s in idle if s.alive]
@@ -716,17 +824,21 @@ async def test_a_detached_launch_outlives_a_later_stop_of_its_session(
 
     It clears the session mark before ``setsid``, so a later timed-out exec
     on the session that typed it, which stops everything the session
-    started, does not reach it.
+    started, does not reach it. ``terminal=False``: that stop and the mark
+    are the session without a terminal's.
     """
     host = piped_either_server
     launched, started = tmp_path / "launched", tmp_path / "started"
     try:
         first = await host.exec(
             "echo $OTTO_SESSION; "
-            + detached_command(f"sh -c 'echo $$ > {launched}; exec sleep 600'")
+            + detached_command(f"sh -c 'echo $$ > {launched}; exec sleep 600'"),
+            terminal=False,
         )
         survivor = await _pid_of(launched)
-        result = await host.exec(f"echo $OTTO_SESSION; echo $$ > {started}; sleep 600", timeout=2)
+        result = await host.exec(
+            f"echo $OTTO_SESSION; echo $$ > {started}; sleep 600", timeout=2, terminal=False
+        )
         assert result.timed_out
         # The stopped exec ran on the session that launched the survivor.
         assert result.value.splitlines()[1] == first.value.splitlines()[0]
@@ -755,7 +867,9 @@ async def test_a_cancel_landing_as_a_session_read_completes_still_cancels_the_co
     Python 3.10's ``wait_for`` returned the read and dropped the cancel, and
     the command was then typed after its caller had cancelled it. The
     ``second-read`` and ``third-read`` cases are reads inside the command's
-    own task; they pin an ordinary cancel in the middle of a command.
+    own task; they pin an ordinary cancel in the middle of a command. Both
+    entries pass ``terminal=False``, so each reads the same ``SshSession``
+    as the other.
     """
     host, _conn = piped
     duration = 10**6 + secrets.randbelow(10**6)
@@ -775,7 +889,7 @@ async def test_a_cancel_landing_as_a_session_read_completes_still_cancels_the_co
     cmd = f"echo started; sleep {duration} < /dev/null"
     never = float("inf")
     call = (
-        host.exec(cmd, timeout=never)
+        host.exec(cmd, timeout=never, terminal=False)
         if entry == "exec"
         else host.run(cmd, timeout=never, terminal=False)
     )
@@ -805,6 +919,8 @@ async def test_a_daemon_otto_launches_outlives_a_later_timed_out_exec_on_its_ses
     every process started with the session's token; the daemon is not one of
     them. ``systemd-run`` is kept off the launching exec's ``PATH``, so the
     launch takes the fallback, which inherits the session shell's environment.
+    ``terminal=False``: the token and its stop are the session without a
+    terminal's.
     """
     host = piped_either_server
     bin_dir = tmp_path / "bin"
@@ -818,13 +934,15 @@ async def test_a_daemon_otto_launches_outlives_a_later_timed_out_exec_on_its_ses
         "otto-test:v1:keep", ["sh", "-c", f"echo $$ > {daemon}; exec sleep 600"]
     )
     try:
-        session_token = (await host.exec("echo $OTTO_SESSION")).value
+        session_token = (await host.exec("echo $OTTO_SESSION", terminal=False)).value
         assert session_token
-        await host.exec(f"PATH={bin_dir} {launch}")
+        await host.exec(f"PATH={bin_dir} {launch}", terminal=False)
         pid = await _pid_of(daemon)
         environ = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
         assert not [e for e in environ if e.startswith(f"{SESSION_MARK}=".encode())]
-        result = await host.exec(f"sh -c 'echo $$ > {started}; exec sleep 600'", timeout=5)
+        result = await host.exec(
+            f"sh -c 'echo $$ > {started}; exec sleep 600'", timeout=5, terminal=False
+        )
         assert result.timed_out
         stopped = await _pid_of(started)
         await wait_for_async(
@@ -835,3 +953,121 @@ async def test_a_daemon_otto_launches_outlives_a_later_timed_out_exec_on_its_ses
         for path in (daemon, started):
             with contextlib.suppress(ProcessLookupError, ValueError, FileNotFoundError):
                 os.kill(int(path.read_text()), signal.SIGKILL)
+
+
+# ---------------------------------------------------------------------------
+# What a user's unset exec meets now that it has a terminal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_unset_exec_is_stopped_by_ctrl_c_and_an_earlier_background_child_lives(
+    tmp_path,
+):
+    """The terminal session's rule: Ctrl-C stops the foreground command, nothing else.
+
+    Both execs run on the one shell of a real pty. The first leaves a child
+    in the background that takes SIGINT's default action back, so a Ctrl-C
+    that reached it would end it; the second times out. Its command is
+    stopped by the Ctrl-C otto types (no stop sweep runs), the pool then lets
+    that session go and the next exec opens another, and the first exec's
+    child is still running: the Ctrl-C reached the foreground command only.
+    The session without a terminal stops everything it started instead:
+    :func:`test_a_stopped_exec_without_a_terminal_stops_everything_its_session_started`.
+    """
+    host = _unix()
+    conn = _PtyConnection(tmp_path)
+    host._connections.ssh = AsyncMock(return_value=conn)  # ty: ignore[invalid-assignment]
+    child, started = tmp_path / "child", tmp_path / "started"
+    try:
+        interruptible = (
+            "import os, signal, time; signal.signal(signal.SIGINT, signal.SIG_DFL); "
+            f"open({str(child)!r}, 'w').write(f'{{os.getpid()}}\\n'); time.sleep(600)"
+        )
+        await host.exec(f'{sys.executable} -c "{interruptible}" >/dev/null 2>&1 </dev/null &')
+        background = await _pid_of(child)
+        result = await host.exec(f"sh -c 'echo $$ > {started}; exec sleep 600'", timeout=3)
+        assert result.timed_out
+        stopped = await _pid_of(started)
+        await wait_for_async(
+            lambda: not _running(stopped), 10.0, interval=0.01, on_timeout=f"{stopped} runs"
+        )
+        (shell,) = conn._ptys
+        assert b"\x03" in shell.written, "the timeout was not a Ctrl-C"
+        assert conn.ran == [], "a stop sweep ran on a terminal session"
+        assert (await host.exec("echo after")).value == "after"
+        assert _running(background), "the Ctrl-C reached the earlier exec's background child"
+    finally:
+        await host.close()
+        await conn.reap()
+        for path in (child, started):
+            with contextlib.suppress(ProcessLookupError, ValueError, FileNotFoundError):
+                os.kill(int(path.read_text()), signal.SIGKILL)
+
+
+_EACH_KIND = 5
+"""Concurrent calls of each kind, ten sessions at once. The fake sets no channel limit."""
+
+
+@pytest.mark.asyncio
+async def test_users_and_otto_s_execs_together_complete_and_keep_one_idle_session_of_each_mode(
+    piped, tmp_path
+):
+    """A user's unset ``exec`` (a terminal) beside otto's own commands (none), held at once.
+
+    Every call runs on a session of its own and completes; afterwards the
+    manager keeps as many idle sessions per mode as its ssh rule says
+    (``_idle_exec_sessions_kept``) and closes the rest.
+    """
+    from otto.host.host import exec_own
+
+    host, conn = piped
+    gate = tmp_path / "gate"
+    gate.mkdir()
+
+    def held(tag: str) -> str:
+        return (
+            f"touch {gate}/started.{tag}; while [ ! -e {gate}/go ]; do sleep 0.05; done; echo {tag}"
+        )
+
+    users = [asyncio.create_task(host.exec(held(f"u{i}"))) for i in range(_EACH_KIND)]
+    owns = [asyncio.create_task(exec_own(host, held(f"o{i}"))) for i in range(_EACH_KIND)]
+    try:
+        await wait_for_async(
+            lambda: len(list(gate.glob("started.*"))) == 2 * _EACH_KIND,
+            30,
+            on_timeout="the calls never ran at once",
+        )
+        live = [s for s in host._session_mgr._named_sessions.values() if s.alive]
+        assert len(live) == 2 * _EACH_KIND
+    finally:
+        (gate / "go").touch()
+        results = await asyncio.gather(*users, *owns)
+    assert [r.value for r in results] == [f"u{i}" for i in range(_EACH_KIND)] + [
+        f"o{i}" for i in range(_EACH_KIND)
+    ]
+    asked = [a.get("request_pty") for a in conn.asked]
+    assert (asked.count(None), asked.count(False)) == (_EACH_KIND, _EACH_KIND)
+    mgr = host._session_mgr
+    kept = mgr._idle_exec_sessions_kept()
+    assert kept == 1
+    idle = [s for plain in (False, True) for s in mgr._exec_pools[("user", plain)] if s.alive]
+    assert [len([s for s in mgr._exec_pools[("user", p)] if s.alive]) for p in (False, True)] == [
+        kept,
+        kept,
+    ]
+    alive = [s for s in mgr._named_sessions.values() if s.alive]
+    assert sorted(map(id, alive)) == sorted(map(id, idle))
+
+
+@pytest.mark.asyncio
+async def test_a_users_unset_exec_refuses_a_control_character_that_runs_without_a_terminal(piped):
+    """A terminal acts on BEL (Ctrl-G) as a keystroke, so it is refused; without one it is data."""
+    from otto.host.errors import UntypableCommandError
+
+    host, _conn = piped
+    cmd = "printf '%s' 'a\ab' | wc -c | tr -d ' '"
+    with pytest.raises(UntypableCommandError, match=r"Ctrl-G \(0x07\)"):
+        await host.exec(cmd)
+    result = await host.exec(cmd, terminal=False)
+    assert (result.status, result.value) == (Status.Success, "3")

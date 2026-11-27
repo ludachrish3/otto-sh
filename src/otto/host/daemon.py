@@ -38,7 +38,7 @@ _SYSTEMD_RUN_PROBE_TIMEOUT = 5
 
 
 def launch_command(sentinel: str, argv: list[str]) -> str:
-    """Build the ``host.exec`` line for a detached, tagged, session-surviving daemon.
+    """Build the ``exec`` line for a detached, tagged, session-surviving daemon.
 
     ``bash -c 'exec -a "$1" "${@:2}"' _ <sentinel> <program argv…>`` sets the
     process's ``argv[0]`` to the sentinel (``exec -a`` — a bash builtin; bash is

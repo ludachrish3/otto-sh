@@ -29,7 +29,7 @@ from ..host.docker_host import (
 )
 from ..host.errors import HostCommandError, StagingRefusedError
 from ..host.factory import apply_providers
-from ..host.host import Host, is_dry_run, refuse_declined_fact
+from ..host.host import Host, exec_own, is_dry_run, refuse_declined_fact
 from ..host.mount import Mount
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError, CommandResult, Result
@@ -79,7 +79,7 @@ async def _run_compose(parent: Host, command: str) -> CommandResult:
     stated once. A per-service ``stop``/``rm`` and the observe verbs keep the
     host's default bound: they never pull or build.
     """
-    return await parent.exec(command, timeout=float("inf"))
+    return await exec_own(parent, command, timeout=float("inf"))
 
 
 async def up_stack(parent: Host, command: str, *, project: str) -> CommandResult:
@@ -243,7 +243,7 @@ async def _stack_already_up(
     ``compose_up`` responds to it by running the convergent ``up -d`` — an
     ACTION. A dry run must not buy that arm with a shrug, so it refuses.
     """
-    result = await parent.exec(stack_containers_command(project_name, all=all))
+    result = await exec_own(parent, stack_containers_command(project_name, all=all))
     refuse_declined_fact(result, asked=f"stack_already_up({project_name!r})")
     if not result.status.is_ok:
         logger.warning(
@@ -280,7 +280,7 @@ async def _resolve_container_id(
     warned: "list[str]" = []
 
     async def visible() -> bool:
-        result = await parent.exec(compose_container_probe(project_name, service))
+        result = await exec_own(parent, compose_container_probe(project_name, service))
         refuse_declined_fact(result, asked=f"resolve_container_id({project_name}/{service})")
         if result.status.is_ok:
             found[:] = result.value.strip().splitlines()[:1]
@@ -1282,7 +1282,7 @@ async def staging_to_remove(host: Host, project: Project) -> StagingSurvey:
             detail="Nothing was listed, so what cleanup would remove is unknown.",
         )
     root = parent_staging_root(host)
-    listed = await host.exec(present_roots_command(root, [k.key for k in keys]))
+    listed = await exec_own(host, present_roots_command(root, [k.key for k in keys]))
     refuse_declined_fact(listed, asked=f"staging_to_remove({project.name})")
     if not listed.is_ok:
         raise HostCommandError(

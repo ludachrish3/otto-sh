@@ -29,7 +29,7 @@ from typing_extensions import final
 
 from ..host.docker_host import DockerContainerHost, parent_staging_root
 from ..host.errors import HostCommandError
-from ..host.host import is_dry_run
+from ..host.host import exec_own, is_dry_run
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError
 from .adapter import AdapterResult, adapter_for
@@ -1004,7 +1004,7 @@ async def teardown(
             continue
         ran: "list[CommandResult]" = []
         for verb, flags in (("stop", ["-t", str(int(stop_timeout))]), ("rm", ["-f"])):
-            result = await parent_host.exec(compose_command(proj, verb, *flags, *wanted))
+            result = await exec_own(parent_host, compose_command(proj, verb, *flags, *wanted))
             ran.append(result)
             if not result.is_ok:
                 logger.error(

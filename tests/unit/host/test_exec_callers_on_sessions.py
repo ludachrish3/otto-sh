@@ -1,7 +1,7 @@
 """otto's own ``exec()`` callers, with real payloads, on the session ``exec()`` uses.
 
-An unset ``exec()`` on ssh borrows a pooled session without a terminal, whose
-shell is a LOGIN shell: its profile has been read. Every host here has a
+otto's own ``exec()`` on ssh borrows a pooled session without a terminal,
+whose shell is a LOGIN shell: its profile has been read. Every host here has a
 profile that prints a line and sets a variable, and each of otto's internal
 callers (the file verbs, the shell and netcat transfers, the coverage sweep,
 a container's delegation, the daemon launcher) is driven through the public
@@ -28,6 +28,7 @@ import otto.host.transfer.nc as nc_mod
 from otto.host import cov_sweep
 from otto.host.daemon import launch_command
 from otto.host.docker_host import DockerContainerHost
+from otto.host.host import exec_own
 from otto.host.process_stop import SESSION_MARK
 from otto.host.transfer.shell import _SHELL_CHUNK_BYTES
 from otto.host.unix_host import UnixHost
@@ -35,7 +36,13 @@ from otto.logger.mode import LogMode
 from otto.utils import Status, wait_for_async
 from tests.unit.host._exec_log import all_records, close_ssh_parent, ssh_parent_over_shells
 from tests.unit.host.test_cov_sweep import _cov, _tree
-from tests.unit.host.test_terminal_switch import _EitherConnection, _pid_of, _running, _unix
+from tests.unit.host.test_terminal_switch import (
+    _EitherConnection,
+    _pid_of,
+    _PtyConnection,
+    _running,
+    _unix,
+)
 
 BANNER = "PROFILE-BANNER-7a"
 """The line every host's login profile prints."""
@@ -130,7 +137,8 @@ async def test_exists_ls_and_glob_answer_only_the_tree_cold_and_warm(profiled, t
             ]
     _no_banner(*(r.getMessage() for r in records))
     assert host._session_mgr._exec_pool_count == 1, "the warm calls reused the cold session"
-    assert (await host.exec("echo $FROM_PROFILE")).value == "yes", "the profile was read"
+    # otto's own command, on the session those calls used: its login shell read the profile.
+    assert (await exec_own(host, "echo $FROM_PROFILE")).value == "yes", "the profile was read"
 
 
 # ---------------------------------------------------------------------------
@@ -368,9 +376,12 @@ async def test_a_container_over_a_session_backed_parent_runs_users_prompts_and_l
     finally:
         await close_ssh_parent(parent, dial)
     # The prompt leg took a terminal session (no request_pty=False), whose
-    # login shell found the stand-in only on the PATH its profile sets.
+    # login shell found the stand-in only on the PATH its profile sets. The
+    # other legs are otto's own hop: without a terminal on a stock parent; a
+    # parent that overrides exec receives them through its public exec, with
+    # the user's default, a terminal.
     assert None in modes
-    assert False in modes
+    assert (False in modes) is (parent_cls is UnixHost)
     assert (plain.status, plain.value) == (Status.Success, "as:default\nyes inside")
     assert as_user.value == "as:app\nhi"
     assert answered.status is Status.Success, answered.value
@@ -409,7 +420,8 @@ async def test_a_daemon_outlives_its_launching_session_being_closed(tmp_path, cl
 
     The launching exec holds its session until the test lets it go; with a
     second exec's session already idle, the ssh idle limit (one) closes the
-    launching session when it returns. Or the host is closed.
+    launching session when it returns. Or the host is closed. Both execs pass
+    ``terminal=False``: the session under test is the one without a terminal.
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -434,6 +446,7 @@ async def test_a_daemon_outlives_its_launching_session_being_closed(tmp_path, cl
                     f">/dev/null 2>&1 </dev/null & touch {launched}; "
                     f"while [ ! -e {go} ]; do sleep 0.05; done",
                     timeout=60,
+                    terminal=False,
                 )
             )
             pid = await _pid_of(daemon)
@@ -443,7 +456,7 @@ async def test_a_daemon_outlives_its_launching_session_being_closed(tmp_path, cl
             assert not [e for e in environ if e.startswith(f"{SESSION_MARK}=".encode())]
             mgr = host._session_mgr
             if closer == "idle-limit":
-                assert (await host.exec("true")).status is Status.Success
+                assert (await host.exec("true", terminal=False)).status is Status.Success
                 (launcher,) = [
                     s for s in _live_sessions(host) if s not in mgr._exec_pools[("user", True)]
                 ]
@@ -466,3 +479,304 @@ async def test_a_daemon_outlives_its_launching_session_being_closed(tmp_path, cl
         for path in (daemon, sibling):
             with contextlib.suppress(ProcessLookupError, ValueError, FileNotFoundError):
                 os.kill(int(path.read_text()), signal.SIGKILL)
+
+
+# ---------------------------------------------------------------------------
+# 7. The mode: otto's own commands keep their session under a user's default
+# ---------------------------------------------------------------------------
+#
+# A user's unset ``exec`` takes the session with a terminal. Each caller below
+# is otto's own and must still run on the session without one (``plain``), on
+# the same host, in the same test.
+
+_DOCKER_ANY = """\
+case "$1" in
+  load) echo "Loaded image: x/img:latest";;
+esac
+exit 0
+"""
+"""A ``docker`` stand-in that answers every verb ok, and ``load`` as docker does."""
+
+
+@contextlib.contextmanager
+def _modes():
+    """Record each ``(command, plain)`` a ``UnixHost`` hands its session manager."""
+    seen: list[tuple[str, bool]] = []
+    real = UnixHost._run_exec
+
+    async def spy(self: Any, **kwargs: Any) -> Any:
+        seen.append((str(kwargs["cmd"]), kwargs["plain"]))
+        return await real(self, **kwargs)
+
+    with patch.object(UnixHost, "_run_exec", spy):
+        yield seen
+
+
+async def _assert_own_kept_its_mode(host: UnixHost, seen: "list[tuple[str, bool]]") -> None:
+    """Every command recorded so far was otto's, without a terminal; a user's now takes one."""
+    assert seen, "otto's caller sent no command"
+    assert [cmd for cmd, plain in seen if not plain] == [], "an own command took the terminal"
+    seen.clear()
+    assert (await host.exec("true")).status is Status.Success
+    assert seen == [("true", False)], "the user's unset exec did not take the terminal"
+
+
+@pytest_asyncio.fixture
+async def docker_parent(tmp_path):
+    """An ssh host over real login shells with :data:`_DOCKER_ANY` on its ``PATH``."""
+    parent, dial = ssh_parent_over_shells(
+        UnixHost, tmp_path / "home", {"docker": _DOCKER_ANY}, login=True
+    )
+    try:
+        yield parent
+    finally:
+        await close_ssh_parent(parent, dial)
+
+
+@pytest.mark.asyncio
+async def test_exec_or_unreachable_keeps_its_mode(profiled):
+    from otto.host.errors import exec_or_unreachable
+
+    host, _conn = profiled
+    with _modes() as seen:
+        result = await exec_or_unreachable(host, "echo reached", timeout=30)
+        assert (result.status, result.value) == (Status.Success, "reached")
+        await _assert_own_kept_its_mode(host, seen)
+
+
+@pytest.mark.asyncio
+async def test_read_file_and_a_long_write_file_keep_their_mode_on_ash(profiled, tmp_path):
+    """On ash a terminal refuses a line over ~4,000 characters; this payload is not refused."""
+    from otto.host.command_frame import build_command_frame
+
+    host, _conn = profiled
+    host._session_mgr._command_frame = build_command_frame(type_name="ash")
+    target = tmp_path / "long"
+    data = "y" * 6000
+    with _modes() as seen:
+        assert (await host.write_file(target, data=data)).status is Status.Success
+        assert await host.read_file(target) == data
+        assert any("base64 -d" in cmd for cmd, _ in seen)
+        await _assert_own_kept_its_mode(host, seen)
+
+
+@pytest.mark.asyncio
+async def test_the_shell_transfer_sends_its_chunk_whole_and_keeps_its_mode(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    async with _profiled(home) as (host, _conn):
+        host.transfer = "shell"
+        host._file_transfer = host._build_file_transfer()
+        src = tmp_path / "chunk.bin"
+        src.write_bytes(bytes(range(256)) * (_SHELL_CHUNK_BYTES // 256))
+        land = tmp_path / "land"
+        land.mkdir()
+        with _modes() as seen:
+            put = await host.put(src, land, show_progress=False)
+            assert put.status is Status.Success, put.msg
+            chunks = [cmd for cmd, _ in seen if "| base64 -d >" in cmd]
+            assert len(chunks) == 1, "the chunk was not sent whole"
+            await _assert_own_kept_its_mode(host, seen)
+        assert (land / "chunk.bin").read_bytes() == src.read_bytes()
+
+
+class _ForwardingHost(UnixHost):
+    """A project's ``exec`` override that only forwards: otto's commands reach it."""
+
+    async def exec(self, cmd, **kwargs):  # ty: ignore[invalid-method-override]
+        return await super().exec(cmd, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_a_long_transfer_through_a_host_that_overrides_exec_is_sized_for_the_terminal(
+    tmp_path,
+):
+    """The override takes the public default, a terminal; the chunks are sized for it."""
+    from otto.host.command_frame import build_command_frame
+    from otto.host.userland import PTY_TYPED_LINE_MAX
+
+    home = tmp_path / "home"
+    parent, dial = ssh_parent_over_shells(_ForwardingHost, home)
+    parent.transfer = "shell"
+    parent._session_mgr._command_frame = build_command_frame(type_name="ash")
+    parent._file_transfer = parent._build_file_transfer()
+    src = tmp_path / "long.bin"
+    src.write_bytes(os.urandom(3 * PTY_TYPED_LINE_MAX))
+    land = tmp_path / "land"
+    land.mkdir()
+    try:
+        with _modes() as seen:
+            put = await parent.put(src, land, show_progress=False)
+        assert put.status is Status.Success, put.msg
+        assert (land / "long.bin").read_bytes() == src.read_bytes()
+        chunks = [cmd for cmd, plain in seen if "| base64 -d >" in cmd]
+        assert len(chunks) > 1, "the payload went in one line a terminal cannot take"
+        assert all(len(cmd) < PTY_TYPED_LINE_MAX for cmd in chunks)
+        assert not [plain for cmd, plain in seen if "| base64 -d >" in cmd and plain]
+    finally:
+        await close_ssh_parent(parent, dial)
+
+
+@pytest.mark.asyncio
+async def test_the_userland_probes_keep_their_mode(profiled):
+    host, _conn = profiled
+    with _modes() as seen:
+        await host._userland().resolve()
+        await _assert_own_kept_its_mode(host, seen)
+
+
+@pytest.mark.asyncio
+async def test_the_survey_runner_keeps_its_mode(profiled):
+    from otto.host.survey.engine import _exec_only
+
+    host, _conn = profiled
+    with _modes() as seen:
+        result = await _exec_only(host, "echo surveyed", user=None)
+        assert (result.status, result.value) == (Status.Success, "surveyed")
+        await _assert_own_kept_its_mode(host, seen)
+
+
+@pytest.mark.asyncio
+async def test_a_containers_hop_keeps_its_mode_on_the_parent(tmp_path):
+    parent, dial = ssh_parent_over_shells(UnixHost, tmp_path, {"docker": _DOCKER}, login=True)
+    container = DockerContainerHost(
+        parent=parent,
+        container_id="abc123def456",
+        project="project1",
+        service="api",
+        compose_project="otto-project1-vagrant",
+    )
+    try:
+        with (
+            patch.object(DockerContainerHost, "_ensure_running", AsyncMock(return_value=None)),
+            _modes() as seen,
+        ):
+            result = await container.exec("echo inside")
+            assert result.value == "as:default\ninside"
+            assert [cmd for cmd, _ in seen if "docker exec" in cmd], seen
+            await _assert_own_kept_its_mode(parent, seen)
+    finally:
+        await close_ssh_parent(parent, dial)
+
+
+@pytest.mark.asyncio
+async def test_docker_load_keeps_its_mode(docker_parent):
+    from otto.host.docker_image_kind import DockerImageProduct
+
+    product = DockerImageProduct(
+        artifact=Path("x/img.tar"), name="tarball", image="x/img.tar", is_tarball=True
+    )
+    docker_parent.default_dest_dir = Path("/srv/stage")
+    with _modes() as seen:
+        assert (await product.install(docker_parent)).status is Status.Success
+        assert any(cmd.startswith("docker load") for cmd, _ in seen), seen
+        await _assert_own_kept_its_mode(docker_parent, seen)
+
+
+@pytest.mark.asyncio
+async def test_docker_compose_keeps_its_mode(docker_parent):
+    from otto.docker.compose import _run_compose
+
+    with _modes() as seen:
+        assert (await _run_compose(docker_parent, "docker compose version")).status.is_ok
+        await _assert_own_kept_its_mode(docker_parent, seen)
+
+
+@pytest.mark.asyncio
+async def test_a_docker_observe_verb_keeps_its_mode(docker_parent):
+    from otto.docker.observe import run_on
+
+    with _modes() as seen:
+        report = await run_on([docker_parent], "docker ps", asked="list_containers()")
+        assert report.ok
+        await _assert_own_kept_its_mode(docker_parent, seen)
+
+
+@pytest.mark.asyncio
+async def test_docker_staging_keeps_its_mode(docker_parent, tmp_path):
+    from otto.docker.staging import cleanup_project
+
+    with (
+        patch("otto.docker.staging.ensure_private_root", AsyncMock(return_value=tmp_path / "root")),
+        _modes() as seen,
+    ):
+        assert (await cleanup_project(docker_parent, "proj", stack=False)).status.is_ok
+        await _assert_own_kept_its_mode(docker_parent, seen)
+
+
+@pytest.mark.asyncio
+async def test_a_coverage_probe_keeps_its_mode(profiled, tmp_path):
+    host, _conn = profiled
+    d = _tree(tmp_path / "cov", "a.gcda")
+    with _modes() as seen:
+        assert await cov_sweep.probe_presence(host, [_cov("app", d)]) == frozenset({"app"})
+        await _assert_own_kept_its_mode(host, seen)
+
+
+@pytest.mark.asyncio
+async def test_a_power_command_keeps_its_mode(profiled):
+    from types import SimpleNamespace
+
+    from otto.host.power import CommandPowerConfig, _CommandPowerController
+
+    controller_host, _conn = profiled
+    target = _unix(ip="10.0.0.9")
+    lab = SimpleNamespace(hosts={"ctl": controller_host})
+    power = _CommandPowerController(
+        CommandPowerConfig(on_cmd="echo on {ip}", off_cmd="echo off", controller="ctl")
+    )
+    with patch("otto.invocation.installed_resolver", return_value=lab), _modes() as seen:
+        assert (await power.on(target)).status is Status.Success
+        assert seen[0][0] == "echo on 10.0.0.9"
+        await _assert_own_kept_its_mode(controller_host, seen)
+
+
+def test_a_remote_completion_listing_keeps_its_mode():
+    """The completer runs its own loop, so its session is stood in for at the manager's entry."""
+    from otto.cli import remote_completion as rc
+    from otto.config.remote_completion_cache import ListingEntry
+    from otto.lifecycle import run_command
+    from otto.result import CommandResult
+
+    host = _unix()
+    seen: list[tuple[str, bool]] = []
+
+    async def answer(self: Any, **kwargs: Any) -> CommandResult:
+        seen.append((str(kwargs["cmd"]), kwargs["plain"]))
+        return CommandResult(status=Status.Success, value="logs/\n", command=kwargs["cmd"])
+
+    with patch.object(UnixHost, "_run_exec", answer):
+        assert rc._live_listing(host, "/var") == [ListingEntry(name="logs", is_dir=True)]
+        assert seen == [(rc.listing_command("/var"), True)]
+        seen.clear()
+        assert run_command(host.exec("true")).status is Status.Success
+    assert seen == [("true", False)], "the user's unset exec did not take the terminal"
+
+
+@pytest.mark.asyncio
+async def test_an_interactive_alias_changes_a_users_exec_and_not_otto_s_rm(tmp_path):
+    """``alias rm='rm -i'`` in the interactive rc file reaches a user's unset ``exec`` only.
+
+    The user's ``rm`` is the alias: its prompt reads end of file and the file
+    stays. otto's own :meth:`~otto.host.file_ops.PosixFileOps.rm` runs on the
+    session without a terminal, a shell that reads no interactive rc file,
+    and removes the file.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    host = _unix()
+    conn = _PtyConnection(home, rc="alias rm='rm -i'\n")
+    host._connections.ssh = AsyncMock(return_value=conn)  # ty: ignore[invalid-assignment]
+    kept, removed = tmp_path / "kept", tmp_path / "removed"
+    kept.write_text("x")
+    removed.write_text("x")
+    try:
+        assert (await host.exec("alias rm")).value == "alias rm='rm -i'"
+        await host.exec(f"rm {kept}")
+        assert kept.exists(), "the alias did not reach the user's command"
+        assert (await host.rm(removed)).status is Status.Success
+        assert not removed.exists(), "otto's own rm took the user's alias"
+    finally:
+        await host.close()
+        await conn.reap()
+    assert sorted(a.get("request_pty") is False for a in conn.asked) == [False, True]

@@ -75,7 +75,8 @@ async def haul_globs(host: Any, globs: Sequence[str], dest: Path, *, who: str) -
 async def _absent(host: Any, path: Path) -> bool:
     """Return True only when ``test -e`` exited 1, never when the probe failed to run."""
     # Function-local: every host imports this module, and only a haul probes.
+    from .host import exec_own
     from .shell_quote import path_operand
 
-    result = await host.exec(f"test -e {path_operand(path)}")
+    result = await exec_own(host, f"test -e {path_operand(path)}")
     return result.retcode == 1

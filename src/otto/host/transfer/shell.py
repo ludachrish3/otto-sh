@@ -153,9 +153,9 @@ the DEVICE's line editor rather than as any transport. A 5535-character chunk
 line is over that by a factor of five.
 
 WHICH OF THE TWO THIS BACKEND GETS IS THE HOST'S ``term``, not this module's
-choice. ``_exec_cmd`` is ``UnixHost.exec``, which runs on a pooled shell session
-on every term; on ``term: "ssh"`` it may open that session without a
-terminal, and telnet's always has one -- the line-edited path. A
+choice. ``_exec_cmd`` is :func:`~otto.host.host.exec_own` on a ``UnixHost``,
+which runs on a pooled shell session on every term; on ``term: "ssh"`` it
+may open that session without a terminal, and telnet's always has one -- the line-edited path. A
 ``term: telnet`` BusyBox host is therefore exactly the case this note used
 to worry about, and it is NO LONGER
 UNMEASURED: five telnet-console BusyBox guests joined the bed, the case
