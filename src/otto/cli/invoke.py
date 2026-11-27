@@ -430,17 +430,17 @@ def _wrap_with_options(
     ``otto.instruction_catalog.instruction_path``), a parameter annotated with
     a class that covers *path* (``otto.instructions.covered_parameters``) is
     taken out of the signature and receives ``otto.get_options`` of its class
-    at call time. *func*'s arguments are bound by
+    at call time: its defaults when the command does not offer the class (its
+    project does not take part). *func*'s arguments are bound by
     ``otto.instructions.bind_arguments``, the binding a library call
     (``otto.instructions.run_instruction``) makes too. Nothing is resolved or
     imported when the command is built.
 
     The command says what is its own (:class:`OwnOptions`: *opts_cls*,
-    *project*, that it finishes its own dry run, and, with *path*, that it
-    keeps every project and that its plain parameters are reserved names, so
-    a covering class whose field takes one is refused naming that parameter)
-    and prepares nothing when it is dispatched: the
-    invocation prepares it with the classes covering it
+    *project*, that it finishes its own dry run, and, with *path*, that its
+    plain parameters are reserved names, so a covering class whose field
+    takes one is refused naming that parameter) and prepares nothing when it
+    is dispatched: the invocation prepares it with the classes covering it
     (:func:`prepare_command_options`), and the wrapper hands *func* the own
     class's prepared instance and its other keyword arguments. Called by
     other code (no parser context of its own), it prepares itself, every
@@ -473,7 +473,6 @@ def _wrap_with_options(
         project=project,
         finishes_dry_run=True,
         reserved=reserved,
-        every_project=path is not None,
     )
 
     # Replace the opts param with its expanded fields and drop the injected
@@ -602,8 +601,7 @@ def prepare_command_target(
 
     With *path*, an instruction's command path, a parameter annotated with
     a class covering *path* is injected with ``otto.get_options(cls)``, and
-    the command keeps every project (see ``_wrap_with_options``). The
-    covering classes' flags are attached for each invocation, like every
+    the covering classes' flags are attached for each invocation, like every
     command's (:func:`offered_options`); nothing is resolved here.
 
     Idempotent by contract, not coincidence: a callable this function already
@@ -2838,8 +2836,7 @@ class OwnOptions:
     for *cls*. *bodies* returns the body classes its own walk builds, every
     project's. *finishes_dry_run* says the command awaits its own dry-run
     tail. *reserved* names, for a collision message, each of its own
-    parameters that is not a field of *cls*. *every_project* keeps every
-    project whatever the invocation's selection.
+    parameters that is not a field of *cls*.
     """
 
     cls: type | None = None
@@ -2847,7 +2844,6 @@ class OwnOptions:
     bodies: "Callable[[], list[OptionsOrigin]] | None" = None
     finishes_dry_run: bool = False
     reserved: "Mapping[str, str]" = dataclasses.field(default_factory=dict)
-    every_project: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -3256,11 +3252,10 @@ def offered_options(ctx: typer.Context, spec: "CommandSpec") -> "Offer | None":
     whether or not it accepts, the covering registrations only when it
     does, and each only when no project owns it or its project takes part,
     so a project that does not take part offers nothing and has nothing
-    imported. A command whose :class:`OwnOptions` sets *every_project* keeps
-    every project and never asks :func:`kept_projects`. The registrations
-    kept are resolved, stopping at the first that fails. With no use kept
-    and no :class:`OwnOptions`, ``None``, and nothing is resolved or built.
-    The own class, the kept body classes and the covering classes are merged
+    imported. The registrations kept are resolved, stopping at the first
+    that fails. With no use kept and no :class:`OwnOptions`, ``None``, and
+    nothing is resolved or built. The own class, the kept body classes and the covering
+    classes are merged
     (:func:`~otto.params.merge_option_params`) with the command's other own
     parameters reserved by name and by spelling, ``-h``/``--help``
     included. A collision raises ``OptionsCollisionError`` naming both
@@ -3348,7 +3343,7 @@ def _offer(ctx: typer.Context, spec: "CommandSpec") -> "Offer | None":
                 union.append(param)
         nothing_built = _leaf_spec(path, None, (), ())
         return Offer(tuple(union), nothing_built, _no_conversion, finishes_dry_run=False)
-    kept = None if own is not None and own.every_project else kept_projects(ctx)
+    kept = kept_projects(ctx)
     own_bodies = own.bodies() if own is not None and own.bodies is not None else []
     uses = [*body_uses(path, own_bodies), *registered_uses()]
     offered = _offered(path, uses, covered=accepts, kept=kept)

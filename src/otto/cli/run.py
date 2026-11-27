@@ -26,10 +26,11 @@ if TYPE_CHECKING:
 def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
     """Build the leaf that dispatches project instruction *project* through the orchestrator.
 
-    Its signature is empty: the flags are every body's options fields, which
-    the leaf says are its own (``OwnOptions.bodies``), and those of every
-    class covering ``otto run <name>``, attached for each invocation and
-    merged by declaring class (``otto.cli.invoke.offered_options``). The
+    Its signature is empty: the flags are the options fields of every body
+    the leaf says is its own (``OwnOptions.bodies``) and those of every class
+    covering ``otto run <name>``, attached for each invocation and merged by
+    declaring class (``otto.cli.invoke.offered_options``), each only when no
+    project owns it or its project takes part in the invocation. The
     invocation prepares them before the leaf runs, the covering classes
     built and the body classes recorded for the walk
     (``otto.cli.invoke.prepare_command_options``); called by other code, the
@@ -47,9 +48,7 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
     from .invoke import OWN_OPTIONS_ATTR, OwnOptions
 
     name = project.spec.name
-    own = OwnOptions(
-        bodies=lambda: body_origins(project), finishes_dry_run=True, every_project=True
-    )
+    own = OwnOptions(bodies=lambda: body_origins(project), finishes_dry_run=True)
 
     async def _leaf(**kw: Any) -> Any:
         # Function-scope: the orchestrator is heavy and the CLI must stay light.

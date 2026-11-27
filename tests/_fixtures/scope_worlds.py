@@ -12,9 +12,11 @@ The world (:func:`scope_world`):
 - :class:`Free` is registered for ``"flash"`` outside any project, so it always applies.
 
 The fixture plugin commands (``tests/_fixtures/plugin_commands.py``) are registered as
-accepting. The labs ``alpha1`` and ``beta1`` are declared by :func:`recording_repository`,
-which the world uses as its lab sources, and load with no host: the projects' flags
-follow the ``-l`` names, never a loaded lab.
+accepting. :meth:`ScopeWorld.override_install` gives a project an ``install`` body with an
+options class of its own, so ``otto run install`` carries that project's body flags. The
+labs ``alpha1`` and ``beta1`` are declared by :func:`recording_repository`, which the world
+uses as its lab sources, and load with no host: the projects' flags follow the ``-l``
+names, never a loaded lab.
 
 :func:`recording_repository` stands in for every project's lab sources and records every
 read of them, so a test can say that nothing read a lab source before the preamble did.
@@ -135,6 +137,26 @@ class ScopeWorld:
         with registering_project(project):
             register_options(cls, verbs=verbs)
 
+    def override_install(self, options_cls: type, *, project: str) -> None:
+        """Make *project* override ``install`` with a body whose class is *options_cls*.
+
+        *options_cls* inherits ``otto.project.InstallOptions``, as every
+        ``install`` body's class does; the body calls up to otto's own.
+        """
+        from otto.instructions import instruction
+        from otto.project import ProjectActions, register_project_actions
+
+        class Actions(ProjectActions):
+            async def install(self, opts: Any) -> Any:  # pragma: no cover — the walk is a stand-in
+                return await super().install(opts)
+
+            install.__annotations__["opts"] = options_cls
+            install = instruction(options=options_cls)(install)
+
+        Actions.__name__ = Actions.__qualname__ = f"{project.capitalize()}Actions"
+        with registering_project(project):
+            register_project_actions(Actions)
+
     def reads(self, *classes: "type | Callable[[], type]") -> "list[dict[str, Any]]":
         """Make each fixture body also read ``otto.get_options`` of *classes*; return the reads.
 
@@ -142,15 +164,59 @@ class ScopeWorld:
         nothing imports it before the body runs. Each read is keyed by class name.
         """
         seen: "list[dict[str, Any]]" = []
+        read = _reader(seen, classes)
         record = plugin_commands._record_call
 
         def recorded(ctx: typer.Context, command: str, **kwargs: Any) -> None:
-            found = [c if isinstance(c, type) else c() for c in classes]
-            seen.append({cls.__name__: otto.get_options(cls) for cls in found})
+            read()
             record(ctx, command, **kwargs)
 
         self.monkeypatch.setattr(plugin_commands, "_record_call", recorded)
         return seen
+
+    def install_reads(self, *classes: "type | Callable[[], type]") -> "list[dict[str, Any]]":
+        """Make each ``otto run <name>`` of a project instruction read *classes*; return the reads.
+
+        The run's walk (``otto.project.orchestrator.run_project_instruction``)
+        is replaced by one read of ``otto.get_options`` of each of *classes*,
+        as a hook reads them, inside the command's preparation: no body runs.
+        The reads are :meth:`reads`' shape.
+        """
+        from otto.project import orchestrator
+
+        seen: "list[dict[str, Any]]" = []
+        read = _reader(seen, classes)
+
+        async def walk(name: str, kwargs: Any, *, source: Any = None) -> None:
+            read()
+
+        self.monkeypatch.setattr(orchestrator, "run_project_instruction", walk)
+        return seen
+
+    def skip_install_bodies(self) -> None:
+        """Make the walk that builds a project instruction's body classes build none."""
+        from otto.project import orchestrator
+
+        self.monkeypatch.setattr(
+            orchestrator, "project_instruction_body_options", lambda *a, **k: []
+        )
+
+
+def _reader(
+    seen: "list[dict[str, Any]]", classes: "tuple[type | Callable[[], type], ...]"
+) -> "Callable[[], None]":
+    """Return a call that appends to *seen* one read of ``otto.get_options`` of each of *classes*.
+
+    The one read :meth:`ScopeWorld.reads` and :meth:`ScopeWorld.install_reads`
+    make. A callable is called for its class at the read, so nothing imports
+    it before then; each read is keyed by class name.
+    """
+
+    def read() -> None:
+        found = [c if isinstance(c, type) else c() for c in classes]
+        seen.append({cls.__name__: otto.get_options(cls) for cls in found})
+
+    return read
 
 
 def _evict_b_flags() -> None:
