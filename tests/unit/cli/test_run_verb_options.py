@@ -16,7 +16,7 @@ import typer
 from otto import options
 from otto.cli.run import instruction
 from otto.context import OttoContext
-from otto.params import OptionsRegistrationError, register_options
+from otto.params import OptionsCollisionError, OptionsRegistrationError, register_options
 from tests._fixtures.paths import TESTS_ROOT
 
 
@@ -143,8 +143,9 @@ def test_an_own_field_colliding_with_a_run_flag_fails_before_the_body(run_cli):
 
     result = run_cli(["run", "clash"])
     assert result.exit_code != 0
-    assert "debug" in result.output
-    assert "RivalOptions" in result.output
+    assert isinstance(result.exception, OptionsCollisionError)
+    assert "debug" in str(result.exception)
+    assert "RivalOptions" in str(result.exception)
     assert ran == []
 
 
@@ -164,14 +165,19 @@ def test_a_verb_field_spelled_like_an_inline_parameter_fails_before_the_body(run
 
     result = run_cli(["run", "tagged", "--note", "x"])
     assert result.exit_code != 0
-    text = " ".join(result.output.replace("│", " ").split())
+    assert isinstance(result.exception, OptionsCollisionError)
+    text = str(result.exception)
     assert "flag --note of field 'loud'" in text
     assert "collides with parameter 'note' of instruction 'tagged'" in text
     assert ran == []
 
 
-def test_a_collision_also_renders_on_the_commands_help(run_cli):
-    """``otto run clash --help`` resolves the command too, and says why it can't."""
+def test_a_collision_also_stops_the_commands_help(run_cli):
+    """``otto run clash --help`` parses the command too, and says why it can't.
+
+    The console script renders the error in one line, as for every command
+    (``tests/unit/cli/test_offered_options.py``).
+    """
     register_options(InstallOptions, verbs=["run"])
 
     @instruction(options=RivalOptions)
@@ -179,9 +185,9 @@ def test_a_collision_also_renders_on_the_commands_help(run_cli):
 
     result = run_cli(["run", "clash", "--help"])
     assert result.exit_code == 1
-    assert "debug" in result.output
-    assert "RivalOptions" in result.output
-    assert "Traceback" not in result.output
+    assert isinstance(result.exception, OptionsCollisionError)
+    assert "debug" in str(result.exception)
+    assert "RivalOptions" in str(result.exception)
 
 
 def test_validation_exits_2_before_the_body(run_cli):
@@ -257,13 +263,14 @@ def test_a_project_instruction_binds_the_run_flags(run_cli, monkeypatch):
     assert seen == {"lab_env": "prod"}
 
 
-def test_registering_and_publishing_resolve_no_run_class():
-    """The ``run`` classes resolve when a command is BUILT, never at registration.
+def test_registering_publishing_and_building_resolve_no_run_class(run_cli):
+    """The ``run`` classes resolve when a command is PARSED, never earlier.
 
     A class registered by string may import a heavy module, which only
     ``otto run`` should pay for; every other verb's startup decorates and
     publishes instructions too. The unimportable target makes a resolution
-    visible: decorating and publishing survive it, building the app does not.
+    visible: decorating, publishing and building the app survive it, the
+    command's own parse does not.
     """
     from otto.cli.run import build_instruction_app
     from otto.instruction_catalog import INSTRUCTIONS
@@ -274,22 +281,28 @@ def test_registering_and_publishing_resolve_no_run_class():
     async def later() -> None: ...
 
     for name in ["later", "install"]:
-        with pytest.raises(OptionsRegistrationError) as excinfo:
-            build_instruction_app(INSTRUCTIONS.get(name))
-        assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
+        build_instruction_app(INSTRUCTIONS.get(name))
+        result = run_cli(["run", name, "--help"])
+        assert isinstance(result.exception, OptionsRegistrationError), result.output
+        assert isinstance(result.exception.__cause__, ModuleNotFoundError)
 
 
-def test_the_completion_payload_lists_run_flags():
+def test_the_completion_payload_records_run_flags_as_candidates():
+    """A ``run`` class's flags are the cache's candidates, not any instruction's own options."""
+    from otto.cli.registry import collect_current_commands, collect_option_candidates
+    from otto.params import options_key
+
     register_options(ProjectOptions, verbs=["run"])
 
     @instruction()
     async def smoke() -> None: ...
 
-    from otto.cli.registry import collect_current_commands
-
-    instructions = collect_current_commands()
-    (entry,) = [e for e in instructions if e["name"] == "smoke"]
-    assert "lab_env" in [o["name"] for o in entry["options"]]
+    (entry,) = [e for e in collect_current_commands() if e["name"] == "smoke"]
+    assert "lab_env" not in [o["name"] for o in entry["options"]]
+    found = collect_option_candidates()
+    key = options_key(ProjectOptions)
+    assert {"key": key, "project": None, "entries": ["run"]} in found["uses"]
+    assert [row["name"] for row in found["rows"][key]] == ["lab_env"]
 
 
 def test_an_own_class_registered_for_the_verb_is_built_once(run_cli):
@@ -426,7 +439,8 @@ def test_no_sensitive_default_reaches_the_run_cache_or_help(run_cli):
 
     import pydantic
 
-    from otto.cli.registry import collect_current_commands
+    from otto.cli.registry import collect_current_commands, collect_option_candidates
+    from otto.params import options_key
 
     @options
     class Hidden:
@@ -443,19 +457,38 @@ def test_no_sensitive_default_reaches_the_run_cache_or_help(run_cli):
     assert "S3CR3T" not in help_text
     assert "--note" in help_text
     [entry] = [c for c in collect_current_commands() if c["name"] == "hush"]
-    assert {o["name"] for o in entry["options"]} >= {"note", "level"}
     assert "S3CR3T" not in json.dumps(entry)
+    rows = collect_option_candidates()["rows"][options_key(Hidden)]
+    assert {row["name"] for row in rows} == {"note", "level"}
+    assert "S3CR3T" not in json.dumps(rows)
 
 
-def _serialized_cli() -> dict:
-    from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
+def _serialized_cli() -> "tuple[dict, dict]":
+    """Serialise otto's tree as a cache write does; return it with the candidates it indexes."""
+    from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, _completion_collectors, app
     from otto.config.completion_tree import serialize_tree
 
-    return serialize_tree(typer.main.get_command(app), pending_key=PENDING_SUBCMD_ARGS_KEY).tree
+    cli = _completion_collectors()
+    tree = serialize_tree(
+        typer.main.get_command(app),
+        pending_key=PENDING_SUBCMD_ARGS_KEY,
+        leaf_candidates=cli.leaf_candidates,
+    ).tree
+    return tree, cli.option_candidates()
+
+
+def _candidate_keys(node: dict, found: dict) -> "list[str]":
+    return [found["uses"][i]["key"] for i in node.get("candidates", [])]
 
 
 def test_the_completion_tree_survives_a_colliding_instruction():
-    """One bad instruction costs its own flags, never root help or another verb's TAB."""
+    """A clash costs nothing at write time: each command keeps its own flags and its candidates.
+
+    The union a TAB offers never fails (it may over-offer); only the
+    command's own parse reports the clash.
+    """
+    from otto.params import options_key
+
     register_options(InstallOptions, verbs=["run"])
 
     @instruction(options=RivalOptions)
@@ -464,12 +497,13 @@ def test_the_completion_tree_survives_a_colliding_instruction():
     @instruction()
     async def fine() -> None: ...
 
-    tree = _serialized_cli()
+    tree, found = _serialized_cli()
 
     assert {"host", "run", "test"} <= set(tree["commands"])
     run = tree["commands"]["run"]["commands"]
-    assert run["clash"] == {"name": "clash", "params": [], "commands": {}, "group": False}
-    assert "--lab-env" in [f for p in run["fine"]["params"] for f in p["flags"]]
+    assert "debug" in [p["name"] for p in run["clash"]["params"]]
+    for name in ("clash", "fine"):
+        assert options_key(InstallOptions) in _candidate_keys(run[name], found), name
 
 
 @pytest.mark.parametrize("broken", ["missing", "syntax error"])
@@ -489,11 +523,12 @@ def test_a_broken_run_ref_leaves_the_rebuild_standing(broken, tmp_path, monkeypa
 
     instructions = collect_current_commands()
     (entry,) = [e for e in instructions if e["name"] == "smoke"]
-    assert entry["options"] == []
+    assert [o["name"] for o in entry["options"] if o["name"] != "help"] == []
 
-    tree = _serialized_cli()
+    tree, found = _serialized_cli()
     assert {"host", "run", "test"} <= set(tree["commands"])
-    assert tree["commands"]["run"]["commands"]["smoke"]["params"] == []
+    node = tree["commands"]["run"]["commands"]["smoke"]
+    assert _candidate_keys(node, found) == []
 
 
 def test_otto_run_names_a_broken_run_ref_in_one_line(run_cli):
@@ -506,8 +541,8 @@ def test_otto_run_names_a_broken_run_ref_in_one_line(run_cli):
 
     result = run_cli(["run", "smoke"])
     assert result.exit_code == 1
-    assert "tests_unit_cli_absent_verb_options:Missing" in result.output
-    assert "Traceback" not in result.output
+    assert isinstance(result.exception, OptionsRegistrationError)
+    assert "tests_unit_cli_absent_verb_options:Missing" in str(result.exception)
     assert ran == []
 
 
@@ -968,3 +1003,312 @@ class TestNoHiddenClickContextParameter:
 
         asyncio.run(_built_callback("posi2")(n=3))
         assert ran == [3]
+
+
+# ---------------------------------------------------------------------------
+# `otto run` and `otto test` offer registered flags through the one
+# implementation every command uses: nothing is stamped on their callbacks,
+# and an entry that names one `run` instruction is offered on it alone.
+# ---------------------------------------------------------------------------
+
+_GONE_MARKERS = (
+    "__otto_records_options__",
+    "__otto_dry_run_self_finishing__",
+    "__otto_sensitive_fields__",
+)
+"""The attributes a leaf that prepared its own options carried, by their values."""
+
+
+def _run_and_test_callbacks() -> list:
+    """Callbacks of a standalone instruction with and without a class, ``install``, ``test``."""
+    from otto.cli import test as cli_test
+    from otto.cli.run import build_instruction_app
+    from otto.instruction_catalog import INSTRUCTIONS
+
+    @instruction()
+    async def bare() -> None: ...
+
+    @instruction(options=InstallOptions)
+    async def owned(opts: InstallOptions) -> None: ...
+
+    apps = [build_instruction_app(INSTRUCTIONS.get(name)) for name in ("bare", "owned", "install")]
+    return [app.registered_commands[0].callback for app in [*apps, cli_test.test_app]]
+
+
+def test_no_marker_for_covering_classes_is_left_on_the_callback():
+    from otto.cli import invoke
+
+    register_options(ProjectOptions, verbs=["run", "test"])
+    for callback in _run_and_test_callbacks():
+        assert [m for m in _GONE_MARKERS if hasattr(callback, m)] == [], callback
+    gone = ("RECORDS_OPTIONS_ATTR", "DRY_RUN_SELF_FINISHING_ATTR", "SENSITIVE_FIELDS_ATTR")
+    assert [name for name in (*gone, "stamp_options_leaf") if hasattr(invoke, name)] == []
+
+
+def test_a_plain_run_or_test_command_resolves_no_registration_and_attaches_nothing(
+    run_cli, otto_test_cli, monkeypatch
+):
+    """With no registration, nothing is resolved and nothing is attached.
+
+    Both carry what they say is their own (``OwnOptions``), so each is offered
+    for the invocation, with nothing beyond their own parameters.
+    """
+    from otto.cli import test as cli_test
+    from otto.cli.invoke import attached_params, command_spec, prepared_options
+    from otto.config._typer import get_current_context
+
+    resolved = []
+    monkeypatch.setattr("otto.params.resolve_registration", resolved.append)
+    monkeypatch.setattr("otto.cli.invoke.resolve_registration", resolved.append)
+    seen = []
+
+    def record() -> None:
+        ctx = get_current_context()
+        seen.append(
+            (list(attached_params(ctx, command_spec(ctx))), prepared_options(ctx) is not None)
+        )
+
+    @instruction()
+    async def plain(times: int = 1) -> None:
+        record()
+
+    monkeypatch.setattr(cli_test, "_run", lambda ctx, names, prepared: record())
+    assert run_cli(["run", "plain", "--times", "2"]).exit_code == 0
+    result = otto_test_cli(["test", "test_x"])
+    assert result.exit_code == 0, result.output
+    assert seen == [([], True), ([], True)]
+    assert resolved == []
+
+
+def test_run_install_takes_a_class_registered_for_it_and_run_status_does_not(run_cli, monkeypatch):
+    """The new input: an entry that names one ``run`` instruction is offered on it alone."""
+    from otto.context import get_context
+    from otto.project import orchestrator
+
+    @options
+    class Variant:
+        variant: Annotated[str, typer.Option(help="The build to install.")] = "field"
+
+    register_options(Variant, verbs=["run install"])
+    seen = []
+
+    async def _install(*, opts):
+        seen.append(get_context().options(Variant).variant)
+
+    monkeypatch.setattr(orchestrator, "install", _install)
+    result = run_cli(["run", "install", "--variant", "debug"])
+    assert result.exit_code == 0, result.output
+    assert seen == ["debug"]
+    assert "--variant" in run_cli(["run", "install", "--help"]).output
+    status = run_cli(["run", "status", "--variant", "debug"])
+    assert status.exit_code == 2
+    assert "No such option" in status.output
+    assert "--variant" not in run_cli(["run", "status", "--help"]).output
+
+
+def test_run_cli_without_ottos_root_still_offers_a_run_class(run_cli):
+    """``run_app`` driven on its own: the command's path starts with the registered name."""
+    register_options(ProjectOptions, verbs=["run smoke"])
+    seen = []
+
+    @instruction()
+    async def smoke(ctx: OttoContext) -> None:
+        seen.append(ctx.options(ProjectOptions).lab_env)
+
+    result = run_cli(["run", "smoke", "--lab-env", "prod"])
+    assert result.exit_code == 0, result.output
+    assert seen == ["prod"]
+
+
+@pytest.mark.parametrize("argv", [["-l", "alpha1"], ["-E", "b"]])
+def test_the_move_keeps_every_projects_flags_under_a_selection(argv, tmp_path):
+    """Project ``b`` out of scope: its registered and install body flags still parse, as on 0.20.0.
+
+    The world is the golden's (:mod:`tests._fixtures.options_golden_world`):
+    ``b`` registers ``--b-level`` for ``run`` and ``test`` and gives ``install``
+    a body class with ``--b-variant``. Each line ends in ``--help``, so a flag
+    that did not parse would stop it with ``No such option`` and nothing runs.
+    """
+    from tests._fixtures.options_golden_world import options_golden_world
+    from tests._fixtures.warm_tab import run_otto
+
+    world = options_golden_world(tmp_path)
+    for words in (["run", "install", "--b-variant", "x"], ["test"]):
+        done = run_otto(world.env, *argv, *words, "--b-level", "2", "--help")
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "No such option" not in done.stdout + done.stderr
+    helped = run_otto(world.env, "-I", "acm", "run", "install", "--help")
+    assert helped.returncode == 0, helped.stdout + helped.stderr
+    assert "--b-variant" in helped.stdout
+
+
+def test_run_install_help_keeps_the_flag_order_of_0_20_0(run_cli):
+    """``otto run install --help`` lists its flags in 0.20.0's order, installers included.
+
+    ``docs/examples/captures/run-install-help.txt``: the body class's flags,
+    then a flag registered for the command, then Typer's completion
+    installers, then ``--help``. The attached flags take the place the
+    function's own parameters had; whatever Typer appends stays after them.
+    """
+
+    @options
+    class Variant:
+        variant: Annotated[str, typer.Option(help="The build to install.")] = "field"
+
+    register_options(Variant, verbs=["run install"])
+    result = run_cli(["run", "install", "--help"])
+    assert result.exit_code == 0, result.output
+    flags = [
+        "--ensure",
+        "--recover-partial",
+        "--variant",
+        "--install-completion",
+        "--show-completion",
+        "--help",
+    ]
+    positions = [result.output.find(flag) for flag in flags]
+    assert -1 not in positions, result.output
+    assert positions == sorted(positions), result.output
+
+
+def test_otto_run_and_run_instruction_bind_one_input_through_one_function(run_cli, monkeypatch):
+    """``otto run h`` and ``run_instruction(name="h")`` bind the same arguments, by one binder."""
+    import asyncio
+
+    from otto import instructions
+    from otto.labs.loader import Lab
+    from otto.run_context import LIBRARY_LAB_NAME
+
+    @options
+    class Depth:
+        depth: Annotated[int, typer.Option()] = 1
+
+    @options
+    class Level:
+        level: Annotated[int, typer.Option()] = 0
+
+    register_options(Level, verbs=["run h"])
+
+    @instruction(options=Depth)
+    async def h(opts: Depth, level: Level) -> None:
+        del opts, level
+
+    seen: list[dict] = []
+    real = instructions.bind_arguments
+
+    def spy(*args, **kwargs):
+        bound = real(*args, **kwargs)
+        seen.append(bound)
+        return bound
+
+    monkeypatch.setattr(instructions, "bind_arguments", spy)
+    result = run_cli(["run", "h", "--depth", "3", "--level", "2"])
+    assert result.exit_code == 0, result.output
+    library = OttoContext(lab=Lab(name=LIBRARY_LAB_NAME))
+    asyncio.run(
+        instructions.run_instruction(library, name="h", opts=[Depth(depth=3), Level(level=2)])
+    )
+    assert seen == [{"opts": Depth(depth=3), "level": Level(level=2)}] * 2
+
+
+def test_the_run_command_is_registered_under_the_instruction_group():
+    """``builtin_commands`` writes the name out; it is the one ``instruction_path`` uses."""
+    from otto.cli.registry import CLI_COMMANDS
+    from otto.instruction_catalog import INSTRUCTION_GROUP
+
+    assert CLI_COMMANDS.peek(name=INSTRUCTION_GROUP).loader == "otto.cli.run:run_app"
+
+
+def test_the_test_command_is_registered_under_the_name_its_path_uses():
+    """``builtin_commands`` writes ``test`` out; it is the one ``otto test``'s path uses."""
+    from otto.cli.registry import CLI_COMMANDS
+    from otto.cli.test import TEST_COMMAND
+
+    assert CLI_COMMANDS.peek(name=TEST_COMMAND).loader == "otto.cli.test:test_app"
+
+
+def test_runs_module_names_the_instruction_group_for_the_completion_fast_path():
+    """``_OttoGroup._real`` finds ``run``'s module by the ``INSTRUCTION_GROUP`` it carries."""
+    import importlib
+
+    from otto.cli.registry import CLI_COMMANDS
+    from otto.instruction_catalog import INSTRUCTION_GROUP
+
+    module_name = CLI_COMMANDS.peek(name=INSTRUCTION_GROUP).loader.partition(":")[0]
+    assert importlib.import_module(module_name).INSTRUCTION_GROUP == INSTRUCTION_GROUP
+
+
+def test_the_0_20_0_tutorial_shape_gives_one_variant_on_each_command(run_cli, otto_test_cli):
+    """0.20.0's tutorial: ``BedVariant`` for ``run`` and ``test``, ``BedInstall`` inheriting it.
+
+    The body class and the registered class both carry ``variant``: the flag
+    is offered once on ``otto run install``, and ``otto test`` offers it
+    too. The ensure half is
+    ``tests/unit/suite/test_ensure_options.py::test_the_0_20_0_tutorial_shape_still_reaches_the_ensured_install``.
+    """
+    from otto.instructions import instruction as project_instruction
+    from otto.project import InstallOptions, ProjectActions, register_project_actions
+    from otto.registry import registering_project
+
+    @options
+    class BedVariant:
+        variant: Annotated[str, typer.Option(help="Agent build variant to install.")] = "field"
+
+    @options
+    class BedInstall(BedVariant, InstallOptions):
+        """``otto run install``'s flags, plus the one this project adds."""
+
+    class BedActions(ProjectActions):
+        @project_instruction(options=BedInstall)
+        async def install(self, opts: BedInstall):
+            return await super().install(opts)
+
+    register_options(BedVariant, verbs=["run", "test"])
+    with registering_project("bed"):
+        register_project_actions(BedActions)
+    import re
+
+    def rows(output: str, flag: str) -> int:
+        """How many option rows of the help panel start with *flag*."""
+        return len(re.findall(rf"^\W*{flag}\s", output, re.MULTILINE))
+
+    install = run_cli(["run", "install", "--help"])
+    assert install.exit_code == 0, install.output
+    assert (rows(install.output, "--variant"), rows(install.output, "--ensure")) == (1, 1)
+    test = otto_test_cli(["test", "--help"])
+    assert test.exit_code == 0, test.output
+    assert rows(test.output, "--variant") == 1, test.output
+
+
+def test_a_standalone_instructions_help_keeps_the_flag_order_of_0_20_0(run_cli):
+    """Own fields, then plain parameters, then a covering class's flags, then Typer's, then help."""
+
+    @options
+    class Shape:
+        width: Annotated[int, typer.Option()] = 1
+        depth: Annotated[int, typer.Option()] = 1
+
+    @options
+    class Covering:
+        level: Annotated[int, typer.Option()] = 0
+
+    register_options(Covering, verbs=["run shaped"])
+
+    @instruction(options=Shape)
+    async def shaped(opts: Shape, label: Annotated[str, typer.Option()] = "x") -> None:
+        del opts, label
+
+    result = run_cli(["run", "shaped", "--help"])
+    assert result.exit_code == 0, result.output
+    flags = [
+        "--width",
+        "--depth",
+        "--label",
+        "--level",
+        "--install-completion",
+        "--show-completion",
+        "--help",
+    ]
+    positions = [result.output.find(flag) for flag in flags]
+    assert -1 not in positions, result.output
+    assert positions == sorted(positions), result.output

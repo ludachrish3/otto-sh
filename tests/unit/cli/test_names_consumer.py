@@ -793,6 +793,56 @@ def test_a_repeated_switch_is_offered_again_after_it_is_given_on_every_path(tmp_
     assert without_installers(shim_tab(env, words)) == without_installers(cold)
 
 
+_OPTED_OUT_INSTRUCTION = '''
+from typing import Annotated
+
+import typer
+
+import otto
+from otto.instructions import instruction
+
+
+@otto.options
+class Reaching:
+    reach: Annotated[int, typer.Option(help="How far.")] = 0
+
+
+otto.register_options(Reaching, verbs=["run"])
+
+
+async def cool() -> None:
+    """Cool the bed."""
+
+
+cool.__cli_accepts_options__ = False
+instruction()(cool)
+
+
+@instruction()
+async def heat() -> None:
+    """Heat the bed: an instruction that accepts, beside the one that does not."""
+'''
+
+
+def test_an_instruction_that_does_not_accept_is_offered_no_registered_flag_on_every_path(tmp_path):
+    """The live command, the shim and the fast path offer ``otto run cool`` none of ``run``'s flags.
+
+    The fast path rebuilds the instruction from its cached row, whose
+    ``accepts_options`` its stub carries.
+    """
+    project = generate_project(tmp_path, files=2, dirs=1)
+    _armed(project, _OPTED_OUT_INSTRUCTION)
+    env = cli_env(project, tmp_path / "home")
+    words = "otto run cool --"
+    cold = cold_tab(env, tmp_path / "cold-home", words)
+    assert "--reach" not in cold, cold
+    assert "--reach" in cold_tab(env, tmp_path / "cold-home-heat", "otto run heat --")
+    run_otto(env, "--help")  # seed
+    # Typer's completion installers stay apart on a `run` leaf. Refs #1383
+    assert without_installers(typer_tab(env, words)) == without_installers(cold)
+    assert without_installers(shim_tab(env, words)) == without_installers(cold)
+
+
 KINDS = {
     "none": "--plain",
     "echo": "--file",

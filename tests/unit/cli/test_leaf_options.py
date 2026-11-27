@@ -47,9 +47,9 @@ class Tagged:
 
 def _target_of(name: str):
     """Return the prepared ``otto run`` target of standalone instruction *name*."""
-    from otto.instruction_catalog import INSTRUCTIONS
+    from otto.instruction_catalog import INSTRUCTIONS, instruction_path
 
-    return prepare_command_target(INSTRUCTIONS.get(name).handler, verb="run")
+    return prepare_command_target(INSTRUCTIONS.get(name).handler, path=instruction_path(name))
 
 
 @contextlib.contextmanager

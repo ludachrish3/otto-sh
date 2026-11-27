@@ -361,9 +361,12 @@ def test_install_forwards_the_converge_flags(monkeypatch, registered):
     monkeypatch.setattr(orchestrator, "install", rec)
 
     first = dispatch.invoke(
-        run_app, ["install", "--ensure", "--no-recover-partial"], async_leaves=True
+        run_app,
+        ["install", "--ensure", "--no-recover-partial"],
+        async_leaves=True,
+        accepts_options=True,
     )
-    second = dispatch.invoke(run_app, ["install"], async_leaves=True)
+    second = dispatch.invoke(run_app, ["install"], async_leaves=True, accepts_options=True)
 
     assert first.exit_code == 0, first.output
     assert second.exit_code == 0, second.output
@@ -378,7 +381,10 @@ def test_uninstall_forwards_both_log_flags(monkeypatch, registered):
     monkeypatch.setattr(orchestrator, "uninstall", rec)
 
     result = dispatch.invoke(
-        run_app, ["uninstall", "--no-product-logs", "--debug-logs"], async_leaves=True
+        run_app,
+        ["uninstall", "--no-product-logs", "--debug-logs"],
+        async_leaves=True,
+        accepts_options=True,
     )
 
     assert result.exit_code == 0, result.output
@@ -399,8 +405,11 @@ def test_cleanup_forwards_all_four_flags(monkeypatch, registered):
         run_app,
         ["cleanup", "--product-logs", "--no-debug-logs", "--no-remove-tunnels"],
         async_leaves=True,
+        accepts_options=True,
     )
-    second = dispatch.invoke(run_app, ["cleanup", "--no-reset-impairments"], async_leaves=True)
+    second = dispatch.invoke(
+        run_app, ["cleanup", "--no-reset-impairments"], async_leaves=True, accepts_options=True
+    )
 
     assert first.exit_code == 0, first.output
     assert second.exit_code == 0, second.output
@@ -428,6 +437,7 @@ def test_get_logs_forwards_all_three_flags(monkeypatch, registered):
         run_app,
         ["get-logs", "--product-logs", "--no-debug-logs", "--require-product-logs"],
         async_leaves=True,
+        accepts_options=True,
     )
 
     assert result.exit_code == 0, result.output
@@ -441,7 +451,10 @@ def test_install_tools_forwards_dev_and_toolchain(monkeypatch, registered):
     monkeypatch.setattr(orchestrator, "install_tools", rec)
 
     result = dispatch.invoke(
-        run_app, ["install-tools", "--no-dev", "--toolchain"], async_leaves=True
+        run_app,
+        ["install-tools", "--no-dev", "--toolchain"],
+        async_leaves=True,
+        accepts_options=True,
     )
 
     assert result.exit_code == 0, result.output
@@ -453,7 +466,10 @@ def test_uninstall_tools_forwards_dev_and_toolchain(monkeypatch, registered):
     monkeypatch.setattr(orchestrator, "uninstall_tools", rec)
 
     result = dispatch.invoke(
-        run_app, ["uninstall-tools", "--no-dev", "--toolchain"], async_leaves=True
+        run_app,
+        ["uninstall-tools", "--no-dev", "--toolchain"],
+        async_leaves=True,
+        accepts_options=True,
     )
 
     assert result.exit_code == 0, result.output
@@ -530,7 +546,7 @@ def test_the_status_answer_reaches_the_process_exit_code(monkeypatch, registered
         orchestrator, "status", _Recorder(ProjectStatus(overall=state, projects={"acme": state}))
     )
 
-    result = dispatch.invoke(run_app, ["status"], async_leaves=True)
+    result = dispatch.invoke(run_app, ["status"], async_leaves=True, accepts_options=True)
 
     assert result.exit_code == code, result.output
 
@@ -666,7 +682,7 @@ def test_status_full_is_parsed_off_the_command_line(monkeypatch, registered):
         _report(_clean_row(CleanlinessKind.TUNNEL, "lab", Cleanliness.DIRTY)),
     )
 
-    result = dispatch.invoke(run_app, ["status", "--full"], async_leaves=True)
+    result = dispatch.invoke(run_app, ["status", "--full"], async_leaves=True, accepts_options=True)
 
     assert result.exit_code == 0, result.output
     assert len(probe.calls) == 1  # --full is what asks the cleanliness question
@@ -1319,7 +1335,9 @@ class TestMergedFlags:
                 async def install(self, opts: WidgetInstall):
                     return await super().install(opts)
 
-        out = runner.invoke(run_app, ["install", "--help"]).output
+        out = dispatch.invoke(
+            run_app, ["install", "--help"], async_leaves=True, accepts_options=True
+        ).output
 
         assert "--ensure" in out
         assert "--recover-partial" in out
@@ -1357,7 +1375,9 @@ class TestMergedFlags:
                 async def install(self, opts: BInstall):
                     return await super().install(opts)
 
-        out = runner.invoke(run_app, ["install", "--help"]).output
+        out = dispatch.invoke(
+            run_app, ["install", "--help"], async_leaves=True, accepts_options=True
+        ).output
 
         assert out.count("--lab-env") == 1, out
 
@@ -1380,26 +1400,29 @@ class TestMergedFlags:
         entry = INSTRUCTIONS.get("deploy")
         assert INSTRUCTIONS.project(name="deploy") is None
         assert entry.module == Widget.__module__
-        assert "--target" in runner.invoke(run_app, ["deploy", "--help"]).output
+        assert (
+            "--target"
+            in dispatch.invoke(
+                run_app, ["deploy", "--help"], async_leaves=True, accepts_options=True
+            ).output
+        )
 
-    def test_the_published_command_serialises_for_the_completion_cache(self, registered) -> None:
-        """TAB completion reads the command's SIGNATURE, which this one builds by hand.
+    def test_the_published_commands_body_flags_are_recorded_for_the_completion_cache(
+        self, registered
+    ) -> None:
+        """TAB completion reads a project instruction's body classes as the cache's candidates.
 
-        ``serialize_options`` records the parameters of the callback's
-        signature, so a leaf that carried only ``**kwargs`` — or annotations
-        that did not match its signature — would silently lose its flags from
-        every completion. The body class's flags are recorded by name.
+        The command's own signature is empty: its body classes' flags are
+        attached for each invocation, so the cache records each body as a use
+        whose entry is the instruction, with the class's rows by name.
         """
-        import typer.main
+        from otto.cli.registry import collect_option_candidates
+        from otto.params import options_key
 
-        from otto.config.completion_cache import serialize_options
-
-        cmd = typer.main.get_command(build_instruction_app(INSTRUCTIONS.get("install")))
-        leaf = cmd.commands["install"] if hasattr(cmd, "commands") else cmd
-        serialised = serialize_options(leaf.callback, command_name="install")
-
-        assert serialised is not None
-        assert {o["name"] for o in serialised} >= {"ensure", "recover_partial"}
+        found = collect_option_candidates()
+        key = options_key(InstallOptions)
+        assert {"key": key, "project": None, "entries": ["run install"]} in found["uses"]
+        assert {row["name"] for row in found["rows"][key]} >= {"ensure", "recover_partial"}
 
     def test_the_published_help_is_the_lab_wide_summary(self, registered) -> None:
         """`--help` describes the command, which walks EVERY project.
@@ -1409,8 +1432,12 @@ class TestMergedFlags:
         and ``status`` keeps the exit-code contract a script branches on, which
         no other surface states.
         """
-        install = runner.invoke(run_app, ["install", "--help"]).output
-        status = runner.invoke(run_app, ["status", "--help"]).output
+        install = dispatch.invoke(
+            run_app, ["install", "--help"], async_leaves=True, accepts_options=True
+        ).output
+        status = dispatch.invoke(
+            run_app, ["status", "--help"], async_leaves=True, accepts_options=True
+        ).output
 
         assert "every project" in install
         assert "exit 0" in status
@@ -1443,7 +1470,12 @@ class TestMergedFlags:
 
         entry = INSTRUCTIONS.get("install")
         assert entry.module == ACTIONS_MODULE
-        assert "--ensure" in runner.invoke(run_app, ["install", "--help"]).output
+        assert (
+            "--ensure"
+            in dispatch.invoke(
+                run_app, ["install", "--help"], async_leaves=True, accepts_options=True
+            ).output
+        )
 
     def test_a_hand_built_first_party_entry_is_refused(self, registered) -> None:
         """A standalone entry under one of otto's names is refused at registration.
@@ -1540,7 +1572,7 @@ def test_the_clash_stops_otto_run_install_naming_both_projects(
     lines = [line for line in out.splitlines() if line.strip()]
     assert len(lines) == 1, out
     [message] = lines
-    assert "'install'" in message
+    assert "otto run install" in message
     assert "'lab_env'" in message
     assert "project 'a'" in message
     assert "project 'b'" in message
@@ -1600,7 +1632,9 @@ class TestDryRunOnAPublishedProjectInstruction:
         register_options(Guard, verbs=["run"])
 
         with active_context(dry_run=True):
-            dry = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
+            dry = dispatch.invoke(
+                run_app, ["install", "--minimum", "0"], async_leaves=True, accepts_options=True
+            )
         assert dry.exit_code == 2, dry.output
         assert "minimum must be >= 1" in dry.stderr
 
@@ -1608,7 +1642,9 @@ class TestDryRunOnAPublishedProjectInstruction:
         # the identical way -- proving the dry run's exit code isn't just
         # "some" non-zero code, and the error rendering isn't just "some"
         # substring match, but BYTE-IDENTICAL to what a real run prints.
-        real = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
+        real = dispatch.invoke(
+            run_app, ["install", "--minimum", "0"], async_leaves=True, accepts_options=True
+        )
         assert real.exit_code == dry.exit_code
         assert dry.stderr == real.stderr, "dry-run and real-run error rendering must be identical"
 
@@ -1628,7 +1664,9 @@ class TestDryRunOnAPublishedProjectInstruction:
         monkeypatch.setattr(orchestrator, "install", rec)
 
         with active_context(dry_run=True):
-            dry = dispatch.invoke(run_app, ["install", "--minimum", "3"], async_leaves=True)
+            dry = dispatch.invoke(
+                run_app, ["install", "--minimum", "3"], async_leaves=True, accepts_options=True
+            )
         assert dry.exit_code == 0, dry.output
         assert "options:" in dry.output
         assert "Guard2: minimum=3" in dry.output
@@ -1694,7 +1732,9 @@ class TestProjectInstructionOwnOptionValidation:
         self._register_guarded_install()
         self._wire_one_project(monkeypatch)
 
-        result = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
+        result = dispatch.invoke(
+            run_app, ["install", "--minimum", "0"], async_leaves=True, accepts_options=True
+        )
         assert result.exit_code == 2, result.output
         assert "minimum must be >= 1" in result.stderr
 
@@ -1705,7 +1745,9 @@ class TestProjectInstructionOwnOptionValidation:
         self._wire_one_project(monkeypatch)
 
         with active_context(dry_run=True):
-            result = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
+            result = dispatch.invoke(
+                run_app, ["install", "--minimum", "0"], async_leaves=True, accepts_options=True
+            )
         assert result.exit_code == 2, result.output
         assert "minimum must be >= 1" in result.stderr
 
@@ -1762,7 +1804,7 @@ class TestTheOptionsWalkAnnouncesNothing:
             caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"),
             active_context(exclude_projects=("dormant",)),
         ):
-            result = dispatch.invoke(run_app, ["install"], async_leaves=True)
+            result = dispatch.invoke(run_app, ["install"], async_leaves=True, accepts_options=True)
 
         assert result.exit_code == 0, result.output
         assert len(seen) == 1, "the widget body did not run exactly once"
@@ -1780,7 +1822,7 @@ class TestTheOptionsWalkAnnouncesNothing:
             caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"),
             active_context(exclude_projects=("dormant",), dry_run=True),
         ):
-            result = dispatch.invoke(run_app, ["install"], async_leaves=True)
+            result = dispatch.invoke(run_app, ["install"], async_leaves=True, accepts_options=True)
 
         assert result.exit_code == 0, result.output
         assert seen == [], "the dry run ran a body"
@@ -1866,12 +1908,17 @@ def test_install_ensure_passes_only_typed_flags_by_name(monkeypatch, registered)
     _wire_variant_project(monkeypatch, seen)
 
     typed = dispatch.invoke(
-        run_app, ["install", "--ensure", "--variant", "debug"], async_leaves=True
+        run_app,
+        ["install", "--ensure", "--variant", "debug"],
+        async_leaves=True,
+        accepts_options=True,
     )
     assert typed.exit_code == 0, typed.output
     assert seen["status"].variant == "debug"
 
-    unset = dispatch.invoke(run_app, ["install", "--ensure"], async_leaves=True)
+    unset = dispatch.invoke(
+        run_app, ["install", "--ensure"], async_leaves=True, accepts_options=True
+    )
     assert unset.exit_code == 0, unset.output
     assert seen["status"].variant == "lab"
 
@@ -1881,7 +1928,7 @@ def test_a_body_class_validator_runs_once_per_command(monkeypatch, registered) -
     counter: list = []
     _wire_variant_project(monkeypatch, seen, counter=counter)
 
-    result = dispatch.invoke(run_app, ["install"], async_leaves=True)
+    result = dispatch.invoke(run_app, ["install"], async_leaves=True, accepts_options=True)
 
     assert result.exit_code == 0, result.output
     assert seen["install"].variant == "field"
@@ -1901,7 +1948,9 @@ def test_the_dry_run_shows_body_options_before_the_run_classes(monkeypatch, regi
     _wire_variant_project(monkeypatch, seen)
 
     with active_context(dry_run=True):
-        dry = dispatch.invoke(run_app, ["install", "--variant", "debug"], async_leaves=True)
+        dry = dispatch.invoke(
+            run_app, ["install", "--variant", "debug"], async_leaves=True, accepts_options=True
+        )
 
     assert dry.exit_code == 0, dry.output
     assert "variant='debug'" in dry.output

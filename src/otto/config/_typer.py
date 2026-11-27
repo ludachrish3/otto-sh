@@ -24,8 +24,9 @@ What otto may use directly is Typer's public surface: ``typer``,
 ``TyperArgument``), ``typer.models``, ``typer.testing``, and the
 non-underscore converters of ``typer.main`` (``get_command``, ``get_group``,
 ``get_command_name``, ``get_install_completion_arguments``,
-``solve_typer_info_help``). The ``typer.main`` converters are undocumented
-but carry no underscore, so the rule leaves them alone.
+``solve_typer_info_help``, ``solve_typer_info_defaults``). The ``typer.main``
+converters are undocumented but carry no underscore, so the rule leaves them
+alone.
 
 Known reaches no static rule sees, each kept on purpose:
 
@@ -195,6 +196,26 @@ def own_params(cmd: Any, ctx: Any) -> "list[Parameter]":
     """
     get_params = cmd.get_params
     return getattr(get_params, OWN_PARAMS_ATTR, get_params)(ctx)
+
+
+def attached_position(cmd: Any, ctx: Any, own: "Sequence[Parameter]") -> int:
+    """Return where parameters attached to *cmd* for one invocation go in its own list *own*.
+
+    Right after the last parameter its function declares (a name in the
+    callback's signature), so every parameter Typer or click appends after
+    the function's own, the help option among them, stays after the attached
+    ones: they keep the place they had when they were the function's own. A
+    callback whose signature cannot be read has them placed before the help
+    option. The one placement, for the CLI's attached flags
+    (``otto.cli.invoke.attach_params``) and the completion cache's tree,
+    whose node records it for the bash TAB.
+    """
+    try:
+        declared = set(inspect.signature(cmd.callback).parameters)
+    except (TypeError, ValueError):
+        help_option = cmd.get_help_option(ctx)
+        return next((i for i, param in enumerate(own) if param is help_option), len(own))
+    return max((i + 1 for i, param in enumerate(own) if param.name in declared), default=0)
 
 
 def built_spellings(param: Parameter) -> "list[str]":

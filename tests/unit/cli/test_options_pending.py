@@ -7,7 +7,7 @@ read raises; ``ensure_lab_context`` holds it over the lab build and moves it
 onto the context, and the lab-free leaf invoke holds it for the leaf.
 ``settle_options`` clears it for a leaf that records nothing (``otto host <id>
 <command>``: defaults, §6 item 8), and for a group that runs with no child; a
-leaf that records clears it by recording.
+command prepared when it is invoked records over it.
 """
 
 import contextvars
@@ -23,7 +23,9 @@ from typer.testing import CliRunner
 import otto
 from otto.cli import invoke
 from otto.cli.invoke import (
-    RECORDS_OPTIONS_ATTR,
+    ACCEPTS_OPTIONS_ATTR,
+    OWN_OPTIONS_ATTR,
+    OwnOptions,
     ensure_lab_context,
     pending_options,
     settle_options,
@@ -110,12 +112,12 @@ def test_a_plugin_command_marks_when_it_accepts():
             assert (marked is not None) == bool(accepts)
 
 
-def test_a_context_with_no_command_spec_marks_only_a_command_that_records():
+def test_a_context_with_no_command_spec_marks_only_a_command_that_says_what_is_its_own():
     assert pending_options(chain("otto", "cov", "get")) is None
 
     def leaf() -> None: ...
 
-    setattr(leaf, RECORDS_OPTIONS_ATTR, True)
+    setattr(leaf, OWN_OPTIONS_ATTR, OwnOptions())
     node = chain("otto", "acme", "go")
     node.command.callback = leaf
     assert pending_options(node) == RecordedOptions(group=None, pending=True)
@@ -196,9 +198,7 @@ def test_a_built_context_keeps_the_mark_and_nothing_leaks_after(monkeypatch):
     assert otto.get_options(Knobs) == Knobs()
 
 
-def test_settling_clears_a_leaf_that_does_not_record_and_leaves_one_that_does(
-    make_otto_context,
-):
+def test_settling_clears_the_mark_and_keeps_its_group(make_otto_context):
     context = make_otto_context()
     host_leaf = _with_callback(_dispatched("host", "exec"), lambda: None)
     recorded = pending_options(host_leaf)
@@ -206,40 +206,28 @@ def test_settling_clears_a_leaf_that_does_not_record_and_leaves_one_that_does(
     record_options(context, recorded)
     binding = set_context(context)
     try:
-        settle_options(host_leaf)
+        settle_options()
         assert otto.get_options(Knobs) == Knobs()
         assert context.verb == "host"
     finally:
         reset_context(binding)
 
-    def run_leaf() -> None: ...
-
-    setattr(run_leaf, RECORDS_OPTIONS_ATTR, True)
-    stamped = _with_callback(chain("otto", "run", "x"), run_leaf)
-    marked = pending_options(stamped)
-    assert marked is not None
-    with command_options(marked):
-        settle_options(stamped)
-        with pytest.raises(OptionsNotAvailableError, match=PENDING):
-            otto.get_options(Knobs)
-
 
 def test_a_listing_still_reads_defaults():
-    """``records_nothing``: ``otto test --list-tests -l lab`` lists before the leaf records.
+    """``otto test --list-tests -l lab`` lists at parse time, before any preparation.
 
-    The ``otto test`` leaf marks (it accepts, and records its own flags), so a
-    plain settle leaves the mark; the listing's settle clears it and a module
-    it collects reads defaults (``listing_participation``, driven end to end
-    by ``tests/unit/cli/test_test_listings.py``).
+    The ``otto test`` leaf marks (it accepts); the listing's settle clears
+    the mark and a module it collects reads defaults
+    (``listing_participation``, driven end to end by
+    ``tests/unit/cli/test_test_listings.py``).
     """
     test_leaf = _dispatched("test")
     marked = pending_options(test_leaf)
     assert marked == RecordedOptions(group="test", pending=True)
     with command_options(marked):
-        settle_options(test_leaf)
         with pytest.raises(OptionsNotAvailableError, match=PENDING):
             otto.get_options(Knobs)
-        settle_options(test_leaf, records_nothing=True)
+        settle_options()
         assert otto.get_options(Knobs) == Knobs()
 
 
@@ -285,29 +273,22 @@ def _run_contextless(root: Any, args: list[str]) -> None:
     contextvars.Context().run(root.main, args, prog_name="otto", standalone_mode=False)
 
 
-def test_a_lab_free_options_command_is_pending_until_it_records(monkeypatch):
-    from otto.cli.invoke import LeafOptionSpec, prepare_leaf_options, stamp_options_leaf
+def test_a_lab_free_options_command_reads_its_values_for_its_run_only(monkeypatch):
+    """Prepared when it is invoked: its body reads what was typed, and nothing outlives the run."""
+    from otto.cli.invoke import prepare_command_target
 
     seen: list[object] = []
-    spec = LeafOptionSpec(group=None, build=(Knobs,))
     app = typer.Typer()
 
-    @app.command()
-    def go(depth: int = 3) -> None:
-        try:
-            otto.get_options(Knobs)
-        except OptionsNotAvailableError as e:
-            seen.append(e)
-        prepared = prepare_leaf_options({"depth": depth}, spec, leaf=go)
-        with prepared.scope():
-            seen.append(otto.get_options(Knobs))
+    async def go(knobs: Knobs) -> None:
+        seen.append(knobs)
+        seen.append(otto.get_options(Knobs))
 
-    stamp_options_leaf(go, spec)
+    app.command()(prepare_command_target(go, Knobs))
     app.command("other")(lambda: None)
     root = _root_with("acme", app, monkeypatch)
     _run_contextless(root, ["acme", "go", "--depth", "7"])
-    assert isinstance(seen[0], OptionsNotAvailableError)
-    assert seen[1] == Knobs(depth=7)
+    assert seen == [Knobs(depth=7), Knobs(depth=7)]
     assert otto.get_options(Knobs) == Knobs()
 
 
@@ -317,7 +298,7 @@ def test_a_lab_free_options_command_that_opens_the_lab_keeps_its_flags(monkeypat
     The lab's context carries the leaf's record, not a fresh pending one, so a
     read after the opening returns the typed value.
     """
-    from otto.cli.invoke import LeafOptionSpec, prepare_leaf_options, stamp_options_leaf
+    from otto.cli.invoke import leaf_preparation
     from otto.config._typer import get_current_context
     from otto.inventory import InventoryView
     from otto.session.lab import BuiltLab
@@ -334,18 +315,18 @@ def test_a_lab_free_options_command_that_opens_the_lab_keeps_its_flags(monkeypat
     )
     monkeypatch.setattr(invoke, "root_options", lambda ctx: make_root_options(labs=["rig"]))
     seen: list[object] = []
-    spec = LeafOptionSpec(group=None, build=(Knobs,))
+    own = OwnOptions(cls=Knobs)
     app = typer.Typer()
 
     @app.command()
     def go(depth: int = 3) -> None:
-        prepared = prepare_leaf_options({"depth": depth}, spec, leaf=go)
+        prepared = leaf_preparation(go, {"depth": depth}, own)
         with prepared.scope():
             built = ensure_lab_context(cast("typer.Context", get_current_context()))
             seen.append(otto.get_options(Knobs).depth)
             seen.append(built.options(Knobs).depth)
 
-    stamp_options_leaf(go, spec)
+    setattr(go, OWN_OPTIONS_ATTR, own)
     app.command("other")(lambda: None)
     root = _root_with("acme", app, monkeypatch)
     _run_contextless(root, ["acme", "go", "--depth", "7"])
@@ -568,6 +549,29 @@ def test_a_group_callback_under_a_command_that_does_not_accept_reads_defaults():
         result = _cli(["board", "status"])
         assert result.exit_code == 0, (result.output, result.exception)
         assert [Acme()] == plugin_commands.GROUP_READS
+
+
+@pytest.mark.usefixtures("one_project")
+@pytest.mark.parametrize("registration", [True, False])
+def test_a_groups_callback_is_judged_by_its_registration_not_by_the_child_that_follows(
+    monkeypatch, registration
+):
+    """The group's registration decides its callback's read; the child's own marker does not.
+
+    The root group holds the registration's mark until the child is invoked,
+    so a child that says the opposite of its registration changes nothing
+    in the group's callback.
+    """
+    monkeypatch.setattr(
+        plugin_commands.status, ACCEPTS_OPTIONS_ATTR, not registration, raising=False
+    )
+    with plugin_commands.registered_board(accepts_options=registration):
+        result = _cli(["board", "status"])
+        [read] = plugin_commands.GROUP_READS
+        if registration:
+            assert isinstance(read, OptionsNotAvailableError), result.output
+        else:
+            assert read == Acme(), result.output
 
 
 @pytest.mark.usefixtures("one_project")

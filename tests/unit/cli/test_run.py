@@ -38,18 +38,18 @@ root_runner = CliRunner()
 
 class TestRunHelp:
     def test_no_args_shows_usage(self):
-        result = runner.invoke(run_app, [])
+        result = runner.invoke(run_app, [], accepts_options=True)
         # When no subcommands are registered, Typer shows usage (exit_code=2)
         # rather than a clean help page.  Verify the output is usage-style text,
         # not a traceback.
         assert "Usage" in result.output or "usage" in result.output.lower()
 
     def test_help_flag(self):
-        result = runner.invoke(run_app, ["--help"])
+        result = runner.invoke(run_app, ["--help"], accepts_options=True)
         assert result.exit_code == 0
 
     def test_help_short_flag(self):
-        result = runner.invoke(run_app, ["-h"])
+        result = runner.invoke(run_app, ["-h"], accepts_options=True)
         assert result.exit_code == 0
 
 
@@ -72,16 +72,23 @@ class TestRunCallback:
         # async, because `otto run`'s leaves must be: this stub used to be a
         # plain `def`, which is exactly the `@run_app.command()` bypass the
         # seam guard now closes.
+        before = list(run_app.registered_commands)
+
         @run_app.command("_test_cmd_cb")
         async def _test_cmd_cb():
             pass
 
-        with (
-            patch("otto.cli.invoke.ensure_cli_session"),
-            patch("otto.cli.invoke.ensure_lab_context"),
-            patch("otto.logger.management.create_output_dir") as p_create,
-        ):
-            result = root_runner.invoke(app, ["--lab", "x", "run", "_test_cmd_cb"])
+        try:
+            with (
+                patch("otto.cli.invoke.ensure_cli_session"),
+                patch("otto.cli.invoke.ensure_lab_context"),
+                patch("otto.logger.management.create_output_dir") as p_create,
+            ):
+                result = root_runner.invoke(app, ["--lab", "x", "run", "_test_cmd_cb"])
+        finally:
+            # run_app is the module's own app: a command left on it is a
+            # static child of `otto run` for every later test.
+            run_app.registered_commands[:] = before
 
         assert result.exit_code == 0, result.output
         p_create.assert_called_once_with("run", "_test_cmd_cb")
@@ -148,7 +155,7 @@ class TestInstructionDecorator:
                 retcode=0,
             )
 
-        result = runner.invoke(run_app, ["_unit_test_noop"])
+        result = runner.invoke(run_app, ["_unit_test_noop"], accepts_options=True)
         assert result.exit_code == 0
 
     def test_sync_handler_is_rejected_at_decoration(self):
@@ -204,7 +211,7 @@ class TestInstructionNameDerivation:
 
         assert "_unit_test_positional_name" in INSTRUCTIONS
         assert "some-func" not in INSTRUCTIONS
-        result = runner.invoke(run_app, ["_unit_test_positional_name"])
+        result = runner.invoke(run_app, ["_unit_test_positional_name"], accepts_options=True)
         assert result.exit_code == 0
 
     def test_name_kwarg(self):
@@ -216,7 +223,7 @@ class TestInstructionNameDerivation:
 
         assert "_unit_test_kwarg_name" in INSTRUCTIONS
         assert "another-func" not in INSTRUCTIONS
-        result = runner.invoke(run_app, ["_unit_test_kwarg_name"])
+        result = runner.invoke(run_app, ["_unit_test_kwarg_name"], accepts_options=True)
         assert result.exit_code == 0
 
     def test_derived_from_function_name(self):
@@ -227,7 +234,7 @@ class TestInstructionNameDerivation:
             return CommandResult(status=Status.Success, value="", command="true", retcode=0)
 
         assert "unit-test-derived-func" in INSTRUCTIONS
-        result = runner.invoke(run_app, ["unit-test-derived-func"])
+        result = runner.invoke(run_app, ["unit-test-derived-func"], accepts_options=True)
         assert result.exit_code == 0
 
     def test_duplicate_instruction_name_fails_loudly(self):
@@ -270,7 +277,7 @@ class TestInstructionExecution:
                 retcode=0,
             )
 
-        result = runner.invoke(run_app, ["_unit_test_exec"])
+        result = runner.invoke(run_app, ["_unit_test_exec"], accepts_options=True)
 
         assert result.exit_code == 0
         assert execution_log == ["ran"]
@@ -291,7 +298,7 @@ class TestInstructionExecution:
                 retcode=0,
             )
 
-        result = runner.invoke(run_app, ["_unit_test_args", "my-device"])
+        result = runner.invoke(run_app, ["_unit_test_args", "my-device"], accepts_options=True)
 
         assert result.exit_code == 0
         assert captured["target"] == "my-device"
@@ -314,7 +321,7 @@ class TestInstructionExecution:
         async def _host_test() -> CommandResult:
             return await mock_host.run("echo hello")
 
-        result = runner.invoke(run_app, ["_unit_test_host"])
+        result = runner.invoke(run_app, ["_unit_test_host"], accepts_options=True)
 
         assert result.exit_code == 0
         mock_host.run.assert_awaited_once_with("echo hello")
@@ -342,7 +349,9 @@ class TestInstructionOptions:
             captured["opts"] = opts
             return CommandResult(status=Status.Success, value="", command="test", retcode=0)
 
-        result = runner.invoke(run_app, ["_unit_test_opts_dc", "--name", "hello"])
+        result = runner.invoke(
+            run_app, ["_unit_test_opts_dc", "--name", "hello"], accepts_options=True
+        )
 
         assert result.exit_code == 0
         assert isinstance(captured["opts"], _Opts)
@@ -369,6 +378,7 @@ class TestInstructionOptions:
         result = runner.invoke(
             run_app,
             ["_unit_test_opts_validate", "--count", "-5"],
+            accepts_options=True,
         )
 
         assert result.exit_code == 2, result.output
@@ -401,6 +411,7 @@ class TestInstructionOptions:
                 "--firmware",
                 "v2.0",
             ],
+            accepts_options=True,
         )
 
         assert result.exit_code == 0
@@ -423,7 +434,7 @@ class TestInstructionOptions:
             captured["opts"] = opts
             return CommandResult(status=Status.Success, value="", command="test", retcode=0)
 
-        result = runner.invoke(run_app, ["_unit_test_opts_defaults"])
+        result = runner.invoke(run_app, ["_unit_test_opts_defaults"], accepts_options=True)
 
         assert result.exit_code == 0
         assert captured["opts"].color == "blue"
@@ -454,6 +465,7 @@ class TestInstructionOptions:
                 "5",
                 "--verbose",
             ],
+            accepts_options=True,
         )
 
         assert result.exit_code == 0
@@ -475,7 +487,7 @@ class TestInstructionOptions:
         async def _opts_help(opts: _HelpChild) -> CommandResult:
             return CommandResult(status=Status.Success, value="", command="test", retcode=0)
 
-        result = runner.invoke(run_app, ["_unit_test_opts_help", "--help"])
+        result = runner.invoke(run_app, ["_unit_test_opts_help", "--help"], accepts_options=True)
         assert result.exit_code == 0
         assert "--region" in result.output
         assert "--tag" in result.output
@@ -491,7 +503,9 @@ class TestInstructionOptions:
             captured.append(msg)
             return CommandResult(status=Status.Success, value="", command="test", retcode=0)
 
-        result = runner.invoke(run_app, ["_unit_test_no_opts", "--msg", "bye"])
+        result = runner.invoke(
+            run_app, ["_unit_test_no_opts", "--msg", "bye"], accepts_options=True
+        )
 
         assert result.exit_code == 0
         assert captured == ["bye"]
@@ -617,14 +631,12 @@ class TestInstructionSeamGuard:
     def _lane() -> "typer.Typer":
         """A stand-in for `run_app`: same group class, same async-leaf lane."""
         from otto.cli.invoke import make_registry_group
-        from otto.cli.run import build_instruction_app, instruction_help
+        from otto.cli.run import build_instruction_app
         from otto.instruction_catalog import INSTRUCTIONS as REGISTRY
 
         app = typer.Typer(
             name="run",
-            cls=make_registry_group(
-                REGISTRY, app_of=build_instruction_app, help_of=instruction_help
-            ),
+            cls=make_registry_group(REGISTRY, app_of=build_instruction_app),
         )
 
         @app.callback()
@@ -941,7 +953,7 @@ class TestInstructionCoverageAwareness:
         async def _probe(ctx: OttoContext) -> None:
             seen.append(ctx.cov)
 
-        result = runner.invoke(run_app, ["_unit_test_cov_aware"])
+        result = runner.invoke(run_app, ["_unit_test_cov_aware"], accepts_options=True)
 
         assert result.exit_code == 0, result.output
         assert seen == [detected]

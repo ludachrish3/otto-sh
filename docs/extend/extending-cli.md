@@ -291,9 +291,12 @@ has the details). Adding a parameter to a command that projects already use
 can therefore break a project that spells the same name.
 
 **A group's own callback cannot read them.** It runs before its command's
-flags are parsed, so `otto.get_options` there raises
-{class}`~otto.params.OptionsNotAvailableError` when the command that follows
-accepts registered options; when it does not, the read returns defaults. A
+flags are parsed. Your registration decides what a read there does, not the
+command that follows: when the registration accepts registered options,
+`otto.get_options` in any of its group callbacks raises
+{class}`~otto.params.OptionsNotAvailableError`, even when that command's
+`__cli_accepts_options__` is `False`; when the registration does not accept,
+the read returns defaults, even when that command's marker is `True`. A
 group invoked with no command (`typer.Typer(invoke_without_command=True)`)
 offers no registered flags, and its callback reads defaults.
 

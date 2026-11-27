@@ -480,6 +480,7 @@ def _covered_leaf():
         ],
     )
     leaf["candidates"] = [0, 1]
+    leaf["candidates_at"] = 1  # after the function's own --own, as the writer records it
     candidates = {
         "rows": {
             "m:A": [_param(["--a"], "a"), _param(["--own"], "spelled_twice")],
@@ -502,6 +503,14 @@ def test_candidate_rows_are_unioned_after_the_nodes_own_params():
     res = sc.resolve(tree, ["leaf", "-c", "x"], {}, candidates)
     assert res.option_values == {"c": "x"}
     assert sc.complete(tree, res, "--", {}, sc.Payloads({})) == ["--own", "--a", "--help"]
+
+
+def test_the_rows_go_where_the_node_records_them():
+    """``candidates_at`` is where the writer placed them: here before everything the node has."""
+    leaf, candidates = _covered_leaf()
+    leaf["candidates_at"] = 0
+    flags = [p["flags"] for p in sc._options(leaf, candidates)]
+    assert flags == [["--a"], ["--c", "-c"], ["--own"], ["--help", "-h"]]
 
 
 def test_a_node_with_no_candidates_key_reads_none():

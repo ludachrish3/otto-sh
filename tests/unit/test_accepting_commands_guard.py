@@ -4,7 +4,7 @@ Whether a command accepts registered options is its registration's answer
 (``accepts_options``, else whether it uses the lab), never a list of command
 names. A name typed into one of the functions that decide it would make one
 command behave differently from another with the same declaration. The one
-stated exception, ``otto.params.covering``'s ``host`` line, lives outside
+stated exception, ``otto.params.closed_to_options``'s ``host``, lives outside
 ``src/otto/cli`` and is not a decider here.
 
 The scan reads the source, so it imports nothing it judges.

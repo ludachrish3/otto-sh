@@ -12,7 +12,7 @@ import contextlib
 import dataclasses
 import functools
 import inspect
-from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Generator, Iterable, Mapping, Sequence
 from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast, get_type_hints
@@ -24,12 +24,13 @@ from typing_extensions import assert_never, override
 from ..config._typer import (
     OWN_PARAMS_ATTR,
     Parameter,
+    attached_position,
     built_spellings,
     carrier,
     get_current_context,
+    own_params,
 )
-from ..config._typer import own_params as _own_params
-from ..errors import OttoError, is_containable
+from ..errors import is_containable
 from ..params import (
     OptionsNotAvailableError,
     OptionsOrigin,
@@ -38,14 +39,12 @@ from ..params import (
     Registration,
     command_options,
     covering,
-    flag_spellings,
     merge_option_params,
     options_key,
     options_params,
     recorded_in_force,
     resolve_registration,
     sensitive_field_names,
-    verb_option_classes,
 )
 
 if TYPE_CHECKING:
@@ -193,17 +192,6 @@ def usage_error_from(
     return typer.BadParameter(message, param_hint=hint)
 
 
-RECORDS_OPTIONS_ATTR = "__otto_records_options__"
-"""Per-leaf marker that a leaf records its own option values (:func:`prepare_leaf_options`).
-
-Stamped ``True`` by :func:`stamp_options_leaf`, with the two dry-run markers.
-"""
-
-
-def _records_options(ctx: typer.Context) -> bool:
-    return bool(getattr(getattr(ctx.command, "callback", None), RECORDS_OPTIONS_ATTR, False))
-
-
 def _owns_options(ctx: typer.Context) -> bool:
     return getattr(getattr(ctx.command, "callback", None), OWN_OPTIONS_ATTR, None) is not None
 
@@ -214,7 +202,7 @@ def pending_options(ctx: typer.Context) -> "RecordedOptions | None":
     The one place that decides whether a command marks: it does when it
     accepts registered options (:func:`leaf_accepts_options`, over the
     invocation's command spec and :func:`command_path`), or its callback
-    carries :data:`RECORDS_OPTIONS_ATTR` or :data:`OWN_OPTIONS_ATTR`. The
+    carries :data:`OWN_OPTIONS_ATTR`. The
     record's ``group`` is the top-level command when it accepts, else
     ``None``. For the root context, before any subcommand runs, it answers
     for the top-level command being dispatched, from its registration
@@ -232,25 +220,23 @@ def pending_options(ctx: typer.Context) -> "RecordedOptions | None":
         callback = getattr(ctx.command, "callback", None)
         if leaf_accepts_options(spec, callback, beneath_group=len(path) > 1):
             group = path[0]
-    if group is None and not _records_options(ctx) and not _owns_options(ctx):
+    if group is None and not _owns_options(ctx):
         return None
     return RecordedOptions(group=group, pending=True)
 
 
-def settle_options(ctx: typer.Context, *, records_nothing: bool = False) -> None:
-    """Clear the pending mark for a leaf that records nothing, so its body reads defaults.
+def settle_options() -> None:
+    """Clear the pending mark, so what runs from here on reads defaults.
 
-    When the record in force (``recorded_in_force``) is pending and *ctx*'s
-    callback has no :data:`RECORDS_OPTIONS_ATTR`, that record's ``pending`` is
-    set ``False``; it keeps its group and is not replaced. A leaf that
-    records clears the mark by recording (:func:`prepare_leaf_options`).
-
-    *records_nothing* clears the mark even when *ctx*'s callback records: for
-    a parse-time listing (``otto test --list-tests -l``) that answers and
-    exits before the leaf ever records its flags.
+    When the record in force (``recorded_in_force``) is pending, its
+    ``pending`` is set ``False``; it keeps its group and is not replaced. A
+    command whose options are prepared when it is invoked
+    (:func:`prepare_command_options`) records over it; everything else, a
+    parse-time listing (``otto test --list-tests -l``) included, reads
+    defaults once it is settled.
     """
     recorded = recorded_in_force()
-    if recorded is not None and recorded.pending and (records_nothing or not _records_options(ctx)):
+    if recorded is not None and recorded.pending:
         recorded.pending = False
 
 
@@ -310,19 +296,6 @@ class LeafOptions:
         return self._hold()
 
 
-def stamp_options_leaf(leaf: Callable[..., Any], spec: LeafOptionSpec) -> None:
-    """Stamp *leaf* with the markers of a leaf that prepares its own options.
-
-    :data:`RECORDS_OPTIONS_ATTR`, :data:`DRY_RUN_SELF_FINISHING_ATTR`, and
-    :data:`SENSITIVE_FIELDS_ATTR` over every class *spec* offers.
-    """
-    from ..params import sensitive_names
-
-    setattr(leaf, RECORDS_OPTIONS_ATTR, True)
-    setattr(leaf, DRY_RUN_SELF_FINISHING_ATTR, True)
-    setattr(leaf, SENSITIVE_FIELDS_ATTR, sensitive_names(spec.build + spec.walk))
-
-
 def _invoking(leaf: Callable[..., Any]) -> "typer.Context | None":
     """Return the current parser context when its command is *leaf*, else ``None``.
 
@@ -363,6 +336,17 @@ def _recorded_for_block(ctx: "OttoContext", recorded: "RecordedOptions") -> "Gen
         yield
 
 
+def _option_values(kw: "Mapping[str, Any]", classes: "Iterable[type]") -> "dict[str, Any]":
+    """Return the values of *kw* that are a field of one of *classes*: the one split.
+
+    What is left of *kw* is the command's function's own arguments.
+    """
+    from ..params import init_field_names
+
+    names = {name for cls in classes for name in init_field_names(cls)}
+    return {k: v for k, v in kw.items() if k in names}
+
+
 def prepare_leaf_options(
     kw: "dict[str, Any]", spec: LeafOptionSpec, *, leaf: Callable[..., Any]
 ) -> LeafOptions:
@@ -384,21 +368,12 @@ def prepare_leaf_options(
     A value that fails a class's validation raises ``typer.BadParameter``.
     """
     from ..config._typer import given_names
-    from ..params import (
-        RecordedOptions,
-        build_offered,
-        command_options,
-        init_field_names,
-        sensitive_names,
-    )
+    from ..params import RecordedOptions, build_offered, command_options, sensitive_names
     from ..run_context import record_options, try_get_context
 
     offered = spec.build + spec.walk
-    names: set[str] = set()
-    for cls in offered:
-        names.update(init_field_names(cls))
-    parsed = {k: v for k, v in kw.items() if k in names}
-    rest = {k: v for k, v in kw.items() if k not in names}
+    parsed = _option_values(kw, offered)
+    rest = {k: v for k, v in kw.items() if k not in parsed}
     parser_ctx = _parsed_by(leaf)
     given = given_names(parser_ctx, parsed)
     try:
@@ -426,35 +401,6 @@ def prepare_leaf_options(
     return LeafOptions(recorded, instances, rest, sensitive=sensitive)
 
 
-def _bind_run_leaf(
-    func: Callable[..., Any], opts_cls: "type[DataclassInstance] | None", kw: "dict[str, Any]"
-) -> "dict[str, Any]":
-    """Bind an ``otto run`` leaf's parsed flags into *func*'s keyword arguments.
-
-    Through :func:`otto.instructions.bind_handler_kwargs`, the rule
-    :func:`otto.instructions.run_instruction` uses too, so ``otto run <name>``
-    and a library call cannot bind an instruction's arguments differently.
-    The values were validated by the leaf's preparation
-    (:func:`prepare_leaf_options`); this only binds them, and turns a
-    rejection on the first read of a class that preparation did not build
-    into a usage error.
-    """
-    from ..instruction_catalog import InstructionEntry
-    from ..instructions import bind_handler_kwargs
-    from ..run_context import get_context
-
-    entry = InstructionEntry(
-        name=getattr(func, "__name__", repr(func)),
-        module=func.__module__,
-        handler=func,
-        options_cls=opts_cls,
-    )
-    try:
-        return bind_handler_kwargs(get_context(), entry, kw)
-    except OptionsValidationError as e:
-        raise usage_error_from(e) from e
-
-
 def _own_option_names(cls: "type | None") -> frozenset[str]:
     """Return the names a command's own options class *cls* puts in its signature.
 
@@ -470,103 +416,69 @@ def _wrap_with_options(
     func: Callable[..., Any],
     opts_cls: "type[DataclassInstance] | None",
     *,
-    verb: str | None = None,
     project: str | None = None,
+    path: "Sequence[str] | None" = None,
 ) -> Callable[..., Any]:
-    """Build a wrapper that expands options classes into CLI parameters.
+    """Build a wrapper that expands a command's own options class into CLI parameters.
 
     *opts_cls* is the command's own options class: its fields become flags,
     and at call time the populated instance is forwarded to *func* in the
-    position of the parameter annotated with it.
+    position of the parameter annotated with it. *project* owns it, and is
+    who a collision message names for it.
 
-    With *verb* (``"run"``, the only verb :func:`prepare_command_target`
-    admits), the command also takes the flags of every options class
-    registered for that verb, merged with the own class by declaring class: a
-    field the own class inherits from a registered base is one flag, and the
-    same name or flag spelling introduced by two unrelated classes, or by a
-    field and one of the instruction's own parameters, raises
-    ``OptionsCollisionError`` here, when the command is built. At call time
-    the wrapper prepares its values through :func:`prepare_leaf_options`
-    (one :class:`LeafOptionSpec`, built here: the own class, then every
-    other class the verb covers), which records what the command was given;
-    the ``run`` verb then injects through
-    :func:`otto.instructions.bind_handler_kwargs` (:func:`_bind_run_leaf`).
-    *project* owns the own class, and is who a collision message names for it.
+    With *path*, the command's path (an instruction's,
+    ``otto.instruction_catalog.instruction_path``), a parameter annotated with
+    a class that covers *path* (``otto.instructions.covered_parameters``) is
+    taken out of the signature and receives ``otto.get_options`` of its class
+    at call time. *func*'s arguments are bound by
+    ``otto.instructions.bind_arguments``, the binding a library call
+    (``otto.instructions.run_instruction``) makes too. Nothing is resolved or
+    imported when the command is built.
 
-    Without *verb* the command says what is its own (:class:`OwnOptions`:
-    *opts_cls*, *project*, and that it finishes its own dry run) and prepares
-    nothing when it is dispatched: the invocation prepares it with the
-    classes covering it (:func:`prepare_command_options`), and the wrapper
-    hands *func* the own class's prepared instance and its other keyword
-    arguments. Called by other code (no parser context of its own), it
-    prepares its own class itself, every value given.
+    The command says what is its own (:class:`OwnOptions`: *opts_cls*,
+    *project*, that it finishes its own dry run, and, with *path*, that it
+    keeps every project and that its plain parameters are reserved names, so
+    a covering class whose field takes one is refused naming that parameter)
+    and prepares nothing when it is dispatched: the
+    invocation prepares it with the classes covering it
+    (:func:`prepare_command_options`), and the wrapper hands *func* the own
+    class's prepared instance and its other keyword arguments. Called by
+    other code (no parser context of its own), it prepares itself, every
+    value given: its own class alone, or with *path* its own class and every
+    class covering *path*, every project kept.
     """
-    func_name = getattr(func, "__name__", repr(func))
+    from .. import instructions
+    from ..instruction_catalog import options_parameter
+    from ..instructions import covered_parameters
+    from ..params import get_options
+
     sig = inspect.signature(func)
-    hints = get_type_hints(func, include_extras=True)
-
-    # Find the parameter annotated with the options class
-    opts_param_name: str | None = None
-    if opts_cls is not None:
-        for name, hint in hints.items():
-            if hint is opts_cls:
-                opts_param_name = name
-                break
-        if opts_param_name is None:
-            raise TypeError(
-                f"instruction {func_name!r} declares options={opts_cls.__name__} "
-                f"but has no parameter annotated as {opts_cls.__name__}"
-            )
-
-    own_params = options_params(opts_cls) if opts_cls is not None else []
-    own_field_names = _own_option_names(opts_cls)
-
-    verb_params: list[inspect.Parameter] = []
-    injected: dict[str, type] = {}
-    registered: set[type] = set()
-    registered_order: list[type] = []
-    if verb is not None:
-        verb_origins = verb_option_classes(verb)
-        registered_order = [origin.cls for origin in verb_origins]
-        # Matched by identity, as `_ctx_param_name` matches OttoContext: an
-        # annotation IS a registered class, or it is an ordinary parameter.
-        registered = {origin.cls for origin in verb_origins}
+    opts_param_name = options_parameter(func, opts_cls)
+    injected: "dict[str, type]" = {}
+    if path is not None:
         injected = {
-            name: hints[name]
-            for name in sig.parameters
+            name: cls
+            for name, cls in covered_parameters(func, path).items()
             if name != opts_param_name
-            and name in hints
-            and any(hints[name] is cls for cls in registered)
         }
-        # The own class goes first, so a base field it inherits is counted
-        # once, under the class that declares it, and a clash between an own
-        # field and a verb field is reported naming both. Every other visible
-        # parameter is reserved, by name and by flag spelling: a verb field of
-        # the same name would make the signature ambiguous, and one of the
-        # same spelling would shadow the parameter's flag. Spellings are read
-        # from the resolved hint, so a string annotation reads the same.
-        own_origin = [OptionsOrigin(opts_cls, project)] if opts_cls is not None else []
-        inline = [
-            p.replace(annotation=hints.get(name, p.annotation))
-            for name, p in sig.parameters.items()
-            if name != opts_param_name and name not in injected
-        ]
-        reserved = {p.name: f"parameter {p.name!r} of instruction {func_name!r}" for p in inline}
-        reserved_flags = {
-            spelling: reserved[p.name] for p in inline for spelling in flag_spellings(p)
-        }
-        merged = merge_option_params(
-            own_origin + verb_origins,
-            what=f"otto {verb} {func_name}",
-            reserved=reserved,
-            reserved_flags=reserved_flags,
-        )
-        verb_params = [p for p in merged if p.name not in own_field_names]
+    own_params = options_params(opts_cls) if opts_cls is not None else []
+    func_name = getattr(func, "__name__", repr(func))
+    reserved = {
+        name: f"parameter {name!r} of instruction {func_name!r}"
+        for name in sig.parameters
+        if path is not None and name != opts_param_name and name not in injected
+    }
+    own = OwnOptions(
+        cls=opts_cls,
+        project=project,
+        finishes_dry_run=True,
+        reserved=reserved,
+        every_project=path is not None,
+    )
 
-    # Build new parameter list: replace the opts param with expanded fields,
-    # drop the injected ones, and append the verb's fields. No hidden click
-    # Context parameter: the wrapper reads the current one (see below), so the
-    # public signature stays exactly what the own + verb fields declare.
+    # Replace the opts param with its expanded fields and drop the injected
+    # ones. No hidden click Context parameter: the wrapper reads the current
+    # one (see below), so the public signature is exactly what it declares.
     new_params: list[inspect.Parameter] = []
     for p in sig.parameters.values():
         if p.name == opts_param_name:
@@ -579,33 +491,19 @@ def _wrap_with_options(
                 else p.replace(kind=inspect.Parameter.KEYWORD_ONLY)
             )
             new_params.append(kw_only_p)
-    new_params.extend(verb_params)
-
-    # The own class first, then every other class the verb covers: one
-    # spec, built once, so the preparation, the dry-run display and the
-    # masked names all read the same classes in the same order.
-    build: tuple[type, ...] = (opts_cls,) if opts_cls is not None else ()
-    build += tuple(cls for cls in registered_order if cls is not opts_cls)
-    spec = LeafOptionSpec(group=verb, build=build)
 
     @functools.wraps(func)
     async def wrapper(**kw: Any) -> Any:
-        # A dispatched verb-less command was prepared when it was invoked; the
-        # invocation holds that record around this call.
-        handed = _handed_options(wrapper) if verb is None else None
-        prepared = handed if handed is not None else prepare_leaf_options(kw, spec, leaf=wrapper)
-        own_kw = (
-            prepared.rest
-            if handed is None
-            else {k: v for k, v in kw.items() if k not in own_field_names}
-        )
-        with prepared.scope() if handed is None else contextlib.nullcontext():
-            if verb == "run":
-                call_kw = _bind_run_leaf(func, opts_cls, own_kw)
-            else:
-                call_kw = dict(own_kw)
-                if opts_cls is not None and opts_param_name is not None:
-                    call_kw[opts_param_name] = prepared.instances[opts_cls]
+        prepared = leaf_preparation(wrapper, kw, own, path)
+        with prepared.scope():
+            offered = _option_values(kw, prepared.recorded.offered)
+            call_kw = instructions.bind_arguments(
+                func,
+                own_cls=opts_cls,
+                path=path,
+                kwargs={k: v for k, v in kw.items() if k not in offered},
+                read=get_options,
+            )
             # Validation is already DONE by this point, exactly as it is on a
             # real run -- so a dry run's `finish_dry_run` never has to
             # re-validate anything, only report what was just built.
@@ -631,16 +529,12 @@ def _wrap_with_options(
             return await func(**call_kw)
 
     wrapper.__signature__ = inspect.Signature(new_params)  # ty: ignore[missing-attribute]
-    if verb is None:
-        own = OwnOptions(cls=opts_cls, project=project, finishes_dry_run=True)
-        setattr(wrapper, OWN_OPTIONS_ATTR, own)
-    else:
-        stamp_options_leaf(wrapper, spec)
+    setattr(wrapper, OWN_OPTIONS_ATTR, own)
     return wrapper
 
 
 _PREPARED_HANDED = "otto.prepared_options_handed"
-"""``click.Context.meta`` key: a verb-less wrapper has been handed the invocation's preparation."""
+"""``click.Context.meta`` key: a wrapper has been handed the invocation's preparation."""
 
 
 def _handed_options(leaf: Callable[..., Any]) -> "LeafOptions | None":
@@ -661,31 +555,56 @@ def _handed_options(leaf: Callable[..., Any]) -> "LeafOptions | None":
     return prepared
 
 
+def leaf_preparation(
+    leaf: Callable[..., Any],
+    kw: "dict[str, Any]",
+    own: "OwnOptions",
+    path: "Sequence[str] | None" = None,
+) -> LeafOptions:
+    """Return the preparation a leaf's body runs with: the invocation's, else its own.
+
+    The one sequence every leaf that says what is its own (:class:`OwnOptions`)
+    follows. When *leaf* is the command being invoked, the invocation
+    prepared it (:func:`prepare_command_options`) and that preparation is
+    handed to its first call (``_handed_options``). Otherwise other code
+    calls it, and it prepares *kw* itself (:func:`prepare_leaf_options`),
+    every value given: over its own class (*own*) alone, or, with *path*,
+    its command's path, over its own class, every class covering *path*
+    (resolved here) and every body of *own*, every project kept. The body
+    runs inside :meth:`LeafOptions.scope` either way.
+    """
+    handed = _handed_options(leaf)
+    if handed is not None:
+        return handed
+    if path is None:
+        spec = LeafOptionSpec(group=None, build=(own.cls,) if own.cls is not None else ())
+    else:
+        origins = [resolve_registration(registration) for registration in covering(path)]
+        spec = _leaf_spec(path, own, origins, own.bodies() if own.bodies is not None else [])
+    return prepare_leaf_options(kw, spec, leaf=leaf)
+
+
 def prepare_command_target(
     func: Callable[..., Any],
     options_cls: type | None = None,
     *,
-    verb: str | None = None,
     project: str | None = None,
+    path: "Sequence[str] | None" = None,
 ) -> Callable[..., Any]:
     """Apply otto's CLI wrappers to *func*: OttoContext injection + options expansion.
 
     The shared machinery behind ``@instruction`` and ``@cli_command``: a
     parameter annotated ``OttoContext`` is stripped from the CLI signature and
     injected at call time; an *options_cls* dataclass parameter is expanded
-    into individual CLI flags.
+    into individual CLI flags. *project* is the project that registered
+    *func* (``None`` for otto), named for *options_cls* when one of its
+    fields collides.
 
-    With *verb*, the command also gains the flag of every options class
-    registered for that verb, the parsed values are bound on the active
-    context before *func* runs, and a parameter annotated with a registered
-    class is injected with ``ctx.options(cls)`` (see ``_wrap_with_options``).
-    *verb* is ``None`` or ``"run"``, the two shapes with a call-time binding:
-    any other raises :exc:`ValueError`, checked before the idempotency
-    short-circuit below so an already-prepared callable is refused too. The
-    verb's classes are resolved HERE, which may import their modules, so
-    a caller passes *verb* only where the command is being built for that
-    verb's own dispatch. *project* is the project that registered *func* (``None``
-    for otto), named for *options_cls* when one of its fields collides.
+    With *path*, an instruction's command path, a parameter annotated with
+    a class covering *path* is injected with ``otto.get_options(cls)``, and
+    the command keeps every project (see ``_wrap_with_options``). The
+    covering classes' flags are attached for each invocation, like every
+    command's (:func:`offered_options`); nothing is resolved here.
 
     Idempotent by contract, not coincidence: a callable this function already
     wrapped is returned unchanged (sentinel attribute). The dispatch path
@@ -701,17 +620,7 @@ def prepare_command_target(
     always find the real registered handler beneath otto's own wrapping
     without having to walk (and so trust) a ``__wrapped__`` chain a user's
     decorator might also have contributed to.
-
-    Raises:
-        ValueError: *verb* is neither ``None`` nor ``"run"``.
     """
-    if verb not in (None, "run"):
-        # The call-time binding exists for exactly these two shapes: `run`
-        # binds through `bind_handler_kwargs`, and a verb-less command builds
-        # its own class alone. Another verb's flags would be expanded and
-        # then never bound.
-        func_name = getattr(func, "__name__", repr(func))
-        raise ValueError(f"command {func_name!r}: no call-time binding for verb {verb!r}")
     if getattr(func, "__otto_cli_prepared__", False):
         return func
     ctx_name = _ctx_param_name(func)
@@ -721,8 +630,8 @@ def prepare_command_target(
     own_cls: "type[DataclassInstance] | None" = None
     if options_cls is not None and dataclasses.is_dataclass(options_cls):
         own_cls = options_cls
-    if own_cls is not None or verb is not None:
-        target = _wrap_with_options(target, own_cls, verb=verb, project=project)
+    if own_cls is not None or path is not None:
+        target = _wrap_with_options(target, own_cls, project=project, path=path)
     if target is not func:
         target.__otto_cli_prepared__ = True  # ty: ignore[missing-attribute]
         target.__otto_handler__ = func  # ty: ignore[missing-attribute]
@@ -1135,7 +1044,7 @@ def settle_for_root_listing(ctx: typer.Context) -> None:
     records nothing, so the root's mark is settled and the stashed command
     spec is dropped, and the lab they load reads defaults.
     """
-    settle_options(ctx, records_nothing=True)
+    settle_options()
     ctx.meta.pop(_COMMAND_SPEC_KEY, None)
 
 
@@ -1537,8 +1446,8 @@ def listing_participation(ctx: typer.Context, projects: "Sequence[Project]") -> 
     cleared as soon as the lab is in, so a conftest or test module that reads
     an options class while the listing collects gets its defaults, as in a
     lab-free leaf, instead of ``OptionsNotAvailableError``
-    (:func:`settle_options` with ``records_nothing``: the ``otto test`` leaf
-    records, but its listings never reach that recording).
+    (:func:`settle_options`: ``otto test``'s listings answer at parse time,
+    before its options are prepared).
     """
     from ..config.scope import participating
     from ..run_context import get_context
@@ -1547,7 +1456,7 @@ def listing_participation(ctx: typer.Context, projects: "Sequence[Project]") -> 
     selection = scope_selection(ctx)
     if selection.labs:
         ensure_inline_lab(ctx)
-        settle_options(ctx, records_nothing=True)
+        settle_options()
         return participating(projects, ctx=get_context())
     validate_project_switches(selection)
     fail_loud_on_bootstrap_errors(selection)
@@ -1779,13 +1688,15 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
     # key. Anything else -- ``otto host <id> get``, ``otto link impair`` --
     # exits at the root with ``parent is None`` and is left alone; this gate
     # is about instruction dispatch, not about every command in the CLI.
+    from ..instruction_catalog import INSTRUCTION_GROUP, INSTRUCTIONS
+
     node = inner_ctx
-    while node.parent is not None and getattr(node.parent.command, "name", None) != "run":
+    while (
+        node.parent is not None and getattr(node.parent.command, "name", None) != INSTRUCTION_GROUP
+    ):
         node = node.parent
     if node.parent is None:
         return  # not dispatched through `otto run`
-
-    from ..instruction_catalog import INSTRUCTIONS
 
     # `or ""`: click types `info_name` as `str | None`, and an unnamed node owns
     # nothing -- "" is never a registered instruction, so the one lookup below
@@ -2156,40 +2067,6 @@ would have used (``otto host`` lends :func:`~otto.cli.host.resolve_cli_host`),
 so there is one authority rather than a mirrored copy that can drift.
 """
 
-SENSITIVE_FIELDS_ATTR = "__otto_sensitive_fields__"
-"""Per-leaf set of option field names whose VALUE the ``would run:`` line must mask.
-
-A ``frozenset[str]``, stamped by :func:`stamp_options_leaf` (and by
-``otto.cli.run._project_leaf``) from ``otto.params.sensitive_names`` over every
-options class contributing flags to the command. Read by ``_param_words``
-for a leaf that prepares its own options (a command prepared when it is
-invoked carries the same set as :attr:`LeafOptions.sensitive`), so the
-generic argv echo -- which knows nothing about options classes, only raw
-click parameters -- can still print ``<hidden>`` for a
-``SecretStr``/``SecretBytes`` field or one declared ``repr=False``, the same
-two conditions ``_options_line`` already masks in the ``options:`` block.
-"""
-
-DRY_RUN_SELF_FINISHING_ATTR = "__otto_dry_run_self_finishing__"
-"""Per-leaf marker that a leaf validates its own options and finishes its own dry run.
-
-Stamped ``True`` by :func:`stamp_options_leaf` on every leaf that prepares
-its options through :func:`prepare_leaf_options` itself (every leaf
-:func:`prepare_command_target` builds for the ``run`` verb), and by the
-project-instruction leaf ``otto.cli.run._project_leaf`` builds; a command
-prepared when it is invoked answers with :attr:`LeafOptions.finishes_dry_run`
-instead. Read by
-:func:`stop_at_dry_run_seam`, which returns immediately for such a leaf --
-no probe, no reference resolution, no print -- because the leaf's own body
-does all three itself, via :func:`finish_dry_run`, AFTER it has bound and
-built its options from the real, typer-CONVERTED kwargs (never
-``ctx.params``, which holds pre-conversion values: a ``Path``, an ``Enum``, a
-``list`` -- whatever typer's own callback shim converts them to -- so a
-``-n`` build cannot construct a different object than a real run's, and a
-project instruction's verb-registered classes (which used to reach the seam
-not at all) validate under ``-n`` exactly as they do on the real path.
-"""
-
 
 @dataclasses.dataclass(frozen=True)
 class LabReference:
@@ -2264,14 +2141,15 @@ def _leaf_declares_preview(ctx: typer.Context) -> bool:
 def _leaf_self_finishes_dry_run(ctx: typer.Context) -> bool:
     """Whether the resolved leaf finishes its own dry run.
 
-    A command prepared when it was invoked answers from its preparation
-    (:attr:`LeafOptions.finishes_dry_run`); a leaf that prepares its own
-    options, from its :data:`DRY_RUN_SELF_FINISHING_ATTR` stamp.
+    Its preparation's answer (:attr:`LeafOptions.finishes_dry_run`, from what
+    the command says is its own); a command prepared nothing finishes none.
+    Such a leaf awaits :func:`finish_dry_run` itself, after its options are
+    built from the values its function receives (never ``ctx.params``, which
+    holds values before Typer's conversion), so a dry run builds the objects
+    a real run would.
     """
     prepared = prepared_options(ctx)
-    if prepared is not None:
-        return prepared.finishes_dry_run
-    return bool(getattr(getattr(ctx.command, "callback", None), DRY_RUN_SELF_FINISHING_ATTR, False))
+    return prepared is not None and prepared.finishes_dry_run
 
 
 def resolve_dry_run_references(ctx: typer.Context) -> "list[LabReference]":
@@ -2294,8 +2172,9 @@ def _param_words(ctx: typer.Context) -> "list[str]":
     the invocation attached). A command prepared when it was invoked
     (:func:`prepared_options`) gives the attached values as the parser held
     them (:attr:`LeafOptions.raw`) and the names to mask
-    (:attr:`LeafOptions.sensitive`); otherwise the names to mask are those
-    :data:`SENSITIVE_FIELDS_ATTR` lists on this node's callback. A masked
+    (:attr:`LeafOptions.sensitive`: a ``SecretStr``/``SecretBytes`` field or
+    one declared ``repr=False``, over every class it offers); any other
+    command masks nothing. A masked
     name has its VALUE replaced with the literal ``<hidden>`` -- the flag
     still shows (an operator needs to know the switch was given), only what
     followed it is masked. A boolean flag carries no separate value word to
@@ -2304,13 +2183,8 @@ def _param_words(ctx: typer.Context) -> "list[str]":
     import shlex
 
     prepared = prepared_options(ctx)
-    if prepared is not None:
-        sensitive = prepared.sensitive
-        values = {**ctx.params, **prepared.raw}
-    else:
-        callback = getattr(ctx.command, "callback", None)
-        sensitive = getattr(callback, SENSITIVE_FIELDS_ATTR, frozenset())
-        values = dict(ctx.params)
+    sensitive = prepared.sensitive if prepared is not None else frozenset()
+    values = {**ctx.params, **(prepared.raw if prepared is not None else {})}
     words: list[str] = []
     for param in ctx.command.get_params(ctx):
         name = getattr(param, "name", None)
@@ -2467,8 +2341,7 @@ def stop_at_dry_run_seam(ctx: typer.Context, spec: "CommandSpec") -> None:
     A no-op when this is not a dry run, which is every non-``-n`` invocation.
 
     A leaf that finishes its own dry run (``_leaf_self_finishes_dry_run``:
-    its preparation says so, or its :data:`DRY_RUN_SELF_FINISHING_ATTR`
-    stamp) is handled not at all: it returns immediately, because such a
+    its preparation says so) is handled not at all: it returns immediately, because such a
     leaf's OWN body calls :func:`finish_dry_run` itself with the options it
     was prepared with.
 
@@ -2540,8 +2413,8 @@ def _sync_probe_step(ctx: typer.Context) -> _ProbeStep:
 def print_preview_dry_run(ctx: typer.Context, options: "list[Any]") -> None:
     """Print a previewing sync leaf's dry-run block: probe (if requested), then the block.
 
-    For a leaf that is both :data:`DRY_RUN_PREVIEW_ATTR` and
-    :data:`DRY_RUN_SELF_FINISHING_ATTR` and runs without a loop of its own
+    For a leaf that is :data:`DRY_RUN_PREVIEW_ATTR` and finishes its own dry
+    run (its :class:`OwnOptions` says so) and runs without a loop of its own
     (``otto test``, whose body is sync because ``pytest.main`` is): it has
     already bound and built *options* from the real, typer-converted kwargs,
     exactly as a real run would, so a bad value has already failed. This runs
@@ -2911,7 +2784,7 @@ def _require_async_leaf(cmd: Any, spec: "CommandSpec") -> None:
     ``fn(**k)``'s coroutine, so a full unwrap that reached the inner ``fn``
     would call the leaf async, wave the guard through, and still drop the
     coroutine on the floor). A data ``InstructionEntry`` now always passes
-    through ``build_instruction_app`` -> ``prepare_command_target(verb="run")``,
+    through ``build_instruction_app`` -> ``prepare_command_target(path=...)``,
     which wraps every handler -- sync or async -- in its own ``async def``
     options-binding wrapper before typer wraps THAT again into the click
     callback, so a plain one-level unwrap would land on that (already-async)
@@ -3093,6 +2966,128 @@ def _described(
     return Candidate(key=key, project=project, entries=entries, params=carried.params)
 
 
+def body_entries(path: "Sequence[str]") -> list[str]:
+    """Return the entries of a body class's use: the one command *path* it is a body of.
+
+    The one spelling of it, for a body's use (:func:`body_uses`) and the
+    uses a command that does not accept is offered (``_offered_uses``). A
+    use's ``entries`` hold it as a tuple.
+    """
+    return [" ".join(path)]
+
+
+@dataclasses.dataclass(frozen=True)
+class OptionsUse:
+    """One use of an options class: what it serves, and where its class comes from."""
+
+    registration: Any
+    """Its ``otto.params.Registration``: its key, the entries it serves and its project.
+
+    What ``otto.params.covering`` judges. Typed ``Any`` here, as
+    :func:`recorded_registrations` is, because the API reference documents
+    no ``otto.params.Registration`` to link to.
+    """
+    origin: "OptionsOrigin | None" = None
+    """A body class's class and project, known already; ``None`` for a registration."""
+
+    def resolve(self) -> OptionsOrigin:
+        """Return its class and project: a body's as known, a registration's resolved.
+
+        A registration is resolved by ``otto.params.resolve_registration``,
+        which raises ``OptionsRegistrationError`` for a class that cannot be
+        imported.
+        """
+        if self.origin is not None:
+            return self.origin
+        return resolve_registration(self.registration)
+
+    def candidate(self) -> "Candidate | None":
+        """Describe its class on its own (:func:`candidate_of`); ``None`` when that fails."""
+        registration = self.registration
+        return candidate_of(
+            registration.key,
+            registration.project,
+            registration.entries,
+            lambda: self.resolve().cls,
+        )
+
+
+def body_uses(path: "Sequence[str]", origins: "Iterable[OptionsOrigin]") -> "list[OptionsUse]":
+    """Return one use per body class in *origins* of the command *path*, in order.
+
+    Each use's entries are the command itself (:func:`body_entries`) and its
+    project the body's. With :func:`registered_uses`, the one enumeration of
+    the uses a command may be offered, for the live offer
+    (:func:`offered_options`), the live candidates (:func:`live_candidates`)
+    and the cache's description of every use
+    (``otto.cli.registry.collect_option_candidates``).
+    """
+    entries = tuple(body_entries(path))
+    return [
+        OptionsUse(
+            Registration(key=options_key(origin.cls), entries=entries, project=origin.project),
+            origin,
+        )
+        for origin in origins
+    ]
+
+
+def registered_uses() -> "list[OptionsUse]":
+    """Return one use per registration (``otto.params.registrations``), in registration order.
+
+    Nothing is resolved: a use resolves its class when asked
+    (:meth:`OptionsUse.resolve`).
+    """
+    from ..params import registrations
+
+    return [OptionsUse(registration) for registration in registrations()]
+
+
+def _body_origins(own: "OwnOptions | None", path: "Sequence[str]") -> "list[OptionsOrigin]":
+    """Return *own*'s body classes (``OwnOptions.bodies``) for completion; none when it fails."""
+    if own is None or own.bodies is None:
+        return []
+    try:
+        return own.bodies()
+    except BaseException as exc:
+        if not is_containable(exc):
+            raise
+        getLogger(__name__).debug(f"otto {' '.join(path)}: no body classes: {exc!r}")
+        return []
+
+
+def _offered_uses(
+    path: "Sequence[str]",
+    among: "Sequence[Registration]",
+    *,
+    covered: bool,
+    bodies: "Collection[str]",
+    kept: "Collection[str] | None" = None,
+) -> "list[Registration]":
+    """Return the uses of *among* the command *path* is offered, in order.
+
+    The one answer for the live offer (:func:`offered_options`), a live TAB
+    (:func:`live_candidates`), a warm TAB (:func:`completion_candidates`)
+    and the completion cache's walk (:func:`covering_uses`). *covered* is
+    the command's gate's accepts answer (:attr:`OfferGate.accepts`): a
+    command that accepts is offered every use covering *path*, its own
+    bodies' included; one that does not is offered only the uses of its own
+    body classes, those whose key is in *bodies* and whose entries are the
+    command itself (:func:`body_entries`). Either way the uses are those
+    ``otto.params.covering`` keeps for *kept*, the projects that take part
+    (``None``, as a TAB asks, keeps every project). Nothing is resolved.
+    """
+    if not covered:
+        entries = tuple(body_entries(path))
+        among = [use for use in among if use.entries == entries and use.key in bodies]
+    return covering(path, kept=kept, among=among)
+
+
+def _body_keys(own: "OwnOptions | None", path: "Sequence[str]") -> frozenset[str]:
+    """Return the registry keys of *own*'s body classes (:func:`_body_origins`)."""
+    return frozenset(options_key(origin.cls) for origin in _body_origins(own, path))
+
+
 def completion_candidates(
     path: "Sequence[str]", own: "OwnOptions | None", *, covered: bool
 ) -> "list[Candidate]":
@@ -3101,30 +3096,33 @@ def completion_candidates(
     The one answer, cold or warm. When the invocation reads the completion
     cache (``otto.registry.get_completion_names``) and its snapshot records
     the candidates (an ``option_candidates`` mapping), they come from it:
-    the recorded uses that cover *path*, each class's rows rebuilt as
-    completion stubs, and no class is resolved. A snapshot that records none
-    (one built by hand) is a miss, as for every other key a completer reads,
-    and the answer is the live registry's (:func:`live_candidates`).
+    the recorded uses ``_offered_uses`` keeps, each class's rows rebuilt
+    as completion stubs, and no class is resolved. A snapshot that records
+    none (one built by hand) is a miss, as for every other key a completer
+    reads, and the answer is the live registry's (:func:`live_candidates`).
     *covered* is the command's gate's accepts answer
-    (:attr:`OfferGate.accepts`); from the cache, a command that does not
-    accept is offered nothing, as the cache's walk recorded it
-    (:func:`covering_uses`). From the cache, *own*'s body classes
-    (``OwnOptions.bodies``) are not offered: the cache records only the
-    project instructions' bodies, and no other command declares bodies yet.
+    (:attr:`OfferGate.accepts`), and *own* what the command says is its own,
+    whose body classes it is offered either way.
     """
     from ..registry import get_completion_names
 
     names = get_completion_names()
     recorded = names.get("option_candidates") if names is not None else None
     if isinstance(recorded, dict):
-        return _cached_candidates(path, recorded) if covered else []
+        return _cached_candidates(path, recorded, own, covered=covered)
     return live_candidates(path, own, covered=covered)
 
 
-def _cached_candidates(path: "Sequence[str]", recorded: "Mapping[str, Any]") -> "list[Candidate]":
+def _cached_candidates(
+    path: "Sequence[str]",
+    recorded: "Mapping[str, Any]",
+    own: "OwnOptions | None",
+    *,
+    covered: bool,
+) -> "list[Candidate]":
     """Return the candidates of the command *path* from the cache's recorded ``option_candidates``.
 
-    Each recorded use that covers *path* (``otto.params.covering`` over one
+    Each recorded use ``_offered_uses`` keeps (one
     :class:`~otto.params.Registration` per use, whatever its project), its
     class's rows rebuilt as completion stubs
     (``otto.config.completion_stubs.stub_param_from_row``): each parses as the
@@ -3134,12 +3132,13 @@ def _cached_candidates(path: "Sequence[str]", recorded: "Mapping[str, Any]") -> 
     """
     try:
         rows = recorded["rows"]
-        uses = covering(path, among=recorded_registrations(recorded["uses"]))
+        among = recorded_registrations(recorded["uses"])
     except BaseException as exc:
         if not is_containable(exc):
             raise
         getLogger(__name__).debug(f"otto {' '.join(path)}: no recorded candidates: {exc!r}")
         return []
+    uses = _offered_uses(path, among, covered=covered, bodies=_body_keys(own, path))
     if not uses:
         return []
     from ..config.completion_stubs import stub_param_from_row
@@ -3161,40 +3160,38 @@ def live_candidates(
 ) -> "list[Candidate]":
     """Return the candidates of the command *path*, from the live registry, for completion.
 
-    Each body class of *own* (its entries: the command itself), then, with
-    *covered*, each registration that covers *path* whatever its project
-    (``otto.params.covering``), each described by :func:`candidate_of`.
-    *covered* is the command's gate's accepts answer
+    The uses ``_offered_uses`` keeps among one use per body class of
+    *own* (:func:`body_uses`), then every registration
+    (:func:`registered_uses`), each described on its own
+    (:meth:`OptionsUse.candidate`). *covered* is the command's gate's accepts answer
     (:attr:`OfferGate.accepts`): a command that does not accept registered
     options is offered its bodies only. A class that fails is left out and
     costs no other its place; nothing raises. :func:`completion_candidates`
     is its one caller on a TAB.
     """
-    found: "list[Candidate | None]" = []
-    if own is not None and own.bodies is not None:
-        try:
-            bodies = own.bodies()
-        except BaseException as exc:
-            if not is_containable(exc):
-                raise
-            getLogger(__name__).debug(f"otto {' '.join(path)}: no body classes: {exc!r}")
-            bodies = []
-        entry = (" ".join(path),)
-        found.extend(
-            candidate_of(options_key(origin.cls), origin.project, entry, lambda o=origin: o.cls)
-            for origin in bodies
-        )
-    if covered:
-        found.extend(
-            candidate_of(
-                registration.key,
-                registration.project,
-                registration.entries,
-                lambda r=registration: resolve_registration(r).cls,
-            )
-            for registration in covering(path)
-        )
+    uses = [*body_uses(path, _body_origins(own, path)), *registered_uses()]
+    found = (use.candidate() for use in _offered(path, uses, covered=covered))
     return [candidate for candidate in found if candidate is not None]
+
+
+def _offered(
+    path: "Sequence[str]",
+    uses: "Sequence[OptionsUse]",
+    *,
+    covered: bool,
+    kept: "Collection[str] | None" = None,
+) -> "list[OptionsUse]":
+    """Return the uses of *uses* the command *path* is offered: ``_offered_uses``' answer.
+
+    Asked over the uses' registrations for *kept*, the keys of the body uses
+    among them (those that know their class) as the command's bodies.
+    """
+    by_id = {id(use.registration): use for use in uses}
+    bodies = {use.registration.key for use in uses if use.origin is not None}
+    offered = _offered_uses(
+        path, [use.registration for use in uses], covered=covered, bodies=bodies, kept=kept
+    )
+    return [by_id[id(registration)] for registration in offered]
 
 
 def recorded_registrations(uses: "Iterable[Mapping[str, Any]]") -> "list[Any]":
@@ -3221,10 +3218,10 @@ def covering_uses(cmd: Any, ctx: Any, among: "Sequence[Any]") -> list[int]:
     ``otto.cli.registry.collect_option_candidates`` recorded (its key,
     entries and project). The command is judged by the live offer's own
     gate (:func:`offer_gate`), for the top-level registration its path
-    starts with: one that prepares its own options, or does not accept,
-    gets ``[]``. Otherwise the answer is the uses ``otto.params.covering``
-    keeps for its path, whatever their project: a body's use covers its
-    instruction through its entries. Nothing is resolved.
+    starts with, and the uses are those ``_offered_uses`` keeps, as a
+    TAB keeps them: a command that accepts is offered every use covering
+    its path, whatever its project; one that does not, only its own bodies'
+    uses. Nothing is resolved.
     """
     from .registry import CLI_COMMANDS
 
@@ -3233,9 +3230,9 @@ def covering_uses(cmd: Any, ctx: Any, among: "Sequence[Any]") -> list[int]:
     if name is None or name not in CLI_COMMANDS:
         return []
     gate = offer_gate(cmd, ctx, CLI_COMMANDS.peek(name=name))
-    if gate.self_preparing or not gate.accepts:
-        return []
-    kept = {id(registration) for registration in covering(gate.path, among=among)}
+    bodies = _body_keys(gate.own, gate.path)
+    offered = _offered_uses(gate.path, among, covered=gate.accepts, bodies=bodies)
+    kept = {id(registration) for registration in offered}
     return [index for index, registration in enumerate(among) if id(registration) in kept]
 
 
@@ -3244,10 +3241,8 @@ def offered_options(ctx: typer.Context, spec: "CommandSpec") -> "Offer | None":
 
     The one offer, decided once per command and invocation (kept in
     ``ctx.meta`` under the command's path). ``None`` for a command that
-    prepares its own options (its callback carries
-    :data:`RECORDS_OPTIONS_ATTR`), and for one that neither accepts
-    registered options (:func:`leaf_accepts_options`) nor carries
-    :data:`OWN_OPTIONS_ATTR`.
+    neither accepts registered options (:func:`leaf_accepts_options`) nor
+    carries :data:`OWN_OPTIONS_ATTR`.
 
     Under a completion parse (``ctx.resilient_parsing``: a TAB) it is the
     union of :func:`completion_candidates` (the completion cache's recorded
@@ -3255,15 +3250,17 @@ def offered_options(ctx: typer.Context, spec: "CommandSpec") -> "Offer | None":
     and the first spelling winning, the command's own parameters skipped:
     nothing is merged and nothing can fail.
 
-    Otherwise the registrations covering the command
-    (``otto.params.covering``, over :func:`kept_projects`) are
-    resolved, stopping at the first that fails, and a body class is kept
-    only when no project owns it or its project is kept: a project that does
-    not take part offers nothing and has nothing imported. A command whose
-    :class:`OwnOptions` sets *every_project* keeps every project and never
-    asks :func:`kept_projects`. With no registration and no
-    :class:`OwnOptions`, ``None``, and nothing is resolved or built. The own
-    class, the kept body classes and the covering classes are merged
+    Otherwise the uses ``_offered_uses`` keeps for :func:`kept_projects`,
+    among the command's body classes (:func:`body_uses`) and every
+    registration (:func:`registered_uses`), are the ones offered: its bodies
+    whether or not it accepts, the covering registrations only when it
+    does, and each only when no project owns it or its project takes part,
+    so a project that does not take part offers nothing and has nothing
+    imported. A command whose :class:`OwnOptions` sets *every_project* keeps
+    every project and never asks :func:`kept_projects`. The registrations
+    kept are resolved, stopping at the first that fails. With no use kept
+    and no :class:`OwnOptions`, ``None``, and nothing is resolved or built.
+    The own class, the kept body classes and the covering classes are merged
     (:func:`~otto.params.merge_option_params`) with the command's other own
     parameters reserved by name and by spelling, ``-h``/``--help``
     included. A collision raises ``OptionsCollisionError`` naming both
@@ -3287,13 +3284,11 @@ class OfferGate:
     """What its callback says is its own (:data:`OWN_OPTIONS_ATTR`)."""
     accepts: bool
     """Whether it accepts registered options (:func:`leaf_accepts_options`)."""
-    self_preparing: bool
-    """Whether it prepares its own options (:data:`RECORDS_OPTIONS_ATTR`): it is offered nothing."""
 
     @property
     def offers(self) -> bool:
-        """Whether anything may be offered (not self-preparing; accepting, or carrying its own)."""
-        return not self.self_preparing and (self.accepts or self.own is not None)
+        """Say whether anything may be offered, which is so when it accepts or carries its own."""
+        return self.accepts or self.own is not None
 
 
 def offer_gate(command: Any, ctx: Any, spec: "CommandSpec") -> OfferGate:
@@ -3309,7 +3304,25 @@ def offer_gate(command: Any, ctx: Any, spec: "CommandSpec") -> OfferGate:
         path=path,
         own=cast("OwnOptions | None", getattr(callback, OWN_OPTIONS_ATTR, None)),
         accepts=leaf_accepts_options(spec, callback, beneath_group=len(path) > 1),
-        self_preparing=bool(getattr(callback, RECORDS_OPTIONS_ATTR, False)),
+    )
+
+
+def _leaf_spec(
+    path: "Sequence[str]",
+    own: "OwnOptions | None",
+    origins: "Sequence[OptionsOrigin]",
+    bodies: "Sequence[OptionsOrigin]",
+) -> LeafOptionSpec:
+    """Return what a command of *path* prepares over: one spec, read by every preparation.
+
+    It records under its top-level command; its own class (*own*'s) and the
+    covering classes (*origins*) are built before its body, the own class
+    first and each once, and its *bodies*' classes are walked.
+    """
+    own_cls = own.cls if own is not None else None
+    built = [*([own_cls] if own_cls is not None else []), *(o.cls for o in origins)]
+    return LeafOptionSpec(
+        group=path[0], build=tuple(dict.fromkeys(built)), walk=tuple(o.cls for o in bodies)
     )
 
 
@@ -3320,7 +3333,6 @@ def _offer(ctx: typer.Context, spec: "CommandSpec") -> "Offer | None":
     if not gate.offers:
         return None
     path, own, accepts = gate.path, gate.own, gate.accepts
-    nothing_built = LeafOptionSpec(group=path[0], build=())
     if ctx.resilient_parsing:
         mine = own_params(command, ctx)
         names = {param.name for param in mine}
@@ -3334,18 +3346,17 @@ def _offer(ctx: typer.Context, spec: "CommandSpec") -> "Offer | None":
                 names.add(param.name)
                 words.update(spelled)
                 union.append(param)
+        nothing_built = _leaf_spec(path, None, (), ())
         return Offer(tuple(union), nothing_built, _no_conversion, finishes_dry_run=False)
     kept = None if own is not None and own.every_project else kept_projects(ctx)
-    registrations = covering(path, kept=kept) if accepts else []
-    if not registrations and own is None:
+    own_bodies = own.bodies() if own is not None and own.bodies is not None else []
+    uses = [*body_uses(path, own_bodies), *registered_uses()]
+    offered = _offered(path, uses, covered=accepts, kept=kept)
+    if not offered and own is None:
         return None
     mine = own_params(command, ctx)
-    origins = [resolve_registration(registration) for registration in registrations]
-    bodies = [
-        origin
-        for origin in (own.bodies() if own is not None and own.bodies is not None else [])
-        if kept is None or origin.project is None or origin.project in kept
-    ]
+    origins = [use.resolve() for use in offered if use.origin is None]
+    bodies = [use.origin for use in offered if use.origin is not None]
     own_cls = own.cls if own is not None else None
     own_origin = [OptionsOrigin(own_cls, own.project)] if own is not None and own_cls else []
     own_fields = _own_option_names(own_cls)
@@ -3369,10 +3380,9 @@ def _offer(ctx: typer.Context, spec: "CommandSpec") -> "Offer | None":
         reserved_flags=reserved_flags,
     )
     carried = carrier(merged)
-    build = tuple(dict.fromkeys([*(o.cls for o in own_origin), *(o.cls for o in origins)]))
     return Offer(
         params=tuple(p for p in carried.params if p.name not in own_fields),
-        spec=dataclasses.replace(nothing_built, build=build, walk=tuple(o.cls for o in bodies)),
+        spec=_leaf_spec(path, own, origins, bodies),
         convert=carried.convert,
         finishes_dry_run=own.finishes_dry_run if own is not None else False,
         own=own_fields,
@@ -3408,15 +3418,18 @@ def _attached_for(
 def attach_params(cmd: Any, spec: "CommandSpec") -> None:
     """Wrap leaf *cmd*'s ``get_params`` to add the invocation's attached parameters (idempotent).
 
-    The wrapper returns the command's own parameters, then
+    The wrapper returns the parameters the command's function declares, then
     :func:`attached_params` less any whose name the command already has, then
-    the help option. Click's parse, both help renderers and shell completion
-    read ``get_params``, so the attached flags parse, show and complete as the
-    command's own. What was attached is kept in ``ctx.meta`` under the
-    context's command path, so every call on one context returns the same
-    objects (the parse compares parameters by identity) and nothing of one
-    invocation stays on *cmd*, which outlives it. An error raised while
-    attaching propagates from the parse: it stops that command only.
+    every parameter Typer or click appends after the function's own, the help
+    option among them (``otto.config._typer.attached_position``), so the attached flags keep the
+    place they had when they were the function's own. Click's parse, both
+    help renderers and shell completion read ``get_params``, so the attached
+    flags parse, show and complete as the command's own. What was attached
+    is kept in ``ctx.meta`` under the context's command path, so every call
+    on one context returns the same objects (the parse compares parameters
+    by identity) and nothing of one invocation stays on *cmd*, which
+    outlives it. An error raised while attaching propagates from the parse:
+    it stops that command only.
     """
     if getattr(cmd, "_otto_params_attached", False):
         return
@@ -3428,23 +3441,11 @@ def attach_params(cmd: Any, spec: "CommandSpec") -> None:
         attached = _attached_for(inner_ctx, spec, own)
         if not attached:
             return own
-        help_option = cmd.get_help_option(inner_ctx)
-        body = [param for param in own if param is not help_option]
-        return [*body, *attached, *(param for param in own if param is help_option)]
+        cut = attached_position(cmd, inner_ctx, own)
+        return [*own[:cut], *attached, *own[cut:]]
 
     setattr(_get_params_with_attached, OWN_PARAMS_ATTR, original_get_params)
     cmd.get_params = _get_params_with_attached
-
-
-def own_params(cmd: Any, ctx: typer.Context) -> list[Parameter]:
-    """Return *cmd*'s parameters for *ctx* with nothing attached: what its own ``get_params`` says.
-
-    The help option included. A command :func:`attach_params` never wrapped
-    answers its ``get_params``. The completion cache's walk reads the same
-    answer, so a flag attached for one invocation is never stored as a
-    command's own.
-    """
-    return _own_params(cmd, ctx)
 
 
 def take_attached(ctx: typer.Context) -> "dict[str, Any]":
@@ -3505,7 +3506,7 @@ def prepare_command_options(ctx: typer.Context) -> "LeafOptions | None":
     spec = command_spec(ctx)
     offer = offered_options(ctx, spec)
     if offer is None:
-        settle_options(ctx)
+        settle_options()
         return None
     attached = take_attached(ctx)
     callback = cast("Callable[..., Any]", ctx.command.callback)
@@ -3564,7 +3565,7 @@ def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
         # whole run (preamble, lab build, gate, body): settled before anything.
         mark = pending_options(inner_ctx)
         if mark is None:
-            settle_options(inner_ctx)
+            settle_options()
         # First: the function is passed only the names it declares.
         take_attached(inner_ctx)
         # Before the preamble, so a refused command creates no output dir and
@@ -3579,7 +3580,7 @@ def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
         prepared = prepared_options(inner_ctx)
         with contextlib.ExitStack() as held:
             held.enter_context(command_options(mark if lab_free else None))
-            settle_options(inner_ctx)
+            settle_options()
             if prepared is not None:
                 held.enter_context(prepared.scope())
             result = original_invoke(inner_ctx)
@@ -3644,7 +3645,7 @@ def _settled_when_childless(callback: Callable[..., Any]) -> Callable[..., Any]:
     def _callback(*args: Any, **kwargs: Any) -> Any:
         ctx = cast("typer.Context | None", get_current_context(silent=True))
         if ctx is not None and ctx.invoked_subcommand is None:
-            settle_options(ctx, records_nothing=True)
+            settle_options()
         return callback(*args, **kwargs)
 
     return _callback
@@ -3743,15 +3744,10 @@ class ChildTable(Protocol):
         ...
 
 
-_LISTING_CHILDREN = "otto_registry_group_listing"
-"""``ctx.meta`` key set while a registry group renders its own help."""
-
-
 def make_registry_group(
     child_registry: ChildTable,
     *,
     app_of: "Callable[[Any], typer.Typer]",
-    help_of: "Callable[[Any], str | None]",
 ) -> "type[TyperGroup]":
     """Build a TyperGroup class whose children come from *child_registry*.
 
@@ -3759,16 +3755,10 @@ def make_registry_group(
     converted children are kept until *child_registry*'s ``revision`` moves:
     a replaced entry is converted afresh.
     *app_of* returns an entry's Typer app: an instruction BUILDS its app then
-    (``otto.cli.run.build_instruction_app``), so building it is where a clash between
-    its flags and the ``run`` verb's is found, or a ``run`` options class that
-    fails to import. ``get_command`` lets that ``OttoError`` propagate, so a
-    reader that walks every child (the completion tree) can contain it and keep
-    the rest of the CLI. ``resolve_command`` -- dispatch, which is how
-    ``otto run <name>`` and ``otto run <name> --help`` both reach the command --
-    renders it as the command's error and exits 1, before any body runs.
-    The group's own help lists such a child by name with *help_of*'s line for
-    its entry, so ``otto run --help`` still shows every command, and the one
-    that cannot be built says why when it is run.
+    (``otto.cli.run.build_instruction_app``). Building resolves no class that
+    covers the command, so it refuses nothing: a clash with one, or one that
+    fails to import, is found when the command is parsed
+    (:func:`prepare_command_options`), before any body runs.
     This follows the same idiom as ``HostGroup`` (``cli/expose.py``): the
     group only resolves children on demand — it does NOT itself wrap them
     with the leaf-invoke preamble. ``main.py``'s root dispatch wraps the
@@ -3783,30 +3773,13 @@ def make_registry_group(
     preamble when dispatched for real.
 
     """
-    from typer.core import TyperCommand, TyperGroup
+    from typer.core import TyperGroup
 
     class RegistryBackedGroup(TyperGroup):
         """Group whose subcommands resolve from a component registry."""
 
         _child_cache: dict[str, Any]
         _child_cache_revision: int | None = None
-
-        @override
-        def resolve_command(self, ctx: Any, args: list[str]) -> Any:
-            # Dispatch only: a child that cannot be built is this command's
-            # error, said in one line, never a traceback.
-            try:
-                return super().resolve_command(ctx, args)
-            except OttoError as exc:
-                fail(exc)
-
-        @override
-        def format_help(self, ctx: Any, formatter: Any) -> None:
-            ctx.meta[_LISTING_CHILDREN] = True
-            try:
-                super().format_help(ctx, formatter)
-            finally:
-                ctx.meta.pop(_LISTING_CHILDREN, None)
 
         @override
         def list_commands(self, ctx: Any) -> list[str]:
@@ -3828,16 +3801,7 @@ def make_registry_group(
                 self._child_cache_revision = revision
             cache = self._child_cache
             if cmd_name not in cache:
-                entry = child_registry.get(cmd_name)
-                try:
-                    app = app_of(entry)
-                except OttoError:
-                    if not ctx.meta.get(_LISTING_CHILDREN):
-                        raise
-                    # Listed by name and help line only, and not kept: the
-                    # command itself is built afresh, and refused, when run.
-                    return TyperCommand(cmd_name, help=help_of(entry))
-                converted: Any = typer.main.get_command(app)
+                converted: Any = typer.main.get_command(app_of(child_registry.get(cmd_name)))
                 cache[cmd_name] = (
                     converted.commands[cmd_name]
                     if hasattr(converted, "commands") and cmd_name in converted.commands

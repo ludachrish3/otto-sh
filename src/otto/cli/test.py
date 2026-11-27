@@ -22,7 +22,8 @@ Options and names mix freely: ``otto test TestDevice --iterations 5`` and
 **Test-verb options.** Every options class registered for the ``test`` verb
 (``register_options(Cls, verbs=["test"])``) adds its fields as flags here.
 Tests read the parsed values with ``ctx.options(Cls)``. A field whose name
-matches one of the run flags below is refused when the command is built.
+matches one of the run flags below is refused when the command line is
+parsed, before any test runs.
 
 **Markers**
 
@@ -194,6 +195,14 @@ if TYPE_CHECKING:
 
 TEST_HELP = "Run tests by name or marker expression."
 """The one-line help ``otto --help`` and ``otto test --help`` both show."""
+
+TEST_COMMAND = "test"
+"""The name ``otto test`` is registered under, and its command path's one word.
+
+``otto.cli.builtin_commands`` registers the command under this name, written
+out there: it runs at every start, warm TAB included, and importing this module
+would cost each one; a test holds the two equal.
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -773,10 +782,10 @@ def _run(ctx: typer.Context, names: "list[str]", prepared: "LeafOptions") -> Non
 
     The run options were constructed and checked at parse time
     (:func:`_check_selection`); every rule between them is the library's.
-    *prepared* holds the ``test`` classes, built once and recorded on the
-    context by :func:`otto.cli.invoke.prepare_leaf_options`: a dry run shows
-    them, and :func:`otto.suite.run.run_tests` reads them from the record, so
-    a test reads the same objects.
+    *prepared* holds the classes covering ``otto test``, built once and
+    recorded on the context (:func:`otto.cli.invoke.leaf_preparation`): a
+    dry run shows them, and :func:`otto.suite.run.run_tests` reads them from
+    the record, so a test reads the same objects.
     ``CoverageNotInstrumentedError`` is deliberately NOT caught here: its
     per-product verdict table is rendered once, on the top-level boundary in
     :mod:`otto.cli.main` (:func:`~otto.cli.invoke.render_instrumentation_refusal`).
@@ -876,80 +885,35 @@ def _is_path_annotation(annotation: object) -> bool:
 _PATH_FIELD_NAMES = frozenset(p.name for p in _run_params() if _is_path_annotation(p.annotation))
 
 
-def test_verb_params() -> "list[inspect.Parameter]":
-    """Return every ``test``-verb option as a parameter, checked against the run flags.
+def _build_test_app() -> typer.Typer:
+    """Build ``otto test``: NAMES and the run flags, and what it says is its own.
 
-    A verb field whose name is a run flag's, or ``names``, or whose flag
-    shares a spelling with a run flag (``--random``, ``-m``), raises
-    ``OptionsCollisionError``. The completion cache serialises exactly this
-    list, so the fast path can offer the verb's flags without the registry.
-    """
-    from ..params import flag_spellings, merge_option_params, verb_option_classes
+    Built on each access of ``test_app`` (the module ``__getattr__``). The
+    flags of every class covering ``otto test`` are attached for each
+    invocation, like every command's (``otto.cli.invoke.offered_options``),
+    and the invocation prepares them before the leaf runs
+    (``otto.cli.invoke.prepare_command_options``); nothing is resolved
+    here. A class whose field is named like a run flag or ``names``, or
+    spelled like one (``--random``, ``-m``), raises ``OptionsCollisionError``
+    from that parse, naming the run flag (``OwnOptions.reserved``), before
+    any test runs.
 
-    run_params = _run_params()
-    reserved = {p.name: f"otto test's {_flag_name(p)}" for p in run_params} | {
-        "names": "otto test's NAMES"
-    }
-    reserved_flags = {
-        spelling: f"otto test's {_flag_name(p)}"
-        for p in run_params
-        for spelling in flag_spellings(p)
-    }
-    return merge_option_params(
-        verb_option_classes("test"),
-        what="otto test",
-        reserved=reserved,
-        reserved_flags=reserved_flags,
-    )
-
-
-def build_test_app(cached_options: "list[dict[str, Any]] | None" = None) -> typer.Typer:
-    """Build ``otto test`` for the completion fast path, from the cache's verb options.
-
-    *cached_options* is the ``names`` section's ``test_options``: the verb's
-    flags as :func:`test_verb_params` serialised them. The registry is not
-    populated on the fast path, so without them ``otto test --<TAB>`` would
-    offer the run flags alone. ``None`` builds from the registry, as
-    ``test_app`` does.
-    """
-    if cached_options is None:
-        return _build_test_app()
-    from ..config.completion_stubs import stub_params
-
-    return _build_test_app(verb_params=stub_params(cached_options))
-
-
-def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typer.Typer:
-    """Build ``otto test``: NAMES, the run flags, and every ``test``-verb option as a flag.
-
-    Built on each access of ``test_app`` (the module ``__getattr__``), so
-    the verb's flags are whatever is registered when the command is resolved.
-    A verb field whose name is a run flag's, or ``names``, raises
-    ``OptionsCollisionError`` here, before any test runs. *verb_params*
-    replaces the registry's (the completion fast path's cached stubs).
-
-    The leaf prepares its values once through
-    :func:`otto.cli.invoke.prepare_leaf_options` (one
-    :class:`~otto.cli.invoke.LeafOptionSpec`: every class registered for
-    ``test``, none on the fast path), which records what the command was
-    given on the context, and is stamped by
-    :func:`~otto.cli.invoke.stamp_options_leaf`. Under resilient parsing (a
-    completion) it returns before the preparation, so it builds and
+    The leaf reads that preparation (``otto.cli.invoke.leaf_preparation``;
+    called by other code, it prepares every class covering ``otto test``
+    itself, every value given) and finishes its own dry run. Under
+    resilient parsing (a completion) it returns at once, so it builds and
     validates nothing.
     """
-    from ..params import verb_option_classes
-    from .invoke import DRY_RUN_PREVIEW_ATTR, LeafOptionSpec, stamp_options_leaf
+    from .invoke import DRY_RUN_PREVIEW_ATTR, OWN_OPTIONS_ATTR, OwnOptions
 
+    command = TEST_COMMAND
     run_params = _run_params()
-    if verb_params is None:
-        verb_params = test_verb_params()
-        spec = LeafOptionSpec(
-            group="test", build=tuple(origin.cls for origin in verb_option_classes("test"))
-        )
-    else:
-        # The completion fast path: the registry is not populated, and a
-        # completion builds and validates nothing.
-        spec = LeafOptionSpec(group="test", build=())
+    reserved = {p.name: f"otto test's {_flag_name(p)}" for p in run_params}
+    own = OwnOptions(
+        finishes_dry_run=True,
+        every_project=True,
+        reserved={**reserved, "names": "otto test's NAMES"},
+    )
 
     names_param = inspect.Parameter(
         "names",
@@ -974,30 +938,30 @@ def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typ
         ctx = cast("typer.Context", get_current_context())
         if ctx.resilient_parsing:  # completion: build and validate nothing
             return
-        from .invoke import prepare_leaf_options
+        from .invoke import leaf_preparation
 
         names = list(kw.pop("names", None) or [])
-        prepared = prepare_leaf_options(kw, spec, leaf=test)
+        prepared = leaf_preparation(test, kw, own, [command])
         with prepared.scope():
             _run(ctx, names, prepared)
 
-    params = [names_param, *run_params, *verb_params]
+    params = [names_param, *run_params]
     # Both, not just the signature: the completion cache serialises a command
     # from `inspect.signature`, while typer reads the ANNOTATIONS to find each
     # parameter's `typer.Option` metadata.
     test.__signature__ = inspect.Signature(params)  # ty: ignore[missing-attribute]
     test.__annotations__ = {p.name: p.annotation for p in params}
-    # Previews its own body under --dry-run (the collected test tree) and,
-    # through the stamp, finishes its own dry run after building the verb's
-    # options, so the seam in the preamble leaves it alone.
+    # Previews its own body under --dry-run (the collected test tree) and
+    # finishes its own dry run after its options are built, so the seam in
+    # the preamble leaves it alone.
     setattr(test, DRY_RUN_PREVIEW_ATTR, True)
-    stamp_options_leaf(test, spec)
+    setattr(test, OWN_OPTIONS_ATTR, own)
 
     app = typer.Typer(
         add_completion=False, context_settings={"help_option_names": ["-h", "--help"]}
     )
     app.command(
-        "test",
+        command,
         cls=_OttoTestCommand,
         help=TEST_HELP,
         context_settings={"help_option_names": ["-h", "--help"]},
@@ -1006,7 +970,7 @@ def _build_test_app(verb_params: "list[inspect.Parameter] | None" = None) -> typ
 
 
 def __getattr__(name: str) -> Any:
-    """Build ``test_app`` on every access, so it carries the verb's current flags."""
+    """Build ``test_app`` on every access."""
     if name == "test_app":
         return _build_test_app()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

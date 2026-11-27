@@ -1,10 +1,9 @@
 """``entry``'s cache write stores what the cache's sections collect.
 
 ``otto.cli.main.entry`` is the one writer: it rebuilds the cache on root
-``--help`` through ``write_cache``. The ``names`` and ``shim`` sections in
-``otto.config.cache_sections`` collect the same payloads, and are its parity
-reference: nothing in ``src`` calls ``Section.collect``. Both take the CLI's
-walkers, its root app and its dispatch key from
+``--help`` through ``write_completion_cache``, which stores what each section
+in ``otto.config.cache_sections`` collects (``Section.collect``). Every
+section takes the CLI's walkers, its root app and its dispatch key from
 ``otto.cli.main._completion_collectors``.
 
 This test hands ``entry`` collectors that are all marked: walkers that return
@@ -68,7 +67,6 @@ def marked():
     cli = real()
     return CliCollectors(
         instructions=lambda: [*cli.instructions(), {"name": "zz-parity-instruction"}],
-        test_options=lambda: [*cli.test_options(), {"name": "--zz-parity-option"}],
         commands=lambda: [*cli.commands(), {"name": "zz-parity-command"}],
         app=toy,
         pending_key=KEY,
@@ -128,7 +126,7 @@ def test_entry_stores_what_the_sections_collect(project_env):
     stored = json.loads(caches[0].read_text())["sections"]
     names, shim = stored["names"]["payload"], stored["shim"]["payload"]
     assert {"name": "zz-parity-instruction"} in names["instructions"]
-    assert {"name": "--zz-parity-option"} in names["test_options"]
+    assert "test_options" not in names
     assert {"name": "zz-parity-command"} in names["commands"]
     assert set(names["option_candidates"]) == {"rows", "uses"}
     assert list(shim["tree"]["commands"]) == ["zz-parity-app"]  # the toy app, under its key

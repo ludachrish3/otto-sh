@@ -50,8 +50,9 @@ other entries.
 When the action itself must do different work, the project overrides its
 body. The worked example's project ({doc}`../developing/bed-case-study/index`)
 installs an agent, and records which build variant goes on every host before
-it installs. It declares an options class that **inherits the first-party
-one** for that instruction, then overrides the body:
+it installs. The variant is a flag of its own, as in the section above; the
+body takes **the first-party options class** for that instruction and reads
+the variant where it needs it:
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/actions.py
 :language: python
@@ -61,9 +62,9 @@ one** for that instruction, then overrides the body:
 
 Three things that code relies on:
 
-- **The options class must inherit `InstallOptions`** — the first-party class
-  for this instruction, exported from `otto.project` along with one for each
-  of the other five. otto refuses an override whose class does not; the rule,
+- **The options class must be, or inherit, `InstallOptions`** — the first-party
+  class for this instruction, exported from `otto.project` along with one for
+  each of the other five. otto refuses an override whose class does not; the rule,
   and what each body then receives, is in [Your project's flags on a
   default](../cli/run/defaults.md#your-projects-flags-on-a-default).
 - **`super()` keeps the default behavior.** The body above does its own work
@@ -72,8 +73,8 @@ Three things that code relies on:
   already narrowed to the hosts this project declared an interest in, and already
   scoped to this project's products.
 
-`otto run install --help` now shows the inherited flags and the new one side
-by side:
+`otto run install --help` now shows otto's two flags and the new one side by
+side:
 
 ```{literalinclude} ../examples/captures/run-install-help.txt
 :language: text
@@ -134,29 +135,10 @@ the walk keywords** — the first declaration fixed them, so a project can never
 reshape otto's own seven, which otto declared first. A project's own new instruction has no
 first-party class to inherit, so `DeployOpts` above inherits nothing.
 
-## Tests follow the flags
+## Tests run the same bodies
 
 A test marked `@pytest.mark.ensure("installed")` converges the lab through the
-same `install` bodies before it runs. Under `otto test`, a body's `--variant`
-comes from `otto test`'s own flags, matched by field name
-([Which flags reach an install body under `otto test`](options-advanced.md#which-flags-reach-an-install-body-under-otto-test)).
-So the flag has to be registered for `test` too, which is what the decorator
-on `BedVariant` in the code above does: `@options(verbs=["run", "test"])`.
-The module is one of the example project's init modules, so the registration
-exists from startup.
-
-`BedVariant` is the small class that declares `variant`, and `BedInstall`
-inherits it, so `--variant` is one flag on `otto run install`. Registering
-`BedVariant` for `run` and `test` puts `--variant`, and only `--variant`, on
-every `otto run` command and on `otto test`. `BedInstall` itself stays `install`'s own
-options class, unregistered, because a registration reaches every command of
-the verb: registering it would put `--ensure` and `--recover-partial` on
-`otto run status`, `otto run uninstall` and `otto test` as well. The rule is
-in [A registration reaches every command of the
-verb](options-advanced.md#a-registration-reaches-every-command-of-the-verb).
-
-A test then asks for the state, and `otto test --variant` steers the install
-that reaches it:
+same `install` bodies before it runs:
 
 ```python
 import pytest
@@ -167,12 +149,10 @@ class TestAgent:
     async def test_agent_answers(self) -> None: ...
 ```
 
-```bash
-otto --lab unix test TestAgent --variant debug
-```
-
-`BedInstall`'s other fields, such as `ensure`, have no `otto test` flag, so
-the body gets their defaults.
+`otto test` has no `--variant`, so under `otto test` the body reads the class's
+default, `"field"`, and installs that build. How to set it from `otto test` as
+well is in
+[Which flags reach an install body under `otto test`](options-advanced.md#which-flags-reach-an-install-body-under-otto-test).
 
 The test side of the marker is in
 [Declaring lab state](writing-tests.md#declaring-lab-state-the-ensure-marker);

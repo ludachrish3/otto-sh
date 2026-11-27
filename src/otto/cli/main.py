@@ -518,16 +518,15 @@ class _OttoGroup(QuietCompletionGroup):
             cached_names = get_completion_names()
             if cached_names is not None and isinstance(loader, str):
                 # Completion fast path: the registries are not populated, so
-                # `run` gains its cached instruction stubs and `test` its
-                # cached verb flags before conversion.
+                # `run` gains its cached instruction stubs before conversion.
+                # Every command's registered flags are attached from the
+                # cache's candidates (`otto.cli.invoke.completion_candidates`).
                 mod_name, _, attr = loader.partition(":")
-                if spec.name == "test":
-                    from .test import build_test_app
-
-                    sub_app = build_test_app(cached_names.get("test_options", []))
-                else:
-                    sub_app = getattr(importlib.import_module(mod_name), attr)
-                if spec.name == "run":
+                module = importlib.import_module(mod_name)
+                sub_app = getattr(module, attr)
+                # `run`'s module names its group (`INSTRUCTION_GROUP`); reading it off
+                # the module imports nothing more for any other command's TAB.
+                if getattr(module, "INSTRUCTION_GROUP", None) == spec.name:
                     _attach_cached_stubs(sub_app, cached_names.get("instructions", []))
                 spec = dataclasses.replace(spec, loader=sub_app)
             from .invoke import wrap_leaf_callbacks
@@ -991,19 +990,28 @@ def _mark_cached_accepts(cmd: Any, record: "dict[str, Any]") -> None:
     callback's marker (``otto.cli.invoke.leaf_accepts_options``), so the stub's
     leaf answers as the live leaf the record was written from did.
     """
-    from .invoke import ACCEPTS_OPTIONS_ATTR
-
     commands = getattr(cmd, "commands", None)
     if commands is None:
-        accepts = record.get("accepts_options")
-        callback = getattr(cmd, "callback", None)
-        if isinstance(accepts, bool) and callback is not None:
-            setattr(callback, ACCEPTS_OPTIONS_ATTR, accepts)
+        _mark_accepts(getattr(cmd, "callback", None), record)
         return
     for child in record.get("commands") or []:
         sub = commands.get(child.get("name")) if isinstance(child, dict) else None
         if sub is not None:
             _mark_cached_accepts(sub, child)
+
+
+def _mark_accepts(callback: Any, record: "dict[str, Any]") -> None:
+    """Set *record*'s ``accepts_options``, when it records one, as *callback*'s marker.
+
+    The one reading of a cached record's answer onto the stub built from it,
+    for a command's leaves (:func:`_mark_cached_accepts`) and an
+    instruction's (:func:`_attach_cached_stubs`) alike.
+    """
+    from .invoke import ACCEPTS_OPTIONS_ATTR
+
+    accepts = record.get("accepts_options")
+    if isinstance(accepts, bool) and callback is not None:
+        setattr(callback, ACCEPTS_OPTIONS_ATTR, accepts)
 
 
 def _attach_cached_stubs(
@@ -1012,8 +1020,11 @@ def _attach_cached_stubs(
 ) -> None:
     """Rebuild per-instruction stubs under ``parent`` from the cache.
 
-    Imports are local so the cache module isn't pulled in during tests or
-    non-completion invocations that don't exercise this path.
+    Each stub's callback carries its record's ``accepts_options``
+    (:func:`_mark_accepts`), so a TAB offers it registered flags only when
+    the live instruction accepts them. Imports are local so the cache module
+    isn't pulled in during tests or non-completion invocations that don't
+    exercise this path.
     """
     from ..config.completion_stubs import build_stub_command
 
@@ -1022,7 +1033,9 @@ def _attach_cached_stubs(
         if not name:
             continue
         options = entry.get("options") or []
-        parent.add_typer(build_stub_command(name, options))
+        stub = build_stub_command(name, options)
+        _mark_accepts(stub.registered_commands[0].callback, entry)
+        parent.add_typer(stub)
 
 
 def _judge_group_entries(spec: "CommandSpec", group: Any) -> None:
@@ -1095,13 +1108,12 @@ def _cache_is_writable(projects: list["Project"]) -> bool:
     return cache_is_writable(projects)
 
 
-RAW_ITERATED_NAMES_KEYS: tuple[str, ...] = ("commands", "instructions", "test_options")
+RAW_ITERATED_NAMES_KEYS: tuple[str, ...] = ("commands", "instructions")
 """The ``names`` payload keys that reach a RAW iterator and so must be shape-checked.
 
 ``_OttoGroup.list_commands`` / ``_OttoGroup._cached_stub`` iterate
 ``commands`` directly; ``_attach_cached_stubs`` does the same for
-``instructions``, and ``otto.cli.test.build_test_app`` for ``test_options`` —
-all deep inside click's
+``instructions`` — both deep inside click's
 help/completion pipeline, well outside any containment ``entry()`` can offer.
 ``_cached_names_payload`` loops over this constant to shape-check them; it
 is the only place it is spelled.
@@ -1268,68 +1280,22 @@ def write_completion_cache(
 ) -> None:
     """Write the completion cache for *projects* from what this process has registered.
 
-    The one assembly of ``otto.config.completion_cache.write_cache``'s
-    keywords: every ``names`` key from its collector, the ``shim`` section's
-    payload from that section's own collector, and the CLI's collectors
-    (``_completion_collectors``), read once. :func:`entry` calls it after a bootstrap that found the cache
-    stale; *digests* are the section digests that check computed (``None``
-    recomputes them) and *tainted* marks a write after a contained bootstrap
-    error. An ``OSError`` from the write propagates.
+    Every registered section (``otto.config.cache_sections.SECTIONS``) is
+    collected by its own collector, over one set of the CLI's collectors
+    (``_completion_collectors``), and the payloads are written in one atomic
+    update (``otto.config.completion_cache.write_sections``): the write and
+    the sections hold one definition of each payload. :func:`entry` calls it
+    after a bootstrap that found the cache stale; *digests* are the section
+    digests that check computed (``None`` recomputes them) and *tainted*
+    marks a write after a contained bootstrap error. An ``OSError`` from the
+    write propagates.
     """
-    from ..config.cache_sections import SHIM_SECTION, section_by_name
-    from ..config.completion_cache import (
-        collect_active_project_names,
-        collect_backend_names,
-        collect_docker_capable_host_ids,
-        collect_docker_default_parent_by_lab,
-        collect_docker_image_names,
-        collect_docker_services_by_use_case,
-        collect_docker_use_case_names,
-        collect_host_classes_by_id,
-        collect_host_drops,
-        collect_host_ids,
-        collect_host_ids_by_lab,
-        collect_inventory_names,
-        collect_lab_names,
-        collect_links,
-        collect_logins_by_host,
-        collect_project_names,
-        collect_reservation_usernames,
-        write_cache,
-    )
+    from ..config.cache_sections import SECTIONS
+    from ..config.completion_cache import write_sections
 
     cli = _completion_collectors()
-    backends = collect_backend_names()
-    write_cache(
-        projects,
-        cli.instructions(),
-        collect_host_ids(projects),
-        test_options=cli.test_options(),
-        docker_hosts=collect_docker_capable_host_ids(projects),
-        docker_use_cases=collect_docker_use_case_names(projects),
-        docker_images=collect_docker_image_names(projects),
-        docker_services_by_use_case=collect_docker_services_by_use_case(projects),
-        active_projects=collect_active_project_names(projects),
-        term_backends=backends["term_backends"],
-        transfer_backends=backends["transfer_backends"],
-        usernames=collect_reservation_usernames(projects),
-        commands=cli.commands(),
-        labs=collect_lab_names(projects),
-        hosts_by_lab=collect_host_ids_by_lab(projects),
-        host_drops=collect_host_drops(projects),
-        host_classes_by_id=collect_host_classes_by_id(projects),
-        projects=collect_project_names(projects),
-        links=collect_links(projects),
-        logins_by_host=collect_logins_by_host(projects),
-        docker_default_parent_by_lab=collect_docker_default_parent_by_lab(projects),
-        inventory_names=collect_inventory_names(projects),
-        option_candidates=cli.option_candidates(),
-        # The shim section's own collector, over the same collectors: the
-        # section and this write build the tree by one call, so they cannot drift.
-        shim=section_by_name(SHIM_SECTION).collect(projects, cli),
-        digests=digests,
-        tainted=tainted,
-    )
+    payloads = {section.name: section.collect(projects, cli) for section in SECTIONS}
+    write_sections(projects, payloads, tainted=tainted, digests=digests)
 
 
 def _completion_collectors() -> "CliCollectors":
@@ -1337,8 +1303,9 @@ def _completion_collectors() -> "CliCollectors":
 
     ``otto.config`` writes the cache but never imports the CLI, so :func:`entry`,
     the cache's writer, takes the walkers, the root app and the dispatch key from
-    here, as do the cache's sections (``otto.config.cache_sections.SECTIONS``),
-    its parity reference.
+    here and hands them to every one of the cache's sections
+    (``otto.config.cache_sections.SECTIONS``), each collected by its own
+    collector.
 
     The candidates are described once per returned instance: the ``names``
     section stores them and every leaf of the ``shim`` section's tree names
@@ -1352,7 +1319,6 @@ def _completion_collectors() -> "CliCollectors":
         collect_cli_commands,
         collect_current_commands,
         collect_option_candidates,
-        collect_test_verb_options,
     )
 
     described: list[dict[str, Any]] = []
@@ -1370,7 +1336,6 @@ def _completion_collectors() -> "CliCollectors":
 
     return CliCollectors(
         instructions=collect_current_commands,
-        test_options=collect_test_verb_options,
         commands=collect_cli_commands,
         app=app,
         pending_key=PENDING_SUBCMD_ARGS_KEY,
@@ -1548,7 +1513,7 @@ def entry(cache_stale: bool = False) -> None:
                 # The validity check and the shim's stat triples ask about the same
                 # key paths; the scope makes that one stat per path.
                 with corpus_snapshot():
-                    # Filled by the validity check, consumed by write_cache: each
+                    # Filled by the validity check, consumed by the write: each
                     # section's key set is hashed at most once per invocation, and
                     # the scope makes each path's stat one syscall.
                     section_digests: dict[str, str] = {}

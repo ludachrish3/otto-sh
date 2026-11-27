@@ -1,5 +1,6 @@
 """otto test: one command, positional names (spec §3, §4.3, §4.6, §5.4)."""
 
+import re
 from pathlib import Path
 from typing import Annotated
 
@@ -293,14 +294,20 @@ def test_a_bad_verb_option_value_is_a_usage_error(otto_test_cli, captured_run):
     assert captured_run == []
 
 
+def _collision(otto_test_cli) -> str:
+    """The collision ``otto test --help`` stops on, from its own parse."""
+    result = otto_test_cli(["test", "--help"])
+    assert isinstance(result.exception, OptionsCollisionError), result.output
+    return str(result.exception)
+
+
 def test_a_verb_option_named_like_a_run_flag_fails_before_any_test(otto_test_cli):
     @options
     class Clash:
         seed: int = 0
 
     register_options(Clash, verbs=["test"])
-    with pytest.raises(OptionsCollisionError, match="otto test's --seed"):
-        otto_test_cli(["test", "--help"])
+    assert "otto test's --seed" in _collision(otto_test_cli)
 
 
 def test_a_collision_names_the_flag_actually_typed(otto_test_cli):
@@ -311,8 +318,7 @@ def test_a_collision_names_the_flag_actually_typed(otto_test_cli):
         random_order: bool = False
 
     register_options(Clash, verbs=["test"])
-    with pytest.raises(OptionsCollisionError, match="otto test's --random;"):
-        otto_test_cli(["test", "--help"])
+    assert "otto test's --random;" in _collision(otto_test_cli)
 
 
 def test_a_verb_option_spelled_like_a_run_flag_fails_before_any_test(otto_test_cli):
@@ -323,11 +329,8 @@ def test_a_verb_option_spelled_like_a_run_flag_fails_before_any_test(otto_test_c
         shuffle: Annotated[bool, typer.Option("--random")] = False
 
     register_options(Clash, verbs=["test"])
-    with pytest.raises(
-        OptionsCollisionError,
-        match=r"flag --random of field 'shuffle'.*collides with otto test's --random",
-    ):
-        otto_test_cli(["test", "--help"])
+    said = _collision(otto_test_cli)
+    assert re.search(r"flag --random of field 'shuffle'.*collides with otto test's --random", said)
 
 
 def test_a_verb_option_named_names_collides(otto_test_cli):
@@ -336,8 +339,7 @@ def test_a_verb_option_named_names_collides(otto_test_cli):
         names: str = ""
 
     register_options(Clash, verbs=["test"])
-    with pytest.raises(OptionsCollisionError, match="otto test's NAMES"):
-        otto_test_cli(["test", "--help"])
+    assert "otto test's NAMES" in _collision(otto_test_cli)
 
 
 # ── --list-tests ─────────────────────────────────────────────────────────────
@@ -593,11 +595,11 @@ def test_dry_run_probe_announces_even_with_no_hosts(otto_test_cli, one_project, 
 
 def test_the_leaf_previews_and_finishes_its_own_dry_run():
     from otto.cli import test as cli_test
-    from otto.cli.invoke import DRY_RUN_PREVIEW_ATTR, DRY_RUN_SELF_FINISHING_ATTR
+    from otto.cli.invoke import DRY_RUN_PREVIEW_ATTR, OWN_OPTIONS_ATTR
 
     leaf = cli_test.test_app.registered_commands[0].callback
     assert getattr(leaf, DRY_RUN_PREVIEW_ATTR) is True
-    assert getattr(leaf, DRY_RUN_SELF_FINISHING_ATTR) is True
+    assert getattr(leaf, OWN_OPTIONS_ATTR).finishes_dry_run is True
 
 
 # ── The command's shape ──────────────────────────────────────────────────────
@@ -645,10 +647,16 @@ def test_help_states_the_interval_floor_as_the_errors_do(otto_test_cli, monkeypa
     assert "Sampling interval for --monitor (at least 1.0s)." in _flat(result.output)
 
 
-def test_the_cache_serialises_the_test_verbs_flags_and_the_fast_path_rebuilds_them():
-    """`names.test_options` round-trips: serialised at rebuild, a flag again on the fast path."""
+def test_the_cache_records_a_test_classs_flags_and_the_fast_path_offers_them(monkeypatch):
+    """A class covering ``otto test`` is a recorded candidate, offered again from the cache.
+
+    The fast path reads the recorded rows (``completion_candidates`` with a
+    snapshot that holds them); nothing is resolved.
+    """
     from otto.cli import test as cli_test
-    from otto.cli.registry import collect_test_verb_options
+    from otto.cli.invoke import OWN_OPTIONS_ATTR, completion_candidates
+    from otto.cli.registry import collect_option_candidates
+    from otto.params import options_key
 
     @options
     class Firmware:
@@ -656,31 +664,35 @@ def test_the_cache_serialises_the_test_verbs_flags_and_the_fast_path_rebuilds_th
         retries: Annotated[int, typer.Option("--retries", help="How often.")] = 3
 
     register_options(Firmware, verbs=["test"])
-    cached = collect_test_verb_options()
-    assert cached == [
-        {"name": "firmware", "flags": [], "kind": "str", "default": "latest", "help": ""},
-        {
-            "name": "retries",
-            "flags": ["--retries"],
-            "kind": "int",
-            "default": 3,
-            "help": "How often.",
-        },
-    ]
-    command = typer.main.get_command(cli_test.build_test_app(cached))
-    flags = {opt for p in command.params for opt in p.opts}
-    assert {"--firmware", "--retries", "--random"} <= flags
+    recorded = collect_option_candidates()
+    key = options_key(Firmware)
+    assert {"key": key, "project": None, "entries": ["test"]} in recorded["uses"]
+    rows = {row["name"]: row for row in recorded["rows"][key]}
+    assert (rows["firmware"]["flags"], rows["retries"]["flags"]) == (["--firmware"], ["--retries"])
+    monkeypatch.setattr(
+        "otto.registry.get_completion_names", lambda: {"option_candidates": recorded}
+    )
+    monkeypatch.setattr(
+        "otto.cli.invoke.resolve_registration", lambda r: pytest.fail("resolved on a warm TAB")
+    )
+    own = getattr(cli_test.test_app.registered_commands[0].callback, OWN_OPTIONS_ATTR)
+    (candidate,) = [c for c in completion_candidates(["test"], own, covered=True) if c.key == key]
+    assert {opt for p in candidate.params for opt in p.opts} == {"--firmware", "--retries"}
 
 
-def test_a_colliding_test_verb_caches_no_flags():
-    from otto.cli.registry import collect_test_verb_options
+def test_a_colliding_test_class_is_still_recorded_and_stops_the_command(otto_test_cli):
+    """A TAB may over-offer; only ``otto test``'s own parse reports the clash."""
+    from otto.cli.registry import collect_option_candidates
+    from otto.params import options_key
 
     @options
     class Clash:
         seed: int = 1
 
     register_options(Clash, verbs=["test"])
-    assert collect_test_verb_options() == []
+    rows = collect_option_candidates()["rows"][options_key(Clash)]
+    assert [row["name"] for row in rows] == ["seed"]
+    assert "otto test's --seed" in _collision(otto_test_cli)
 
 
 @pytest.mark.parametrize(
@@ -722,10 +734,10 @@ def test_no_sensitive_default_reaches_the_cache_or_the_help(otto_test_cli):
     """A repr=False or secret default is never written to the cache file, nor shown by --help."""
     import json
 
-    from otto.cli.registry import collect_test_verb_options
+    from otto.cli.registry import collect_option_candidates
 
     register_options(_probe_options(), verbs=["test"])
-    cached = collect_test_verb_options()
+    cached = collect_option_candidates()
     assert "S3CR3T" not in json.dumps(cached)
     help_text = otto_test_cli(["test", "--help"], lab=None).output
     assert "S3CR3T" not in help_text
@@ -734,13 +746,14 @@ def test_no_sensitive_default_reaches_the_cache_or_the_help(otto_test_cli):
 
 def test_a_secret_flag_keeps_every_other_flag_cached():
     """One SecretStr field used to drop the verb's whole flag list."""
-    from otto.cli.registry import collect_test_verb_options
+    from otto.cli.registry import collect_option_candidates
+    from otto.params import options_key
 
-    register_options(_probe_options(), verbs=["test"])
-    cached = {opt["name"]: opt for opt in collect_test_verb_options()}
+    probe = _probe_options()
+    register_options(probe, verbs=["test"])
+    cached = {row["name"]: row for row in collect_option_candidates()["rows"][options_key(probe)]}
     assert set(cached) == {"firmware", "token", "note", "plain"}
-    assert cached["token"]["kind"] == "str"
-    assert cached["firmware"]["default"] == "latest"
+    assert cached["token"]["takes_value"] is True
 
 
 def test_a_rewriting_validator_runs_once_under_otto_test(otto_test_cli, one_project):

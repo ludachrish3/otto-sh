@@ -50,7 +50,8 @@ it was generated, and a taint flag::
                 "generated_at": 1745000000,
                 "tainted": false,
                 "payload": {
-                    "instructions": [{"name": "install", "options": [...]}, ...],
+                    "instructions": [{"name": "install", "options": [...],
+                                      "accepts_options": true}, ...],
                     "hosts": ["test1", "test2", ...],
                     "hosts_by_lab": {"unix": ["test1", "test2"], ...},
                     "host_drops": [{"project": "sut", "where": "...", "reason": "...",
@@ -282,12 +283,15 @@ CACHE_FILENAME = "completion_cache.json"
 #      same, but a v32 entry holds the narrower buckets, so it is dropped.
 # v34: "names" gains "option_candidates" (every options class a command may
 #      offer, one row list per class and one use per occurrence) and each
-#      covered leaf's tree node "candidates" (indexes into those uses). A
+#      covered leaf's tree node "candidates" (indexes into those uses) and
+#      "candidates_at" (where their rows go among its params). A
 #      command's "options" keep every flag: an option the cache cannot
 #      describe is "kind": "opaque" with its completion row, where a v33
 #      entry dropped the whole command's flags. "commands" records carry
 #      "accepts_options", a function loader's options, and a group's own
-#      parameters. A v33 entry has none of these, so it is dropped.
+#      parameters. "test_options" goes: ``otto test``'s registered flags are
+#      candidates like every command's. A v33 entry has none of these, so it
+#      is dropped.
 SCHEMA_VERSION = 34
 
 # A conftest holds no test of its own, but pytest loads it before collecting
@@ -703,7 +707,7 @@ def _inventory_fingerprint(projects: list["Project"]) -> "_InventoryDigest":
     as an ``InventoryConstructionError``, but a third-party ``fingerprint()`` —
     local state only, by the protocol, but nothing makes it correct — can
     still raise anything at all (an unreadable file, a plain bug), and
-    this runs inside ``write_cache``, past ``otto.cli.main``'s
+    this runs inside ``write_sections``, past ``otto.cli.main``'s
     ``suppress(OSError)``, which would traceback an otherwise-successful
     command AFTER its real work was done.
 
@@ -966,7 +970,7 @@ def read_sections(
     *digests*, when given, is both a memo and a return channel: section
     digests already present in it are trusted (not recomputed), and every
     digest computed here is recorded back. Threading that dict from
-    :func:`cache_rebuild_is_worthwhile` into :func:`write_cache` is what
+    :func:`cache_rebuild_is_worthwhile` into :func:`write_sections` is what
     keeps each section's key set stat-hashed AT MOST ONCE per invocation.
 
     Each section is judged against what its writer stored: its lab key
@@ -1042,7 +1046,7 @@ def read_cache(
     so a lost or stale ``shim`` section makes a rebuild worthwhile even while
     ``names`` still validates on its own.
 
-    On success returns one flat dict with ``instructions``, ``test_options``,
+    On success returns one flat dict with ``instructions``,
     ``hosts``, ``hosts_by_lab``, ``docker_hosts``, ``docker_use_cases``,
     ``docker_images``, ``docker_services_by_use_case``, ``active_projects``,
     ``term_backends``, ``transfer_backends``, ``usernames``, ``commands``,
@@ -1053,7 +1057,7 @@ def read_cache(
     when a payload omits them.
 
     *digests*, when given, collects the per-section digests computed here
-    for reuse by a subsequent :func:`write_cache` — see
+    for reuse by a subsequent :func:`write_sections` — see
     :func:`read_sections`.
     """
     payloads = read_sections(loaded_projects, ["names", *require], digests=digests)
@@ -1062,7 +1066,6 @@ def read_cache(
     merged = payloads["names"]
 
     instructions = merged.get("instructions")
-    test_options = merged.get("test_options", [])
     hosts = merged.get("hosts")
     hosts_by_lab = merged.get("hosts_by_lab", {})
     docker_hosts = merged.get("docker_hosts", [])
@@ -1085,7 +1088,6 @@ def read_cache(
     option_candidates = merged.get("option_candidates", {"rows": {}, "uses": []})
     if (
         not isinstance(instructions, list)
-        or not isinstance(test_options, list)
         or not isinstance(hosts, list)
         or not isinstance(hosts_by_lab, dict)
         or not isinstance(docker_hosts, list)
@@ -1110,7 +1112,6 @@ def read_cache(
         return None
     return {
         "instructions": instructions,
-        "test_options": test_options,
         "hosts": hosts,
         "hosts_by_lab": hosts_by_lab,
         "host_drops": host_drops,
@@ -1139,7 +1140,7 @@ def cache_rebuild_is_worthwhile(
 ) -> bool:
     """Whether collecting and writing a fresh entry would do any good.
 
-    False when write_cache would drop the result (empty projects, no cache
+    False when write_sections would drop the result (empty projects, no cache
     path, ephemeral fingerprint) or when every on-disk section is already
     valid — in every False case the caller should skip the collect, which
     runs the projects' init modules and enumerates their hosts. ``not projects`` is
@@ -1149,7 +1150,7 @@ def cache_rebuild_is_worthwhile(
     False.
 
     *digests* is filled with the per-section digests the validity check
-    computes, for the caller to hand straight to :func:`write_cache` on a
+    computes, for the caller to hand straight to :func:`write_sections` on a
     miss — never compute a digest twice (:func:`read_sections`).
 
     Also requires the ``shim`` section to validate (:func:`read_cache`'s
@@ -1163,7 +1164,7 @@ def cache_rebuild_is_worthwhile(
 
 
 def cache_is_writable(projects: list["Project"]) -> bool:
-    """Whether :func:`write_cache` would keep an entry for *projects* at all.
+    """Whether :func:`write_sections` would keep an entry for *projects* at all.
 
     The cheap half of :func:`cache_rebuild_is_worthwhile`: no key-set stats,
     so a caller can ask it before paying for anything a rebuild needs. False
@@ -1191,7 +1192,6 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     instructions: list[dict[str, Any]],
     hosts: list[str],
     *,
-    test_options: list[dict[str, Any]] | None = None,
     docker_hosts: list[str] | None = None,
     docker_use_cases: list[str] | None = None,
     docker_images: list[str] | None = None,
@@ -1222,13 +1222,14 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     should be a ``Section`` registration written through
     :func:`otto.config.cache_sections.write_section`, not another keyword.
 
-    *shim* is the exception: it is the other registered section, added here
-    so ``entry()`` writes it in the same atomic update as ``names``.
-    ``entry()`` always passes it, so the section is rewritten with its
-    sibling; a caller that omits it leaves the
-    stored entry with a stale digest, so every later invocation reads as a
-    miss and re-collects — pass ``shim=`` or write it through
-    :func:`otto.config.cache_sections.write_section`.
+    ``entry()`` does not call it: its writer
+    (``otto.cli.main.write_completion_cache``) collects every registered
+    section with that section's own collector and writes them through
+    :func:`write_sections`. *shim* is the other registered section, written
+    here in the same atomic update as ``names`` when given; a caller that
+    omits it leaves the stored entry with a stale digest, so every later
+    invocation reads as a miss and re-collects — pass ``shim=`` or write it
+    through :func:`otto.config.cache_sections.write_section`.
 
     Skipped silently when projects is empty — an empty-project digest is what any
     shell without ``OTTOPATH`` would also compute, and that would
@@ -1254,7 +1255,6 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     payloads: dict[str, dict[str, Any]] = {
         "names": {
             "instructions": instructions,
-            "test_options": test_options or [],
             "hosts": hosts,
             "hosts_by_lab": hosts_by_lab or {},
             "host_drops": host_drops or [],
@@ -1344,8 +1344,9 @@ def write_sections(
     ``KeyError`` for a payload keyed on an unregistered section name, raised
     before any I/O. Skipped silently for empty projects and for an ephemeral
     inventory digest, for the reasons :func:`write_cache` documents — this
-    is the single writer under both it and
-    :func:`otto.config.cache_sections.write_section`.
+    is the single writer under ``entry()``'s
+    (``otto.cli.main.write_completion_cache``), the keyword writer
+    :func:`write_cache` and :func:`otto.config.cache_sections.write_section`.
 
     Sections not named in *payloads* are left as they are. Reserved
     ``__*__`` namespaces (collected tests, tunnel ids) are carried forward

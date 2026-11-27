@@ -222,6 +222,24 @@ def command_name(func_name: str) -> str:
     return func_name.lower().replace("_", "-")
 
 
+INSTRUCTION_GROUP = "run"
+"""The command every instruction hangs under, as in ``otto run <name>``.
+
+``otto.cli.builtin_commands`` registers that command under this name, written
+out there: it runs at every start, warm TAB included, and importing this module
+would cost each one; a test holds the two equal.
+"""
+
+
+def instruction_path(name: str) -> list[str]:
+    """Return the command path of instruction *name*: the group instructions hang on, then it.
+
+    The shape ``otto.params.covering`` takes, so a class registered for
+    ``"run"`` or ``"run <name>"`` covers it.
+    """
+    return [INSTRUCTION_GROUP, name]
+
+
 def options_parameter(func: "Callable[..., Any]", opts_cls: type | None) -> str | None:
     """Name the parameter of *func* annotated exactly *opts_cls*, or ``None`` for no class.
 

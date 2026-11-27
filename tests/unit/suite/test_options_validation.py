@@ -97,7 +97,6 @@ from typing import Annotated
 import pydantic
 import pytest
 import typer
-from typer.testing import CliRunner
 
 from otto import options
 from otto.context import OttoContext, reset_context, set_context
@@ -120,19 +119,27 @@ def _ok_result():
     )
 
 
-def _test_app():
-    """``otto test``'s app, read at call time so it carries the registered verb flags."""
-    from otto.cli import test as cli_test
+def _invoke_test(args: "list[str]"):
+    """Invoke ``otto test <args>`` dispatched, as the shipped ``test`` registration is.
 
-    return cli_test.test_app
+    The registered ``test`` flags are attached by the invocation, so the app
+    is driven through :class:`~tests._fixtures.dispatch.DispatchRunner`
+    accepting registered options, under a bare ``otto`` root.
+    """
+    from otto.cli import test as cli_test
+    from tests._fixtures.dispatch import DispatchRunner
+
+    return DispatchRunner().invoke(
+        cli_test.test_app, ["test", *args], spec_name="test", under_root=True, accepts_options=True
+    )
 
 
 @pytest.fixture(autouse=True)
 def _stub_cli_bootstrap(monkeypatch):
     """Patch management.create_output_dir and install a stub context.
 
-    Tests in this module invoke ``otto test``'s app directly (not via the main
-    callback), so ``init_cli_logging``/``create_output_dir`` have never run
+    Tests in this module invoke ``otto test``'s app through the leaf-invoke
+    wrapper, not via the main callback, so ``init_cli_logging``/``create_output_dir`` have never run
     and there is no active OttoContext. Patch both so the command doesn't
     raise.
     """
@@ -165,7 +172,7 @@ def test_verb_pydantic_options_reject_bad_value(monkeypatch):
 
     register_options(_ValOpts, verbs=["test"])
     seen = _capture_options(monkeypatch)
-    result = CliRunner().invoke(_test_app(), ["test_x", "--count", "-5"])
+    result = _invoke_test(["test_x", "--count", "-5"])
     assert result.exit_code == 2, result.output
     assert "count" in result.stderr
     assert seen == {}, "run_tests was reached although validation failed"
@@ -178,7 +185,7 @@ def test_verb_pydantic_options_accept_good_value(monkeypatch):
 
     register_options(_OkOpts, verbs=["test"])
     seen = _capture_options(monkeypatch)
-    result = CliRunner().invoke(_test_app(), ["test_x", "--count", "5"])
+    result = _invoke_test(["test_x", "--count", "5"])
     assert result.exit_code == 0, result.output
     assert seen["options"][0].count == 5
 
@@ -194,7 +201,7 @@ def test_verb_field_default_used_when_flag_omitted(monkeypatch):
 
     register_options(_DefOpts, verbs=["test"])
     seen = _capture_options(monkeypatch)
-    result = CliRunner().invoke(_test_app(), ["test_x"])  # no --count
+    result = _invoke_test(["test_x"])  # no --count
     assert result.exit_code == 0, result.output
     assert seen["options"][0].count == 7
 
@@ -209,7 +216,7 @@ def test_verb_plain_dataclass_options_still_work(monkeypatch):
 
     register_options(_PlainOpts, verbs=["test"])
     seen = _capture_options(monkeypatch)
-    result = CliRunner().invoke(_test_app(), ["test_x", "--label", "y"])
+    result = _invoke_test(["test_x", "--label", "y"])
     assert result.exit_code == 0, result.output
     assert seen["options"][0].label == "y"
 
