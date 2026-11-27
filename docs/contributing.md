@@ -838,10 +838,12 @@ run) and the tunnel-stability tree, which name their lanes in both columns. So a
 commit that changes only a src leaf under `src/otto/link/` runs no stability
 lane before the tip, and the landing's tip runs it. The probe-line cut sweep
 (`make stability-cut-sweep`) names its lane in the commit column only, as a
-working check. No tip runs it; it runs in nightly's `probe-cut-sweep` job,
-split into four shards (`CUT_SWEEP_SHARD=i/4`, a round robin over the cases
-that `tests/unit/host/test_cut_sweep_shards.py` proves a partition), and once
-by hand before a change to it lands. Without `CUT_SWEEP_SHARD` it runs every
+working check. It lives in a tree of its own, `tests/cut_sweep/`, so that no
+`tests/unit` run builds its cases only to deselect them (#1399). No tip runs
+it; it runs in nightly's `probe-cut-sweep` job, split into four shards
+(`CUT_SWEEP_SHARD=i/4`, a round robin over the cases that
+`tests/unit/host/test_cut_sweep_shards.py` proves a partition), and once by
+hand before a change to it lands. Without `CUT_SWEEP_SHARD` it runs every
 case, about two hours on the dev VM, so pass `LANE_TIMEOUT=9000s` for a full
 local pass. Whichever area selects it, a
 stability lane runs **once**: `make stability-<tier> COUNT=1`, and for the tunnel

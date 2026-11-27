@@ -98,6 +98,16 @@ FD_TOLERANCE = 4
 
 GcPolicy = Literal["always", "on-suspicion"]
 
+SPAWN_LANE_TOLERANCE = 0
+"""The tolerance measured on ``tests/unit/host`` (that directory's conftest says how).
+
+``tests/unit/host`` and ``tests/cut_sweep`` (a fresh shell on a fresh pty per
+case, which the measurement did not include) both bracket at it, so a change
+to the measured value reaches both."""
+
+SPAWN_LANE_GC_POLICY: GcPolicy = "on-suspicion"
+"""The collection policy measured on ``tests/unit/host``, for the same lanes."""
+
 
 def open_fd_count() -> int:
     """Number of file descriptors currently open in this process."""

@@ -591,7 +591,7 @@ SPECIAL_TREES = [
     # The #853 every-offset cut sweep (`stability`, hostless): nightly's
     # `probe-cut-sweep` job plus one by-hand pass; a change to it names the lane
     # as a working check, and no tip runs it.
-    ("tests/unit/host/test_probe_line_cut_sweep.py", ["make stability-cut-sweep"], []),
+    ("tests/cut_sweep/*", ["make stability-cut-sweep"], []),
     # its items are integration-marked: the tip's `make coverage-bed` runs them
     ("tests/integration/busybox_bed/*", ["make coverage-unix"], []),
     (
