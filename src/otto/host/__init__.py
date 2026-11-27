@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from .command_frame import CommandFrame as CommandFrame
     from .command_frame import RawFrame as RawFrame
     from .command_frame import SessionMarkers as SessionMarkers
+    from .command_frame import WorkShellLines as WorkShellLines
     from .command_frame import ZephyrFrame as ZephyrFrame
     from .command_frame import build_command_frame as build_command_frame
     from .command_frame import register_command_frame as register_command_frame
@@ -151,6 +152,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "CommandFrame": "otto.host.command_frame",
     "RawFrame": "otto.host.command_frame",
     "SessionMarkers": "otto.host.command_frame",
+    "WorkShellLines": "otto.host.command_frame",
     "ZephyrFrame": "otto.host.command_frame",
     "build_command_frame": "otto.host.command_frame",
     "register_command_frame": "otto.host.command_frame",
@@ -363,6 +365,7 @@ __all__ = [
     "UnsupportedOptionError",
     "UserSupport",
     "Userland",
+    "WorkShellLines",
     "ZephyrFrame",
     "ZephyrHost",
     "build_command_frame",

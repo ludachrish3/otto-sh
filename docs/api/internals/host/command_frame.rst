@@ -13,6 +13,8 @@ and the reference can link them. The public names are on :doc:`/api/host/command
 
 .. autofunction:: otto.host.command_frame.history_prefix
 
+.. autofunction:: otto.host.command_frame.led
+
 .. autofunction:: otto.host.command_frame.whole_line_echo
 
 .. autodata:: otto.host.command_frame.READY_SUFFIX

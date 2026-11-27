@@ -3,8 +3,9 @@
 Login and run over both dial modes, the ``shell`` transfer on the one
 session, logout on close, and the failures a console must raise loudly
 (already logged in, a refused login, a busy line), ``exec`` on the one
-session with a named session still refused, and a reboot that never takes
-(otto logs the line out).
+session with a named session still refused, a reboot that never takes
+(otto logs the line out), and a console otto does not log in on, whose
+shell otto leaves as it found it.
 
 Every test releases the line and leaves it at its login prompt; the
 ``test2_console`` fixture (``conftest.py``) checks that after each test and,
@@ -22,13 +23,16 @@ from otto.host.errors import ConsoleError
 from otto.host.login_proxy import Cred
 from otto.result import Result
 from otto.utils import Status
+from tests._fixtures.interactive_shell import PersonState, parse_person_state, person_state_line
 from tests._fixtures.labdata import host_data, host_data_console, make_console_host
 from tests.e2e.console._raw import (
+    collect,
     console_answer,
     ends_at_login,
     login_and_abandon,
     raw_console,
     server_cred,
+    strip_ansi_bytes,
 )
 
 pytestmark = [
@@ -93,6 +97,63 @@ async def test_already_logged_in_fails_loud():
     finally:
         await h.logout()  # the abandoned shell back to login:
         await h.close()
+
+
+async def _person_state(*typed_first: str) -> PersonState:
+    """Type each of *typed_first* into the shell on test2's line, then read its state.
+
+    Over a raw line, so the reading reaches the shell as it is, by the one
+    reading line (:func:`~tests._fixtures.interactive_shell.person_state_line`).
+    """
+    typed = person_state_line()
+    cred = server_cred(_OPTS.server)
+    async with raw_console(_SERVER["ip"], cred.login, cred.password, _OPTS.port) as line:
+        for text in (*typed_first, typed.line.rstrip("\n")):
+            line.writer.write(text.encode() + b"\r")
+        raw = await collect(
+            line, 20.0, lambda b: typed.done.search(b.decode(errors="replace")) is not None
+        )
+    out = strip_ansi_bytes(raw).decode(errors="replace")
+    assert typed.done.search(out), f"the shell on test2's line printed no state reading: {out!r}"
+    return parse_person_state(out, typed)
+
+
+async def test_a_login_false_console_leaves_the_persons_shell_as_it_found_it():
+    """#1358: otto's session on a console it does not log in on leaves the person's shell as it was.
+
+    No lab host declares ``login: false`` on a bash console, so test2's
+    console is used with that option. A person's shell is left logged in on
+    the line, with an unexported variable typed into it. otto's session runs
+    in a child of that shell (its ``$PPID``), reads ``!`` and a TAB as a
+    script does, and its close leaves the child: the person's shell keeps its
+    variable, its TAB completion, its ``!`` history expansion and the rest of
+    what the reading shows.
+    """
+    await login_and_abandon(_OPTS.server, _OPTS.port, _OTHER.login, _OTHER.password)
+    try:
+        before = await _person_state("PV=person")
+        assert before.shell.pv == "person", before
+        h = make_console_host("test2", console_options=replace(_OPTS, login=False))
+        try:
+            ppid = (await h.run("echo $PPID")).only
+            assert (ppid.retcode, ppid.value) == (0, str(before.shell.pid)), ppid
+            bang = (await h.run("echo a !b c")).only
+            assert (bang.retcode, bang.value) == (0, "a !b c"), bang
+            tab = (await h.run("echo 'a\tb'")).only
+            assert (tab.retcode, tab.value) == (0, "a\tb"), tab
+        finally:
+            await h.close()
+        after = await _person_state()
+        assert after.shell.pv == "person", after
+        assert '"\\C-i": complete' in after.shell.tab.splitlines(), after.shell.tab
+        assert "set -o histexpand" in after.shell.options.splitlines(), after.shell.options
+        assert after == before
+    finally:
+        h = make_console_host("test2")
+        try:
+            await h.logout()  # the person's shell back to login:
+        finally:
+            await h.close()
 
 
 async def test_a_reboot_that_never_takes_says_so_and_logs_the_line_out(monkeypatch):

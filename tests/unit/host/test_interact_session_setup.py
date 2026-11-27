@@ -676,6 +676,8 @@ async def test_the_bridge_handshake_waits_the_host_init_timeout(hook):
 class _FakeConsoleClient:
     """Records ``login_sequence`` calls; the bridge must delegate to it."""
 
+    owes_logout = False
+
     def __init__(self) -> None:
         self.login_calls = 0
 
@@ -747,6 +749,35 @@ async def test_a_hook_on_a_telnet_bridge_is_refused_console_login_naming_the_ter
         await interact._run_session_setup_on_bridge(
             **_console_bridge_kwargs(console, term="telnet")
         )
+
+
+@pytest.mark.asyncio
+async def test_the_bridge_starts_no_work_shell():
+    """On a console whose shell outlives the session the bridge still types into the person's shell.
+
+    Its shell is the person's own, so the bridge types no start line and its
+    one handshake carries the save and no shell prefix, as before.
+    """
+    from otto.host.command_frame import handshake_prefix
+    from otto.host.session import _WorkShell
+    from tests.unit.host._pty_session import outliving_console
+
+    console = _Console(DialectShell())
+    s = interact._BridgeShellSession(
+        console.write_remote,
+        console.read_remote,
+        newline=b"\n",
+        command_frame=BashFrame(),
+        console_client=outliving_console(),
+    )
+    assert s.shell_outlives_session
+    await s._ensure_initialized()
+
+    m = s.markers
+    frame = BashFrame()
+    prefix = handshake_prefix(frame, m, shell_history=True, save_terminal=True, script_lines=False)
+    assert [w.decode() for w in console.sent] == [frame.handshake(m, prefix=prefix)]
+    assert s._work_shell is _WorkShell.NOT_USED
 
 
 @pytest.mark.asyncio

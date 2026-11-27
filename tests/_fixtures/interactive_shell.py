@@ -17,6 +17,7 @@ sweep decide which shells run and what is typed in one place.
 """
 
 import contextlib
+import dataclasses
 import functools
 import os
 import pathlib
@@ -32,6 +33,7 @@ import pytest
 
 from otto.host.command_frame import (
     BashFrame,
+    CommandFrame,
     ExecRestore,
     SessionMarkers,
     handshake_prefix,
@@ -39,7 +41,7 @@ from otto.host.command_frame import (
 )
 from otto.host.console import strip_ansi
 from otto.host.login_proxy import _identity_pattern, _identity_probe
-from otto.host.session import ShellSession, ready_pattern
+from otto.host.session import ShellSession, TelnetSession, ready_pattern
 from otto.host.terminal_mapping import ONLCR, establish_exec_state, measure
 from otto.utils import WaitTimeoutError, wait_for
 from tests._fixtures.controlling_pty import ControllingPty, spawn_on_controlling_pty
@@ -294,23 +296,27 @@ def shell_env(
 
 @contextlib.contextmanager
 def interactive_shell(
-    name: str, *, onlcr: bool = True, setup: str = ""
+    name: str,
+    *,
+    onlcr: bool = True,
+    setup: str = "",
+    env: "dict[str, str] | None" = None,
 ) -> Iterator[InteractiveShell]:
     """Start shell *name* (a :data:`SHELL_ARGV` key) interactive on its own controlling pty.
 
-    Its environment is :func:`shell_env`'s (its fake terminal readers make a
-    tail that runs one fail here on any machine). It yields once
-    the shell has printed its prompt. *onlcr* sets the terminal's ``onlcr``
-    before the shell starts. *setup*, when given, is typed first as one line
-    (:meth:`InteractiveShell.run`). The shell and its foreground job are
-    killed on exit.
+    Its environment is :func:`shell_env`'s, with *env* on top (its fake
+    terminal readers make a tail that runs one fail here on any machine). It
+    yields once the shell has printed its prompt. *onlcr* sets the
+    terminal's ``onlcr`` before the shell starts. *setup*, when given, is
+    typed first as one line (:meth:`InteractiveShell.run`). The shell and
+    its foreground job are killed on exit.
     """
     with (
         tempfile.TemporaryDirectory(prefix="otto-ishell-") as home,
         tempfile.TemporaryDirectory(prefix="otto-ishell-fakes-") as fakes,
     ):
         terminal = spawn_on_controlling_pty(
-            SHELL_ARGV[name], env=shell_env(name, home, fakes), onlcr=onlcr
+            SHELL_ARGV[name], env=shell_env(name, home, fakes, overlay=env), onlcr=onlcr
         )
         try:
             shell = InteractiveShell(name, terminal)
@@ -362,7 +368,15 @@ HAZARD_MARKERS: dict[str, SessionMarkers] = {
 Ids are random hex, so some session's id ends in each of these; a tail cut
 inside the echo word's head must not leave it as a word of its own."""
 
-PROBE_LINES = ("handshake", "console-handshake", "resync", "recovery", "exec-restore")
+PROBE_LINES = (
+    "handshake",
+    "console-handshake",
+    "resync",
+    "recovery",
+    "exec-restore",
+    "work-console-handshake",
+    "work-entry",
+)
 """The probe lines otto types into a shell that may run only a tail of them.
 
 The readiness handshake and the resync probe open a fresh shell; the
@@ -370,7 +384,13 @@ recovery probe follows an interrupt after a command timed out, and the
 post-recovery restore line (``exec-restore``) follows the recovery of a
 timed-out ``exec``. The console handshake is the readiness handshake a
 session whose terminal outlives it sends first, with the settings save in
-front (``handshake_prefix``)."""
+front (``handshake_prefix``). On a console whose shell outlives the session
+the first line is the work-shell console handshake instead (the save and no
+shell prefix, typed into the person's shell), and ``work-entry`` is the work
+shell's entry proof, the resync probe carrying the frame's work-shell lines,
+cut in each state :data:`WORK_OWNERSHIP` names. Both are rendered here
+without the frame's lead: a cut inside the lead leaves the whole line, which
+answers."""
 
 ESTABLISHED = establish_exec_state(replace=True)
 """What a session's handshake leaves in its shell: the exec frame's variables, set."""
@@ -381,6 +401,8 @@ PROBE_STATES: dict[str, tuple[bool, ...]] = {
     "resync": (False, True),
     "recovery": (False,),
     "exec-restore": (True,),
+    "work-console-handshake": (False,),
+    "work-entry": (False, True),
 }
 """Per :data:`PROBE_LINES` kind, whether the shell it is cut in has :data:`ESTABLISHED` typed first.
 
@@ -391,14 +413,173 @@ it keeps. The restore line follows an ``exec`` on an established session;
 the same line with the record lost is
 ``test_exec_terminal.py::test_exec_restore_line_with_lost_state_answers_and_restores_nothing``."""
 
-HANDSHAKE_LINES = ("handshake", "console-handshake")
+HANDSHAKE_LINES = ("handshake", "console-handshake", "work-console-handshake")
 """The :data:`PROBE_LINES` that carry the terminal-mapping calibration."""
 
-HISTORY_LINES = ("handshake", "console-handshake", "resync")
+HISTORY_LINES = ("handshake", "console-handshake", "resync", "work-entry")
 """The :data:`PROBE_LINES` that carry history suppression when the host asks for it.
 
 They are the first line a fresh shell runs. The recovery probe is written
-into a shell that is already set up, so it never carries it."""
+into a shell that is already set up, so it never carries it. The work-shell
+console handshake is typed into the person's shell, which keeps its history:
+the entry proof that follows carries the suppression."""
+
+WORK_OWNERSHIP = ("unowned", "started", "leftover")
+"""The states a work shell's entry proof is cut in (:func:`cut_probe`'s *ownership*).
+
+``unowned`` is a shell as it was spawned, a person's shell; ``started`` a
+shell the start line started (``__otto_child=1`` in its environment);
+``leftover`` a work shell an earlier session left (the work mark's alias
+defined). The proof must answer the mark in the last two and never in the
+first."""
+
+TAB_BINDING_QUERY = (
+    "case ${BASH_VERSION:-} in ?*) bind -p 2>/dev/null;; esac; "
+    "case ${ZSH_VERSION:-} in ?*) bindkey '^I';; esac; "
+    "case ${KSH_VERSION:-} in *MIRBSD*|*LEGACY*) bind;; esac"
+)
+"""What prints a shell's TAB binding in its line editor: bash ``bind -p``, zsh's, mksh's.
+
+The binding :meth:`~otto.host.command_frame.BashFrame.script_parsing` changes;
+the other shells print nothing."""
+
+
+@dataclasses.dataclass(frozen=True)
+class ShellState:
+    """What a person's shell holds that a work shell must leave alone."""
+
+    pid: int
+    program: str
+    options: str
+    """``set +o``."""
+    tab: str
+    """The line editor's TAB binding, as :data:`TAB_BINDING_QUERY` prints it."""
+    pv: str
+    """``${PV-unset}``: an unexported variable typed by hand."""
+    pfunc: bool
+    palias: bool
+    work_mark: bool
+    """Whether the work mark's alias is defined (``__otto_as_w`` unless another is named)."""
+    histfile: str
+    """``${HISTFILE-unset}``."""
+    cwd: str
+    """``pwd``."""
+    otto_t: str
+    """``${OTTO_T-unset}``: what a session's ``export OTTO_T=...`` would leave behind."""
+
+
+@dataclasses.dataclass(frozen=True)
+class PersonState:
+    """A person's shell and the terminal it reads."""
+
+    shell: ShellState
+    terminal: str
+    """``stty -g``."""
+
+
+_PERSON_PROBES = {
+    "pid": "echo $$",
+    "program": "readlink /proc/$$/exe",
+    "options": "set +o",
+    "tab": TAB_BINDING_QUERY,
+    "pv": "echo ${PV-unset}",
+    "pfunc": "command -v pfunc >/dev/null 2>&1 && echo 1 || echo 0",
+    "palias": "alias palias >/dev/null 2>&1 && echo 1 || echo 0",
+    "mark": "alias {mark} >/dev/null 2>&1 && echo 1 || echo 0",
+    "hist": "echo ${HISTFILE-unset}",
+    "cwd": "pwd",
+    "otto_t": "echo ${OTTO_T-unset}",
+    "tty": "stty -g",
+}
+"""Each :class:`PersonState` field's command, in the order :func:`person_state_line` types them.
+
+``{mark}`` is the work mark's alias the reading asks about."""
+
+
+@dataclasses.dataclass(frozen=True)
+class PersonStateLine:
+    """The line :func:`person_state_line` types, and how its output is read."""
+
+    line: str
+    head: str
+    """The section words' common head: a fresh token."""
+
+    @property
+    def done(self) -> "re.Pattern[str]":
+        """What ends the line's output: its last section word."""
+        return re.compile(rf"{self.head}end\r*\n")
+
+
+def person_state_line(*, mark: str = "__otto_as_w") -> PersonStateLine:
+    """One line reading a person's shell state (:class:`PersonState`).
+
+    Each command's output follows a section word of its own, made of a fresh
+    token, which the quotes split in the typed text so no echo of the line
+    carries it. *mark* is the work mark's alias
+    :attr:`ShellState.work_mark` reads. The one builder of the reading, for
+    a session's harness and the synchronous one (:func:`read_person_state`).
+    """
+    head = f"__PS_{uuid.uuid4().hex[:8]}_"
+
+    def section(name: str) -> str:
+        return f'echo {head}""{name}'
+
+    line = "; ".join(
+        f"{section(name)}; {cmd.replace('{mark}', mark)}" for name, cmd in _PERSON_PROBES.items()
+    )
+    return PersonStateLine(line=f"{line}; {section('end')}\n", head=head)
+
+
+def parse_person_state(out: str, typed: PersonStateLine) -> PersonState:
+    """Read the :class:`PersonState` in *out*, what the shell printed for *typed*."""
+    head = typed.head
+    lines = out.replace("\r", "").split("\n")
+
+    def at(name: str) -> int:
+        # The line the section's echo printed; a prompt may lead it, and the
+        # typed line's echo never ends with it.
+        return max(i for i, text in enumerate(lines) if text.endswith(head + name))
+
+    names = list(_PERSON_PROBES)
+    found = {
+        name: "\n".join(lines[at(name) + 1 : at(nxt)])
+        for name, nxt in zip(names, [*names[1:], "end"], strict=True)
+    }
+    return PersonState(
+        shell=ShellState(
+            pid=int(found["pid"]),
+            program=found["program"],
+            options=found["options"],
+            tab=found["tab"],
+            pv=found["pv"],
+            pfunc=found["pfunc"] == "1",
+            palias=found["palias"] == "1",
+            work_mark=found["mark"] == "1",
+            histfile=found["hist"],
+            cwd=found["cwd"],
+            otto_t=found["otto_t"],
+        ),
+        terminal=found["tty"],
+    )
+
+
+def read_person_state(shell: "InteractiveShell") -> PersonState:
+    """Read the state of the shell reading *shell*'s terminal now (:func:`person_state_line`)."""
+    typed = person_state_line()
+    mark = len(shell.output)
+    shell.send(typed.line)
+    shell.wait_for_output(typed.done, READY_TIMEOUT)
+    found = typed.done.search(shell.output, mark)
+    assert found is not None
+    return parse_person_state(shell.output[mark : found.end()], typed)
+
+
+_WORK_STATE = {
+    "unowned": ({}, ""),
+    "started": ({"__otto_child": "1"}, ""),
+    "leftover": ({}, "alias __otto_as_w=:"),
+}
+"""Per :data:`WORK_OWNERSHIP` state: the environment the shell starts with, what is typed first."""
 
 
 def _handshake(m: SessionMarkers, history: bool, *, save_terminal: bool) -> str:
@@ -407,6 +588,58 @@ def _handshake(m: SessionMarkers, history: bool, *, save_terminal: bool) -> str:
         BashFrame(), m, shell_history=not history, save_terminal=save_terminal
     )
     return BashFrame().handshake(m, prefix=prefix)
+
+
+@dataclasses.dataclass(frozen=True)
+class TypedWorkShellLines:
+    """The three lines a console session types to enter its work shell, as it types them."""
+
+    line_one: str
+    start: str
+    proof: str
+    lead: str
+
+
+def typed_work_shell_lines(
+    frame: CommandFrame, *, quiet: bool, m: "SessionMarkers | None" = None
+) -> TypedWorkShellLines:
+    """The lines a session on *frame*, on a console whose shell outlives it, enters with.
+
+    Rendered by the session itself: line 1 by its ``_handshake_payload`` with
+    the lines its ``_enters_work_shell`` chose, and the proof by the one probe
+    builder its entry resyncs through. *quiet* is history suppression; *m*
+    the markers, the session's own by default.
+    """
+    from tests.unit.host._pty_session import outliving_console  # it builds on this module
+
+    session = TelnetSession(
+        reader=None,
+        writer=None,
+        console_client=outliving_console(),
+        command_frame=frame,
+        shell_history=not quiet,
+    )
+    work = session._enters_work_shell()
+    assert work is not None
+    m = session.markers if m is None else m
+    return TypedWorkShellLines(
+        line_one=session._handshake_payload(m, save=session._saves_terminal(), work=work),
+        start=work.lead + work.start,
+        proof=_identity_probe(m, "", work=work),
+        lead=work.lead,
+    )
+
+
+def _work_console_handshake(m: SessionMarkers) -> str:
+    """The first line typed into the person's shell, without its lead: the save, no prefix."""
+    typed = typed_work_shell_lines(BashFrame(), quiet=False, m=m)
+    return typed.line_one.removeprefix(typed.lead)
+
+
+def _work_entry(m: SessionMarkers, history: bool) -> str:
+    """The work shell's entry proof without its lead, history suppressed where *history* asks."""
+    typed = typed_work_shell_lines(BashFrame(), quiet=history, m=m)
+    return typed.proof.removeprefix(typed.lead)
 
 
 def _restore_line(m: SessionMarkers) -> str:
@@ -432,6 +665,8 @@ _RENDER = {
     ),
     "recovery": lambda m, _history: BashFrame().recover(m),
     "exec-restore": lambda m, _history: _restore_line(m),
+    "work-console-handshake": lambda m, _history: _work_console_handshake(m),
+    "work-entry": _work_entry,
 }
 
 _ANSWER = {
@@ -440,6 +675,8 @@ _ANSWER = {
     "resync": _identity_pattern,
     "recovery": BashFrame().recover_pattern,
     "exec-restore": _restored_pattern,
+    "work-console-handshake": lambda m: ready_pattern(m, line_ending=True),
+    "work-entry": lambda m: _identity_pattern(m, reads_work_mark=True),
 }
 
 
@@ -469,6 +706,7 @@ def cut_probe(
     history: bool = True,
     setup: str = "",
     established: bool = False,
+    ownership: "str | None" = None,
 ) -> str:
     """Cut a *kind* line at *offset* in a fresh *name* shell, resend it whole, require the answer.
 
@@ -478,10 +716,16 @@ def cut_probe(
     calibration, measured ``onlcr`` as on any default Linux terminal, so the
     resend ran from its first byte. *setup*, then :data:`ESTABLISHED` when
     *established* (:data:`PROBE_STATES`), is typed before the cut as one
-    line (:func:`interactive_shell`). Returns everything the terminal printed.
+    line (:func:`interactive_shell`). *ownership*, for the ``work-entry``
+    kind only, is the :data:`WORK_OWNERSHIP` state the shell is put in
+    first, and the whole resend's readback must be ``1`` exactly where that
+    state owns the mark. Returns everything the terminal printed.
     """
-    typed = "; ".join(part for part in (setup, ESTABLISHED if established else "") if part)
-    with interactive_shell(name, setup=typed) as shell:
+    if (ownership is not None) != (kind == "work-entry"):
+        raise ValueError(f"ownership {ownership!r} is for the work-entry kind only, not {kind!r}")
+    env, owned = _WORK_STATE[ownership] if ownership is not None else ({}, "")
+    typed = "; ".join(part for part in (owned, setup, ESTABLISHED if established else "") if part)
+    with interactive_shell(name, setup=typed, env=env) as shell:
         out = cut_case(
             shell,
             render_probe(kind, tail, history),
@@ -495,6 +739,12 @@ def cut_probe(
         assert found is not None
         assert measure(out[: found.end()], resend.ready).mapping == ONLCR, (
             f"{name}: {out[-_FAILURE_TAIL:]!r}"
+        )
+    if ownership is not None:
+        found = probe_answer(kind, resend).search(out)
+        assert found is not None
+        assert found.group(3) == ("" if ownership == "unowned" else "1"), (
+            f"{name} ({ownership}): readback {found.group(3)!r}; {out[-_FAILURE_TAIL:]!r}"
         )
     return out
 

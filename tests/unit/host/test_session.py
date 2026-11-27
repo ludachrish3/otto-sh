@@ -21,10 +21,12 @@ import pytest_asyncio
 from pydantic import SecretStr
 
 from otto.errors import OttoError
+from otto.host import login_proxy
 from otto.host.command_frame import (
     RECOVER_SUFFIX,
     BashFrame,
     CommandFrame,
+    RawFrame,
     ZephyrFrame,
     ZephyrSerialFrame,
 )
@@ -2281,6 +2283,7 @@ def fake_console_connections() -> SimpleNamespace:
         writer=MagicMock(),
         options=ConsoleOptions(server="test1", port=4001, dial="ssh"),
         logged_in=True,
+        owes_logout=True,
         read_gate=ReadGate(),
     )
     return _console_connections(client)
@@ -2703,6 +2706,7 @@ class TestOpenBudget:
         conn = MagicMock()
         conn.connect_allowance.return_value = 3.0
         conn.release_allowance.return_value = 2.0
+        conn.keeps_console_shell.return_value = False
         mgr = session_manager(
             connections=conn,
             name="h",
@@ -2718,6 +2722,7 @@ class TestOpenBudget:
         conn.connect_allowance.return_value = 3.0
         conn.release_allowance.return_value = 0.0
         conn.retries_failed_open.return_value = False
+        conn.keeps_console_shell.return_value = False
         mgr = session_manager(
             connections=conn,
             name="h",
@@ -2757,6 +2762,57 @@ class TestOpenBudget:
         session_manager(connections=conn, name="h").open_budget(term="telnet")
         conn.connect_allowance.assert_called_once_with(term="telnet")
         conn.release_allowance.assert_called_once_with(term="telnet")
+
+    @pytest.mark.parametrize("keeps", [False, True], ids=["logs-in-and-out", "keeps-its-shell"])
+    def test_open_budget_counts_the_work_shell_where_the_console_keeps_its_shell(
+        self, keeps, monkeypatch
+    ):
+        # The work shell's two waits: the entry proof's resync deadline and
+        # the readiness deadline of the handshake typed in the work shell.
+        monkeypatch.setattr(login_proxy, "RESYNC_DEADLINE", 5.0)
+        conn = MagicMock()
+        conn.connect_allowance.return_value = 3.0
+        conn.release_allowance.return_value = 2.0
+        conn.keeps_console_shell.return_value = keeps
+        mgr = session_manager(
+            connections=conn,
+            name="h",
+            init_timeout=4.0,
+            retry_backoff=1.0,
+        )
+        work = 5.0 + 4.0 if keeps else 0.0
+        assert mgr.open_budget(term="console") == 2 * (3.0 + 4.0 + work + 2.0) + 1.0
+        conn.keeps_console_shell.assert_called_once_with(term="console")
+
+    @pytest.mark.parametrize(
+        ("command_frame", "landing_frame", "counted"),
+        [
+            (ZephyrFrame(), None, False),
+            (ZephyrFrame(), RawFrame(), False),
+            (None, RawFrame(), True),
+            (ZephyrFrame(), BashFrame(), True),
+        ],
+        ids=["zephyr", "raw-landing-then-zephyr", "raw-landing-then-bash", "bash-landing"],
+    )
+    def test_open_budget_counts_the_work_shell_only_where_a_frame_offers_one(
+        self, command_frame, landing_frame, counted, monkeypatch
+    ):
+        """A console that keeps its shell counts the work shell only where its frames offer one."""
+        monkeypatch.setattr(login_proxy, "RESYNC_DEADLINE", 5.0)
+        conn = MagicMock()
+        conn.connect_allowance.return_value = 3.0
+        conn.release_allowance.return_value = 2.0
+        conn.retries_failed_open.return_value = False
+        conn.keeps_console_shell.return_value = True
+        mgr = session_manager(
+            connections=conn,
+            name="h",
+            init_timeout=4.0,
+            command_frame=command_frame,
+            landing_frame=landing_frame,
+        )
+        work = 5.0 + 4.0 if counted else 0.0
+        assert mgr.open_budget(term="console") == 3.0 + 4.0 + work + 2.0
 
     def test_no_override_uses_the_class_default(self, monkeypatch):
         # The class attribute is what a session without an override waits,
@@ -2804,6 +2860,25 @@ class TestOpenBudget:
         assert mgr.open_budget(term="console") == (
             conns.connect_allowance(term="console") + 4.0 + CONSOLE_QUIESCE_BUDGET
         )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_work_shell_is_never_retried():
+    """A work shell the proof did not find is a ConsoleError: the open is not rebuilt."""
+    from otto.host.errors import ConsoleError
+    from tests.unit.host.test_terminal_restore import _session_on
+
+    built: list[ShellSession] = []
+
+    def factory() -> ShellSession:
+        session, _events = _session_on(console=True, record=None, owes_logout=False, owns=False)
+        built.append(session)
+        return session
+
+    mgr = session_manager(name="h", session_factory=factory, retry_backoff=0)
+    with pytest.raises(ConsoleError, match="work shell refused"):
+        await mgr._ensure_session()
+    assert len(built) == 1
 
 
 class TestInitTimeoutFromTheEnvironment:
@@ -2977,7 +3052,9 @@ def test_the_budget_and_the_console_session_read_one_retry_rule(monkeypatch):
         host_id="h",
         console_options=options,
     )
-    client = SimpleNamespace(logged_in=False, read_gate=ReadGate(), options=options)
+    client = SimpleNamespace(
+        logged_in=False, owes_logout=False, read_gate=ReadGate(), options=options
+    )
     session = TelnetSession(reader=object(), writer=object(), console_client=client)
     assert conns.retries_failed_open() is False
     assert session._retry_failed_handshake is False
@@ -3001,6 +3078,50 @@ def test_a_telnet_session_on_a_one_client_line_is_not_retried(single_client):
     client = stream_client(None, None, single_client=single_client)
     session = TelnetSession(reader=object(), writer=object(), client=client)
     assert session._retry_failed_handshake is (not single_client)
+
+
+@pytest.mark.parametrize(
+    ("login", "logout"), [(True, True), (True, False), (False, True), (False, False)]
+)
+def test_whether_the_options_keep_the_console_shell_agrees_with_the_client(login, logout):
+    """``keeps_console_shell`` and ``owes_logout`` are one rule: ``console_owes_logout``.
+
+    The rule is a logout the options ask for, by a client that logged in. The
+    options answer before any client exists, giving the rule the login they
+    ask for; the client answers after its login, giving it its own. As
+    ``connect()`` leaves it (logged in exactly when ``login`` is on), the two
+    agree. A client a raw-landing hook logged in (``login`` off) owes a logout
+    the options cannot foresee, and they count it as keeping the shell.
+    """
+    from otto.host.connections import ConnectionManager
+    from otto.host.console import console_owes_logout
+
+    options = ConsoleOptions(server="s", port=1, login=login, logout=logout)
+    assert console_owes_logout(options, logged_in=True) is logout
+    assert console_owes_logout(options, logged_in=False) is False
+    conns = ConnectionManager(
+        ip="10.0.0.1",
+        creds=[Cred(login="u", password="p")],
+        term="console",
+        name="h",
+        host_id="h",
+        console_options=options,
+    )
+    client = ConsoleClient(host="localhost", port=1, user="u", password="p", options=options)
+    for logged_in in (False, True):
+        client._logged_in = logged_in
+        assert client.owes_logout is console_owes_logout(options, logged_in=logged_in)
+    assert conns.keeps_console_shell() is not console_owes_logout(options, logged_in=login)
+    assert conns.keeps_console_shell(term="telnet") is False
+    client._logged_in = login  # as connect() leaves it: login_sequence ran when login is on
+    assert conns.keeps_console_shell() is not client.owes_logout
+    if not login:
+        # A hook's console_login() on a raw landing: the client now owes a
+        # logout when logout is on, and the options, which cannot foresee
+        # the hook, still count the shell as kept: an upper bound.
+        client._logged_in = True
+        assert client.owes_logout is logout
+        assert conns.keeps_console_shell()
 
 
 # --- A telnet session closes through its client, and reads through its gate ---
@@ -3125,7 +3246,9 @@ async def test_admitted_read_finishes_on_captured_reader():
 def test_session_requires_exactly_one_client():
     """Every telnet session has exactly one closer: a telnet client or a console client."""
     reader, writer = object(), object()
-    console = SimpleNamespace(logged_in=False, read_gate=ReadGate(), options=ConsoleOptions())
+    console = SimpleNamespace(
+        logged_in=False, owes_logout=False, read_gate=ReadGate(), options=ConsoleOptions()
+    )
     with pytest.raises(ValueError, match="exactly one"):
         TelnetSession(reader, writer)
     with pytest.raises(ValueError, match="exactly one"):

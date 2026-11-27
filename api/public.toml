@@ -747,6 +747,9 @@ why = "implementer-facing"
 [symbols."otto.host.command_frame:CommandFrame.save_terminal"]
 positional = ["m"]
 
+[symbols."otto.host.command_frame:CommandFrame.work_shell"]
+implementer = true
+
 [symbols."otto.host.command_frame:RawFrame.end_pattern"]
 positional = ["m"]
 why = "implementer-facing"
@@ -815,6 +818,9 @@ positional = ["m"]
 
 [symbols."otto.host.command_frame:SessionMarkers"]
 construct = false
+subclass = false
+
+[symbols."otto.host.command_frame:WorkShellLines"]
 subclass = false
 
 [symbols."otto.host.command_frame:ZephyrFrame.end_pattern"]
@@ -1519,6 +1525,9 @@ why = "implementer-facing"
 
 [symbols."otto.host:CommandFrame.save_terminal"]
 positional = ["m"]
+
+[symbols."otto.host:CommandFrame.work_shell"]
+implementer = true
 
 [symbols."otto.host:CommandPowerConfig"]
 construct = false
@@ -2452,6 +2461,9 @@ positional = ["ctx"]
 
 [symbols."otto.host:Userland"]
 construct = false
+subclass = false
+
+[symbols."otto.host:WorkShellLines"]
 subclass = false
 
 [symbols."otto.host:ZephyrFrame.end_pattern"]

@@ -161,6 +161,17 @@ def classify_tail(
     return None
 
 
+def console_owes_logout(options: ConsoleOptions, *, logged_in: bool) -> bool:
+    """Whether a console client's close logs out: *options* ask for a logout and it *logged_in*.
+
+    The one rule. :attr:`ConsoleClient.owes_logout` gives it the client's own
+    login; :meth:`~otto.host.connections.ConnectionManager.keeps_console_shell`
+    gives it ``options.login``, the login the options ask for, before any
+    client exists.
+    """
+    return options.logout and logged_in
+
+
 @dataclass(eq=False)
 class ConsoleClient(_StreamHolder):
     """Telnet transport to one serial console, with a classify-then-login handshake.
@@ -200,10 +211,51 @@ class ConsoleClient(_StreamHolder):
     def _fail(self, what: str) -> ConsoleError:
         return ConsoleError(self._prefix() + what)
 
+    def work_shell_refused(self, *, started: bool) -> ConsoleError:
+        """Return the refusal of a session whose work shell on this console was not proved.
+
+        *started* says which part failed: ``False`` when the proof found no
+        mark (the shell started no child, the line that starts it was lost,
+        or the shell has no ``alias`` to carry the mark), ``True`` when the
+        child it tried to start did not answer. The message names the
+        console, why otto works in a child shell there, and the two remedies.
+        """
+        why = (
+            "the child it tried to start did not answer "
+            "(a startup file that waits for input or never ends?)"
+            if started
+            else "the shell started none: it cannot start a copy of itself (a restricted "
+            "shell, or one whose name does not end in sh, such as -su), it has no alias "
+            "command to carry the work shell's mark (BusyBox hush, or an ash built without "
+            "alias support), or the line that starts it was lost"
+        )
+        return self._fail(
+            "keeps its shell after otto's session (console_options.login or logout is "
+            "false), so otto runs its commands in a work shell, a child of that shell, "
+            f"and {why}. otto set none of its settings in that shell. Set "
+            "console_options.login and console_options.logout to true so that otto logs "
+            "in and out (the console must then show a login prompt), or give the console "
+            "a shell that can start a copy of itself"
+        )
+
     @property
     def logged_in(self) -> bool:
-        """Whether THIS client performed the login (and so owes a logout)."""
+        """Whether THIS client performed the login.
+
+        Whether its close logs out as well is :attr:`owes_logout`.
+        """
         return self._logged_in
+
+    @property
+    def owes_logout(self) -> bool:
+        """Whether this client's close logs out, as ``options.logout`` is on and it logged in.
+
+        The one answer to the question. The close reads it, and so does
+        :attr:`~otto.host.session.ShellSession.shell_outlives_session`: a
+        shell this close does not end with a logout is still there for the
+        console's next user. The rule is :func:`console_owes_logout`.
+        """
+        return console_owes_logout(self.options, logged_in=self._logged_in)
 
     @property
     def alive(self) -> bool:
@@ -648,7 +700,7 @@ class ConsoleClient(_StreamHolder):
 
     @override
     async def _release(self, taken: _TakenStream) -> None:
-        """Log out if this client logged in, then release the stream. Never raises.
+        """Log out if this client :attr:`owes_logout`, then release the stream. Never raises.
 
         The console's part of :meth:`close <otto.host.telnet._StreamHolder.close>`,
         which takes the stream first and marks its release ended afterwards.
@@ -684,7 +736,7 @@ class ConsoleClient(_StreamHolder):
             taken.sock,
             taken.gate,
         )
-        owes_logout = self.options.logout and self._logged_in
+        owes_logout = self.owes_logout
         loop = asyncio.get_running_loop()
         idle_deadline = loop.time() + CONSOLE_QUIESCE_BUDGET
         logout_elapsed = 0.0

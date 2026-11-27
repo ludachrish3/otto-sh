@@ -146,7 +146,9 @@ and nothing else:
   console's line outlives otto's session, so there otto reads the settings
   (`stty -g`) on the same handshake line before changing anything, and puts
   them back, echo and tabs together, when it hands the line to a person and
-  before it logs out. The settings are printed behind a marker of the
+  before its close, which logs out or, where the shell outlives the session,
+  leaves otto's work shell
+  ({ref}`console-shell-outlives-session`). The settings are printed behind a marker of the
   session's own, so other text on the console can't pass for them. A
   session that ends without a clean close (otto killed, the link cut)
   leaves them changed, and so does a close while a timed-out command still

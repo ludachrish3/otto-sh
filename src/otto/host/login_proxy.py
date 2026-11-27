@@ -26,7 +26,14 @@ from ..errors import OttoError
 from ..logger.mode import LogMode
 from ..models.base import Cred, cred_identity
 from ..registry import Registry, registration_boundary
-from .command_frame import RECOVER_SUFFIX, BashFrame, SessionMarkers, whole_line_echo
+from .command_frame import (
+    RECOVER_SUFFIX,
+    BashFrame,
+    SessionMarkers,
+    WorkShellLines,
+    led,
+    whole_line_echo,
+)
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .identity import ROOT_LOGIN, is_root
 from .shell_liveness import confirm_live
@@ -393,12 +400,17 @@ def _get_proxy(hop: Cred) -> LoginProxy:
 # with the transition is silently dropped (verified 40/40 on the live bed).
 # _RESYNC_SETTLE absorbs that flush; confirm_live then resends an echo-proof
 # exit-code probe (BashFrame.recover) on a short interval until the shell answers
-# with the digit form or _RESYNC_DEADLINE passes — decoupling per-probe wait from
+# with the digit form or RESYNC_DEADLINE passes — decoupling per-probe wait from
 # the overall budget so a slow round-trip under load no longer exhausts a fixed
 # attempt count (the 3.13 flake). See otto.host.shell_liveness.confirm_live.
 _RESYNC_SETTLE = 0.3
 _RESYNC_PROBE_TIMEOUT = 0.5
-_RESYNC_DEADLINE = 10.0
+RESYNC_DEADLINE = 10.0
+"""How long a resync resends its probe before it gives up.
+
+Read through this module when it is used, so a caller sizing a wait on a
+resync (:meth:`~otto.host.session.SessionManager.open_budget`) and a test that
+shortens it see the same value."""
 
 # When a proxy declares a credential prompt, the settle doubles as the watch for
 # it — and THAT job wants a longer window than absorbing a tty flush does. A
@@ -465,6 +477,25 @@ _RESYNC_FRAME = BashFrame()
 # userland the probe simply cannot interrogate.
 _IDENTITY_TAIL = r"(\d+)__(.*?)__"
 
+# The entry proof of a work shell reads one more field after the identity:
+# the frame's readback (WorkShellLines.readback), `1` where the shell owns the
+# work mark and nothing elsewhere, then a `.` that ends the reply. The `.` is
+# what makes the field checked: a reply cut before it does not match, so an
+# empty field always means "not owned", never "not yet read".
+_WORK_MARK_TAIL = r"(1?)\."
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class _ResyncAnswer:
+    """What the shell that answered a resync said about itself."""
+
+    user: str
+    """The user it named, ``""`` where the shell gave none (a userland with no ``id``)."""
+
+    in_work_shell: bool = False
+    """Whether it owns the work mark; read only when the probe was an entry proof."""
+
 
 _SWITCH_MISMATCH_CAUSE = (
     "A rejected password is the usual cause: `su` reports the failure and exits back to "
@@ -481,7 +512,12 @@ _SETUP_MISMATCH_CAUSE = (
 """Why the post-setup proof (:func:`prove_identity`) usually fails."""
 
 
-def _identity_probe(m: SessionMarkers, shell_prefix: str, marking: str = "") -> str:
+def _identity_probe(
+    m: SessionMarkers,
+    shell_prefix: str,
+    marking: str = "",
+    work: WorkShellLines | None = None,
+) -> str:
     """Render the liveness+identity probe for markers *m*.
 
     Anchored like the handshake (:func:`~otto.host.command_frame.whole_line_echo`):
@@ -499,23 +535,47 @@ def _identity_probe(m: SessionMarkers, shell_prefix: str, marking: str = "") -> 
     *marking* is a statement that rides the same line (a pooled session's
     identity mark, :func:`prove_identity`), so the shell that answers the
     proof is the shell that ran it.
+
+    *work*, a frame's work-shell lines, makes the probe a work shell's entry
+    proof: its :attr:`~otto.host.command_frame.WorkShellLines.proof` leads the
+    statements and its :attr:`~otto.host.command_frame.WorkShellLines.readback`
+    follows the identity on the echo, then a ``.``
+    (:func:`_identity_pattern` with *reads_work_mark*). The proof carries the
+    history suppression itself, where the shell owns the mark, so
+    *shell_prefix* must then be empty. The line starts with the lines'
+    :attr:`~otto.host.command_frame.WorkShellLines.lead`, as every line otto
+    types into the person's shell does: where no work shell started, the
+    proof runs there.
+
+    Raises:
+        ValueError: *work* is given with a non-empty *shell_prefix*.
     """
+    if work is not None and shell_prefix:
+        raise ValueError(
+            "an entry proof carries its history suppression in its proof; "
+            f"shell_prefix must be empty, got {shell_prefix!r}"
+        )
     marked = f"{marking}; " if marking else ""
-    statements = f"{shell_prefix}{establish_exec_state(replace=False)}; {marked}"
-    return whole_line_echo(m.recover, RECOVER_SUFFIX, statements, after="$?__$(id -un)__")
+    first = work.proof if work is not None else shell_prefix
+    after = "$?__$(id -un)__" + (f"{work.readback}." if work is not None else "")
+    statements = f"{first}{establish_exec_state(replace=False)}; {marked}"
+    return led(work, whole_line_echo(m.recover, RECOVER_SUFFIX, statements, after=after))
 
 
-def _identity_pattern(m: SessionMarkers) -> re.Pattern[str]:
+def _identity_pattern(m: SessionMarkers, *, reads_work_mark: bool = False) -> re.Pattern[str]:
     """Match the probe's reply, capturing the exit code and the reporting user.
 
     The user has to be INSIDE the match: a real ``expect`` returns text only
     up to the end of what it matched, so a pattern that stopped at the exit
-    code would hand back a string with the identity still unread.
+    code would hand back a string with the identity still unread. With
+    *reads_work_mark*, the entry proof's readback is captured as well (group
+    3, ``1`` or empty), up to the ``.`` that ends it.
     """
-    return re.compile(re.escape(m.recover) + _IDENTITY_TAIL)
+    tail = _IDENTITY_TAIL + (_WORK_MARK_TAIL if reads_work_mark else "")
+    return re.compile(re.escape(m.recover) + tail)
 
 
-async def _resync_shell(
+async def _resync_shell(  # noqa: PLR0913 — one resync loop: each keyword is one way a caller proves a shell
     io: ProxyIO,
     host_id: str,
     hop_login: str,
@@ -527,7 +587,8 @@ async def _resync_shell(
     marking: str = "",
     settle: float | None = None,
     mismatch_cause: str | None = None,
-) -> str:
+    work: WorkShellLines | None = None,
+) -> _ResyncAnswer:
     """Resync with the shell after a su/sudo/exit transition, and prove who it is.
 
     *shell_prefix* is the caller's already-resolved statements for a new shell
@@ -560,12 +621,20 @@ async def _resync_shell(
       immediately would feed the first probe straight into the flush.
     * *check the identity.* See the note above :func:`_identity_probe`.
 
+    *work*, a frame's work-shell lines, makes each probe the work shell's
+    entry proof (:func:`_identity_probe`): the answer then says whether the
+    shell that ran it owns the work mark. A session's entry into a work shell
+    and a user switch so prove a shell through the same loop.
+
+    Returns the answer of the shell that answered last: the user it named and,
+    for an entry proof, whether it owns the work mark.
+
     Raises :class:`LoginProxyError` if the shell never resyncs before
-    :data:`_RESYNC_DEADLINE`, if a declared prompt appears with no password to
+    :data:`RESYNC_DEADLINE`, if a declared prompt appears with no password to
     answer it, or if the shell that answers is not *expect_user*.
     """
     answered = False
-    answered_as: list[str] = []
+    answers: list[_ResyncAnswer] = []
 
     async def answer() -> None:
         nonlocal answered
@@ -611,7 +680,9 @@ async def _resync_shell(
             await asyncio.sleep(_RESYNC_SETTLE)
             raise asyncio.TimeoutError("credential prompt answered; probe again")
         seen_user = hit.group(2)
-        answered_as.append(seen_user)
+        answers.append(
+            _ResyncAnswer(user=seen_user, in_work_shell=work is not None and hit.group(3) == "1")
+        )
         # A non-empty answer must be the expected user. An EMPTY one (a
         # userland with no `id`) proves liveness only: a switch accepts it, as
         # it always has; the caller reads it from the return value and decides
@@ -644,19 +715,19 @@ async def _resync_shell(
     confirmed = await confirm_live(
         io.send,
         expect,
-        lambda m: _identity_probe(m, shell_prefix, marking),
-        _identity_pattern,
+        lambda m: _identity_probe(m, shell_prefix, marking, work),
+        lambda m: _identity_pattern(m, reads_work_mark=work is not None),
         lambda: SessionMarkers.for_session(session_id=uuid.uuid4().hex[:12]),
         settle=settle,
         probe_timeout=_RESYNC_PROBE_TIMEOUT,
-        deadline=_RESYNC_DEADLINE,
+        deadline=RESYNC_DEADLINE,
     )
     if not confirmed:
         raise LoginProxyError(
             f"{host_id}: shell did not resync after a login-proxy transition "
             f"({hop_login!r}) — su/sudo/exit flushed the next command"
         )
-    return answered_as[-1] if answered_as else ""
+    return answers[-1] if answers else _ResyncAnswer(user="")
 
 
 async def run_proxy(
@@ -838,7 +909,7 @@ async def prove_identity(
     Raises:
         LoginProxyError: the shell answered as someone else, or not at all.
     """
-    seen = await _resync_shell(
+    answer = await _resync_shell(
         io,
         host_id,
         user,
@@ -848,4 +919,4 @@ async def prove_identity(
         settle=0.0,
         mismatch_cause=_SETUP_MISMATCH_CAUSE,
     )
-    return seen == user
+    return answer.user == user

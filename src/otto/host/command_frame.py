@@ -42,7 +42,7 @@ import enum
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any, ClassVar
 
 from typing_extensions import final, override
@@ -74,6 +74,7 @@ __all__ = [
     "ExecRestore",
     "RawFrame",
     "SessionMarkers",
+    "WorkShellLines",
     "ZephyrFrame",
     "command_value",
     "register_command_frame",
@@ -134,7 +135,22 @@ SESSION_SHELL = '"${SHELL:-/bin/sh}"'
 
 What an exec under sudo's ``shell`` form runs its command in: the session's
 shell, so the command is written in the language of the session it was
-typed into."""
+typed into. ``sudo -s`` reads ``$SHELL`` too, so this word names the program
+sudo would run. It is not the shell reading the line, which
+:data:`RUNNING_SHELL` names: ``$SHELL`` is the login's shell, which nothing on
+the line proved, and on a console that does not log in it can name another
+shell or be unset."""
+
+RUNNING_SHELL = "${BASH:-${0#-}}"
+"""The program of the shell reading the line, as a word that shell expands.
+
+bash names itself by ``$BASH``, since its ``$0`` can be ``-su``. Every other
+shell names itself by ``$0`` less a login dash, which a command then looks up
+on ``PATH``: ``busybox sh`` has ``$0`` ``sh``, and so finds ``PATH``'s ``sh``.
+The work shell (:meth:`BashFrame.work_shell`) starts this program, so it
+speaks the dialect the handshake just proved. :data:`SESSION_SHELL` answers a
+different question: the program sudo's ``shell`` form runs, which ``$SHELL``
+names."""
 
 EXEC_CREDENTIAL_FD = 3
 """The file descriptor an isolated ``exec`` keeps the caller's stdin on, for a password.
@@ -280,6 +296,129 @@ class SessionMarkers:
 LITERAL_NEXT = "\x16"
 """Ctrl-V: typed before a character, it makes a line editor or a terminal take that character
 literally (readline's ``quoted-insert``, the line discipline's ``lnext``)."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True)
+class WorkShellLines:
+    r"""The lines a frame types to run a session in a work shell, and to leave it.
+
+    A work shell is a child shell otto starts in the shell it finds on a
+    console whose shell outlives the session, so the shell that was there
+    keeps its own settings. The frame renders the whole protocol in this one
+    record (:meth:`CommandFrame.work_shell` says how the session uses each
+    field), so a frame cannot implement half of it.
+
+    Every line keeps :func:`whole_line_echo`'s cut rules: a console can
+    deliver a line in pieces, so a shell may run only a tail of one, and no
+    tail may leave it waiting for more input. So no field holds a quote. Each
+    line otto types, its lead included, is at most
+    :data:`~otto.host.userland.ASH_ECHOING_LINE_MAX` (1022) bytes, the
+    longest line BusyBox ash takes from a terminal that still echoes. And
+    every line is safe to repeat: the entry proof is resent until one lands,
+    and a session that finds a work shell an earlier session left types the
+    start line and the proof into it again.
+
+    Raises:
+        ValueError: naming the field, when any field holds ``'`` or ``"``;
+            :attr:`lead` holds anything but spaces; :attr:`start` holds a
+            ``\r``, or does not end in one ``\n`` and hold no other;
+            :attr:`start`, :attr:`proof` or :attr:`readback` holds a ``!``
+            or a TAB; :attr:`proof`, :attr:`readback` or :attr:`exit` holds
+            a ``\n`` or a ``\r``; :attr:`proof` does not end in ``"; "``;
+            or :attr:`readback` begins with a letter, a digit, ``_``, ``[``
+            or ``:``.
+    """
+
+    lead: str
+    """Spaces, typed before every line otto types into the person's shell; none at all is allowed.
+
+    Bash's is one space, which keeps the line out of a history that ignores
+    lines starting with one (``ignorespace``). Spaces only, because every
+    other blank a shell skips is a key its line editor or the terminal can
+    act on (a TAB completes, a ``\\r`` ends the line)."""
+
+    start: str
+    """The start line, one line ending in its one ``\\n``, typed once with no reply awaited.
+
+    It holds no ``\\r``, which a terminal also reads as the end of a line,
+    and, like :attr:`proof` and :attr:`readback`, no ``!`` or TAB: a shell
+    otto has not prepared expands the one and completes at the other. It
+    starts a shell of the same kind as the one reading it, unless that one
+    already owns the mark."""
+
+    proof: str
+    """Statements ending in ``"; "`` that ride the entry proof's line after its anchor.
+
+    They make a shell :attr:`start` started, or one already marked, own the
+    mark, and run the *prefix* :meth:`CommandFrame.work_shell` was given (the
+    history suppression) only where the mark is owned. The echo statement of
+    the probe line follows them directly, hence the ``"; "``; they hold no
+    ``\\n`` or ``\\r``, so the line stays one line."""
+
+    readback: str
+    """A word expanded on the entry proof's echo, ``1`` where the mark is owned and empty elsewhere.
+
+    It does not begin with a letter, a digit, ``_``, ``[`` or ``:``, the
+    rule :func:`whole_line_echo` holds its *after* to, and holds no ``\\n``
+    or ``\\r``."""
+
+    exit: str
+    """A statement that leaves the shell only where it owns the mark; elsewhere it does nothing.
+
+    It rides a line of its own, so it holds no ``\\n`` or ``\\r``."""
+
+    def __post_init__(self) -> None:
+        for name in (f.name for f in fields(self)):
+            value = getattr(self, name)
+            if "'" in value or '"' in value:
+                raise ValueError(
+                    f"WorkShellLines.{name} {value!r} holds a quote, which a cut line leaves open"
+                )
+        if set(self.lead) - {" "}:
+            raise ValueError(f"WorkShellLines.lead {self.lead!r} must hold only spaces")
+        if "\r" in self.start:
+            raise ValueError(f"WorkShellLines.start {self.start!r} holds a \\r, which ends a line")
+        if not self.start.endswith("\n") or self.start.count("\n") != 1:
+            raise ValueError(
+                f"WorkShellLines.start {self.start!r} must be one line, ending in its one newline"
+            )
+        # These reach a shell no statement of otto's has prepared: its line
+        # editor or history expansion acts on a `!` or a TAB before any
+        # statement on the line runs.
+        for name in ("start", "proof", "readback"):
+            value = getattr(self, name)
+            if "!" in value or "\t" in value:
+                raise ValueError(
+                    f"WorkShellLines.{name} {value!r} holds a ! or a TAB, which a shell otto "
+                    "has not prepared acts on as it reads the line"
+                )
+        for name in ("proof", "readback", "exit"):
+            value = getattr(self, name)
+            if "\n" in value or "\r" in value:
+                raise ValueError(
+                    f"WorkShellLines.{name} {value!r} holds a line ending; it rides one line"
+                )
+        if not self.proof.endswith("; "):
+            raise ValueError(
+                f"WorkShellLines.proof {self.proof!r} must end in '; ', before the probe's echo"
+            )
+        if _extends_probe_var(self.readback):
+            raise ValueError(
+                f"WorkShellLines.readback {self.readback!r} begins with a letter, a digit, "
+                "_, [ or :, which would change the probe word it follows"
+            )
+
+
+def led(work: WorkShellLines | None, line: str) -> str:
+    """Return *line* as otto types it where *work*'s lines are in play: after their lead.
+
+    *work* is the work-shell lines a session types (to enter a work shell,
+    from line 1 to the close), or ``None``, which leaves *line* as it is.
+    The one rule for the lead, whatever the line: line 1, the start line,
+    the entry proof and each close line.
+    """
+    return work.lead + line if work is not None else line
 
 
 class CommandFrame(ABC):
@@ -608,6 +747,46 @@ class CommandFrame(ABC):
         """
         return self.restore_interactive()
 
+    def work_shell(self, *, prefix: str) -> "WorkShellLines | None":  # noqa: ARG002 — the default offers no work shell
+        """Return the lines that run a session in a work shell, or ``None`` (the default) for none.
+
+        A frame that returns lines is entered on a console whose shell
+        outlives the session
+        (:attr:`~otto.host.session.ShellSession.shell_outlives_session`):
+        the session runs in a child shell it starts and leaves, so the shell
+        that was there keeps its own settings. The protocol (each line that
+        can run in the person's shell, the first handshake, the start line,
+        the entry proof and each close line, starts with
+        :attr:`~WorkShellLines.lead` (:func:`led`); the session's own
+        commands, typed in the work shell, do not):
+
+        1. the first handshake, in the person's shell, with no shell prefix:
+           it measures the terminal and saves its settings;
+        2. :attr:`~WorkShellLines.start`, which starts the work shell, typed
+           once with no reply awaited;
+        3. the entry proof, a probe line that carries
+           :attr:`~WorkShellLines.proof` after its anchor and
+           :attr:`~WorkShellLines.readback` on its echo, resent until one
+           lands. A readback other than ``1`` refuses the open;
+        4. the ordinary handshake, in the work shell;
+        5. at close, the terminal's restore, where its settings were saved,
+           then :attr:`~WorkShellLines.exit`.
+
+        *prefix* is the history suppression the session gives the new shell
+        (:func:`history_prefix`, empty where history is kept). It is all the
+        proof carries: the script-parsing statements
+        (:meth:`script_parsing`) come on the ordinary handshake after it,
+        so the start line and the proof's line, which reach a shell whose
+        reading of a typed line is unchanged, hold no ``!`` or TAB and no
+        ``#`` that starts a word.
+
+        The default offers none: a frame with no shell to start (an RTOS
+        shell, a raw landing) is entered in the shell it finds. Registration
+        builds the frame and refuses a result that is neither ``None`` nor a
+        :class:`WorkShellLines`.
+        """
+        return None
+
     # --- parse half: bytes read -> structured result ---
 
     @abstractmethod
@@ -691,6 +870,15 @@ _PROBE_VAR = "__otto_probe"
 """The shell variable a probe line holds the end of its marker in (see :func:`whole_line_echo`)."""
 
 
+def _extends_probe_var(word: str) -> bool:
+    """Whether *word*, written straight after ``$__otto_probe``, changes what the shell expands.
+
+    A variable-name character extends the unbraced name; zsh reads ``[`` as
+    a subscript of it and ``:`` as a modifier.
+    """
+    return re.match(r"[A-Za-z0-9_\[:]", word) is not None
+
+
 def whole_line_echo(marker: str, suffix: str, statements: str = "", after: str = "") -> str:
     r"""Render a probe line that prints *marker* only when the shell ran it from its first byte.
 
@@ -760,7 +948,7 @@ def whole_line_echo(marker: str, suffix: str, statements: str = "", after: str =
     head = marker.removesuffix(suffix)
     if not marker.endswith(suffix) or not head.endswith("_"):
         raise ValueError(f"marker {marker!r} does not end in {suffix!r} after a head ending in _")
-    if re.match(r"[A-Za-z0-9_\[:]", after):
+    if _extends_probe_var(after):
         raise ValueError(f"after {after!r} would extend the variable name {_PROBE_VAR!r}")
     return (
         f"{_PROBE_VAR}={suffix}; {statements}echo {head}${_PROBE_VAR}{after}; unset {_PROBE_VAR}\n"
@@ -792,6 +980,23 @@ def _validated_mark(mark: str) -> str:
     if not mark.isalnum():
         raise ValueError(f"identity mark {mark!r} must be letters and digits")
     return mark
+
+
+def _mark_name(mark: str) -> str:
+    """Return the name of the alias carrying *mark*: :data:`IDENTITY_MARK_PREFIX`, then *mark*."""
+    return IDENTITY_MARK_PREFIX + _validated_mark(mark)
+
+
+def _mark_statement(mark: str) -> str:
+    """Return the quote-free statement defining the alias that carries *mark* (:func:`_mark_name`).
+
+    The one way a shell is given a mark: a switched shell's identity mark
+    (:meth:`BashFrame.identity_mark_statement`) and the work shell's
+    (:meth:`BashFrame.work_shell`). The work shell calls it directly, never
+    through the overridable hook, so a subclass that marks its switched
+    shells its own way still sets the alias its work-shell lines query.
+    """
+    return f"alias {_mark_name(mark)}=:"
 
 
 def _restore_var(restore: "ExecRestore") -> str:
@@ -974,7 +1179,7 @@ class BashFrame(CommandFrame):
     @override
     def identity_mark_statement(self, *, mark: str) -> str:
         # Quote-free, for the identity proof's line.
-        return f"alias {IDENTITY_MARK_PREFIX}{_validated_mark(mark)}=:"
+        return _mark_statement(mark)
 
     @override
     def identity_guard(self, *, payload: str, mark: str, m: SessionMarkers) -> str:
@@ -986,10 +1191,45 @@ class BashFrame(CommandFrame):
         # before it, which the session reads as a command that never ran. The
         # record's digits come from a variable, so an echoed copy of the typed
         # text never holds a complete record.
-        name = IDENTITY_MARK_PREFIX + _validated_mark(mark)
+        name = _mark_name(mark)
         return (
             f"if alias {name} >/dev/null 2>&1; then\n{payload}"
             f'else {_STATUS_VAR}=0; echo "{m.end_prefix}${{{_STATUS_VAR}}}__"; fi\n'
+        )
+
+    @override
+    def work_shell(self, *, prefix: str) -> WorkShellLines:
+        # The mark is an alias, as an identity mark is, with the fixed mark
+        # `w`: a leftover work shell is recognised by the next session, and
+        # `w` is not a hex digit, so no identity mark is the same alias. The
+        # mark is set and queried through `_mark_statement` and `_mark_name`,
+        # never through `identity_mark_statement` or `identity_guard`, so a
+        # subclass that overrides those hooks still sets the alias these lines
+        # query. The start line hands `__otto_child` to the child only, as a
+        # prefix assignment; the proof turns it into the mark there and unsets it.
+        # The exit first sets the job options so that, whatever a startup
+        # file chose, a stopped job keeps the shell from leaving and a running
+        # one neither blocks the exit nor is sent a hangup: zsh's three
+        # options, and bash's `checkjobs` off (bash refuses an exit while a job
+        # is stopped whatever `checkjobs` says, and with it on, while one runs).
+        name = _mark_name("w")
+        owns = f">/dev/null 2>&1 alias {name}"
+        return WorkShellLines(
+            lead=" ",
+            start=(
+                f"if {owns}; then :; else __otto_c={RUNNING_SHELL}; "
+                "case $__otto_c in *sh) __otto_child=1 $__otto_c;; esac; unset __otto_c; fi\n"
+            ),
+            proof=(
+                f"case ${{__otto_child-}} in ?*) {_mark_statement('w')}; "
+                f"unset __otto_child;; esac; if {owns}; then {prefix}:; fi; "
+            ),
+            readback=f"$({owns} && echo 1)",
+            exit=(
+                f"if {owns}; then case ${{ZSH_VERSION:-}} in ?*) "
+                "setopt CHECKJOBS NOCHECKRUNNINGJOBS NOHUP;; esac; "
+                "case ${BASH_VERSION:-} in ?*) shopt -u checkjobs;; esac; exit; fi"
+            ),
         )
 
     def terminal_restore(self, restore: ExecRestore) -> str:
@@ -1744,7 +1984,11 @@ def _check_frame_class(type_name: str, cls: object) -> None:
     eagerly, ``check_resolved`` on the class a ``Ref`` names, once imported.
     It also holds :attr:`CommandFrame.exact_output` to ``None`` or a
     :class:`~otto.host.limitation.Limitation` declared on the class's own
-    body, so a subclass never inherits a parent's limitation unseen.
+    body, so a subclass never inherits a parent's limitation unseen. Last,
+    it builds the frame (as :func:`build_command_frame` does), refusing one
+    that cannot be built, and refuses a :meth:`CommandFrame.work_shell` that
+    raises or returns anything but ``None`` or a :class:`WorkShellLines`
+    (:func:`_check_work_shell`).
     """
     if not (isinstance(cls, type) and issubclass(cls, CommandFrame)):
         raise TypeError(
@@ -1768,6 +2012,45 @@ def _check_frame_class(type_name: str, cls: object) -> None:
             "it never measured. Declare None, or its own Limitation."
         )
     _check_exec_frame(type_name, cls)
+    _check_work_shell(type_name, cls)
+
+
+def _check_work_shell(type_name: str, cls: "type[CommandFrame]") -> None:
+    """Refuse a frame whose :meth:`~CommandFrame.work_shell` returns neither a record nor None.
+
+    It is asked with each prefix a session can give it: none, and the
+    frame's history suppression (:func:`history_prefix`), so a
+    :meth:`~CommandFrame.quiet_history` the record refuses is refused here,
+    not at the first open. The frame is built first, in a step of its own,
+    so a frame that cannot be built is refused as that, never as its
+    ``work_shell``. A ``ValueError`` from ``work_shell`` (a record that
+    refuses its fields) stays a ``ValueError``; any other exception it
+    raises is a ``TypeError``. Every refusal names the registration and the
+    step that failed.
+    """
+    where = f"register_command_frame({type_name!r})"
+    try:
+        frame = cls()
+    except Exception as exc:
+        raise TypeError(
+            f"{where}: {cls.__name__}() could not be built: {type(exc).__name__}: {exc}"
+        ) from exc
+    # Both prefixes a session gives it: none where history is kept, and the
+    # frame's own history suppression.
+    for prefix in dict.fromkeys(("", history_prefix(frame, False))):
+        try:
+            lines = frame.work_shell(prefix=prefix)
+        except ValueError as exc:
+            raise ValueError(f"{where}: {cls.__name__}.work_shell: {exc}") from exc
+        except Exception as exc:
+            raise TypeError(
+                f"{where}: {cls.__name__}.work_shell raised {type(exc).__name__}: {exc}"
+            ) from exc
+        if lines is not None and not isinstance(lines, WorkShellLines):
+            raise TypeError(
+                f"{where}: {cls.__name__}.work_shell returned "
+                f"{type(lines).__name__}; it returns WorkShellLines or None"
+            )
 
 
 def _defining_class(cls: type, name: str) -> type:

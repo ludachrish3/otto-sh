@@ -504,8 +504,12 @@ class _BridgeShellSession(_PatternReaderTransport, ShellSession):
     line as a script line (:meth:`~otto.host.command_frame.CommandFrame.script_parsing`):
     a session otto opens for a person gets none of those statements, so the
     person keeps their shell's ``!`` history expansion, its reading of ``#``
-    and TAB completion. A console shell that outlived otto's own session
-    still has them (#1358).
+    and TAB completion. Nor does it start a work shell where the shell
+    outlives the session
+    (:attr:`~otto.host.session.ShellSession.shell_outlives_session`), because
+    it types no script lines: the shell it hands over is the console's own,
+    which otto's bash-family sessions leave as they found it, since they run
+    in a work shell of their own.
     """
 
     _script_lines = False

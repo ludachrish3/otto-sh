@@ -678,6 +678,30 @@ class TestConnectAllowance:
         assert self._cm("ssh").connect_allowance(term="xmodem") == 0.0
 
 
+@pytest.mark.parametrize(
+    ("login", "logout"), [(True, True), (True, False), (False, True), (False, False)]
+)
+@pytest.mark.parametrize("term", ["ssh", "telnet", "console"])
+def test_only_a_console_whose_options_log_in_and_out_never_keeps_its_shell(term, login, logout):
+    """A console whose options skip the login or the logout may leave its shell to the next user."""
+    console_options = ConsoleOptions(server="s", port=1, login=login, logout=logout)
+    keeps = term == "console" and not (login and logout)
+
+    def manager(active: str) -> ConnectionManager:
+        return ConnectionManager(
+            ip="10.0.0.1",
+            creds=[Cred(login="u", password="p")],
+            term=active,
+            name="h1",
+            host_id="h1",
+            console_options=console_options,
+        )
+
+    assert manager(term).keeps_console_shell() is keeps
+    # A named term overrides the active one.
+    assert manager("ssh").keeps_console_shell(term=term) is keeps
+
+
 class TestReleaseAllowance:
     """The bounded drain one release spends agrees with whether the release drains (#386)."""
 

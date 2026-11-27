@@ -5,11 +5,13 @@ from dataclasses import replace
 import pytest
 
 from otto.host import login_proxy
-from otto.host.command_frame import RECOVER_SUFFIX, BashFrame
+from otto.host.command_frame import RECOVER_SUFFIX, BashFrame, SessionMarkers, whole_line_echo
 from otto.host.login_proxy import (
     LOGIN_PROXIES,
     Cred,
     LoginProxyError,
+    _identity_pattern,
+    _identity_probe,
     _resync_shell,
     cred_for,
     cred_identity,
@@ -504,7 +506,7 @@ async def test_resync_shell_retries_past_timeouts_then_succeeds():
 async def test_resync_shell_raises_login_proxy_error_when_deadline_elapses(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(login_proxy, "_RESYNC_DEADLINE", 0.05)  # short deadline for the test
+    monkeypatch.setattr(login_proxy, "RESYNC_DEADLINE", 0.05)  # short deadline for the test
     # sleep_on_fail: each failed attempt consumes real wall-clock time (like a
     # genuine timed-out round-trip), so the retry loop can't spin past
     # fail_times faster than the deadline elapses — see the fake's docstring.
@@ -512,6 +514,37 @@ async def test_resync_shell_raises_login_proxy_error_when_deadline_elapses(
     with pytest.raises(LoginProxyError, match=r"h1.*resync.*mysql"):
         await _resync_shell(io, host_id="h1", hop_login="mysql")
     assert io._calls >= 1  # it probed; the deadline (not a fixed count) ended it
+
+
+def test_the_resync_answer_reads_the_work_mark():
+    """The entry proof's readback is a checked field: ``1`` or empty, then the ``.`` ending it."""
+    m = SessionMarkers.for_session(session_id="cafef00d")
+    reads = _identity_pattern(m, reads_work_mark=True)
+    owned = reads.search(f"{m.recover}0__u__1.")
+    unowned = reads.search(f"{m.recover}0__u__.")
+    assert owned is not None
+    assert unowned is not None
+    assert (owned.group(2), owned.group(3)) == ("u", "1")
+    assert (unowned.group(2), unowned.group(3)) == ("u", "")
+    assert reads.search(f"{m.recover}0__u__") is None  # cut before its end: not yet read
+    lines = BashFrame().work_shell(prefix="")
+    with pytest.raises(ValueError, match="shell_prefix must be empty"):
+        _identity_probe(m, "p; ", work=lines)
+    # Without the lines, the probe and its pattern are the switch's, byte for byte.
+    assert _identity_pattern(m).pattern == re.escape(m.recover) + r"(\d+)__(.*?)__"
+    assert _identity_probe(m, "p; ") == whole_line_echo(
+        m.recover,
+        RECOVER_SUFFIX,
+        f"p; {establish_exec_state(replace=False)}; ",
+        after="$?__$(id -un)__",
+    )
+    # The entry proof leads, as every line typed into the person's shell does.
+    assert _identity_probe(m, "", work=lines) == lines.lead + whole_line_echo(
+        m.recover,
+        RECOVER_SUFFIX,
+        f"{lines.proof}{establish_exec_state(replace=False)}; ",
+        after=f"$?__$(id -un)__{lines.readback}.",
+    )
 
 
 # ---------------------------------------------------------------------------
