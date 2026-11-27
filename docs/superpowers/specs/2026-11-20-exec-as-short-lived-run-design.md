@@ -240,13 +240,29 @@ My calls on the switch, for Chris to check:
 - **Name.** `terminal` (bool) for the argument. The builder may pick a
   different name if an existing option already uses the word; the meaning
   is fixed.
-- **The switch is a plain bool; there is no "off where offered" value.**
-  otto's own callers that already work on telnet and console work under a
-  terminal, so they take the default on every family. A caller that
-  works only without a terminal (long lines, byte-exact output) passes
-  `terminal=False` and is refused on a terminal-only family, which is where
-  it already cannot run. Stage 0 produces both lists. If it finds a caller
-  that needs a third behaviour, that comes back to Chris before Stage 1.
+- **The public switch is a plain bool; there is no public "off where
+  offered" value.** A user's call that works only without a terminal (long
+  lines, byte-exact output) passes `terminal=False` and is refused on a
+  terminal-only family, which is where it already cannot run.
+- **otto's own commands keep "no terminal where this call can have none"**
+  (ruled by Chris 2026-11-26, replacing the 2026-11-22 expectation that they
+  would take the default or pass `terminal=False`). Stage 4's inventory of
+  `main` found the third behaviour this section said would come back to
+  Chris: until Stage 4 an unset `terminal` and `terminal=False` are the same
+  mode on `exec()` (`False` only adds refusals), and the machinery that needs
+  no terminal (the file-transfer builder, `write_file`, `docker load`,
+  `docker compose`, the docker observe verbs, the container's hop to its
+  parent, the netcat listener) also runs on telnet, proxied, hooked and
+  console hosts, under their terminal. A constant `terminal=False` there
+  would refuse calls that work today. So every command otto itself wrote
+  goes through one private entry that keeps the mode it has before Stage 4:
+  no terminal where the host offers that for this call, the host's own mode
+  otherwise, never a refusal. Only a command a user wrote (their own
+  `host.exec()`, `otto host <id> exec`, an instruction body) takes the
+  public default. The private entry is not public API, and there is no lint
+  rule. A host class that overrides `exec`, and a container whose parent is
+  not a stock otto host, keep receiving otto's commands through their public
+  `exec` with `terminal` unset, so an override still sees every command.
 
 ### Timeout and cancellation — my calls
 
@@ -364,8 +380,18 @@ re-read and closed or re-scoped.
 
 **Stage 4: `exec()`'s default becomes terminal on (`!`).** The end state
 Chris ruled: both entries share one default. It is its own release-noted
-break, after Stage 3. Before it, the release before it says the default
-will change, and otto's own callers stop depending on the default.
+break, after Stage 3, and otto's own callers stop depending on the default
+in the same pull request. Ruled by Chris 2026-11-26: the whole stage is one
+pull request in the release that follows Stage 3; no earlier release
+announces it. (Before that ruling this paragraph asked for a release in
+between that says the default will change.) The commit's `BREAKING CHANGE:`
+footer and the page that owns the switch tell a user what changes and that
+`terminal=False` is the way back.
+
+Two typed-line defects are fixed before the default moves, because it moves
+every unqualified ssh `exec()` onto a typed line: an interactive bash or zsh
+history-expanded `!word` and zsh read `#` as a word (#1346), and a TAB typed
+before the shell was back at its prompt was lost (#1356).
 
 Stage 4 also puts the terminal switch into the conformance matrix (ruled
 2026-11-23). Per entry, for `run` and `exec`: `terminal=True` and
@@ -381,12 +407,19 @@ way, about 14 parse a tool that changes under a terminal (`docker images`,
 `docker ps`, `docker compose`, `docker load`, `ls`), and about 4, plus the
 transfer path, carry byte-exact data. They share no single helper.
 
-Ruled 2026-11-22: only the sites that need it today pass `terminal=False`
-(the 14 or so that parse a terminal-aware tool and the byte-exact ones).
-There is no internal entry point and no lint rule; the breaking-change
-notes tell users how to migrate their own calls. The container host's
-transport is the one site that must pass on the container call's own
-choice, not the parent's.
+Ruled 2026-11-22, and replaced on 2026-11-26 (see "The terminal switch"):
+only the sites that need it today pass `terminal=False` (the 14 or so that
+parse a terminal-aware tool and the byte-exact ones), with no internal entry
+point. The inventory made for Stage 4 counted 146 call sites, 9 of which
+forward a command the user wrote, and showed that the sites which need no
+terminal are not ssh-only, so a constant `False` would refuse calls that
+work today. What holds now: every command otto wrote goes through one
+private entry that keeps its mode; the 9 forwarding sites keep the public
+default; there is still no lint rule; the breaking-change notes tell users
+how to migrate their own calls. The container host's transport is still
+the one site that passes on the container call's own choice, not the
+parent's; where the parent is not a stock otto host, the hop is the parent's
+public `exec` with `terminal` unset.
 
 Each stage is its own pull request with its own gate. Stages 1 and 2 may be
 split further by the plan; Stage 3 lands only after Stage 2 has been on
