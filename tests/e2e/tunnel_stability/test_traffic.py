@@ -12,6 +12,7 @@ import uuid
 
 import pytest
 
+from otto.host.host import exec_own
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, remove_tunnel
 from otto.utils import WaitTimeoutError, wait_for_async
@@ -147,8 +148,11 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
             # Read first, then send again: each probe gives the previous
             # datagram the interval to land before it is looked for.
             nonlocal received_text
-            result = await test2.exec(
-                f"cat {shlex.quote(outfile)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
+            result = await exec_own(
+                test2,
+                f"cat {shlex.quote(outfile)} 2>/dev/null || true",
+                timeout=15,
+                log=LogMode.QUIET,
             )
             received_text = result.value
             if final_probe in received_text:

@@ -9,6 +9,7 @@ import contextlib
 import logging
 import uuid
 
+from otto.host.host import exec_own
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from tests._ambient_env import ambient
@@ -111,12 +112,12 @@ async def sshd_listener_pid(control) -> int:
     channel survives, NEW connections hang at the banner. Asserts the MainPID
     is NOT the pid serving this very session (spec §8): stopping that one
     would freeze the control channel we recover through."""
-    result = await control.exec(_SSHD_PID_CMD, timeout=15, log=LogMode.QUIET)
+    result = await exec_own(control, _SSHD_PID_CMD, timeout=15, log=LogMode.QUIET)
     # `[-1]`: if `systemctl show ssh` prints and then fails, its line precedes sshd's.
     lines = result.value.splitlines()
     pid = int(lines[-1]) if lines else 0
     assert pid > 0, f"could not resolve sshd MainPID: {result.value!r}"
-    session_parent = await control.exec("sh -c 'echo $PPID'", timeout=15, log=LogMode.QUIET)
+    session_parent = await exec_own(control, "sh -c 'echo $PPID'", timeout=15, log=LogMode.QUIET)
     assert str(pid) != session_parent.value, (
         f"MainPID {pid} IS our session's server process — refusing to stop it"
     )

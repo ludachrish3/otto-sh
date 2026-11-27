@@ -19,6 +19,7 @@ import re
 from typing import TYPE_CHECKING
 
 from otto.host.daemon import parse_ps_output, ps_failed
+from otto.host.host import exec_own
 from otto.link.netem import NetEmImpairer, parse_scoped_outputs
 from otto.link.sentinel import IMPAIR_PS_COMMAND, parse_impair_ps
 from otto.logger.mode import LogMode
@@ -172,7 +173,7 @@ async def netcat_listeners(host: "BaseHost", label: str) -> list[str]:
     The one way a bed test asks a host for its netcat listeners. A probe that
     fails fails the test, named by *label*.
     """
-    answered = await host.exec(_NC_LISTENER_PROBE)
+    answered = await exec_own(host, _NC_LISTENER_PROBE)
     assert answered.retcode == 0, f"{label}: the orphan-listener probe failed: {answered}"
     return probe_lines(answered.value)
 
@@ -285,7 +286,7 @@ async def snapshot_host(host) -> HygieneSnapshot:
     """
 
     async def _out(cmd: str) -> str:
-        result = await host.exec(cmd, timeout=_PROBE_TIMEOUT, log=LogMode.QUIET)
+        result = await exec_own(host, cmd, timeout=_PROBE_TIMEOUT, log=LogMode.QUIET)
         check_probe_result(getattr(host, "id", "<unknown host>"), result)
         return result.value
 

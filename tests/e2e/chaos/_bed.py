@@ -26,6 +26,7 @@ from typing import Any
 
 from otto.context import OttoContext, set_context
 from otto.host.factory import create_host_from_dict
+from otto.host.host import exec_own
 from otto.host.login_proxy import Cred
 from otto.host.remote_host import make_host_id
 from otto.host.unix_host import UnixHost
@@ -124,7 +125,7 @@ def probe_text(element: str, cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> st
     ``(result.value or "")`` shape that turned probe failures into clean
     oracle answers.
     """
-    out = run_probe(element, lambda h: h.exec(cmd, timeout=timeout, log=LogMode.QUIET))
+    out = run_probe(element, lambda h: exec_own(h, cmd, timeout=timeout, log=LogMode.QUIET))
     return out.value
 
 
@@ -496,7 +497,7 @@ def _exec_factory(cmd: str, timeout: float):
     Returns the ``Result`` itself, so the probe's status check vets it before
     the twins unwrap ``.value`` (``busybox_probe_text``, ``chaos_guest_probe_text``).
     """
-    return lambda h: h.exec(cmd, timeout=timeout, log=LogMode.QUIET)
+    return lambda h: exec_own(h, cmd, timeout=timeout, log=LogMode.QUIET)
 
 
 @contextlib.contextmanager

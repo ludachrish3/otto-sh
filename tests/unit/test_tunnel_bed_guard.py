@@ -30,6 +30,7 @@ from otto.utils import Status
 from tests._fixtures import tunnel_bed
 from tests._fixtures.bed_hygiene import ProbeFailedError
 from tests._fixtures.labdata import element_of, entry_of, flatten_lab_doc
+from tests._fixtures.own_exec_fakes import StockOwnHost, patch_public_exec
 from tests._fixtures.tunnel_bed import cli_project_root, format_leftover_report, owning_suite
 
 # pid etime args… — the exact shape `ps_scan_command` emits.
@@ -229,6 +230,45 @@ async def test_observe_tunnel_processes_scans_only_the_hosts_it_is_given(monkeyp
     built.clear()
     await tunnel_bed.observe_tunnel_processes()
     assert built == list(tunnel_bed.UNIX)
+
+
+@pytest.mark.asyncio
+async def test_a_probe_asks_for_no_terminal_where_the_host_offers_one(monkeypatch) -> None:
+    """Pins: the bed's discovery, bound-port and listener-output reads take the private entry."""
+    patch_public_exec(monkeypatch)
+    host = StockOwnHost(
+        plain={
+            "ss -Htln 2>/dev/null || true": "10.0.0.1:5",
+            "ss -H -u -a -n 2>/dev/null || true": "10.0.0.1:5",
+            "cat /tmp/out 2>/dev/null || true": "10.0.0.2 payload",
+        }
+    )
+    monkeypatch.setattr(tunnel_bed, "build_bed_host", lambda ne: host)
+    await tunnel_bed.observe_tunnel_processes(hosts=("test1",))
+    await tunnel_bed.wait_for_tcp_bound(host, "10.0.0.1", 5, 2.0)
+    await tunnel_bed.wait_for_udp_bound(host, "10.0.0.1", 5, 2.0)
+    assert await tunnel_bed.wait_for_listener_output(host, "/tmp/out", timeout=2.0) == (
+        "10.0.0.2 payload"
+    )
+    assert host.public_calls == []
+    assert len(host.own_calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_a_probe_on_a_terminal_only_host_leaves_the_terminal_unset() -> None:
+    """Pins: a host whose exec is not otto's own gets no `terminal` keyword from the bed's reads."""
+    seen: list[dict] = []
+
+    class _TerminalOnly:
+        id = "tel1"
+
+        async def exec(self, cmd: str, **kw: object) -> CommandResult:
+            seen.append(kw)
+            return CommandResult(status=Status.Success, value="10.0.0.1:5", command=cmd, retcode=0)
+
+    await tunnel_bed.wait_for_tcp_bound(_TerminalOnly(), "10.0.0.1", 5, 2.0)  # ty: ignore[invalid-argument-type]
+    assert seen
+    assert all("terminal" not in kw for kw in seen), seen
 
 
 def test_cli_project_renders_exactly_the_elements_it_is_given(tmp_path: Path) -> None:

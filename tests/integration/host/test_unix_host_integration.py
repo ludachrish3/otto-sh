@@ -25,7 +25,7 @@ import pytest
 
 from otto.host.connections import teardown_step
 from otto.host.errors import UnsupportedOptionError
-from otto.host.host import Host
+from otto.host.host import Host, exec_own
 from otto.host.login_proxy import Cred, LoginProxyError
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
@@ -223,7 +223,7 @@ class TestTerminalSwitch:
         assert result.timed_out, result
         assert (await host1.run("echo again", terminal=False)).only.value == "again"
         # The bracket keeps the pattern from matching the shell that runs pgrep.
-        left = await host1.exec(f"pgrep -f '[s]leep {length}'; [ -e {ran_on} ] && echo ran-on")
+        left = await exec_own(host1, f"pgrep -f '[s]leep {length}'; [ -e {ran_on} ] && echo ran-on")
         assert left.value == "", left
 
 
@@ -646,7 +646,7 @@ class TestUserAuthenticates:
                 lambda: host.put([by_second], Path(remote_dir), user=second)
             )
             assert res.status == Status.Success, f"put(user={second!r}) failed: {res.msg}"
-            landed = await host.exec(f"stat -c %U:%s {remote_dir}/{by_second.name}")
+            landed = await exec_own(host, f"stat -c %U:%s {remote_dir}/{by_second.name}")
             assert landed.status == Status.Success, f"stat failed: {landed.value!r}"
             assert landed.value == f"{second}:{len(by_second.read_bytes())}", (
                 f"put(user={second!r}) landed {landed.value!r}, expected "
@@ -655,7 +655,7 @@ class TestUserAuthenticates:
 
             res = await transfer_with_retry(lambda: host.put([by_default], Path(remote_dir)))
             assert res.status == Status.Success, f"control put failed: {res.msg}"
-            landed = await host.exec(f"stat -c %U:%s {remote_dir}/{by_default.name}")
+            landed = await exec_own(host, f"stat -c %U:%s {remote_dir}/{by_default.name}")
             assert landed.status == Status.Success, f"stat failed: {landed.value!r}"
             assert landed.value == f"{default_login}:{len(by_default.read_bytes())}", (
                 f"control put landed {landed.value!r}, expected "
@@ -679,7 +679,7 @@ class TestUserAuthenticates:
         host, default_login, second = self._host_and_logins()
         remote_path = f"/tmp/otto_get_user_{uuid.uuid4().hex}"
         try:
-            uid = await host.exec("id -u")
+            uid = await exec_own(host, "id -u")
             assert uid.status == Status.Success, f"id -u failed: {uid.value!r}"
             assert uid.value != "0", (
                 f"the bed's default login for test2 ({default_login!r}) is root; "
@@ -689,7 +689,7 @@ class TestUserAuthenticates:
 
             made = await host.exec(f"umask 077 && printf secret > {remote_path}", user=second)
             assert made.status == Status.Success, f"could not write {remote_path}: {made.value!r}"
-            perms = await host.exec(f"stat -c %U:%a {remote_path}")
+            perms = await exec_own(host, f"stat -c %U:%a {remote_path}")
             assert perms.status == Status.Success, f"stat failed: {perms.value!r}"
             assert perms.value == f"{second}:600", (
                 f"{remote_path} is {perms.value!r}; the test needs it owned "
