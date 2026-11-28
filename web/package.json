@@ -42,7 +42,7 @@
   },
   "devDependencies": {
     "@bcoe/v8-coverage": "1.0.2",
-    "@biomejs/biome": "2.6.7",
+    "@biomejs/biome": "2.6.9",
     "@commitlint/cli": "21.2.4",
     "@commitlint/lint": "21.2.4",
     "@commitlint/load": "21.2.4",
