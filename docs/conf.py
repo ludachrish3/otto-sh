@@ -14,7 +14,13 @@ from typing_extensions import override
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-from scripts import api_manifest, docs_api_reference, docs_build_stamp, render_release_notes
+from scripts import (
+    api_manifest,
+    docs_api_reference,
+    docs_build_stamp,
+    docs_search,
+    render_release_notes,
+)
 from scripts.docs_tree import RENDERED
 
 project = "otto"
@@ -941,6 +947,7 @@ def setup(app):
     app.connect("autodoc-process-signature", _process_signature)
     app.connect("autodoc-process-bases", _drop_private_bases)
     render_release_notes.sphinx_setup(app)
+    docs_search.sphinx_setup(app)
 
 
 # -- napoleon -----------------------------------------------------------------

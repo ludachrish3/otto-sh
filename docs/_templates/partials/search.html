@@ -1,0 +1,30 @@
+{#
+  The header's search box: Pagefind's, in place of the theme's (see
+  scripts/docs_search.py). Results link root-relative ("/setup/x.html"), so
+  base-url is the site's root path as this page sees it, which keeps links right
+  under a hosted prefix such as Read the Docs' /en/stable/.
+
+  A page opened from disk (file://, the offline bundle) cannot run the search:
+  browsers refuse its module script and index fetches there. The box is
+  replaced with a note saying how to serve the bundle instead of failing silently.
+#}
+<div class="md-search otto-search" role="search">
+  <pagefind-config id="otto-pagefind-config" bundle-path="{{ pathto('pagefind/', 1) }}"></pagefind-config>
+  <pagefind-searchbox placeholder="Search the docs" show-sub-results max-sub-results="3"></pagefind-searchbox>
+  <pagefind-filter-dropdown filter="area" label="Area"></pagefind-filter-dropdown>
+  <p class="otto-search-offline" hidden>Search needs the docs served over HTTP:
+    <code>python3 -m http.server</code></p>
+  <script>
+    (function () {
+      var box = document.currentScript.parentElement;
+      if (location.protocol === "file:") {
+        box.querySelectorAll("pagefind-config, pagefind-searchbox, pagefind-filter-dropdown")
+          .forEach(function (el) { el.remove(); });
+        box.querySelector(".otto-search-offline").hidden = false;
+        return;
+      }
+      box.querySelector("pagefind-config").setAttribute(
+        "base-url", new URL("{{ pathto('index') }}", location.href).pathname.replace(/index\.html$/, ""));
+    })();
+  </script>
+</div>

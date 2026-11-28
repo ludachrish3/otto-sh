@@ -1909,6 +1909,25 @@ The HTML build needs two system tools the dev environment provides:
 by the Vagrantfile) and headless Chromium (installed by `make dev` via
 `make browsers`).
 
+### Site search
+
+The site's search is [Pagefind](https://pagefind.app), not Sphinx's built-in
+index. Every HTML build ends by indexing the finished pages into
+`docs/_build/html/pagefind/` (`scripts/docs_search.py`, hooked from
+`docs/conf.py`), so `make docs-html`, CI and Read the Docs all build the same
+search, and a result opens the section that holds the words.
+
+Each page's **area**, which the search box's *Area* filter narrows by, is the
+caption of the `docs/index.rst` toctree it sits under (*Set up a project*,
+*Reference*, ...): a new page is placed by the toctree that lists it, with
+nothing else to edit. Pages that record rather than explain (the Python API
+reference and the pages a renderer writes, `scripts/docs_tree.py`'s
+`RENDERED`) rank lower, so the page that explains a term comes before the
+pages that only mention it.
+
+The search runs only when the site is served: a page opened from disk shows how
+to serve it instead ({doc}`installation`).
+
 ### Build-time GUI media and terminal blocks
 
 Screenshots and the animated terminal blocks are **products of the

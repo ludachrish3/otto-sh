@@ -26,3 +26,27 @@
 <a href="{{ otto_stable_docs_url }}">stable documentation</a>.
 {%- endif -%}
 {%- endblock -%}
+
+{#
+  Site search: Pagefind (scripts/docs_search.py builds the index after the
+  build). The page's main content is the indexed region: its area (the root
+  toctree caption it sits under) is the search's filter, and its weight scales
+  how its words rank. A page Sphinx generates with no source (the general and
+  module indexes) has no indexed region, so the search skips it.
+#}
+{%- block extrahead -%}
+{{ super() }}
+<link rel="stylesheet" href="{{ pathto('pagefind/pagefind-component-ui.css', 1) }}">
+<script type="module" src="{{ pathto('pagefind/pagefind-component-ui.js', 1) }}"></script>
+{%- endblock -%}
+
+{%- block content -%}
+{%- if otto_search_indexed -%}
+<div data-pagefind-body data-pagefind-weight="{{ otto_search_weight }}"
+  {%- if otto_search_area %} data-pagefind-filter="area:{{ otto_search_area }}"{% endif %}>
+{{ super() }}
+</div>
+{%- else -%}
+{{ super() }}
+{%- endif -%}
+{%- endblock -%}
