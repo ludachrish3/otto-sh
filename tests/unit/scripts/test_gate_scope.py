@@ -1,5 +1,6 @@
 """Pins for scripts/gate_scope.py — the diff classifier behind `make gate-scope` (#566)."""
 
+import functools
 import json
 import os
 import re
@@ -1677,6 +1678,19 @@ def _ci_hostless_legs() -> "list[_Leg]":
     return primary_ci_legs()
 
 
+@functools.cache
+def _items_by_path(collect) -> "dict[str, list]":
+    """The collection's items grouped by file, built once per collection (#1253).
+
+    The commit census asks for one file's items for every tracked test module; scanning the
+    whole collection each time was quadratic in the tree's size.
+    """
+    grouped: "dict[str, list]" = {}
+    for item in collect(()):
+        grouped.setdefault(item.path, []).append(item)
+    return grouped
+
+
 def _uncovered(
     path: str, lines: "list[str]", collect, makefile: str, *, ci: "list[_Leg] | None" = None
 ) -> "list[str]":
@@ -1686,7 +1700,7 @@ def _uncovered(
     hostless suite locally, CI does.
     """
     legs = [*_oracle_legs(lines, makefile), *(ci or [])]
-    items = [item for item in collect(()) if item.path == path]
+    items = _items_by_path(collect).get(path, [])
     selected = _selected_node_ids(legs, items)
     return [item.nodeid for item in items if item.nodeid not in selected]
 
@@ -1868,31 +1882,41 @@ def test_every_bed_reaching_tip_emits_coverage_bed(package):
     assert not [line for line in lines if line.startswith("make quick")], lines
 
 
+@pytest.fixture(scope="module")
+def coverage_census(collect_marker_sets) -> "tuple[str, list, set[str]]":
+    """What the tip census shares across its rows, computed once (#1253).
+
+    The Makefile, the collection's items `make coverage` would select (M_COVERAGE), and the
+    node ids among them that the pull request's hostless legs select. None depends on the
+    row, and recomputing them per row cost about 13 s a case, which ran the changed-test
+    repeat past its job timeout.
+    """
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
+    coverage = Expression.compile(
+        _lane_invariants._makefile_marker_variables(makefile)["M_COVERAGE"]
+    )
+    items = [
+        item for item in collect_marker_sets(()) if coverage.evaluate(_marker_matcher(item.markers))
+    ]
+    return makefile, items, _selected_node_ids(_ci_hostless_legs(), items)
+
+
 @pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 @pytest.mark.parametrize("package", _SRC_ROWS)
 def test_every_row_item_the_tip_does_not_run_is_in_ci_s_hostless_selection(
-    collect_marker_sets, package
+    coverage_census, package
 ):
     """THE TIP CENSUS. For a src change in any row, every item under the row's unit trees
     that `make coverage` would select (M_COVERAGE) and no tip leg selects is in the pull
     request's `tests_hostless` selection: the tip and CI together run what `make coverage`
     would. The tiers M_COVERAGE excludes (stability, browser, busybox, conformance, kmodcov)
     keep their own lanes, special rows or nightly."""
-    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
+    makefile, coverage_items, ci = coverage_census
     lines = _src_row_tip(package)
-    coverage = Expression.compile(
-        _lane_invariants._makefile_marker_variables(makefile)["M_COVERAGE"]
-    )
-    items = [
-        item
-        for item in collect_marker_sets(())
-        if gs._within(item.path, gs.UNIT_TREES[package])
-        and coverage.evaluate(_marker_matcher(item.markers))
-    ]
+    items = [item for item in coverage_items if gs._within(item.path, gs.UNIT_TREES[package])]
     tip = _selected_node_ids(_oracle_legs(lines, makefile), items)
-    ci = _selected_node_ids(_ci_hostless_legs(), items)
-    gaps = [item.nodeid for item in items if item.nodeid not in tip | ci]
+    gaps = [item.nodeid for item in items if item.nodeid not in tip and item.nodeid not in ci]
     assert gaps == [], f"{len(gaps)} item(s) neither the tip nor CI selects:\n  " + "\n  ".join(
         gaps[:40]
     )
