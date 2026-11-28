@@ -1,4 +1,5 @@
 $ otto --lab example_lab cov report /tmp/otto-gs/xdir/quickstart-docker/e2e --dir /tmp/otto-gs/xdir/quickstart-docker/report
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
 INFO     @docker-host   | docker container inspect --format '{"status":{{json
          .State.Status}},"running":{{json .State.Running}},"image":{{json .Image}},"ref":{{json
          .Config.Image}},"user":{{json .Config.User}},"groups":{{json .HostConfig.GroupAdd}}}'

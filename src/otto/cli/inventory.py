@@ -9,12 +9,12 @@
 Each verb reads one inventory: ``default`` (today's) unless ``--inventory
 NAME`` names an ``[[inventories]]`` entry (#1176).
 
-Lab-free, and settings-only: §8 resolves the process inventory from the active
-projects' ``[inventory]`` tables and the user settings file, and from nothing
-else — no lab, no root option and no host reaches it. That is why the verbs
-below take no ``typer.Context``: unlike ``otto reservation whoami``, which
-reads ``--holder``/``-R`` off the root options, there is nothing on the
-context an inventory answer depends on.
+Lab-free, and settings-only: §8 resolves the process inventory from the
+participating projects' ``[inventory]`` tables and the user settings file, and
+from nothing else — no lab and no host reaches it. Which projects participate
+is judged before any lab, from ``-l`` (or ``OTTO_LAB``), ``-I`` and ``-E``
+alone, so each verb takes the ``typer.Context`` those root options are read
+from.
 
 IMPORT DISCIPLINE: everything from :mod:`otto.inventory` and
 ``otto.models`` is imported INSIDE the verb that uses it. This module is
@@ -35,7 +35,7 @@ from rich import print as rprint
 
 from ..host.inventory_ref import DEFAULT_INVENTORY
 from .completers import completion_source
-from .invoke import fail
+from .invoke import fail, scope_selection
 
 if TYPE_CHECKING:
     from rich.text import Text
@@ -108,8 +108,12 @@ difference, which is the failure ``diff(1)`` gave the code away for.
 """
 
 
-def _inventory(code: int = 1, *, name: str = DEFAULT_INVENTORY) -> "Inventory":
+def _inventory(ctx: typer.Context, code: int = 1, *, name: str = DEFAULT_INVENTORY) -> "Inventory":
     """Resolve the inventory named *name* the way bootstrap does; ``fail`` on none or on error.
+
+    Only the participating projects' ``[inventory]`` tables are read: a
+    project ``-E`` switched off, or whose ``lab_patterns`` do not match the
+    ``-l`` (or ``OTTO_LAB``) labs, contributes none, and ``-I`` brings one back.
 
     ``default`` is today's resolution, unchanged: a ``default`` declared
     nowhere fails with :func:`_no_inventory_message`. Any other name is
@@ -132,15 +136,17 @@ def _inventory(code: int = 1, *, name: str = DEFAULT_INVENTORY) -> "Inventory":
     from .. import bootstrap
 
     del bootstrap
+    from ..config.scope import participating
     from ..declared import get_projects
     from ..inventory.config import build_inventory, deferred_inventory_view
     from ..inventory.errors import InventoryError
 
+    projects = participating(get_projects(), selection=scope_selection(ctx)).kept
     try:
         if name == DEFAULT_INVENTORY:
-            inventory = build_inventory(projects=get_projects())
+            inventory = build_inventory(projects=projects)
         else:
-            inventory = deferred_inventory_view(projects=get_projects()).select_name(name=name)
+            inventory = deferred_inventory_view(projects=projects).select_name(name=name)
     except InventoryError as e:
         from rich.text import Text
 
@@ -280,6 +286,7 @@ def _cell(value: "Any") -> "Text":
 
 @inventory_app.command("lookup")
 def lookup(
+    ctx: typer.Context,
     key: Annotated[str, typer.Argument(help="Inventory key to resolve.")],
     inventory_name: _InventoryName = DEFAULT_INVENTORY,
 ) -> None:
@@ -288,7 +295,7 @@ def lookup(
 
     from ..console import id_column
 
-    inventory = _inventory(name=inventory_name)
+    inventory = _inventory(ctx, name=inventory_name)
     from ..inventory.errors import InventoryError
 
     try:
@@ -390,13 +397,13 @@ _SKIP_VIEWS: "list[_SkipViews]" = [
 
 
 @inventory_app.command("list")
-def list_records(inventory_name: _InventoryName = DEFAULT_INVENTORY) -> None:
+def list_records(ctx: typer.Context, inventory_name: _InventoryName = DEFAULT_INVENTORY) -> None:
     """List every inventory key with its address."""
     from rich.table import Table
 
     from ..console import id_column
 
-    inventory = _inventory(name=inventory_name)
+    inventory = _inventory(ctx, name=inventory_name)
     records = _discovery(inventory).records
     table = Table(box=box.ROUNDED)
     id_column(table, "key")
@@ -412,6 +419,7 @@ def list_records(inventory_name: _InventoryName = DEFAULT_INVENTORY) -> None:
 
 @inventory_app.command("export")
 def export(
+    ctx: typer.Context,
     path: Annotated[Path, typer.Argument(help="Stage-1 JSON file to write.")],
     force: Annotated[bool, typer.Option("--force", help="Overwrite an existing file.")] = False,
     inventory_name: _InventoryName = DEFAULT_INVENTORY,
@@ -422,7 +430,7 @@ def export(
     `otto.inventory.v2` format, records and instances; any other is written
     as the flat document.
     """
-    inventory = _inventory(name=inventory_name)
+    inventory = _inventory(ctx, name=inventory_name)
     # Checked BEFORE the fetch: a refusal must leave the file untouched, and
     # an operator who mistyped a path should not pay a NetBox round trip to
     # find out.
@@ -529,6 +537,7 @@ def _difference_table(
 
 @inventory_app.command("diff")
 def diff(
+    ctx: typer.Context,
     path: Annotated[Path, typer.Argument(help="Stage-1 JSON file to compare against.")],
     other: Annotated[
         Path | None,
@@ -559,7 +568,7 @@ def diff(
         left_label, left = str(path), _document_discovery(path)
         right_label, right = str(other), _document_discovery(other)
     else:
-        inventory = _inventory(_CANNOT_ANSWER, name=inventory_name)
+        inventory = _inventory(ctx, _CANNOT_ANSWER, name=inventory_name)
         left_label, left = inventory.label, _discovery(inventory, _CANNOT_ANSWER)
         right_label, right = str(path), _document_discovery(path)
 
@@ -580,14 +589,14 @@ def diff(
 
 
 @inventory_app.command("refresh")
-def refresh(inventory_name: _InventoryName = DEFAULT_INVENTORY) -> None:
+def refresh(ctx: typer.Context, inventory_name: _InventoryName = DEFAULT_INVENTORY) -> None:
     """Force a fetch of a cached remote inventory and rewrite its snapshot."""
     from datetime import datetime, timezone
 
     from ..inventory.cache import format_age, snapshot_cache_of
     from ..inventory.errors import InventoryError
 
-    inventory = _inventory(name=inventory_name)
+    inventory = _inventory(ctx, name=inventory_name)
     cache = snapshot_cache_of(inventory=inventory)
     if cache is None:
         # An error, not a cheerful no-op: the operator asked for a fetch and

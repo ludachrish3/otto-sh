@@ -71,6 +71,16 @@ otto link check <link> [--live] [--feature <name>[,<name>...]] [--from <host>]
 | `--report` | `check` | Also write the full result as JSON to this path |
 | `--verbose`, `-v` | `check` | Also print every probe's raw output |
 
+## Project scope
+
+`impair` and `check` are scoped ({ref}`project-scope-hosts`): a link with an
+endpoint or in-path middlebox outside the scope is refused before any device
+is contacted, and the command exits 1.  `list` shows only the links in scope.
+`repair` is not scoped ({ref}`project-scope-exceptions`).  So `otto link
+repair` and `otto run status` see impairments on links that `link list` does
+not show: when an impairment you expect is missing from `link list`, look
+there.
+
 ## Previewing: `--dry-run`
 
 `--dry-run` (`-n`) is a **global** option — `otto -n --lab unix link impair

@@ -81,9 +81,12 @@ already see and what they asked for:
 `[project] lab_patterns` has no default, and a table without it applies to no
 lab: every-lab is spelled `[".*"]`, out loud, so match-all is a visible choice
 and never a default that quietly widens a project's reach. Explicit targeting
-(`otto host <id>`, `get_host("id")`) is not bounded by the declaration, because
-a project naming a jump host it does not own must still be able to reach it, and a
-scoping typo must never brick the one command that could diagnose it.
+(`otto host <id>`, `get_host("id")`) is bounded by the declaration too, so the
+declaration is the one statement of what a run may touch
+({ref}`project-scope`). A host reached as a hop needs only lab membership, so a
+jump host the project does not own still carries its traffic. A scoping typo
+cannot lock a user out: the recovery commands and the unscoped diagnostics
+(`otto init`, `otto lab`) still run when nothing is in scope.
 
 ## The orchestration environment
 
@@ -154,8 +157,8 @@ builds it. Its choices:
   holds the composed state, which the layers below the root read instead of
   importing it: the published results, the initiator, and the readers over
   them, {func}`~otto.declared.compose` (the one read that starts a
-  composition) and {func}`~otto.declared.current_projects`, the run's projects where
-  no context is in hand. {func}`~otto.bootstrap.bootstrap` publishes the
+  composition) and {func}`~otto.declared.current_projects`, the projects taking part in
+  the run where no context is in hand. {func}`~otto.bootstrap.bootstrap` publishes the
   in-progress result before the projects' init modules run, then the complete
   one; a failed composition and {func}`~otto.bootstrap.invalidate` withdraw
   both. Importing {mod}`otto.bootstrap` installs the catalog's initiator, and

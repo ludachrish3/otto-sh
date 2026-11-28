@@ -89,7 +89,7 @@ if TYPE_CHECKING:
 
     from ..config.dependencies import ResolvedDependency
     from ..config.project import Project
-    from ..config.scope import ProjectScope
+    from ..config.scope import ProjectScope, ProjectScopeError
     from ..host.host import Host
     from ..instruction_catalog import ProjectInstructionBody
     from ..labs.loader import Lab
@@ -139,18 +139,21 @@ def _lab() -> "tuple[OttoContext, list[Project]]":
     (:func:`is_uninstalled`, the three ``ensure_*``, and ``install --ensure``)
     are gated by the verb they delegate to, before that delegate does anything
     either.
+
+    :func:`cleanup` is the one verb that does not come here: its gate is
+    :func:`_cleanup_scope`'s, which its preview makes too.
     """
     from ..run_context import get_context
 
     ctx = get_context()
     _enforce_current_scope(ctx)
-    return ctx, ctx.ordered_projects
+    return ctx, ctx.unscoped.ordered_projects
 
 
 def _enforce_current_scope(ctx: "OttoContext") -> None:
     """Raise when the DRIVING project's own fleet declaration cannot work (D3's abort).
 
-    THE DRIVING PROJECT IS ``ctx.projects[0]`` -- the first ``OTTOPATH``
+    THE DRIVING PROJECT IS ``ctx.unscoped.projects[0]`` -- the first ``OTTOPATH``
     entry, the project whose run this is -- and NOT the first project of the walk
     order this module iterates. Those are two different projects in any lab with a
     dependency: :attr:`~otto.context.OttoContext.ordered_projects` is a topological
@@ -164,14 +167,14 @@ def _enforce_current_scope(ctx: "OttoContext") -> None:
     identical.
 
     A run with no projects at all has no current project to enforce, and that is
-    legal -- ``otto run`` in a bare lab directory -- so the lookup is guarded
-    rather than indexed.
-    """
-    from ..config.scope import require_current_scope, scopes_of
+    legal -- ``otto run`` in a bare lab directory.
 
-    projects = ctx.projects
-    if projects:
-        require_current_scope(scopes_of(ctx), projects[0].name)
+    The decision is :func:`~otto.config.scope.require_driving_scope`'s, which
+    ``otto monitor --live`` calls too; this is the orchestrator's one call site.
+    """
+    from ..config.scope import require_driving_scope
+
+    require_driving_scope(ctx)
 
 
 def _applicable(
@@ -656,7 +659,7 @@ def project_instruction_body_options(
     """
     if source is None:
         source = _handed_source(kwargs)
-    walk = _walk_order(name, ctx, ctx.ordered_projects, announce=announce)
+    walk = _walk_order(name, ctx, ctx.unscoped.ordered_projects, announce=announce)
     return list(_body_options((body for _project, _actions, body in walk), source).values())
 
 
@@ -843,7 +846,9 @@ async def _reset_impairments(ctx: "OttoContext") -> Result:
     """
     from ..link.manage import describe_out_of_scope, repair_all
 
-    report = await repair_all(lab=ctx.lab)
+    # The whole lab, past any scope: an impairment on a host that left the run's
+    # scope is still this cleanup's to reset, and status reads the same lab.
+    report = await repair_all(lab=ctx.unscoped.lab)
     if report.dry_run:
         return Result(
             status=Status.NotRun,
@@ -854,7 +859,7 @@ async def _reset_impairments(ctx: "OttoContext") -> Result:
     # carry the rest. One that cleared nothing is dropped, like a structural
     # refusal: `run status` already reads it as clean.
     outside = [describe_out_of_scope(r) for r in report.out_of_scope if r.cleared]
-    declined = "; ".join([*_live_refusals(ctx.lab, report.skipped), *outside])
+    declined = "; ".join([*_live_refusals(ctx.unscoped.lab, report.skipped), *outside])
     if report.failures:
         also = f" (declined: {declined})" if declined else ""
         failed = "; ".join(report.failures)
@@ -883,7 +888,8 @@ async def _remove_tunnels(ctx: "OttoContext") -> Result:
     """
     from ..tunnel.manage import remove_all_tunnels
 
-    report = await remove_all_tunnels(lab=ctx.lab)
+    # The whole lab, as the reset above and status read it.
+    report = await remove_all_tunnels(lab=ctx.unscoped.lab)
     if report.plan is not None:
         return Result(
             status=Status.NotRun,
@@ -980,13 +986,35 @@ async def cleanup(*, opts: "CleanupOptions | OptionsSource | None" = None) -> Re
     hop edge -- is dropped from that report instead, because a lab is not
     dirtier for having hop edges and reporting them would leave ``cleanup``
     unable to answer Success on any real lab.
+
+    WHEN NO HOST IS IN PLAY (:meth:`~otto.context.OttoContext.empty_scope_refusal`
+    has a refusal), cleanup still runs, because it is the recovery verb. The
+    driving project's scope is not enforced. A project that does not take part
+    is skipped with its usual warning, and one forced on with ``-I`` whose
+    fleet has no host in play is skipped with one of its own. The debug-log
+    sweep and the toolchain removal need a host, so each is declined
+    (``Status.Skipped``) with ``<step> skipped: no host is in play``, one line
+    each, after any decline of the impairment reset. The impairment reset and
+    the tunnel reap run lab-wide as always, so the run still answers
+    ``is_ok`` when they succeed.
     """
+    from ..run_context import get_context
+
     with _call_options(opts, CleanupOptions) as source:
         base = source.build(CleanupOptions)
-        ctx, projects = _lab()
-        cleaned = await _walk("cleanup", ctx, projects, source)
-        swept = await _sweep_debug_logs(ctx) if base.debug_logs else Result(status=Status.Success)
-        removed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
+        ctx = get_context()
+        scope = _cleanup_scope(ctx)
+        cleaned = await _walk("cleanup", ctx, scope.projects, source)
+        # No host is in play: the steps that need one are declined, saying so,
+        # and the lab-wide reset and reap below still run.
+        declined = _declined_fleet_steps(base, scope.empty)
+        fleet: "list[Result]" = []
+        if not declined:
+            swept = (
+                await _sweep_debug_logs(ctx) if base.debug_logs else Result(status=Status.Success)
+            )
+            removed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
+            fleet = [swept, removed]
         repaired = (
             await _reset_impairments(ctx)
             if base.reset_impairments
@@ -995,7 +1023,100 @@ async def cleanup(*, opts: "CleanupOptions | OptionsSource | None" = None) -> Re
         reaped = (
             await _remove_tunnels(ctx) if base.remove_tunnels else Result(status=Status.Success)
         )
-        return _reported(cleaned, swept, removed, repaired, reaped)
+        return _with_declined_steps(_reported(cleaned, *fleet, repaired, reaped), declined)
+
+
+_DEBUG_LOG_SWEEP = "debug-log sweep"
+"""Cleanup's fleet step that gathers every host's debug logs, as its decline names it."""
+
+_TOOLCHAIN_REMOVAL = "toolchain removal"
+"""Cleanup's fleet step that removes every host's toolchain tools, as its decline names it."""
+
+
+@dataclasses.dataclass(frozen=True)
+class _CleanupScope:
+    """What cleanup's scope preflight decided: the empty-scope refusal and the projects to walk."""
+
+    empty: "ProjectScopeError | None"
+    """The run's ``OttoContext.empty_scope_refusal()``; ``None`` with a host in play."""
+
+    projects: "list[Project]"
+    """The projects cleanup walks, dependencies first."""
+
+
+def _cleanup_scope(ctx: "OttoContext") -> _CleanupScope:
+    """Make cleanup's scope preflight, for its run and its preview alike, before any device.
+
+    With a host in play the driving project's scope is enforced as for every
+    other verb (:func:`_enforce_current_scope`, D3). With none it is not: the
+    recovery verb must still reset and reap lab-wide. The projects are
+    :func:`_cleanup_projects`', and the skips it announces are announced once.
+    """
+    empty = ctx.empty_scope_refusal()
+    if empty is None:
+        _enforce_current_scope(ctx)
+    return _CleanupScope(empty, _cleanup_projects(ctx, ctx.unscoped.ordered_projects, empty))
+
+
+def _cleanup_projects(
+    ctx: "OttoContext", projects: "list[Project]", empty: "ProjectScopeError | None"
+) -> "list[Project]":
+    """Return the projects cleanup walks, for :func:`_cleanup_scope`.
+
+    *empty* is the run's ``OttoContext.empty_scope_refusal()``. With a host in
+    play (``None``) that is every project, and the walk's own
+    :func:`_applicable` drops the ones that do not take part. Under an empty
+    scope a project that takes part but whose own fleet has no host in play
+    (forced on with ``-I``) is left out too, with one WARNING, because its
+    fleet walk would refuse.
+    """
+    if empty is None:
+        return list(projects)
+    taking_part = {project.name for project in ctx.projects}
+    kept: "list[Project]" = []
+    for project in projects:
+        if project.name in taking_part and not ctx._owner_in_play(project.name):  # noqa: SLF001 — a project's own hosts in play
+            logger.warning(
+                f"cleanup skipped for project {project.name!r}: its fleet has no host in play"
+            )
+            continue
+        kept.append(project)
+    return kept
+
+
+def _declined_fleet_steps(opts: CleanupOptions, empty: "ProjectScopeError | None") -> "list[str]":
+    """Return the fleet steps cleanup declines, in run order, for its run and its preview alike.
+
+    None with a host in play (*empty* ``None``). Under an empty scope, the
+    steps that need a host: the debug-log sweep when *opts* asks for it, and
+    the toolchain removal. Each is reported as :func:`_no_host_in_play_line`.
+    """
+    if empty is None:
+        return []
+    return [*([_DEBUG_LOG_SWEEP] if opts.debug_logs else []), _TOOLCHAIN_REMOVAL]
+
+
+def _with_declined_steps(outcome: Result, declined: "list[str]") -> Result:
+    """Add the fleet steps an empty-scope cleanup declined to its *outcome*, one line each.
+
+    *declined* is :func:`_declined_fleet_steps`' answer; with none, *outcome*
+    is returned as it is, and so is an *outcome* that is not ``is_ok`` (a
+    failure outranks a decline). Otherwise the result is a decline whose
+    message leads with *outcome*'s own decline, when there is one (an
+    impairment reset that left otto state on the wire is the actionable
+    line), then one :func:`_no_host_in_play_line` per declined step.
+    """
+    if not declined or not outcome.is_ok:
+        return outcome
+    lines = [_no_host_in_play_line(step) for step in declined]
+    if outcome.status is not Status.Success and outcome.msg:
+        lines.insert(0, outcome.msg)
+    return Result(status=Status.Skipped, msg="\n".join(lines))
+
+
+def _no_host_in_play_line(step: str) -> str:
+    """Return the line naming a fleet *step* an empty-scope cleanup declined."""
+    return f"{step} skipped: no host is in play"
 
 
 ####################
@@ -1142,7 +1263,7 @@ async def status(*, opts: "StatusOptions | OptionsSource | None" = None) -> Proj
     # that explains it. Actions and the install state walk only `projects`.
     walked = {project.name for project in projects}
     scoping: "dict[str, ProjectScopeSummary]" = {}
-    for project in ctx.projects:
+    for project in ctx.unscoped.projects:
         scope = scopes_of(ctx).get(project.name)
         if scope is not None:
             scoping[project.name] = _scope_row(scope, skipped=project.name not in walked)
@@ -1390,7 +1511,7 @@ async def _impairment_items(ctx: "OttoContext") -> "list[CleanlinessItem]":
 
     kind = CleanlinessKind.IMPAIRMENT
     items: "list[CleanlinessItem]" = []
-    for state in await read_link_states(ctx.lab):
+    for state in await read_link_states(ctx.unscoped.lab):
         link_id = state.link.id
         if not state.impairable:
             continue
@@ -1461,7 +1582,7 @@ async def _tunnel_items(ctx: "OttoContext") -> "list[CleanlinessItem]":
     from ..tunnel.discovery import TunnelNotMeasuredError, discover_tunnels
 
     kind = CleanlinessKind.TUNNEL
-    discovery = await discover_tunnels(ctx.lab)
+    discovery = await discover_tunnels(ctx.unscoped.lab)
     items = [
         _row(kind, found.tunnel.id, clean=False, detail=found.status) for found in discovery.tunnels
     ]

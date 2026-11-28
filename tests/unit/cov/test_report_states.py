@@ -601,6 +601,25 @@ def test_declared_products_keep_each_hosts_own_definition(monkeypatch):
     assert _declared_products(keys) == {keys[0]: on_h1, keys[1]: on_h2}
 
 
+def test_cov_report_definitions_targetable_only(tmp_path):
+    """The report pairs a product with the definition on a host the run may target only."""
+    from types import SimpleNamespace
+
+    from otto.coverage.reporter import _declared_products
+    from otto.run_context import get_context
+    from tests._fixtures.fleet import scope_workspace
+
+    ws = scope_workspace(tmp_path)
+    ws.lab.hosts["a-dut"].products = [SimpleNamespace(name="app")]
+    ws.lab.hosts["a-jump"].products = [SimpleNamespace(name="app")]
+    assert get_context() is ws.ctx
+
+    keys = [ProductKey("a-dut", "app"), ProductKey("a-jump", "app")]
+    found = _declared_products(keys)
+    assert set(found) == {keys[0]}
+    assert found[keys[0]] is ws.lab.hosts["a-dut"].products[0]
+
+
 def _sources_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
     """Return every ``Sources:`` INFO message the reporter logged."""
     return [

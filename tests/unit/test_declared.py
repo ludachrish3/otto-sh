@@ -638,6 +638,106 @@ def test_declared_for_host_selects_the_named_seam(projects_table):
     assert declared_for_host(host, "declared_dev_tools") == [t]
 
 
+def _on(parent_id, *, source_lab="alpha", container=True):
+    """A container double on *parent_id* of lab ``alpha``, stamped as compose stamps it.
+
+    ``container=False`` is the same id with no parent: a plain host.
+    """
+    parent = SimpleNamespace(id=parent_id, source_lab="alpha") if container else None
+    return _host(
+        id=f"{parent_id}.r1.api",
+        source_lab=source_lab,
+        parent=parent,
+        products=[],
+        dev_tools=[],
+        shadowed_products=[],
+        shadowed_dev_tools=[],
+    )
+
+
+_PINNED = _scope(["alpha"], hosts=["a-dut", r"a-jump\..*"])
+"""``a-dut`` exactly, and every container on ``a-jump`` by its id but not ``a-jump``."""
+
+
+def _register_both(owner):
+    from otto.host.dev_tool import register_dev_tool_provider
+    from otto.host.product import register_product_provider
+    from otto.registry import registering_project
+
+    with registering_project(owner):
+        register_product_provider(lambda host: [SimpleNamespace(name="app", owner=None)])
+        register_dev_tool_provider(lambda host: [SimpleNamespace(name="gdb", owner=None)])
+
+
+def _attached(host):
+    from otto.host.dev_tool import apply_dev_tool_providers
+    from otto.host.product import apply_product_providers
+
+    apply_product_providers(host)
+    apply_dev_tool_providers(host)
+    return [p.name for p in host.products], [t.name for t in host.dev_tools]
+
+
+def test_container_products_and_tools_follow_parent(projects_table, monkeypatch):
+    """Providers and declared entries reach a container exactly when its parent is targeted.
+
+    Judged by its own id, the container on ``a-dut`` would get nothing and the
+    one on ``a-jump`` everything: ``_PINNED`` is the pair that tells them apart.
+    """
+    entry = _entry("fw")
+    projects_table.append(_project("pinned", scope=_PINNED, products=[entry]))
+    monkeypatch.setattr(declared_mod, "scope_for_project", {"pinned": _PINNED}.get)
+    _register_both("pinned")
+
+    on_dut, on_jump = _on("a-dut"), _on("a-jump")
+
+    assert _attached(on_dut) == (["app"], ["gdb"])
+    assert _attached(on_jump) == ([], [])
+    assert declared_for_host(on_dut, "declared_products") == [entry]
+    assert declared_for_host(on_jump, "declared_products") == []
+
+
+def test_unstamped_host_carve_outs_unchanged(projects_table, monkeypatch):
+    """An unstamped host, container or not, is still not judged at the three sites.
+
+    The declaration excludes it on both axes, and both providers and the
+    declared entry still reach it; the docker facts, which have no carve-out,
+    still leave an unstamped host out under a declaration.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from otto.docker import resolve as resolve_mod
+    from otto.docker.resolve import SelectedFragment, Selection, build_facts
+    from otto.host.unix_host import UnixHost
+
+    excluding = _scope(["nowhere"], hosts=["nothing"])
+    entry = _entry("fw")
+    projects_table.append(_project("pinned", scope=excluding, products=[entry]))
+    monkeypatch.setattr(declared_mod, "scope_for_project", {"pinned": excluding}.get)
+    _register_both("pinned")
+
+    for host in (_on("a-dut", source_lab=""), _on("a-jump", source_lab="", container=False)):
+        assert _attached(host) == (["app"], ["gdb"])
+        assert declared_for_host(host, "declared_products") == [entry]
+
+    unstamped = MagicMock(spec=UnixHost)
+    unstamped.id, unstamped.ip, unstamped.source_lab = "h9", "192.0.2.9", ""
+    parent = MagicMock(spec=UnixHost)
+    parent.id, parent.ip, parent.source_lab = "p1", "192.0.2.1", "nowhere"
+    lab = SimpleNamespace(hosts={"h9": unstamped, "p1": parent})
+    fragment = SelectedFragment(SimpleNamespace(name="pinned"), MagicMock())
+    with patch.object(resolve_mod, "scope_for_project", {"pinned": excluding}.get):
+        facts = build_facts(
+            Selection(use_case="u", fragments=[fragment]),
+            lab,
+            compose_project="p",
+            parent_id="p1",
+            files={},
+            scratch_dir="/tmp/s",
+        )
+    assert facts["hosts"] == {}
+
+
 def test_declared_for_host_reads_the_result_a_running_composition_published():
     """An init module that builds a host runs while its composition is still in progress.
 

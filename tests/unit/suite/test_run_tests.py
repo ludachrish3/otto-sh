@@ -441,6 +441,33 @@ def test_undeclared_project_always_searched(tmp_path):
     assert [p.name for p in result.junit_paths] == ["junit_plain.xml"]
 
 
+@pytest.mark.usefixtures("_generated_modules_evicted")
+def test_run_tests_not_searched_lines_survive(tmp_path, caplog):
+    """A run still names each project that does not take part, whatever ``ctx.projects`` holds.
+
+    The run judges its layout and its skip lines over every parsed project
+    (``ctx.unscoped``), so narrowing ``ctx.projects`` to the participants loses
+    neither the per-project layout nor the ``not searched`` line.
+    """
+    import logging
+
+    with _real_merged_lab(tmp_path, patterns={"in_a": ["a"], "elsewhere": ["c"]}):
+        with caplog.at_level(logging.WARNING):
+            result = run_tests(names=["test_same"], run_options=NO_COV, output_dir=tmp_path / "o")
+        said = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "elsewhere" in r.getMessage()
+        ]
+        with pytest.raises(UnknownSelectionError) as caught:
+            run_tests(names=["test_absent"], run_options=NO_COV, output_dir=tmp_path / "p")
+    assert [p.name for p in result.junit_paths] == ["junit_in_a.xml"]
+    assert len(said) == 1
+    assert "skipping it for test" in said[0]
+    (line,) = caught.value.not_searched
+    assert "project elsewhere was not searched" in line
+
+
 def test_host_starved_project_not_searched(two_projects):
     from otto.suite.run import selected_tests
     from tests._fixtures.scoping import verdict

@@ -92,7 +92,7 @@ from .socat import pick_random_free_port
 if TYPE_CHECKING:
     from asyncio import CancelledError
 
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
 
 PROTOCOLS = ["tcp", "udp"]
 """Every protocol the check proves, in the order ``--protocol both`` runs them."""
@@ -706,7 +706,7 @@ def _proven(columns: list[TunnelCheckColumn], dest: _Dest | None) -> str:
 
 async def check_tunnel(
     *,
-    lab: "Lab",
+    lab: "LabView",
     hosts: list[EndpointSpec],
     port: int,
     protocol: str = "both",

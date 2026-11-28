@@ -68,6 +68,15 @@ otto tunnel check  --hosts <h0[@if],h1[@if],...,hn-1[@if]> --port <P> [--protoco
 | `-y, --yes` | `remove` | Skip the `--all` confirmation prompt |
 | `<id>` (argument) | `remove` | Id of the tunnel to remove |
 
+## Project scope
+
+`add` and `check` are scoped ({ref}`project-scope-hosts`): when a `--hosts`
+entry or the `--dest` is outside the scope, the command refuses before any
+device is contacted.  `add` exits 1 with the refusal; `check` prints
+`cannot check tunnel …: <refusal>`, puts the refusal in its `--report`, and
+exits 1.  `list`, `remove` and `add`'s conflict check are not scoped
+({ref}`project-scope-exceptions`).
+
 ## Previewing: `--dry-run`
 
 `--dry-run` (`-n`) is a **global** option — `otto -n --lab unix tunnel add

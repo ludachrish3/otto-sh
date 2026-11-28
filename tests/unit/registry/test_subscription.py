@@ -52,6 +52,18 @@ def test_origin_and_project_are_recorded_per_occurrence():
     ]
 
 
+def test_an_otto_subscription_inside_a_projects_init_import_has_no_owner():
+    """The subscription twin of the registry rule: otto's own subscriber records no project."""
+    sub = _sub()
+    with reg.registering_project("acme"):
+        _from_module("otto.host.product", sub.subscribe, value=len)
+        _from_module("acme_init", sub.subscribe, value=abs)
+    assert [(s.origin, s.project) for s in sub.items()] == [
+        ("otto.host.product", None),
+        ("acme_init", "acme"),
+    ]
+
+
 def test_the_refusal_applies():
     sub = _sub()
     with reg.loading_test_files(), pytest.raises(RegistrationRefused, match="init module"):

@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at hundreds of sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 143 NAMED failures", not "anything otto
+therefore means "one of otto's 145 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,7 +24,7 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers most of those raise sites,
-  and 80 of the 143 named classes. Of the other 63, forty-two are rooted at
+  and 80 of the 145 named classes. Of the other 65, forty-two are rooted at
   plain ``Exception`` (the bootstrap, project-activation,
   project-instruction, lab-repository, term-backend, transfer-backend,
   inventory, creds, templating, reservation, power-controller, field, monitor,
@@ -39,11 +39,13 @@ rather than offering a comforting near-miss:
   ``NcPortSharedError``, ``ReadGateClosed``,
   ``RetryAttemptTimeoutError``, ``SessionSetupError``, ``UvNotFoundError``,
   ``WaitTimeoutError``), and
-  two sit under ``LookupError``
+  four sit under ``LookupError``
   (``OptionsNotAvailableError``, for a read of option values that is not an
-  options class or comes before the command read its flags, and
+  options class or comes before the command read its flags,
   ``UnknownSessionError``, for a monitor write naming a session its
-  source does not hold) — 80 + 42 + 19 + 2 = 143, so the split accounts
+  source does not hold, ``HostOutOfScopeError``, a ``KeyError`` for a
+  host lookup outside the run's scope, and ``UnknownHostError``, a ``KeyError``
+  for a host id no host has) — 80 + 42 + 19 + 4 = 145, so the split accounts
   for every named class.
 
 The class counts are measured, not maintained by arithmetic, and gated
@@ -248,6 +250,22 @@ class FieldError(OttoError):
     def __init__(self, message: str, *, field: "str | None") -> None:
         super().__init__(message)
         self.field = field
+
+
+class _UnquotedKeyError(OttoError, KeyError):
+    """An otto ``KeyError`` whose ``str()`` is its message, without the quotes.
+
+    ``KeyError.__str__`` renders its argument as a repr, so a lookup error's
+    sentence would print wrapped in quotes at every boundary that shows an
+    ``OttoError``. This base is the one place that is undone; the host lookup
+    errors (``HostOutOfScopeError`` and ``UnknownHostError``) derive from it,
+    and stay ``KeyError`` to an existing ``except KeyError``.
+    """
+
+    @override
+    def __str__(self) -> str:
+        """Return the message unquoted (:class:`KeyError` would quote it)."""
+        return str(self.args[0]) if self.args else ""
 
 
 class EnsureStateError(OttoError, RuntimeError):

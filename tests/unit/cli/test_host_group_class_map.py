@@ -134,3 +134,54 @@ def test_resilient_menu_is_the_union_for_an_unknown_id(monkeypatch):
     monkeypatch.setattr("otto.registry.get_completion_names", lambda: {"host_classes_by_id": {}})
     group = HostGroup(name="host")
     assert set(group.list_commands(_ctx("ghost"))) == set(group.list_commands(_ctx(None)))
+
+
+def test_completion_menu_unchanged(monkeypatch, tmp_path):
+    """Regression: under completion an out-of-scope target's menu is its class's, unadmitted."""
+    from tests._fixtures.fleet import scope_workspace
+
+    ws = scope_workspace(tmp_path)
+    assert "a-jump" not in ws.ctx.targetable_ids()
+    monkeypatch.setattr(
+        "otto.registry.get_completion_names",
+        lambda: {"host_classes_by_id": {"a-jump": "unix"}},
+    )
+    group = HostGroup(name="host")
+
+    names = group.list_commands(_ctx("a-jump"))
+
+    assert names == group.scoped_names(_ctx("a-jump"), UnixHost)
+    assert "exec" in names
+
+
+def test_completion_never_admits_or_opens_context(monkeypatch):
+    """Regression: completion answers from the cached class and never opens a context.
+
+    With the lab probe, the context builder, the context lookups and help
+    admission all raising, the menu is still the cached class's and a verb
+    still resolves.
+    """
+
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("completion opened or read a context")
+
+    monkeypatch.setattr(
+        "otto.registry.get_completion_names",
+        lambda: {"host_classes_by_id": {"z1": "zephyr"}},
+    )
+    monkeypatch.setattr("otto.cli.invoke.try_ensure_lab", _explode)
+    monkeypatch.setattr("otto.run_context.new_run_context", _explode)
+    monkeypatch.setattr("otto.run_context.get_context", _explode)
+    monkeypatch.setattr("otto.run_context.try_get_context", _explode)
+    # Admission itself: a menu that admitted under completion would call it.
+    monkeypatch.setattr("otto.cli.host_lookup.help_refusal", _explode)
+    group = HostGroup(name="host")
+    verb = min(exposed_cli_names(ZephyrHost))
+
+    names = group.list_commands(_ctx("z1"))
+
+    assert set(names) <= exposed_cli_names(ZephyrHost) | (
+        set(group.list_commands(_ctx(None))) - group._dynamic_names
+    )
+    assert verb in names
+    assert group.get_command(_ctx("z1"), verb) is not None

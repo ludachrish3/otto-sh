@@ -1,4 +1,5 @@
 $ otto --lab example_lab docker use-cases quickstart
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
                            use-case quickstart
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┓
 ┃ fragment                 ┃ provides ┃ host        ┃ env keys ┃ status ┃

@@ -503,11 +503,17 @@ class World:
     errors: "list[bs.BootstrapError]" = dataclasses.field(default_factory=list)
 
 
-def _healthy(root: Path) -> Project:
-    """The project that supplies ``lab1`` and ``lab2``, so a run that gets that far has a lab."""
+def _healthy(root: Path, *, declares: bool = False) -> Project:
+    """The project that supplies ``lab1`` and ``lab2``, so a run that gets that far has a lab.
+
+    *declares* gives it a ``[project]`` scope over every loaded lab, so a world
+    whose only other declaration applies to no loaded lab still has hosts in
+    play rather than an empty scope, which a scoped command refuses.
+    """
     return _project(
         root,
         "Healthy",
+        extra='[project]\nlab_patterns = [".*"]\n' if declares else "",
         hosts=[_host("alpha", "10.0.0.1", lab="lab1"), _host("beta", "10.0.0.2", lab="lab2")],
     )
 
@@ -535,7 +541,7 @@ def _active_broken(root: Path) -> World:
 
 def _out_of_scope_broken(root: Path) -> World:
     project, error = _broken(root, _BROKEN, lab_patterns=["elsewhere"])
-    return World(projects=[_healthy(root), project], errors=[error])
+    return World(projects=[_healthy(root, declares=True), project], errors=[error])
 
 
 def _demoted_and_fatal(root: Path) -> World:

@@ -99,6 +99,14 @@ def test_global_lab_option_explains_a_host(bench):
     assert "source: sut/json#1" in result.stdout.splitlines()
 
 
+def test_explain_unknown_host_names_the_lab_and_its_hosts(bench):
+    """An id no host has prints the shared unknown-id message, unquoted, and exits 1."""
+    result = _root("-l", "bench", "lab", "explain", "ghost")
+    assert result.exit_code == 1, result.output
+    assert "No host 'ghost' in lab 'bench'. Available: ['dut', 'local']" in result.output
+    assert '"No host' not in result.output
+
+
 def test_explain_presents_no_reservation_gate(bench, monkeypatch):
     """A gate that would refuse is never evaluated: explain touches no host."""
     from otto.cli import invoke
@@ -148,8 +156,8 @@ def test_explain_reuses_the_session_lab_and_view(bench, monkeypatch):
     builds: list[Any] = []
     real_build = session_lab.build_lab_and_view
 
-    def counting_build(projects: Any, *, labs: Any, view: Any = None) -> Any:
-        builds.append(real_build(projects, labs=labs, view=view))
+    def counting_build(projects: Any, *, labs: Any, view: Any = None, **kw: Any) -> Any:
+        builds.append(real_build(projects, labs=labs, view=view, **kw))
         return builds[-1]
 
     explained: list[dict[str, Any]] = []

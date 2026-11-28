@@ -36,7 +36,7 @@ import pytest
 from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
 from otto.check.errors import CheckCommandFailedError, CheckHostUnreachableError
 from otto.config.coverage_settings import CoverageConfigError
-from otto.config.scope import DuplicateProjectError, EmptySelectionError
+from otto.config.scope import DuplicateProjectError, EmptySelectionError, HostOutOfScopeError
 from otto.coverage.capture.gitio import (
     GitCommandFailedError,
     GitMissingError,
@@ -106,6 +106,7 @@ from otto.host.login_proxy import LoginProxyError
 from otto.host.loop_owner import HostLoopError
 from otto.host.power import PowerConstructionError, PowerControlError
 from otto.host.recursive_transfer import ListingError
+from otto.host.targeting import UnknownHostError
 from otto.host.telnet import ReadGateClosed
 from otto.host.transfer.nc import (
     NcListenerAnswerError,
@@ -321,6 +322,10 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (NotSwitchable, Exception),
     (UploadTooLarge, Exception),
     (UnknownSessionError, LookupError),
+    # A lookup miss, as a host lookup always was: an existing `except KeyError`
+    # still catches a host outside the run's scope.
+    (HostOutOfScopeError, KeyError),
+    (UnknownHostError, KeyError),
     (ReservationBackendError, Exception),
     (ReservationConstructionError, ValueError),
     (MissingReservationError, Exception),

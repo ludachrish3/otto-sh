@@ -29,7 +29,7 @@ from ..link.manage import (
 from ..link.params import ImpairmentParams, Selector, parse_percent, parse_rate, parse_time_ms
 from ..link.placement import FlowDirection
 from .completers import completion_source, lab_scoped_host_ids, selected_lab_names
-from .invoke import fail, print_check_dry_run, print_dry_run_plan, print_error
+from .invoke import EMPTY_SCOPE_ATTR, fail, print_check_dry_run, print_dry_run_plan, print_error
 
 if TYPE_CHECKING:
     from rich.text import Text
@@ -275,7 +275,7 @@ async def repair(
     """Clear a link's impairment(s) and cancel its timers, or repair --all."""
     from rich.text import Text
 
-    from ..fleet import get_lab
+    from ..run_context import get_context
 
     # This usage-error exit is deliberately kept OUT of the try/except below,
     # for the same typer.Exit-is-a-RuntimeError reason as `impair` above.
@@ -294,7 +294,9 @@ async def repair(
             selector = Selector.parse(port_text=port, proto=proto, side=side)
         except ValueError as e:
             fail(e, 2)
-    lab = get_lab()
+    # The whole lab: an impairment otto placed stays clearable from here after
+    # its link's hosts leave the run's scope.
+    lab = get_context().unscoped.lab
     if all_:
         sweep = await repair_all(lab=lab)
         if sweep.dry_run:
@@ -350,6 +352,10 @@ async def repair(
         # `RuntimeError` under typer's vendored click fork, so raising it inside
         # would be re-wrapped as a spurious error message instead of exiting.
         raise typer.Exit(1)
+
+
+# A recovery verb: it clears impairments lab-wide, so it runs when no host is in play.
+setattr(repair, EMPTY_SCOPE_ATTR, True)
 
 
 def _dir_text(state: LinkState, direction: FlowDirection) -> str:

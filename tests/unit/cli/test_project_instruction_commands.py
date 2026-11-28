@@ -985,8 +985,8 @@ async def test_status_full_renders_a_row_per_project_on_an_undeclared_lab(
         fake_project("widgets", root="/projects/widgets", project_scope=None),
     ]
     hosts = {
-        "h0": types.SimpleNamespace(source_lab="bench"),
-        "h1": types.SimpleNamespace(source_lab="floor"),
+        "h0": types.SimpleNamespace(id="h0", source_lab="bench"),
+        "h1": types.SimpleNamespace(id="h1", source_lab="floor"),
     }
     # ``status`` asks ``otto.config.scope.active``, which reads the switch
     # tuples as well as the verdicts. Empty, as the real ``OttoContext``
@@ -1051,8 +1051,8 @@ async def test_status_full_renders_both_rows_for_a_host_starved_project(
         ),
     ]
     hosts = {
-        "h0": types.SimpleNamespace(source_lab="bench"),
-        "h1": types.SimpleNamespace(source_lab="floor"),
+        "h0": types.SimpleNamespace(id="h0", source_lab="bench"),
+        "h1": types.SimpleNamespace(id="h1", source_lab="floor"),
     }
     # ``status`` asks ``otto.config.scope.active``, which reads the switch
     # tuples as well as the verdicts. Empty, as the real ``OttoContext``
@@ -1956,3 +1956,60 @@ def test_the_dry_run_shows_body_options_before_the_run_classes(monkeypatch, regi
     assert "variant='debug'" in dry.output
     assert dry.output.index("VariantInstall:") < dry.output.index("RunWide: minimum=1")
     assert seen == {}, "the dry run ran a body"
+
+
+# ── Activation: an instruction whose project an active one requires ──────────
+
+
+def test_instruction_required_by_active_project_runs(monkeypatch, tmp_path) -> None:
+    """Fail-first: ``otto run`` runs an instruction whose owner an active project requires.
+
+    ``fw`` applies only to lab ``beta``, so with ``-l alpha`` it does not take
+    part, and its instruction is refused. Once ``app``, which takes part,
+    requires ``fw``, the same command runs: the rule load-error classification
+    already applies, judged with the lab.
+    """
+    from otto.cli.main import app as root_app
+    from otto.config.dependencies import ResolvedDependency
+    from otto.session.lab import BuiltLab
+    from tests._fixtures.bootstrap_seam import install_composed
+    from tests._fixtures.fleet import _lab, _project, add_builtin_local
+
+    monkeypatch.setenv("COLUMNS", "300")
+    app_project = _project(tmp_path, "app", labs=["alpha"], hosts=["a-dut.*"])
+    fw = _project(tmp_path, "fw", labs=["beta"], hosts=["b-dut.*"])
+    lab = add_builtin_local(_lab(("a-dut", "alpha"), component_names=["alpha"]))
+    ran: "list[str]" = []
+
+    with registering_project("fw"):
+
+        @instruction()
+        async def flash_fw() -> None:
+            ran.append("flash-fw")
+
+    install_composed(monkeypatch, patch_bootstrap(monkeypatch, [app_project, fw]))
+    monkeypatch.setattr(
+        "otto.session.lab.build_lab_and_view",
+        lambda _projects, **_kw: BuiltLab(lab=lab, view=None),  # ty: ignore[invalid-argument-type]
+    )
+
+    refused = runner.invoke(root_app, ["--lab", "alpha", "run", "flash-fw"])
+    assert refused.exit_code == 1, refused.output
+    assert "'flash-fw' belongs to project 'fw', which is inactive for the loaded" in (
+        refused.output
+    )
+    assert ran == []
+
+    app_project.dependencies = [
+        ResolvedDependency(
+            name="fw",
+            normalized="fw",
+            constraint="",
+            required=True,
+            status="satisfied",
+            provider_version=None,
+        )
+    ]
+    required = runner.invoke(root_app, ["--lab", "alpha", "run", "flash-fw"])
+    assert required.exit_code == 0, required.output
+    assert ran == ["flash-fw"]

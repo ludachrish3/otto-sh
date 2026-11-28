@@ -4,8 +4,9 @@ A :class:`CommandSpec` describes one top-level command or group: its name, a
 loader (a live Typer app, a plain/async function, or a lazy ``"pkg.mod:attr"``
 string imported only on dispatch), the help line shown by ``otto --help``
 *without* importing the module, and dispatch metadata (``lab_free``,
-``output_dir``, ``gate``, ``dry_run_preview``, ``accepts_options``). First-party subcommands and
-third-party plugins register through the same :func:`register_cli_command`.
+``output_dir``, ``gate``, ``scoped``, ``dry_run_preview``,
+``accepts_options``). First-party subcommands and third-party plugins
+register through the same :func:`register_cli_command`.
 """
 
 import functools
@@ -53,6 +54,16 @@ class CommandSpec:
     gate: bool = True
     """Whether invocations run the reservation gate (ignored when ``lab_free``)."""
 
+    scoped: bool = True
+    """Whether invocations see only this run's projects and the hosts they target.
+
+    ``True`` (the default) for every command, otto's own and a plugin's.
+    ``False`` is for a command that must see every project and lab host,
+    whatever the active projects declare (``otto init``, ``env``, ``cache``
+    and ``lab`` diagnose every source). A leaf beneath a scoped group opts
+    out alone with ``__cli_scoped__ = False``; whether a command is scoped is
+    read by :func:`~otto.cli.invoke.leaf_is_scoped`."""
+
     accepts_options: bool | None = None
     """Whether this command offers the flags of registered options classes.
 
@@ -97,7 +108,7 @@ CLI_COMMANDS: Registry[CommandSpec] = Registry(
 
 
 @registration_boundary
-def register_cli_command(
+def register_cli_command(  # noqa: PLR0913 — one keyword per CommandSpec field, by design
     name: str,
     loader: Any,
     *,
@@ -105,6 +116,7 @@ def register_cli_command(
     lab_free: bool = False,
     output_dir: bool = True,
     gate: bool = True,
+    scoped: bool = True,
     async_leaves: bool = False,
     dry_run_preview: bool = False,
     accepts_options: bool | None = None,
@@ -120,6 +132,10 @@ def register_cli_command(
 
     *dry_run_preview* opts every leaf under this command out of the
     ``--dry-run`` seam default (see :attr:`CommandSpec.dry_run_preview`).
+
+    *scoped* ``False`` lets the command see every project and lab host,
+    whatever the active projects declare (see :attr:`CommandSpec.scoped`);
+    leave it at the default unless the command diagnoses every source.
 
     *accepts_options* says whether the command offers the flags of registered
     options classes; left ``None``, a command that uses the lab does and a
@@ -143,6 +159,7 @@ def register_cli_command(
         lab_free=lab_free,
         output_dir=output_dir,
         gate=gate,
+        scoped=scoped,
         async_leaves=async_leaves,
         dry_run_preview=dry_run_preview,
         accepts_options=accepts_options,
@@ -158,6 +175,7 @@ def cli_command(
     lab_free: bool = False,
     output_dir: bool = True,
     gate: bool = True,
+    scoped: bool = True,
     dry_run_preview: bool = False,
     accepts_options: bool | None = None,
 ) -> Callable[..., Any]:
@@ -179,6 +197,9 @@ def cli_command(
     myself", which is exactly what monitor does. ``async def`` is in turn
     necessary and not sufficient: a body that blocks the event loop is no more
     interruptible than a sync one (see :func:`~otto.instructions.instruction`).
+
+    ``scoped`` is :func:`register_cli_command`'s: ``False`` lets the command
+    see every project and lab host (see :attr:`CommandSpec.scoped`).
 
     ``accepts_options`` is :func:`register_cli_command`'s: whether the command
     offers the flags of registered options classes. The command's options
@@ -214,6 +235,7 @@ def cli_command(
             lab_free=lab_free,
             output_dir=output_dir,
             gate=gate,
+            scoped=scoped,
             dry_run_preview=dry_run_preview,
             accepts_options=accepts_options,
         )

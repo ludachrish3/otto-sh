@@ -128,9 +128,10 @@ existed — so the gate never becomes a new abort surface. Completion's gate
 builds a temporary context and passes that context's ids, so a TAB and a run
 agree about what is needed.
 
-An explicitly named host outside the fleet — the target of `otto host <id>`,
-or its `--hop` — has its own element- and host-level identifiers added to the
-required set. Otherwise holding the fleet's slots would be permission to touch
+A named host outside the fleet — the `--hop` of `otto host <id>`, or the
+target of a host verb that opts out of scoping — has its own element- and
+host-level identifiers added to the required set. A scoped target is in the
+fleet already. Otherwise holding the fleet's slots would be permission to touch
 hardware nobody reserved, and reaching a fleet host through an unreserved jump
 box is still using the jump box.
 

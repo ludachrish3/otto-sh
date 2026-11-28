@@ -36,10 +36,10 @@ These options are available on every `otto` command:
 | `--holder USERNAME` | | current user | Check reservations as USERNAME instead of the current user |
 | `--skip-reservation-check, -R` | | `False` | Bypass the reservation check entirely (emergency use only) |
 | `--list-labs` | | | List the labs each project applies to and exit |
-| `--list-hosts` | | | List host IDs in the loaded lab and exit |
+| `--list-hosts` | | | List the host IDs this run may target in the loaded lab and exit — see {ref}`project-scope` |
 | `--list-products` | | | List the products the projects declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
 | `--list-tools` | | | List the dev tools the projects declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
-| `--show-lab` | | | Print the lab as a tree (each host's id, kind, address, transports and products, then the links) and exit |
+| `--show-lab` | | | Print the lab as a tree (each targetable host's id, kind, address, transports and products, then the links among them) and exit |
 | `--lab-depth` | | `0` | How many levels of the `--show-lab` tree open: `1` = host ids and kinds, `2` = also their details and the links (`0` = all) |
 | `--version` | | | Show version and exit |
 | `--install-completion` | | | Install shell completion and exit |
@@ -67,6 +67,8 @@ options go before the subcommand: `otto -x ... test`".
 Almost every command needs a lab. Name it with `--lab`/`-l`, or set `OTTO_LAB`
 once and leave it out of the command line.
 
+(combining-labs)=
+
 ### Combining labs with `+`
 
 Combine lab names with `+` to merge them:
@@ -88,8 +90,11 @@ otto --lab my_lab --list-hosts     # list host IDs in the loaded lab
 otto --lab my_lab --show-lab       # the lab as a tree; --lab-depth 1 shows host ids only
 ```
 
-`--list-hosts` needs `--lab`. `--show-lab` draws the lab as a tree, contacting
-no host:
+`--list-hosts` needs `--lab`. Both listings show only the hosts this run may
+target: a lab host no declared project targets is left out of `--list-hosts` and
+of the `--show-lab` tree, along with every link that touches it
+({ref}`project-scope` says what is targetable). `--show-lab` draws the lab as a
+tree, contacting no host:
 
 ```text
 ╭─────────────────────────────────────────╮
@@ -172,8 +177,9 @@ can therefore load a lab with `--lab` that its project's panel does not list.
 `--list-products` and `--list-tools` print a table of the products or dev tools
 your projects declare in {doc}`../configuration/declared-products-tools`. Neither
 contacts a host, and neither is lab-gated: they work with or without `--lab`.
-Only the projects that take part are listed; {ref}`project-scope` says who that
-is, and what the dim `no lab selected` line means.
+Only the projects that take part are listed, and with `--lab` only on the hosts
+this run may target; {ref}`project-scope` says who and what that is, and what the
+dim `no lab selected` line means.
 A narrow terminal folds long cells onto more lines rather than cutting them
 (see `COLUMNS` under [Environment variables](#environment-variables)).
 
@@ -570,7 +576,7 @@ verdicts instead: see {doc}`check-verdicts`.
 | --- | --- |
 | [`otto init`](init.md) | Scaffold a new otto project, or validate an existing one |
 | [`otto env`](env/index.md) | Build and maintain this workspace's orchestration environment |
-| [`otto host`](host/index.md) | Run commands and transfer files on lab hosts |
+| [`otto host`](host/index.md) | Run commands and transfer files on the lab hosts in this run's scope |
 | [`otto cache`](cache/index.md) | Inspect, clear, and prune otto's per-workspace caches |
 | [`otto run`](run/index.md) | Run a registered instruction on the lab |
 | [`otto test`](test/index.md) | Run your projects' pytest tests by name or marker |

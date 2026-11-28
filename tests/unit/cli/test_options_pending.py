@@ -148,7 +148,7 @@ def _lab_reading_options(monkeypatch):
         def __init__(self) -> None:
             self.knobs = otto.get_options(Knobs)
 
-    def build(projects, labs):
+    def build(projects, labs, **_kw):
         ReadingHost()
         return BuiltLab(lab=Lab(name="rig"), view=InventoryView.of_default(inventory=None))
 
@@ -180,7 +180,7 @@ def test_a_built_context_keeps_the_mark_and_nothing_leaks_after(monkeypatch):
     patch_bootstrap(monkeypatch, [])
     monkeypatch.setattr(
         "otto.session.lab.build_lab_and_view",
-        lambda projects, labs: BuiltLab(
+        lambda projects, labs, **_kw: BuiltLab(
             lab=Lab(name="rig"), view=InventoryView.of_default(inventory=None)
         ),
     )
@@ -236,7 +236,11 @@ def test_the_preparation_runs_before_the_dry_run_seam(monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr(invoke, "validate_project_switches", lambda ctx: None)
     monkeypatch.setattr(invoke, "fail_loud_on_bootstrap_errors", lambda ctx: None)
-    monkeypatch.setattr(invoke, "command_spec", lambda ctx: SimpleNamespace(lab_free=True))
+    monkeypatch.setattr(
+        invoke,
+        "command_spec",
+        lambda ctx: SimpleNamespace(name="host", lab_free=True, scoped=True),
+    )
     monkeypatch.setattr(invoke, "prepare_command_options", lambda ctx: calls.append("prepare"))
     monkeypatch.setattr(invoke, "stop_at_dry_run_seam", lambda ctx, spec: calls.append("seam"))
     leaf = _with_callback(chain("otto", "host", "ls"), lambda: None)
@@ -253,7 +257,8 @@ def test_the_pending_error_passes_both_catch_alls(monkeypatch):
     monkeypatch.setattr(invoke, "ensure_lab_context", refuse)
     with pytest.raises(OptionsNotAvailableError, match=PENDING):
         try_ensure_lab(chain("otto", "host"))
-    monkeypatch.setattr("otto.fleet.get_host", refuse)
+    # Class discovery reads the whole lab, through the hop lookup's lab.
+    monkeypatch.setattr("otto.cli.host_lookup.hop_lab", refuse)
     with pytest.raises(OptionsNotAvailableError, match=PENDING):
         host_class_for_id("router1")
 
@@ -305,7 +310,7 @@ def test_a_lab_free_options_command_that_opens_the_lab_keeps_its_flags(monkeypat
 
     monkeypatch.setattr(
         "otto.session.lab.build_lab_and_view",
-        lambda projects, labs: BuiltLab(
+        lambda projects, labs, **_kw: BuiltLab(
             lab=Lab(name="rig"), view=InventoryView.of_default(inventory=None)
         ),
     )
@@ -369,7 +374,7 @@ def test_a_host_command_body_reads_defaults(monkeypatch):
     patch_bootstrap(monkeypatch, [])
     monkeypatch.setattr(
         "otto.session.lab.build_lab_and_view",
-        lambda projects, labs: BuiltLab(
+        lambda projects, labs, **_kw: BuiltLab(
             lab=Lab(name="x"), view=InventoryView.of_default(inventory=None)
         ),
     )
@@ -408,7 +413,7 @@ def reading_lab(monkeypatch) -> "Any":
     The command's body never runs: what the constructor read is the result.
     """
 
-    def build(projects: Any, labs: Any) -> Any:
+    def build(projects: Any, labs: Any, **_kw: Any) -> Any:
         ReadingHost()
         raise typer.Exit(0)
 
@@ -465,7 +470,7 @@ def test_a_leaf_that_does_not_accept_builds_its_lab_reading_defaults(
 
     gate_reads: list[object] = []
 
-    def build(projects: Any, labs: Any) -> Any:
+    def build(projects: Any, labs: Any, **_kw: Any) -> Any:
         ReadingHost()
         return BuiltLab(lab=Lab(name="rig"), view=InventoryView.of_default(inventory=None))
 
@@ -602,7 +607,7 @@ def test_ctx_verb_is_the_top_level_command(monkeypatch):  # §6 item 8
     patch_bootstrap(monkeypatch, [])
     monkeypatch.setattr(
         "otto.session.lab.build_lab_and_view",
-        lambda projects, labs: BuiltLab(
+        lambda projects, labs, **_kw: BuiltLab(
             lab=Lab(name="rig"), view=InventoryView.of_default(inventory=None)
         ),
     )

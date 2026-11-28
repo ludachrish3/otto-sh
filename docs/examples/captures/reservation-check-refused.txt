@@ -1,8 +1,7 @@
 $ otto --lab busybox --holder alice reservation check
 INFO     [reservations] acting as 'alice' (--holder)
-INFO     fleet of interest: 5 of 7 lab hosts (1 project(s), 0 excluded); outside it: test1 (no
-         declared project targets it)
-reservations required by lab busybox for alice (5
+INFO     fleet of interest: 6 of 7 lab hosts (1 project(s), 0 excluded)
+reservations required by lab busybox for alice (6
                 host(s) in play)
 ╭────────────────┬─────────┬─────────────┬──────╮
 │ resource       │ level   │ owner       │ held │
@@ -10,8 +9,10 @@ reservations required by lab busybox for alice (5
 │ bb-bench       │ lab     │ busybox     │ no   │
 │ bb1350-chassis │ element │ bb1350      │ no   │
 │ bb1350-slot    │ host    │ bb1350-qemu │ no   │
+│ test1-chassis  │ element │ test1       │ no   │
 ╰────────────────┴─────────┴─────────────┴──────╯
 User 'alice' does not hold all resources required by lab 'busybox'. Missing:
   bb-bench        lab busybox  (held by: chris)
   bb1350-chassis  element bb1350  (held by: chris)
   bb1350-slot     host bb1350-qemu  (held by: chris)
+  test1-chassis   element test1  (held by: chris)

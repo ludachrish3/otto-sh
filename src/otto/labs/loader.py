@@ -132,7 +132,9 @@ class Lab:
 
     A ``Lab`` aggregates the ``Host`` objects parsed from lab data files under
     a single name.  Multiple labs can be merged via ``+`` to build a composite
-    environment that spans several lab data sources.
+    environment that spans several lab data sources. A scoped lab view is not
+    a lab to merge: ``lab + view`` raises :class:`TypeError` and leaves the
+    lab unchanged.
     """
 
     name: str
@@ -300,7 +302,11 @@ class Lab:
 
         from ..host.inventory_ref import first_conflict
         from ..host.remote_host import RemoteHost
+        from ..lab_view import refuse_view_merge  # lazy: keep Lab import-light
 
+        # Before anything changes: a scoped view merged here would leave this
+        # lab renamed and its hosts re-backlinked before the merge failed.
+        refuse_view_merge(other)
         pre_merge_name = self.name
         self.name = f"{self.name}{LAB_SEPARATOR}{other.name}"
         # Beside the name concatenation, because it repairs what the name

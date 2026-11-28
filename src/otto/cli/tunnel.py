@@ -18,7 +18,7 @@ from ..tunnel.discovery import discover_tunnels
 from ..tunnel.manage import add_tunnel, remove_all_tunnels, remove_tunnel
 from ..utils import complete_separated_list
 from .completers import completion_source
-from .invoke import fail, print_check_dry_run, print_dry_run_plan, print_error
+from .invoke import EMPTY_SCOPE_ATTR, fail, print_check_dry_run, print_dry_run_plan, print_error
 
 if TYPE_CHECKING:
     from rich.text import Text
@@ -361,9 +361,11 @@ async def list_tunnels() -> None:
 
     del bootstrap
     from ..declared import get_projects
-    from ..fleet import get_lab
+    from ..run_context import get_context
 
-    lab = get_lab()
+    # The whole lab: a tunnel stays visible from here after its hosts leave
+    # the run's scope.
+    lab = get_context().unscoped.lab
     discovery = await discover_tunnels(lab)
     if discovery.not_measured:
         # BEFORE `record_tunnel_ids`, which is the part that would otherwise
@@ -426,6 +428,10 @@ async def list_tunnels() -> None:
         )
 
 
+# A recovery verb: it reads tunnels lab-wide, so it runs when no host is in play.
+setattr(list_tunnels, EMPTY_SCOPE_ATTR, True)
+
+
 @tunnel_app.command()
 async def remove(
     tunnel_id: str | None = typer.Argument(None, autocompletion=_tunnel_id_completer),
@@ -439,8 +445,8 @@ async def remove(
 
     del bootstrap
     from ..declared import get_projects
-    from ..fleet import get_lab
     from ..lifecycle import interruptible_prompt
+    from ..run_context import get_context
 
     # These two usage-error exits are deliberately kept OUT of the try/except
     # below: typer's vendored click fork makes ``typer.Exit`` a ``RuntimeError``
@@ -459,7 +465,9 @@ async def remove(
         rprint("[red]give a tunnel id or --all[/red]")
         raise typer.Exit(2)
 
-    lab = get_lab()
+    # The whole lab, as `list` reads it: a tunnel whose hosts left the run's
+    # scope is still reaped.
+    lab = get_context().unscoped.lab
     try:
         if all_:
             report = await remove_all_tunnels(lab=lab)
@@ -489,3 +497,7 @@ async def remove(
     if report.unreachable:
         _row(Text.assemble(("could not reach:", "yellow"), " ", ", ".join(report.unreachable)))
         raise typer.Exit(1)
+
+
+# A recovery verb: it reaps tunnels lab-wide, so it runs when no host is in play.
+setattr(remove, EMPTY_SCOPE_ATTR, True)

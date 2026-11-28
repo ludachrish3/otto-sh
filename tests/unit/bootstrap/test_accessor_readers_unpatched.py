@@ -113,7 +113,7 @@ def test_the_remote_completion_gate_reads_the_real_projects(declaring_project, m
     lab = _rig()
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs, **_kw: lab)
     chain = rc._ChainParams(host_id="", hop="", term=None, labs=["rig"], holder="carol")
 
     assert rc._reservation_allows(chain) is True  # no [reservations]: the gate is a no-op

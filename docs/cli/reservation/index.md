@@ -144,11 +144,10 @@ components' declared sets, and every lab-level row is attributed to the merged
 name `a+b` rather than to the component that declared the identifier.
 
 Naming a host explicitly — as the target or as the `--hop` — adds it to that
-set, the built-in `local` host still excepted.  `otto host <id>` is not scoped
-by any `[project]` declaration
-({doc}`../host/index`), so a host outside the fleet has its OWN element- and
-host-level identifiers checked before the command runs — including a jump box
-you only reach a fleet host through.
+set, the built-in `local` host still excepted.  A `--hop` needs only lab
+membership, not scope ({doc}`../host/index`), so a hop outside the fleet has
+its OWN element- and host-level identifiers checked before the command runs —
+including a jump box you only reach a fleet host through.
 
 Otto then asks the configured backend which of those identifiers the effective
 user holds.  Anything missing raises an error that names each missing

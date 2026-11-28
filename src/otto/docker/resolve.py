@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from ..config.scope import declared_use_case_names, project_targets
+from ..config.scope import declared_use_case_names, host_targeted
 from ..declared import scope_for_project
 from ..errors import OttoError
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from ..config.project import Project
     from ..config.scope import DockerUseCase
     from ..host.unix_host import UnixHost
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
 
 
 class UseCaseResolutionError(OttoError, ValueError):
@@ -337,7 +337,7 @@ class Facts(TypedDict):
 
 def build_facts(
     selection: Selection,
-    lab: "Lab",
+    lab: "LabView",
     *,
     compose_project: str,
     parent_id: str,
@@ -351,9 +351,13 @@ def build_facts(
     guessed at — spec §12.
     """
     from ..host.unix_host import UnixHost  # function-scope: import-budget
+    from ..lab_view import whole_lab
+
+    # The whole lab: the participating projects' declarations narrow it below.
+    whole = whole_lab(lab)
 
     def _addr(hid: str, *, context: str) -> str:
-        h = lab.hosts.get(hid)
+        h = whole.hosts.get(hid)
         if h is None:
             raise UseCaseResolutionError(
                 f"use-case {selection.use_case!r}: {context} names host {hid!r}, "
@@ -384,9 +388,8 @@ def build_facts(
     scopes = [scope_for_project(name) for name in project_names]
     hosts: "dict[str, HostFact]" = {
         hid: {"addr": _addr(hid, context="host")}
-        for hid, h in lab.hosts.items()
-        if isinstance(h, UnixHost)
-        and any(project_targets(scope, h.source_lab, hid) for scope in scopes)
+        for hid, h in whole.hosts.items()
+        if isinstance(h, UnixHost) and any(host_targeted(scope, h) for scope in scopes)
     }
     return {
         "use_case": selection.use_case,

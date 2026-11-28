@@ -627,3 +627,38 @@ async def test_a_missing_dockerfile_refuses_a_compose_build_dry_run(
     ):
         await compose_build("integration")
     assert builds == []
+
+
+# -- participation: docker reads only the projects taking part (scoping spec §3.7, Q20) --
+
+
+@contextmanager
+def _switched_off(lab, projects, *, exclude):
+    """Install a scoped run on *lab* over *projects*, with *exclude* switched off (``-E``)."""
+    with (
+        active_context(lab, exclude_projects=tuple(exclude)),
+        patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result(projects)),
+    ):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_docker_build_sources_participating(lab, builds):
+    """``build_on`` builds only participating projects' images; a switched-off one is unknown."""
+    a, b = _project("a", images=("api",)), _project("b", images=("db",))
+    with _switched_off(lab, [a, b], exclude=["b"]):
+        report = await build_on(parent="test3")
+        with pytest.raises(DockerVerbError, match=r"docker projects: \['a'\]"):
+            await build_on(parent="test3", project="b")
+    assert [rb.project for rb in report.projects] == ["a"]
+    assert [c[:2] for c in builds] == [("a", "test3")]
+
+
+def test_docker_fragment_selection_participating(lab):
+    """A use-case's fragments, and their merge order, come only from participating projects."""
+    a = _uc_project("a", _frag())
+    b = _uc_project("b", _frag())
+    with _switched_off(lab, [a, b], exclude=["b"]):
+        resolution = deploy_mod.resolve_use_case("integration", parent="test3", provide=None)
+    assert [sf.project.name for sf in resolution.selection.fragments] == ["a"]
+    assert resolution.order == {"a": 0}

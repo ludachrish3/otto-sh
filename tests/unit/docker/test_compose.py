@@ -394,6 +394,116 @@ async def test_unregister_container_hosts_narrows_to_named_services():
 
 
 @pytest.mark.asyncio
+async def test_docker_writes_and_facts_read_whole_lab(monkeypatch):
+    """Container registration, its sweep, a rollback and the use-case facts act on the whole lab.
+
+    A registration is the lab's, whatever the run's scope admits, and the facts
+    are narrowed by the participating projects' declarations, not by the lab
+    they are handed. Each call is handed a lab without the parent, which
+    ``otto.lab_view.whole_lab`` maps to the whole lab, so each write and read
+    shows which lab it took.
+    """
+    from otto.docker import resolve as resolve_mod
+    from otto.docker.resolve import SelectedFragment, Selection, build_facts
+
+    from .test_resolve_select import _frag, _project
+
+    whole = _make_lab()
+    parent = whole.hosts["test3"]
+    narrow = Lab(name=whole.name)
+    monkeypatch.setattr("otto.lab_view.whole_lab", lambda lab: whole if lab is narrow else lab)
+
+    # The facts read the parent's address from the whole lab (before any
+    # container joins it: a container publishes no address of its own here).
+    monkeypatch.setattr(resolve_mod, "scope_for_project", lambda _name: None)
+    selection = Selection(
+        use_case="integration", fragments=[SelectedFragment(_project("a"), _frag())]
+    )
+    facts = build_facts(
+        selection, narrow, compose_project="p", parent_id="test3", files={}, scratch_dir="/tmp/s"
+    )
+    assert facts["parent"] == {"id": "test3", "addr": "10.10.200.13"}
+    assert "test3" in facts["hosts"]
+
+    # Registration writes the whole lab.
+    parent.exec.side_effect = lambda cmd, *_, **__: _ok("cid\n")  # type: ignore[union-attr]
+    hosts = await register_stack_hosts(
+        narrow, parent, compose_project="l-u-c", id_project="uc", services=["api"]
+    )
+    assert whole.hosts["test3.uc.api"] is hosts["api"]
+    assert "test3.uc.api" not in narrow.hosts
+
+    # The sweep removes from the whole lab.
+    api = _container_host(parent, "integration", "api")
+    whole.hosts[api.id] = api
+    assert await unregister_container_hosts(narrow, "test3.integration.") == [api.id]
+    assert api.id not in whole.hosts
+
+    # A rollback takes the stack down against the whole lab.
+    downs = []
+
+    async def _down(_parent, _project_name, *, lab, **_kw):
+        downs.append(lab)
+        return _ok()
+
+    monkeypatch.setattr(compose_mod, "compose_down_project", _down)
+    await roll_back(narrow, [StartedStack(parent, "p", ["/a.yml"])])
+    assert len(downs) == 1
+    assert downs[0] is whole
+
+
+@pytest.mark.asyncio
+async def test_container_register_unregister_rollback_through_view(monkeypatch, tmp_path):
+    """Fail-first: handed a scoped command's ``ctx.lab``, docker's writes act on the canonical lab.
+
+    The real view, not a stand-in. The one project targets ``test1``, so the
+    parent ``test3`` is outside the run's scope: the view holds neither it nor
+    the container registered on it, and the registration, its sweep and a
+    rollback still land in the canonical lab. Its precondition, that the
+    parent is outside the view, fails before ``ctx.lab`` is a view; the writes
+    it then guards would pass there too.
+    """
+    from tests._fixtures.fleet import _project, install_scoped_context
+
+    whole = _make_lab()
+    parent = whole.hosts["test3"]
+    targeted = _wire_parent_mock(_capable_host("test1", ne="test1"))
+    whole.hosts[targeted.id] = targeted
+    for host in (parent, targeted):
+        host.source_lab = "test"
+    ctx = install_scoped_context(whole, [_project(tmp_path, "p", labs=["test"], hosts=["test1"])])
+    view = ctx.lab
+    assert "test3" not in view.hosts
+    assert "test1" in view.hosts
+
+    # Registration writes the canonical lab; the container follows its parent out of the view.
+    parent.exec.side_effect = lambda cmd, *_, **__: _ok("cid\n")  # type: ignore[union-attr]
+    hosts = await register_stack_hosts(
+        view, parent, compose_project="l-u-c", id_project="uc", services=["api"]
+    )
+    assert whole.hosts["test3.uc.api"] is hosts["api"]
+    assert "test3.uc.api" not in view.hosts
+
+    # The sweep removes from the canonical lab.
+    api = _container_host(parent, "integration", "api")
+    whole.hosts[api.id] = api
+    assert await unregister_container_hosts(view, "test3.integration.") == [api.id]
+    assert api.id not in whole.hosts
+
+    # A rollback takes the stack down against the canonical lab.
+    downs = []
+
+    async def _down(_parent, _project_name, *, lab, **_kw):
+        downs.append(lab)
+        return _ok()
+
+    monkeypatch.setattr(compose_mod, "compose_down_project", _down)
+    await roll_back(view, [StartedStack(parent, "p", ["/a.yml"])])
+    assert len(downs) == 1
+    assert downs[0] is whole
+
+
+@pytest.mark.asyncio
 async def test_unregister_container_hosts_pops_a_host_that_fails_to_close():
     """A container that cannot be closed is still gone; advertising it would lie."""
     lab = _make_lab()

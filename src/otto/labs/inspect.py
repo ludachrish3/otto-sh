@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from ..config.project import Project
     from ..host.provenance import FieldTrace, FieldWinner
     from ..inventory.view import InventoryView
+    from ..lab_view import LabView
     from .jsonnet_source import JsonnetSourceInputs
-    from .loader import Lab
 
 
 @final
@@ -245,7 +245,7 @@ class HostExplanation:
 
 
 def explain_host(
-    *, host_id: str, lab: "Lab", view: "InventoryView", trace: "FieldTrace"
+    *, host_id: str, lab: "LabView", view: "InventoryView", trace: "FieldTrace"
 ) -> HostExplanation:
     """Explain which layer supplied each value of host *host_id* of *lab*.
 
@@ -264,11 +264,12 @@ def explain_host(
             container, or a source that builds its hosts without otto's lab
             file loader), so there is nothing to attribute.
     """
+    from ..host.targeting import unknown_host_error
     from .sources import JSONNET_FILE_RULE
 
     if host_id not in lab.hosts:
-        known = ", ".join(sorted(lab.hosts)) or "none"
-        raise LabRepositoryError(f"no host {host_id!r} in lab {lab.name!r}; its hosts: {known}")
+        missed = unknown_host_error(host_id, lab_name=lab.name, available=list(lab.hosts))
+        raise LabRepositoryError(missed.message)
     entry = trace.entry_for(host_id=host_id)
     if entry is None:
         raise LabRepositoryError(

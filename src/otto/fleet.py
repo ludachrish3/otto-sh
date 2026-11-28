@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from .config.project import Project
     from .host.remote_host import RemoteHost
     from .host.unix_host import UnixHost
-    from .labs.loader import Lab
+    from .lab_view import LabView
     from .result import Results
     from .run_context import HostOverrides
 
@@ -219,7 +219,10 @@ def get_host(
     host_id: str,
     **overrides: "Unpack[HostOverrides]",
 ) -> "UnixHost":
-    """Return the host registered under *host_id* in the active lab.
+    """Return the host registered under *host_id* in the active lab, if this run targets it.
+
+    The active context's :meth:`~otto.context.OttoContext.get_host`: in a
+    scoped command only the hosts this run targets resolve.
 
     Args:
         host_id: Unique host id (as produced by ``UnixHost.id``).
@@ -234,6 +237,11 @@ def get_host(
             instance is returned unchanged so
             ``get_host('x') is get_host('x')`` still holds. Hop
             resolution is internal and is *not* affected by overrides.
+
+    Raises:
+        otto.lab.HostOutOfScopeError: *host_id* is in the lab but outside this
+            run's scope (a :class:`KeyError`).
+        KeyError: No host in the lab has *host_id*.
     """
     from .run_context import get_context
 
@@ -243,8 +251,15 @@ def get_host(
     )
 
 
-def get_lab() -> "Lab":
-    """Return the active lab from the current OttoContext."""
+def get_lab() -> "LabView":
+    """Return the active context's lab, as :attr:`otto.context.OttoContext.lab` reads it.
+
+    In a scoped command it is a :class:`~otto.lab.ScopedLab`: its ``hosts``
+    holds only the hosts this run targets, and its links only those that stay
+    among them. In an unscoped command it is the canonical
+    :class:`~otto.labs.loader.Lab`. ``otto.context.get_context().unscoped.lab``
+    is the canonical lab in either.
+    """
     from .run_context import get_context
 
     return get_context().lab
@@ -290,7 +305,7 @@ names what was passed, so a caller can tell a typo from a project it forgot."""
 
 
 def fleet_of_interest(
-    lab: "Lab",
+    lab: "LabView",
     *,
     projects: "list[Project]",
     owner: str | None = None,
@@ -306,19 +321,20 @@ def fleet_of_interest(
     the same lab, projects and ``-E`` set, in the lab's order; with *owner* set,
     the ids ``ctx.for_project(owner).all_hosts()`` yields. It is the walk's own
     computation, not a copy of it: the admissible set comes from
-    :func:`otto.config.scope.scoped_ids`, which the walk's base set
+    ``otto.host.builtin_hosts.admitted_ids``, which the walk's base set
     (:meth:`otto.context.OttoContext.admissible_ids`) reads too, and the
     membership flags from the one rule the walk applies.
 
     Three differences are deliberate:
 
-    * **An empty declared fleet** is an answer, ``[]``. The walk refuses it,
+    * **An empty declared fleet** (nothing in play, the runner aside) is an
+      answer, ``[]``. The walk refuses it,
       because a walk that touches nothing is a silent failure; a query that
       returns an empty list is not silent.
     * **An unknown owner** is refused even when *projects* is empty. A context
       that could not reach its projects falls back to the whole lab; a caller
       that passed *projects* has reached them, so the whole lab would widen.
-    * **The library sentinel lab** (``otto.run_context.LIBRARY_LAB_NAME``) gets no
+    * **The library sentinel lab** (``otto.invocation.LIBRARY_LAB_NAME``) gets no
       special case. A context on it walks its whole lab; this function scopes
       the lab it is given.
 
@@ -331,6 +347,9 @@ def fleet_of_interest(
 
     Args:
         lab: The loaded lab. Its ``hosts`` are read as they stand at the call.
+            A scoped view (``otto.get_lab()`` in a scoped command) is read
+            through to the canonical lab it reads, so *projects* alone decide
+            the answer, as they decide the walk's.
         projects: The projects whose ``[project]`` declarations scope the lab.
         owner: A ``Project.name`` exactly as declared (it is never normalized),
             for that one project's fleet, which also admits the containers that
@@ -342,10 +361,10 @@ def fleet_of_interest(
             *owner* is set, as in the walk. A name that matches no project is
             ignored: validating it is the CLI's job.
         include_containers: Also answer the container hosts the scope admits.
-        include_local: Also answer the built-in ``local`` host when the scope
-            admits it. With no declaration it always does; under one it
-            depends on ``local``'s stamped ``source_lab``. The flag never adds
-            a host the scope excluded.
+        include_local: Also answer the built-in ``local`` host, and with
+            *include_containers* the containers on it. The scope admits the
+            runner by identity, whatever any ``host_patterns`` say and in
+            either ``-l`` component order, so the flag alone decides.
 
     Returns:
         The host ids, in the lab's order. Possibly empty.
@@ -360,8 +379,8 @@ def fleet_of_interest(
     >>> from otto.labs.loader import Lab
     >>> from otto.config.scope import ProjectScopeConfig
     >>> hosts = {
-    ...     "sensor-1": types.SimpleNamespace(source_lab="bench"),
-    ...     "gw-1": types.SimpleNamespace(source_lab="bench"),
+    ...     "sensor-1": types.SimpleNamespace(id="sensor-1", source_lab="bench"),
+    ...     "gw-1": types.SimpleNamespace(id="gw-1", source_lab="bench"),
     ... }
     >>> lab = Lab(name="bench", hosts=hosts)
     >>> sensors = types.SimpleNamespace(  # only .name/.project_scope/.root are read
@@ -375,19 +394,24 @@ def fleet_of_interest(
     ['sensor-1', 'gw-1']
     """
     # function-scope: keeps this module import-light
-    from .config.scope import ProjectScopeError, resolve_scopes, scoped_ids
-    from .host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, _flag_holding_out
-
-    # The verdicts the walk's context resolves (``scopes_of(ctx)``), with
-    # the same ``local`` exclusion, so the two read identical data.
-    scopes = resolve_scopes(
-        projects,
-        lab.component_names,
-        lab.hosts,
-        exclude_ids=frozenset({BUILTIN_LOCAL_HOST_ID}),
+    from .config.scope import ProjectScopeError
+    from .host.builtin_hosts import (
+        _flag_holding_out,
+        admitted_ids,
+        lab_scopes,
+        require_nonempty_in_play,
     )
+    from .lab_view import whole_lab
+
+    # The walk reads the canonical lab; a view would narrow it by the run's
+    # scope before *projects* are asked.
+    whole = whole_lab(lab)
+
+    # The verdicts the walk's context resolves (``scopes_of(ctx)``), through
+    # the same function, so the two read identical data.
+    scopes = lab_scopes(projects, component_names=whole.component_names, hosts=whole.hosts)
     if owner is not None and owner not in scopes:
-        # Checked here, before ``scoped_ids``: its own refusal stands down over
+        # Checked here, before ``admitted_ids``: its own refusal stands down over
         # empty scopes, a leniency for a context that could not reach its
         # projects. This caller handed them over.
         raise ProjectScopeError(
@@ -396,12 +420,20 @@ def fleet_of_interest(
                 owner=owner, known=", ".join(sorted(scopes)) or "(none)"
             ),
         )
-    admissible = scoped_ids(
-        lab.hosts, scopes, owner, exclude_projects=tuple(exclude_projects or ())
-    )
+    excluded = tuple(exclude_projects or ())
+    admissible = admitted_ids(whole.hosts, scopes, owner, exclude_projects=excluded)
+    try:
+        # The walk's own refusal, over the same hosts in play: where it would
+        # refuse an empty declared fleet, the query answers that fleet, [],
+        # even when the runner (admitted by identity) is all that is left.
+        require_nonempty_in_play(
+            admissible, hosts=whole.hosts, scopes=scopes, owner=owner, exclude_projects=excluded
+        )
+    except ProjectScopeError:
+        return []
     return [
         host_id
-        for host_id, host in lab.hosts.items()
+        for host_id, host in whole.hosts.items()
         if host_id in admissible
         and _flag_holding_out(
             host, include_containers=include_containers, include_local=include_local, owner=owner

@@ -327,3 +327,106 @@ def test_run_is_registered_with_async_leaves_and_test_is_not():
     register_builtin_commands()
     assert CLI_COMMANDS.get("run").async_leaves is True
     assert CLI_COMMANDS.get("test").async_leaves is False
+
+
+# ── The scope switch: scoped by default, opted out by name ───────────────────
+# The new names are imported inside each test, so every other test in this
+# module still runs where they do not exist yet.
+
+
+def test_command_spec_scoped_defaults_true():
+    """A command is scoped unless its registration says otherwise."""
+    register_cli_command("d-scoped", typer.Typer(name="d-scoped"))
+    assert CLI_COMMANDS.get("d-scoped").scoped is True
+    assert CommandSpec(name="x", loader=None).scoped is True
+
+
+def test_register_cli_command_scoped_false():
+    register_cli_command("d-unscoped", typer.Typer(name="d-unscoped"), scoped=False)
+    assert CLI_COMMANDS.get("d-unscoped").scoped is False
+
+
+def test_cli_command_forwards_scoped():
+    """``@cli_command`` hands ``scoped`` to the registration it makes, as it does ``gate``."""
+
+    @cli_command(name="_unit_unscoped", lab_free=True, scoped=False)
+    def _unit_unscoped() -> None:  # pragma: no cover — registered, never run
+        pass
+
+    @cli_command(name="_unit_scoped", lab_free=True)
+    def _unit_scoped() -> None:  # pragma: no cover — registered, never run
+        pass
+
+    assert CLI_COMMANDS.get("_unit_unscoped").scoped is False
+    assert CLI_COMMANDS.get("_unit_scoped").scoped is True
+
+
+def test_leaf_attr_opts_out_one_leaf():
+    """``__cli_scoped__ = False`` opts one leaf out under a scoped group, and only it.
+
+    A leaf cannot opt back in under an unscoped group (the shape of
+    ``__cli_gate__``), and no spec at all reads as scoped.
+    """
+    from otto.cli.invoke import SCOPED_ATTR, leaf_is_scoped
+
+    def plain() -> None:  # pragma: no cover — read, never run
+        pass
+
+    def opted_out() -> None:  # pragma: no cover — read, never run
+        pass
+
+    setattr(opted_out, SCOPED_ATTR, False)
+    scoped = CommandSpec(name="s", loader=None)
+    unscoped = CommandSpec(name="u", loader=None, scoped=False)
+
+    assert SCOPED_ATTR == "__cli_scoped__"
+    assert leaf_is_scoped(scoped, plain) is True
+    assert leaf_is_scoped(scoped, opted_out) is False
+    assert leaf_is_scoped(scoped, None) is True
+    assert leaf_is_scoped(unscoped, plain) is False
+    assert leaf_is_scoped(None, None) is True
+    assert leaf_is_scoped(None, opted_out) is False
+
+
+def test_builtin_opt_outs_are_exactly_init_env_cache_lab():
+    """The four first-party commands that diagnose every source opt out; no other does."""
+    from otto.cli.builtin_commands import builtin_command_names
+
+    names = builtin_command_names()
+    assert {name for name in names if not CLI_COMMANDS.get(name).scoped} == {
+        "init",
+        "env",
+        "cache",
+        "lab",
+    }
+
+
+def test_every_builtin_registration_but_the_four_scoped_by_omission():
+    """Every first-party registration but the four opt-outs says nothing about scope.
+
+    Scoped by omission, as a plugin's is: a built-in that wrote ``scoped=True``
+    would be relying on a keyword a plugin never writes. Read from the source,
+    so it holds whether or not the keyword exists.
+    """
+    import ast
+    import inspect
+
+    from otto.cli import builtin_commands
+
+    tree = ast.parse(inspect.getsource(builtin_commands))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "register_cli_command"
+    ]
+    names = [call.args[0].value for call in calls if isinstance(call.args[0], ast.Constant)]
+    assert len(names) == len(calls) == 15, names
+    saying = {
+        call.args[0].value
+        for call in calls
+        if isinstance(call.args[0], ast.Constant)
+        and any(keyword.arg == "scoped" for keyword in call.keywords)
+    }
+    assert saying <= {"init", "env", "cache", "lab"}, saying

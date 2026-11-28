@@ -287,8 +287,9 @@ do:
 - **Never report success over nothing.** A `pattern=` that selects no host
   raises, because a silently empty sweep is the one failure worse than a
   crash: it reports success over a lab nothing happened on.
-- **Never let scoping lock anyone out.** Explicit targeting is never scoped
-  ({doc}`bootstrap`, "Project activation"). A driving project whose
+- **Never let scoping lock anyone out.** Explicit targeting is scoped, but a
+  hop needs only lab membership, and the recovery commands still run when
+  nothing is in scope ({ref}`project-scope-empty`). A driving project whose
   declaration admits no host aborts, but a dependency's is only skipped — one
   project's scoping must not veto another project's run.
 - **Never blur install state.** `status` exits with three codes rather than a

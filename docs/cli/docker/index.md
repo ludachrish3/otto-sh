@@ -119,16 +119,27 @@ otto host test3 exec "docker ps --format '{{.ID}} {{.Names}}'"
 
 Every docker verb runs on one **parent** — a docker-capable lab host, the
 one whose daemon holds the containers. Name it with `--parent HOST`. When
-you omit it, otto uses the lab selection's only docker-capable host, or, when
-there are several, the one whose `docker_priority` in `lab.json` is strictly
-highest. A tie at the top (every host at the default `0` counts) is refused
+you omit it, otto uses the only docker-capable host the run may target, or,
+when there are several, the one whose `docker_priority` in `lab.json` is
+strictly highest. A tie at the top (every host at the default `0` counts) is refused
 with the tied hosts named — otto never picks a host by file order. A use-case
 deploys on one parent; a deployment that spans hosts is two use-cases, each
 brought up with its own `--parent`.
 
+The candidates are the hosts the run may target: when a project declares a
+`[project]` scope ({ref}`project-scope`), a docker-capable host outside it is
+never the default, and `--parent` naming one is refused with exit 2 and the
+scope's own out-of-scope text ({ref}`project-scope-hosts`). When the lab's
+only docker-capable hosts are all outside the scope, the verb refuses with
+exit 2, naming them and the settings files to widen:
+
+```text
+no docker-capable host in lab 'bench' is in scope; capable but outside: test3; widen host_patterns in /home/me/proj/.otto/settings.toml
+```
+
 `ps`, `compose ps` and the `image` verbs (`image ls`/`images`, `image rm`,
 `image prune`) are the exception: without `--parent` they run on every
-docker-capable host in the lab.
+docker-capable host the run may target.
 
 A `docker_image` product ({ref}`docker-image-kind`) runs its image on the
 host its [`match`](../../configuration/declared-products-tools.md#matching)
@@ -186,6 +197,7 @@ otto docker compose logs  [USE_CASE [SERVICE]...] [--tail N] [--since WHEN]
                           [--provide CAP=PROJECT]...
 ```
 
+(docker-container-hosts)=
 ## Container hosts
 
 After `otto docker compose up`, the resulting containers appear in `--list-hosts`
@@ -200,13 +212,22 @@ otto host test3.integration.api put ./local /remote/path
 otto host test3.integration.api get /etc/os-release ./
 ```
 
-A declared container's id exists before any `otto docker compose up`: otto
-derives it when the lab loads, under the default parent
-({ref}`Which host <docker-which-host>`), so `--list-hosts` and tab completion
-show it at once. A lab whose default-parent rule refuses has no such ids until
-a stack is up. Using a container whose stack is not running fails at once,
-because otto never starts a container for you
-({ref}`docker-start-first`).
+Unless the default-parent rule ({ref}`Which host <docker-which-host>`)
+refuses, a declared container's id exists before any `otto docker compose
+up`: otto derives it when the lab loads, under the default parent, so
+`--list-hosts` and tab completion show it at once. A lab whose rule refuses
+has no such ids until a stack is up.
+
+Which projects get these ids is judged from the loaded labs and the `-I` /
+`-E` switches, before the lab's hosts are read: a project outside the loaded
+lab's `lab_patterns`, or switched off with `-E`, gets none, and
+`-I <project>` brings one back. So a project whose `host_patterns` match no
+host in the loaded lab still gets ids, under the parent another project puts
+in scope, though it does not take part in the run
+({ref}`project-scope-active`) and the docker verbs do not deploy it.
+
+Using a container whose stack is not running fails at once, because otto
+never starts a container for you ({ref}`docker-start-first`).
 
 A container host has no connection of its own: each command and file transfer
 runs on its parent as `docker exec` or `docker cp`.

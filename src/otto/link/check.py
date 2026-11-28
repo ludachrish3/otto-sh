@@ -96,7 +96,7 @@ from .sandbox import (
 )
 
 if TYPE_CHECKING:
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
 
 FEATURES = [
     "read-back", "delay", "jitter", "loss", "duplicate", "reorder",
@@ -558,7 +558,7 @@ def _dry_run_plan(
 
 async def check_link(
     *,
-    lab: "Lab",
+    lab: "LabView",
     ident: str,
     live: bool = False,
     features: list[str] | None = None,

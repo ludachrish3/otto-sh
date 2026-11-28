@@ -81,6 +81,7 @@ import importlib.util
 import re
 from pathlib import Path
 
+from tests._fixtures.import_walk import module_of, resolve_import
 from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
 SRC_ROOT = CHECKOUT_ROOT / "src" / "otto"
@@ -192,11 +193,6 @@ def _gone(module: str) -> bool:
     return any(module == gone or module.startswith(gone + ".") for gone in GONE)
 
 
-def _module_of(path: Path) -> str:
-    """``otto.a.b`` for ``src/otto/a/b.py``; ``otto.a.__init__`` for a package init."""
-    return ".".join(path.relative_to(SRC_ROOT.parent).with_suffix("").parts)
-
-
 class _OldSpellings(ast.NodeVisitor):
     """Collect ``(line, what)`` for every old spelling in one file."""
 
@@ -210,13 +206,11 @@ class _OldSpellings(ast.NodeVisitor):
         self.found: list[tuple[int, str]] = []
 
     def _source(self, node: ast.ImportFrom) -> "str | None":
-        if node.level == 0:
-            return node.module or ""
-        if self.module is None:
+        if node.level and self.module is None:
             return None
-        # A package init is "<pkg>.__init__", so one level up is the package itself.
-        base = ".".join(self.module.split(".")[: -node.level])
-        return f"{base}.{node.module}" if node.module else base
+        # A package init is "<pkg>.__init__", so its package is one level up.
+        package = ".".join((self.module or "").split(".")[:-1])
+        return resolve_import(package, node)
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -297,7 +291,7 @@ def old_spellings(source: str, module: "str | None") -> list[tuple[int, str]]:
 
 def _corpus() -> "list[tuple[Path, str | None]]":
     files: list[tuple[Path, str | None]] = [
-        (path, _module_of(path)) for path in sorted(SRC_ROOT.rglob("*.py"))
+        (path, module_of(path)) for path in sorted(SRC_ROOT.rglob("*.py"))
     ]
     files += [(path, None) for path in sorted(TESTS_ROOT.rglob("*.py")) if path != THIS_FILE]
     return files

@@ -331,7 +331,7 @@ class Project:
     """Compiled ``[project]`` declaration — the labs and hosts this project targets.
 
     ``None`` when the project declares no ``[project]`` table, which every
-    consumer reads through :func:`otto.config.scope.project_targets` as "targets
+    consumer reads through :func:`otto.config.scope.host_targeted` as "targets
     everything"; that is what the whole-lab fallback for product-less projects is
     built on. Membership is never re-derived from this by hand — the predicate
     is the only reader of the patterns."""

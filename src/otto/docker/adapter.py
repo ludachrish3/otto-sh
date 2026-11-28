@@ -15,10 +15,11 @@ from typing_extensions import final
 
 from ..registry import (
     Justified,
+    Proposed,
     Registry,
     RequireProject,
-    get_registering_project,
     registration_boundary,
+    registration_owner,
 )
 
 
@@ -55,9 +56,11 @@ class ComposeAdapterEntry:
     """The adapter, which takes plain-data facts and returns an :class:`AdapterResult`."""
 
 
-def _check_adapter_entry(name: str, entry: ComposeAdapterEntry, _proposed: object) -> None:
-    """Refuse a key that is not the registering project joined with the record's use case."""
-    if ":" in entry.use_case or name != f"{get_registering_project()}:{entry.use_case}":
+def _check_adapter_entry(
+    name: str, entry: ComposeAdapterEntry, proposed: "Proposed[ComposeAdapterEntry]"
+) -> None:
+    """Refuse a key that is not the registration's owner joined with the record's use case."""
+    if ":" in entry.use_case or name != f"{proposed.owner}:{entry.use_case}":
         raise ValueError(
             f"compose adapter key {name!r} does not match its project and use case "
             f"{entry.use_case!r}"
@@ -109,8 +112,8 @@ def register_compose_adapter(
 
     @registration_boundary
     def _register(fn: ComposeAdapter) -> ComposeAdapter:
-        project = get_registering_project()
-        # Outside an init import the engine refuses before the key is checked,
+        project = registration_owner()
+        # With no owner the engine refuses before the key is checked,
         # and its message names the bare use case rather than a "None:" key.
         key = f"{project}:{use_case}" if project is not None else use_case
         COMPOSE_ADAPTERS.register(

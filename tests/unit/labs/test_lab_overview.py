@@ -138,3 +138,32 @@ def test_a_lab_with_no_links_has_no_links_branch() -> None:
     text = console.export_text()
     assert "links" not in text
     assert "local" in text
+
+
+def test_show_lab_hosts_targetable_and_links_filtered(monkeypatch, tmp_path: Path) -> None:
+    """``--show-lab`` draws the scoped view: no out-of-scope host, no link that touches one."""
+    from tests._fixtures.fleet import dispatch_root, scope_workspace
+
+    ws = scope_workspace(tmp_path)
+    ws.lab.links.append(Link(a=LinkEndpoint("a-dut"), b=LinkEndpoint("local"), name="kept"))
+    ws.lab.links.append(Link(a=LinkEndpoint("a-dut"), b=LinkEndpoint("a-jump"), name="dropped"))
+
+    overview = lab_overview(ws.ctx.lab)
+    assert [h.id for h in overview.hosts] == ["a-dut", "local"]
+    assert [link.id for link in overview.links] == ["kept"]
+
+    result = dispatch_root(
+        monkeypatch,
+        ["--show-lab"],
+        lab=ws.lab,
+        projects=[ws.inscope, ws.outscope],
+        env={"COLUMNS": "240"},
+    )
+    assert result.exit_code == 0, (result.output, repr(result.exception))
+    # The fleet INFO line names the host outside the scope, and a-dut's address says it hops
+    # through it; the drawn tree must hold no node for it.
+    tree = [line for line in result.stdout.splitlines() if line.startswith("\u2502")]
+    assert any("\u2500\u2500 a-dut" in line for line in tree)
+    assert any("kept" in line for line in tree)
+    assert not any("\u2500\u2500 a-jump" in line for line in tree)
+    assert not any("dropped" in line for line in tree)

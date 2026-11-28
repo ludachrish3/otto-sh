@@ -84,12 +84,45 @@ class TestRepairCommand:
         result = runner.invoke(link_app, ["repair", "edge", "--all"])
         assert result.exit_code == 2
 
+    def test_repair_reads_the_unscoped_lab(self, monkeypatch) -> None:
+        """``repair`` and ``repair --all`` act on the run's whole lab, past any scope.
+
+        An impairment otto placed stays clearable after its link's hosts leave
+        the run's scope. ``OttoContext.unscoped`` is a stand-in over a lab
+        other than ``ctx.lab``, so the lab each library call is handed shows
+        which one the command read.
+        """
+        from types import SimpleNamespace
+
+        from otto.context import OttoContext
+        from otto.labs.loader import Lab
+        from otto.link import RepairAllReport, RepairReport
+
+        whole = Lab(name="rig")
+        monkeypatch.setattr(
+            OttoContext,
+            "unscoped",
+            property(lambda _ctx: SimpleNamespace(lab=whole)),
+            raising=False,
+        )
+        sweep = AsyncMock(return_value=RepairAllReport())
+        one = AsyncMock(return_value=RepairReport("lnk-abc"))
+        with (
+            active_context(Lab(name="rig")),
+            patch("otto.cli.link.repair_all", sweep),
+            patch("otto.cli.link.repair_link", one),
+        ):
+            assert runner.invoke(link_app, ["repair", "--all"]).exit_code == 0
+            assert runner.invoke(link_app, ["repair", "edge"]).exit_code == 0
+        assert sweep.call_args.kwargs["lab"] is whole
+        assert one.call_args.args[0] is whole
+
     def test_repair_all_failures_exit_1(self) -> None:
         from otto.link import RepairAllReport
 
         sweep = RepairAllReport(failures=["lnk-abc: host down"])
         with (
-            patch("otto.fleet.get_lab", return_value=object()),
+            active_context(),
             patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
         ):
             result = runner.invoke(link_app, ["repair", "--all"])
@@ -106,7 +139,7 @@ class TestRepairCommand:
             skipped=["lnk-abc: test1/eth1.100 has a foreign qdisc otto did not create"]
         )
         with (
-            patch("otto.fleet.get_lab", return_value=object()),
+            active_context(),
             patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
         ):
             result = runner.invoke(link_app, ["repair", "--all"])
@@ -130,7 +163,7 @@ class TestRepairCommand:
             ]
         )
         with (
-            patch("otto.fleet.get_lab", return_value=object()),
+            active_context(),
             patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
         ):
             result = runner.invoke(link_app, ["repair", "--all"])
@@ -157,7 +190,7 @@ class TestRepairCommand:
             ],
         )
         with (
-            patch("otto.fleet.get_lab", return_value=object()),
+            active_context(),
             patch("otto.cli.link.repair_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["repair", "edge"])
@@ -177,7 +210,7 @@ class TestRepairCommand:
             cleared=[Placement("test1", "bbeth-1350", FlowDirection.A_TO_B)],
         )
         with (
-            patch("otto.fleet.get_lab", return_value=object()),
+            active_context(),
             patch("otto.cli.link.repair_link", AsyncMock(return_value=report)),
         ):
             result = runner.invoke(link_app, ["repair", "edge"])
@@ -416,7 +449,7 @@ class TestScopedCli:
 
         mock = AsyncMock(return_value=RepairReport("lnk-abc"))
         with (
-            patch("otto.fleet.get_lab", return_value=object()),
+            active_context(),
             patch("otto.cli.link.repair_link", mock),
         ):
             result = runner.invoke(link_app, ["repair", "edge", "--port", "53", "--proto", "udp"])
@@ -432,7 +465,7 @@ class TestScopedCli:
 
         mock = AsyncMock(return_value=RepairReport("lnk-abc"))
         with (
-            patch("otto.fleet.get_lab", return_value=object()),
+            active_context(),
             patch("otto.cli.link.repair_link", mock),
         ):
             result = runner.invoke(
@@ -936,10 +969,7 @@ class TestDryRunRendering:
 
     @staticmethod
     def _dry_invoke(lab, args: list[str]):
-        with (
-            active_context(dry_run=True),
-            patch("otto.fleet.get_lab", return_value=lab),
-        ):
+        with active_context(lab, dry_run=True):
             return runner.invoke(link_app, args)
 
     def test_impair_prints_the_plan_and_no_green_impaired_line(self) -> None:
@@ -1002,7 +1032,7 @@ class TestDryRunRendering:
             "the skip itself is lab data and must still be reported"
         )
 
-        with patch("otto.fleet.get_lab", return_value=_bed(link=bare)[0]):
+        with active_context(_bed(link=bare)[0]):
             real = runner.invoke(link_app, ["repair", "--all"])
         assert "repaired 0 link(s)" in real.output, (
             "the control: without it, a renderer that had lost the success line "
@@ -1020,7 +1050,7 @@ class TestDryRunRendering:
 
         sweep = RepairAllReport(repaired=[RepairReport("lnk-abc")])
         with (
-            patch("otto.fleet.get_lab", return_value=object()),
+            active_context(),
             patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
         ):
             result = runner.invoke(link_app, ["repair", "--all"])

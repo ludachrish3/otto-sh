@@ -47,10 +47,11 @@ either way
 {doc}`../configuration/declared-products-tools`.
 
 Declaring a product makes the `[project]` table required — the project has to say
-which labs and hosts it is speaking for. The worked example declares it as
-`lab_patterns = ["busybox"]` and `host_patterns = ["bb.*-qemu"]`, both
-fullmatched regexes, defined in {ref}`project-scope` in
-{doc}`../configuration/lab-config`.
+which labs and hosts it is speaking for. The worked example declares the
+four labs it works in and the boards it works on, in `lab_patterns` and
+`host_patterns`, both fullmatched regexes, defined in {ref}`project-scope` in
+{doc}`../configuration/lab-config`; {doc}`../developing/bed-case-study/boards-of-interest`
+shows the table.
 
 ### When a command string is not enough
 

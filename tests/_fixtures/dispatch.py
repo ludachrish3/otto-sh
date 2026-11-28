@@ -104,6 +104,7 @@ class DispatchRunner(CliRunner):
         dry_run_preview: bool | None = None,
         lab_free: bool = True,
         accepts_options: bool | None = None,
+        scoped: bool = True,
         under_root: bool = False,
         **extra: Any,
     ) -> Result:
@@ -148,6 +149,10 @@ class DispatchRunner(CliRunner):
         harness run of a command whose shipped registration offers the flags of
         registered options classes (``run``, a lab-bound plugin).
 
+        *scoped* is the synthetic spec's own ``CommandSpec.scoped``: ``False``
+        drives the command as one registered ``scoped=False``. The preamble
+        reads the leaf's verdict off this spec, as it reads the gate's.
+
         *under_root* nests the dispatched command under a bare ``otto`` group,
         so *args* start with the command's own name (``["test", ...]``) and the
         click context chain is root → command, as on the real CLI. A reader that
@@ -165,6 +170,7 @@ class DispatchRunner(CliRunner):
             loader=app,
             lab_free=lab_free,
             accepts_options=accepts_options,
+            scoped=scoped,
             output_dir=False,
             async_leaves=async_leaves,
             dry_run_preview=(

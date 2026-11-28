@@ -1403,7 +1403,7 @@ class TestCovGetContainerOnlyPattern:
         token = set_context(OttoContext(lab=lab))
         try:
             with (
-                patch("otto.declared.current_projects", return_value=[project]),
+                patch("otto.declared.unscoped_projects", return_value=[project]),
                 patch(
                     "otto.coverage.capture.gitio.head_commit", return_value="c0ffee" * 6 + "abcd"
                 ),
@@ -1447,7 +1447,7 @@ class TestCovEmptySelectionCliWording:
         token = set_context(OttoContext(lab=lab))
         try:
             with (
-                patch("otto.declared.current_projects", return_value=[project]),
+                patch("otto.declared.unscoped_projects", return_value=[project]),
                 patch.object(cov_module.logger, "error") as mock_err,
             ):
                 result = runner.invoke(cov_app, ["clean"])

@@ -105,6 +105,11 @@ inventory physical: live
 The lab is the one the global `-l`/`--lab` option names, written before
 `lab`, as for every other command. `explain` has no `--lab` option of its own,
 and an unknown or missing lab fails exactly as it does for any other command.
+An id the lab does not hold fails with exit 1, naming every lab host, for
+example
+`No host 'east-r7-dut9' in lab 'router-lab.east-r7'. Available: ['east-r7-dut0', 'east-r7-dut1']`.
+`explain` is not scoped: it explains any lab host, one no project targets
+included ({ref}`project-scope-exceptions`).
 The lab loads exactly as a run loads it, and the answer comes from that load:
 nothing is loaded a second time.
 

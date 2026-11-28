@@ -2290,8 +2290,14 @@ def _declared_container_ids(project: "Project", parents: list[str]) -> list[str]
     #
     # *parents* is the lab's default parent by the one rule (at most one), and
     # `register_declared_container_hosts` registers its use-case AND legacy
-    # placeholders under that same one parent, so these are exactly the ids it
-    # registers: a lab the rule refuses passes none and gets none.
+    # placeholders under one parent too: a lab the rule refuses passes none and
+    # gets none. The mirror is canonical: it reads the whole lab and every
+    # project, with no participation filter. Placement narrows by the run's
+    # scope: only projects that take part, under a parent chosen among the
+    # hosts in scope. That parent can differ from the whole lab's, so a
+    # scoped run may register DIFFERENT ids from the ones completion offers
+    # (another <parent> segment), not merely fewer; a hint that misses the
+    # scoped parent's ids is a known, deferred gap.
     middles_for: "dict[str, set[str]]" = {}  # service -> id middle segments
     # getattr, like `docker_settings` above: this is the completion fast
     # path, which must not crash on a settings object that predates the

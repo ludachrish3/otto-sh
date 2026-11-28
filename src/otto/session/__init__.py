@@ -5,8 +5,9 @@ otto.session — the decisions that prepare a run, shared by the CLI and the lib
 call the same functions in the same order:
 :func:`select_projects` (the project switches), :func:`check_projects` (a broken
 active project stops the run), :func:`build_lab` (the projects' lab sources, host
-preferences, inventory and declared containers), then, once the context is
-installed, :func:`check_dependencies`. A library
+preferences, inventory and declared containers, placed under the run's
+:class:`ScopeSelection`), then, once the context is installed,
+:func:`check_dependencies`. A library
 caller who wants otto's console calls :func:`install_logging`. Nothing here
 prints or exits; every refusal is a typed :class:`~otto.errors.OttoError`
 carrying its facts as attributes.
@@ -17,6 +18,7 @@ Every name is exported lazily (PEP 562); see ``otto.config``'s ``__dir__``.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from ..config.scope import ScopeSelection as ScopeSelection
     from .activation import check_instruction_active as check_instruction_active
     from .dependencies import check_dependencies as check_dependencies
     from .errors import DependencyRefusedError as DependencyRefusedError
@@ -51,6 +53,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "ProjectCheck": "otto.session.projects",
     "ProjectLoadError": "otto.session.errors",
     "RequiredProject": "otto.session.projects",
+    "ScopeSelection": "otto.config.scope",
     "BuiltLab": "otto.session.lab",
     "build_lab": "otto.session.lab",
     "build_lab_and_view": "otto.session.lab",
@@ -91,6 +94,7 @@ __all__ = [
     "ProjectSelection",
     "ProjectSelectionError",
     "RequiredProject",
+    "ScopeSelection",
     "build_lab",
     "build_lab_and_view",
     "check_dependencies",

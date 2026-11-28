@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from ..lab_view import LabView
     from ..link.model import LinkEndpoint
-    from .loader import Lab
 
 LOCAL_ADDRESS = "this machine"
 """The address cell of the built-in ``local`` host, which otto reaches without a network."""
@@ -91,7 +91,7 @@ def _endpoint(end: "LinkEndpoint") -> str:
     return f"{end.host}:{end.interface}" if end.interface else end.host
 
 
-def lab_overview(lab: "Lab") -> LabOverview:
+def lab_overview(lab: "LabView") -> LabOverview:
     """Return *lab*'s hosts and links as :class:`LabOverview` values, contacting nothing."""
     hosts = [
         HostOverview(

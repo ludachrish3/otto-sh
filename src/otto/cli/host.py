@@ -5,7 +5,7 @@ Commands are synthesised dynamically from ``@cli_exposed`` methods on the
 resolved host's class — see ``otto.cli.expose``.
 """
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
 from rich import print as rprint
@@ -84,7 +84,7 @@ def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
 
 host_app = typer.Typer(
     name="host",
-    help="Run commands and transfer files on lab hosts.",
+    help="Run commands and transfer files on the lab hosts in this run's scope.",
     cls=HostGroup,
     context_settings={
         "help_option_names": ["-h", "--help"],
@@ -92,28 +92,51 @@ host_app = typer.Typer(
 )
 
 
-def _resolve_host(host_id: str) -> "UnixHost":
+def _resolve_target(host_id: str) -> "UnixHost":
+    """Resolve the target through the run's scoped lookup; a miss refuses with exit 1.
+
+    A host outside the run's scope prints its refusal, which names why and
+    the fix. Any other miss prints "No host with ID" over the ids the lookup
+    could have found, the hosts the run may target: the ones the lookup's own
+    error carries, else the run's targetable ids.
+    """
+    from ..config.scope import HostOutOfScopeError
     from ..fleet import get_host
-    from ..run_context import get_context
+    from ..host.targeting import UnknownHostError
+    from .host_lookup import refuse_target
 
     try:
         return get_host(host_id)
-    except KeyError:
-        print_error(f"No host with ID {host_id!r}.")
-        rprint("Available hosts:")
-        # The lab's mapping directly, NOT `all_hosts`: this listing enumerates
-        # what `otto host <id>` can ADDRESS, and explicit targeting is
-        # deliberately unscoped by the project-universe design — so a host
-        # outside every project's fleet of interest must still be offered here,
-        # exactly as `get_host` would still resolve it. Going through the fleet
-        # generator would also make this error path raise its own error when
-        # the universe came out empty, replacing "No host with ID x" with a
-        # scoping complaint about a lab the user was not asking about.
-        from ..console import print_literal
+    except HostOutOfScopeError as refused:
+        refuse_target(refused)
+    except KeyError as missed:
+        if isinstance(missed, UnknownHostError):
+            _refuse_unknown_host(missed.host_id, available=missed.available)
+        from ..run_context import get_context
 
-        for known_id in get_context().lab.hosts:
-            print_literal(f"  - {known_id}")
-        raise typer.Exit(1) from None
+        _refuse_unknown_host(host_id, available=get_context().targetable_ids())
+
+
+def _resolve_hop(host_id: str) -> "RemoteHost":
+    """Resolve a ``--hop`` through the shared hop lookup; a miss refuses like a target's."""
+    from ..host.targeting import UnknownHostError
+    from .host_lookup import hop_host
+
+    try:
+        return hop_host(host_id)
+    except UnknownHostError as missed:
+        _refuse_unknown_host(missed.host_id, available=missed.available)
+
+
+def _refuse_unknown_host(host_id: str, *, available: "list[str]") -> "NoReturn":
+    """Print that no host has *host_id*, list the *available* ids, and exit 1."""
+    from ..console import print_literal
+
+    print_error(f"No host with ID {host_id!r}.")
+    rprint("Available hosts:")
+    for known_id in available:
+        print_literal(f"  - {known_id}")
+    raise typer.Exit(1) from None
 
 
 @host_app.callback(invoke_without_command=True)
@@ -122,12 +145,16 @@ def main(
     host_id: Annotated[
         str,
         typer.Argument(
-            help="Host ID to operate on.",
+            help="Host ID to operate on: a host in this run's scope (see --list-hosts).",
             autocompletion=_host_id_completer,
         ),
     ] = "",
     hop: Annotated[
-        str, typer.Option("--hop", help="Host ID to use as an SSH hop to reach the target.")
+        str,
+        typer.Option(
+            "--hop",
+            help="Host ID to use as an SSH hop to reach the target: any lab host, in scope or not.",
+        ),
     ] = "",
     term: Annotated[
         str | None,
@@ -169,9 +196,10 @@ def main(
         # carried until 2026-09-03 (the shape from before the lazy load) ran
         # before any context existed and tracebacked on the documented
         # `otto --lab L host --list-hosts`.
-        from .invoke import ensure_inline_lab
+        from .invoke import ensure_inline_lab, warn_empty_scope
 
         ensure_inline_lab(ctx)
+        warn_empty_scope()
         list_hosts_callback(True)
         raise typer.Exit
 
@@ -190,17 +218,21 @@ def main(
 def _check_named_host_reservations(ctx: typer.Context, named: "list[RemoteHost]") -> None:
     """Refuse an out-of-fleet named host whose slot is not held.
 
+    A scoped verb's target is in scope, but a ``--hop`` and the target of a
+    verb that opts out of scoping may be any lab host, so either may be
+    outside the fleet the preamble's gate covered.
     The rules are :meth:`otto.reservations.ReservationGate.check_hosts`'s.
     Local imports: ``otto host`` is a budgeted import surface.
     """
     gate = ctx.meta.get("otto_reservation")
     if gate is None:
         return
-    from ..fleet import get_lab
-    from ..reservations.check import MissingReservationError
+    from ..reservations.check import MissingReservationError, requirement_lab
+    from ..run_context import get_context
 
     try:
-        gate.check_hosts(lab=get_lab(), hosts=named)
+        # The whole lab: a named host, or its hop, may be one no project targets.
+        gate.check_hosts(lab=requirement_lab(get_context()), hosts=named)
     except MissingReservationError as e:
         fail(e)
 
@@ -229,14 +261,14 @@ def resolve_cli_host(ctx: typer.Context) -> "RemoteHost":
     from ..run_context import _apply_option_overrides
 
     request = ctx.meta["_otto_host_request"]
-    host: "RemoteHost" = _resolve_host(request["host_id"])
+    host: "RemoteHost" = _resolve_target(request["host_id"])
 
     # Resolved BEFORE the reservation check so the hop is one of the hosts
     # that check covers, and its id is what gets stored — a hop that names no
     # host therefore reports "No host with ID" ahead of any reservation
     # verdict, which is the same order the target already had.
     hop = request.get("hop")
-    hop_host: "RemoteHost | None" = _resolve_host(hop) if hop else None
+    hop_host: "RemoteHost | None" = _resolve_hop(hop) if hop else None
 
     # Before ANY connection is wired: a host the caller may not have is not a
     # host to start opening a session to — and `rebuild_connections` below

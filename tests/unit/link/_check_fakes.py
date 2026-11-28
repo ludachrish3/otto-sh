@@ -31,6 +31,7 @@ from otto.link.netem import netem_args, parse_qdisc_show
 from otto.link.params import ImpairmentParams
 from otto.link.sandbox import SWEEP_LIST_COMMAND, new_sandbox
 from otto.result import CommandResult, Results, Status
+from tests._fixtures.fleet import DoubleLab
 from tests.unit.check._fakes import ScriptedHost
 from tests.unit.check.test_fingerprint import MODERN
 
@@ -323,13 +324,7 @@ def _reply(cmd: str, output: str, *, ok: bool = True) -> CommandResult:
     )
 
 
-@dataclass
-class FakeLab:
-    hosts: dict
-    links: list
-
-    def static_links(self) -> list:
-        return list(self.links)
+FakeLab = DoubleLab
 
 
 EDGE = Link(

@@ -64,7 +64,7 @@ def test_the_pure_reader_takes_the_lists_as_they_are():
 
 def test_the_pure_reader_splits_nothing_and_ignores_what_is_not_a_list_of_strings():
     assert selection_from_params({"labs": "a", "include_projects": [3]}) == ScopeSelection(
-        (), (), ()
+        labs=(), include=(), exclude=()
     )
     assert selection_from_params({"include_projects": ["x,y"]}).include == ("x,y",)
 
@@ -129,7 +129,9 @@ def test_ottos_root_group_carries_the_root_marker():
 
 
 def test_a_root_that_is_not_ottos_answers_no_selection():
-    assert scope_selection(chain("flash", "erase")) == ScopeSelection((), (), ())
+    assert scope_selection(chain("flash", "erase")) == ScopeSelection(
+        labs=(), include=(), exclude=()
+    )
 
 
 def test_the_record_and_the_reader_agree(seen):
@@ -150,7 +152,7 @@ def test_no_lab_is_recorded_as_none():
         [(record, selection)] = plugin_commands.CALLS
     assert record is not None
     assert record.labs is None
-    assert selection == ScopeSelection((), (), ())
+    assert selection == ScopeSelection(labs=(), include=(), exclude=())
 
 
 # --- the validation takes the selection ---------------------------------------------
@@ -159,7 +161,7 @@ def test_no_lab_is_recorded_as_none():
 def test_validation_needs_no_root_record(monkeypatch, capsys):
     install_composed(monkeypatch, fake_bootstrap_result([fake_project("acme")]))
     with pytest.raises(typer.Exit) as e:
-        validate_project_switches(ScopeSelection((), ("acm",), ()))
+        validate_project_switches(ScopeSelection(labs=(), include=("acm",), exclude=()))
     captured = capsys.readouterr()
     assert e.value.exit_code == 2
     assert "acm" in captured.out + captured.err

@@ -17,6 +17,7 @@ from otto.config.scope import (
     announce_dropped,
     applies_to_any,
     applies_to_lab,
+    host_targeted,
     inactive_before_lab,
     inactive_reason,
     not_searched_line,
@@ -24,8 +25,11 @@ from otto.config.scope import (
     pre_lab_inactive_reason,
     pre_lab_reason_record,
     project_targets,
+    resolve_scopes,
+    scoped_ids,
     scopes_of,
     switched_off,
+    union_admits,
 )
 from otto.context import OttoContext
 from otto.host.element import Element
@@ -40,6 +44,34 @@ def _cfg(labs, hosts=(".*",)):
         lab_patterns=[re.compile(p) for p in labs],
         host_patterns=[re.compile(p) for p in hosts],
     )
+
+
+class _Untouchable:
+    """A host that fails the test on any attribute read, ``id`` and ``parent`` included."""
+
+    def __getattribute__(self, name):
+        raise AssertionError(f"an undeclared verdict read host.{name}")
+
+
+def test_host_targeted_undeclared_reads_no_attribute():
+    """No declaration admits a host before reading anything off it.
+
+    Load-bearing, not an optimization: hosts built before scoping carry no
+    ``source_lab``, and a world with zero declarations must not demand one.
+    The three functions driven over it (``resolve_scopes``, ``union_admits``
+    and ``scoped_ids``) inherit the short-circuit rather than restating it.
+    The walk's real base set reads more (each host's type and ``parent``, to
+    find the built-in runner), so it is not driven here.
+    """
+    host = _Untouchable()
+    plain = type("P", (), {"name": "plain", "root": "/p", "project_scope": None})()
+
+    assert host_targeted(None, host)
+    scopes = resolve_scopes([plain], ["a"], {"h": host})
+    assert scopes["plain"].universe == frozenset({"h"})
+    assert union_admits(host, scopes, exclude_projects=())
+    assert scoped_ids({"h": host}, scopes, None) == {"h"}
+    assert scoped_ids({"h": host}, scopes, "plain") == {"h"}
 
 
 def test_fullmatch_not_search_on_lab_names():
@@ -306,13 +338,14 @@ def test_exclude_ids_removes_a_host_the_patterns_admit(tmp_path):
     would pass just as well against a resolver that never saw the host.
 
     Why the mechanism is a caller-supplied id set rather than a check for the
-    built-in id in here: ``otto.config`` must not import ``otto.host``, and
-    ``local``'s ``source_lab`` stamp is CLI-order-dependent under ``-l a+b``,
+    built-in runner in here: ``otto.config`` must not import ``otto.host``, and
+    the runner's ``source_lab`` stamp is CLI-order-dependent under ``-l a+b``,
     so keying its membership on that stamp would make ``a+b`` and ``b+a``
-    resolve differently.
+    resolve differently. The list is the one the real caller passes,
+    ``builtin_ids``, which judges the runner by identity.
     """
     from otto.config.scope import resolve_scopes
-    from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, make_builtin_local_host
+    from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, builtin_ids, make_builtin_local_host
 
     project = _scoped_project(tmp_path, "sensors", labs=["bench"], hosts=[".*"])
     local = make_builtin_local_host()
@@ -322,9 +355,7 @@ def test_exclude_ids_removes_a_host_the_patterns_admit(tmp_path):
     admitted = resolve_scopes([project], ["bench"], hosts)["sensors"]
     assert BUILTIN_LOCAL_HOST_ID in admitted.universe
 
-    scoped = resolve_scopes(
-        [project], ["bench"], hosts, exclude_ids=frozenset({BUILTIN_LOCAL_HOST_ID})
-    )["sensors"]
+    scoped = resolve_scopes([project], ["bench"], hosts, exclude_ids=builtin_ids(hosts))["sensors"]
     assert scoped.universe == frozenset({"sensor-1"})
 
 
@@ -843,9 +874,11 @@ def test_participating_pre_lab_tier(tmp_path):
     (dropped,) = out.dropped
     assert isinstance(dropped, DroppedProject)
     assert dropped.reason == pre_lab_reason_record(scoped, "out_of_scope", labs=["y"])
-    forced = participating([scoped], selection=ScopeSelection(("y",), ("scoped",), ()))
+    forced = participating(
+        [scoped], selection=ScopeSelection(labs=("y",), include=("scoped",), exclude=())
+    )
     assert [p.name for p in forced.kept] == ["scoped"]
-    off = participating([plain], selection=ScopeSelection((), (), ("plain",)))
+    off = participating([plain], selection=ScopeSelection(labs=(), include=(), exclude=("plain",)))
     assert off.dropped[0].reason.reason == "excluded"
 
 
@@ -861,14 +894,18 @@ def test_participating_preserves_order():
 def test_participating_merged_lab_component_match(tmp_path, pattern):
     # `-l a+b` arrives as ("a", "b"); a pattern matching either component admits it.
     project = _scoped_project(tmp_path, "proj", labs=[pattern])
-    out = participating([project], selection=ScopeSelection(("a", "b"), (), ()))
+    out = participating(
+        [project], selection=ScopeSelection(labs=("a", "b"), include=(), exclude=())
+    )
     assert [p.name for p in out.kept] == ["proj"]
-    miss = participating([project], selection=ScopeSelection(("c", "d"), (), ()))
+    miss = participating(
+        [project], selection=ScopeSelection(labs=("c", "d"), include=(), exclude=())
+    )
     assert [d.project.name for d in miss.dropped] == ["proj"]
 
 
 def test_participating_requires_exactly_one_source():
-    sel = ScopeSelection((), (), ())
+    sel = ScopeSelection(labs=(), include=(), exclude=())
     with pytest.raises(TypeError):
         participating([])
     with pytest.raises(TypeError):

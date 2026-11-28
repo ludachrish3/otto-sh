@@ -7,8 +7,6 @@ and the default use-case all read the declared names; each is driven here
 through :func:`otto.config.scope.declared_use_case_names` and must reach it.
 """
 
-from unittest.mock import patch
-
 import pytest
 
 from otto.cli import docker as docker_cli
@@ -18,6 +16,8 @@ from otto.config.scope import DockerSettings, DockerUseCase, declared_use_case_n
 from otto.docker import compose, resolve
 from otto.docker.compose import project_staging_keys, use_case_project
 from tests._fixtures.fake_project import fake_project
+
+from .test_cli import _participating
 
 
 def _project(name: str, *use_cases: str) -> Project:
@@ -81,6 +81,6 @@ def test_a_project_stages_one_stack_per_declared_name(asked):
 
 def test_the_default_use_case_is_the_one_declared_name(asked):
     one = [_project("a", "integration"), _project("b", "integration")]
-    with patch("otto.declared.get_projects", return_value=one):
+    with _participating(one):
         assert docker_cli._default_use_case(None) == "integration"
     assert asked == [one]

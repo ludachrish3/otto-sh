@@ -47,7 +47,7 @@ from ..instruction_catalog import (
     instruction,
 )
 from ..params import OptionsSource, own_options, shared_field_values
-from ..registry import get_registering_project, registration_boundary
+from ..registry import registration_boundary, registration_owner
 from ..result import CommandNotRunError, CommandResult, Result, Results
 from ..utils import Status
 from .options import (
@@ -579,6 +579,8 @@ class ProjectActions:
         continue_on_failure=True,
         require_dependencies=False,
         dry_run_preview=True,
+        # The recovery verb: it still resets and reaps lab-wide when no host is in play.
+        _allows_empty_scope=True,
     )
     async def cleanup(self, opts: CleanupOptions) -> Result:
         """Uninstall products, remove their coverage data, dev tools, staged files, staging.
@@ -944,12 +946,12 @@ def register_project_actions(
         otto.instruction_catalog.ProjectInstructionError: If the bodies break a
             table rule, or two methods of *cls* claim one name.
     """
-    project = get_registering_project()
+    project = registration_owner()
     # otto's own class carries otto's bodies (declared in FIRST_PARTY_ACTIONS);
     # a project that registers it unchanged declares none of its own.
     bodies = () if cls is ProjectActions else _bodies_of(cls, project)
     entry = ProjectActionsEntry(cls, bodies)
-    # Outside an init import the key is the class name, which the refusal names.
+    # With no owner the key is the class name, which the refusal names.
     PROJECT_ACTIONS.register(
         name=project if project is not None else cls.__name__, entry=entry, overwrite=overwrite
     )

@@ -8,9 +8,16 @@ between a JSON inventory and NetBox; `refresh` forces a fetch of a cached
 remote inventory.
 
 Every verb reads the `[inventory]` table from your user settings file
-(`~/.otto/settings.toml`, or wherever `OTTO_HOME` puts it) or from a project's
-`.otto/settings.toml`, and exits 1 with the inventory's own error text when it
-cannot answer. No verb needs a lab, touches a host, or writes to the
+(`~/.otto/settings.toml`, or wherever `OTTO_HOME` puts it) or from a
+participating project's `.otto/settings.toml`, and exits 1 with the inventory's
+own error text when it cannot answer. A participating project is one that
+takes part in the run ({ref}`project-scope-active`): a project switched off
+with `-E`, or whose `lab_patterns` miss the `-l` (or `OTTO_LAB`) labs,
+contributes no table, and `-I <project>` brings one back.  With no lab
+selected, every project that `-E` has not switched off contributes its table. A project that an
+active project requires is no exception here: its root commands still run
+({doc}`../projects`), but its `[inventory]` table is not read unless it takes
+part itself. No verb needs a lab, touches a host, or writes to the
 inventory — and none of them ever prints a password, whether the credentials
 came from a record or from the `[creds]` store; when a store is configured,
 `lookup` and `list` each print a `creds:` row naming it.

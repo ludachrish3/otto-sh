@@ -209,8 +209,17 @@ class _FakeCtx:
         self.include_projects = tuple(include_projects)
         self.exclude_projects = tuple(exclude_projects)
 
+    @property
+    def unscoped(self):
+        """The double's whole universe: its own lab and project lists, as the context's are."""
+        return self
+
     def all_hosts(self, _scope_owner=None):
         return iter(self.hosts)
+
+    def empty_scope_refusal(self):
+        """``None``: this double's walks reach its hosts, so its scope is never empty."""
+        return
 
     def _recorded_options(self):
         """The ``ActiveRun`` member ``recorded_in_force`` reads once this double is installed.
@@ -699,6 +708,64 @@ async def test_cleanup_forwards_get_product_logs(monkeypatch):
 # there. Both go through the library functions — `repair_all` keeps the
 # refuse-a-foreign-qdisc rail, `remove_all_tunnels` keeps the post-kill verify
 # — so nothing here reimplements `tc` or `kill`.
+
+
+@pytest.mark.asyncio
+async def test_cleanup_status_and_reap_use_unscoped_lab(monkeypatch):
+    """Cleanup's reset and reap, and status's link and tunnel rows, read the whole lab.
+
+    An impairment or a tunnel on a host that left the run's scope is still
+    cleanup's to clear and status's to report. ``ctx.lab`` is one lab and
+    ``OttoContext.unscoped`` a stand-in over another, so the lab each of the
+    four library seams is handed shows which one its reader took.
+    """
+    from otto.labs.loader import Lab
+    from otto.project.orchestrator import (
+        _impairment_items,
+        _remove_tunnels,
+        _reset_impairments,
+        _tunnel_items,
+    )
+
+    scoped, whole = Lab(name="rig"), Lab(name="rig")
+    monkeypatch.setattr(
+        OttoContext, "unscoped", property(lambda _ctx: SimpleNamespace(lab=whole)), raising=False
+    )
+    calls = _wire_infra(monkeypatch, [])
+    ctx = OttoContext(lab=scoped)
+
+    await _reset_impairments(ctx)
+    await _remove_tunnels(ctx)
+    await _impairment_items(ctx)
+    await _tunnel_items(ctx)
+
+    assert [(name, lab is whole) for name, lab in calls] == [
+        ("repair_all", True),
+        ("remove_all_tunnels", True),
+        ("read_link_states", True),
+        ("discover_tunnels", True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_impairment_reset_judges_its_skips_against_the_unscoped_lab(monkeypatch):
+    """The reset drops a structural skip by the whole lab's links, as ``repair_all`` swept them.
+
+    ``repair_all`` skips a link no command can act on, which cleanup does not
+    report. Only the stand-in for ``OttoContext.unscoped`` declares that link;
+    ``ctx.lab`` declares none. A reset that judged its skips against
+    ``ctx.lab`` would keep the skip and decline instead of succeeding.
+    """
+    from otto.project.orchestrator import _reset_impairments
+
+    bare = _link("hop-edge", impairable=False)
+    whole = _fake_lab([bare])
+    monkeypatch.setattr(
+        OttoContext, "unscoped", property(lambda _ctx: SimpleNamespace(lab=whole)), raising=False
+    )
+    _wire_infra(monkeypatch, [], repair=RepairAllReport(skipped=[f"{bare.id}: no named interface"]))
+    result = await _reset_impairments(OttoContext(lab=_fake_lab()))
+    assert result.status is Status.Success, result.msg
 
 
 @pytest.mark.asyncio
@@ -3089,9 +3156,10 @@ class TestForcedInclusionOfAnEmptyFleet:
         empty because the declaration says so, not because the fixture handed
         over nothing. The widening row is what pins that distinction.
         """
+        # Each host carries its id, as every lab host does: a declaration judges it by it.
         hosts = {
-            "h0": SimpleNamespace(source_lab="bench"),
-            "h1": SimpleNamespace(source_lab="bench"),
+            "h0": SimpleNamespace(id="h0", source_lab="bench"),
+            "h1": SimpleNamespace(id="h1", source_lab="bench"),
         }
         starved = _scope(
             "project2",

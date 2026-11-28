@@ -12,6 +12,8 @@ are declared on :doc:`/api/context`.
 
 .. autofunction:: otto.invocation.check_variant
 
+.. autodata:: otto.invocation.LIBRARY_LAB_NAME
+
 .. autoclass:: otto.invocation.CoverageCollection
    :members:
 
@@ -31,6 +33,9 @@ are declared on :doc:`/api/context`.
 
 The active-run slot: the run ``set_context`` installed, read below the run
 layer; the host layer never reads it.
+
+.. autoclass:: otto.invocation.UnscopedRun
+   :members:
 
 .. autoclass:: otto.invocation.ActiveRun
    :members:

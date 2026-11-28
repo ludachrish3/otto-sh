@@ -21,16 +21,17 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
-from typing_extensions import Unpack, final
+from typing_extensions import Unpack, final, override
 
 from .host.host import DEFAULT_COMMAND_TIMEOUT
-from .invocation import ContextBinding, RunPolicy, Variant
+from .host.targeting import HostScope, ScopeVerdicts
+from .invocation import LIBRARY_LAB_NAME, ContextBinding, RunPolicy, Variant
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from .config.project import Project
-    from .config.scope import ProjectScope
+    from .config.scope import ProjectScope, ProjectScopeError, ScopeSelection
     from .declared import BootstrapResult
     from .host.options import (
         FtpOptions,
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     )
     from .host.remote_host import RemoteHost
     from .host.unix_host import UnixHost
+    from .lab_view import LabView, ScopedLab
     from .labs.loader import Lab
     from .params import OptionsSource, RecordedOptions
     from .result import Results
@@ -51,6 +53,7 @@ if TYPE_CHECKING:
 __all__ = [
     "OttoContext",
     "ProjectContextView",
+    "UnscopedView",
     "get_context",
     "open_context",
     "reset_context",
@@ -65,26 +68,6 @@ T = TypeVar("T")
 
 # The public name the facade's users configure (docs/extend/python-library.md).
 logger = logging.getLogger("otto.context")
-
-LIBRARY_LAB_NAME = "<library>"
-"""Sentinel ``Lab.name`` for the minimal, host-less context a library caller
-gets for free.
-
-``otto.suite.run._session_context`` installs ``OttoContext(lab=Lab(name=LIBRARY_LAB_NAME))``
-around a session when no context is already active (e.g. ``run_tests()``
-called outside ``async with otto.open_context(...)``). That
-Lab carries no hosts, so any ``get_host()`` call inside such a run fails loud —
-:meth:`OttoContext.get_host` checks this constant to append a hint pointing at
-``open_context`` (see below) ONLY for that sentinel lab; a real, lab-backed
-unknown-host error is untouched.
-
-Lives here rather than in ``otto.suite.run`` (where the sentinel is actually
-installed) because this is the lower module in the import graph: ``otto.suite``
-already imports ``otto.run_context``, and ``otto.run_context`` must never import from
-``otto.suite`` (that would cycle back through ``otto.suite.run``'s own
-``from ..run_context import ...``). Defining the shared constant on the
-already-imported side keeps both directions acyclic.
-"""
 
 
 def get_context() -> "OttoContext":
@@ -177,18 +160,23 @@ def reset_variant(*, token: ContextBinding) -> None:
 
 
 class _ContextResolver:
-    """The installed peer-host resolver: the context's lab, read live (a later ``ctx.lab`` too)."""
+    """The installed peer-host resolver: the run's whole lab, read live (a later ``ctx.lab`` too).
+
+    It reads ``ctx.unscoped.lab``, never a scoped view: a hop, a console
+    server or a power controller needs only lab membership, so a peer outside
+    the run's scope still resolves.
+    """
 
     def __init__(self, ctx: "OttoContext") -> None:
         self._ctx = ctx
 
     @property
     def name(self) -> str:
-        return self._ctx.lab.name
+        return self._ctx.unscoped.lab.name
 
     @property
     def hosts(self) -> "dict[str, Any]":
-        return self._ctx.lab.hosts
+        return self._ctx.unscoped.lab.hosts
 
 
 class HostOverrides(TypedDict, total=False):
@@ -342,12 +330,17 @@ def _flags_hiding_every_match(
     return sorted(hiding)
 
 
+_PROJECT_SWITCHES = frozenset({"include_projects", "exclude_projects"})
+"""The :class:`OttoContext` fields whose assignment drops the resolved scope verdicts."""
+
+
 @final
 @dataclass(init=False)
 class OttoContext:
     """The active per-invocation runtime: chosen lab and run policy."""
 
-    lab: "Lab"
+    _lab: "Lab"
+    """The run's canonical lab; read it as ``unscoped.lab``, replace it through :attr:`lab`."""
     policy: "RunPolicy"
     """The run's policy, read live by every host; the same object :func:`set_context` installs."""
     cov_decision: "bool | None" = None
@@ -374,6 +367,8 @@ class OttoContext:
     is read rather than merely asked for here — a docstring-only version would
     let ``exclude_projects=("My_Project",)`` be silently ignored, which is an
     explicit switch failing OPEN.
+
+    Assigning it drops the scope verdicts resolved under the old value.
     """
 
     exclude_projects: tuple[str, ...] = ()
@@ -385,6 +380,8 @@ class OttoContext:
     side by :meth:`otto.context.OttoContext.admissible_ids` (through
     :func:`otto.config.scope.scoped_ids`), which leaves a switched-off project's
     hosts out of play.
+
+    Assigning it drops the scope verdicts resolved under the old value.
     """
 
     verb: "str | None" = field(default=None, init=False)
@@ -435,23 +432,30 @@ class OttoContext:
     )
     """The projects' scope verdicts, once resolved."""
 
+    _scoped: bool = field(default=True, init=False, repr=False, compare=False)
+    """The command's scope verdict, as :func:`new_run_context` gave it; read :attr:`scoped`."""
+
+    _view: "ScopedLab | None" = field(default=None, init=False, repr=False, compare=False)
+    """The scoped view :attr:`lab` hands out, built on first read and dropped on replacement."""
+
     def __otto_summary__(self) -> str:
         """Return the one-line identity a failing ``expect()`` report shows.
 
         For example ``<OttoContext lab=bench>``: the lab's name only; its
         hosts, their credentials and the run policy stay out of the report.
         """
-        return f"<{type(self).__name__} lab={self.lab.name}>"
+        return f"<{type(self).__name__} lab={self._lab.name}>"
 
     def __init__(
         self,
         *,
-        lab: "Lab",
+        lab: "LabView",
         cov_decision: "bool | None" = None,
         include_projects: tuple[str, ...] = (),
         exclude_projects: tuple[str, ...] = (),
         policy: "RunPolicy | None" = None,
         bootstrap: "BootstrapResult | None" = None,
+        _scoped: bool = True,
     ) -> None:
         """Build a context over *lab*; the run flags come only from *policy*.
 
@@ -469,13 +473,18 @@ class OttoContext:
         included, is kept for the context's life. See :mod:`otto.context` for
         the routes around the facade, on which that read refuses.
         ``dataclasses.replace`` is not supported on a context.
+
+        A context built here is scoped (:attr:`scoped`); only otto's own
+        run-context builder, for a command that opted out, builds one that is
+        not. *lab* is taken as :attr:`lab`'s setter takes it: a scoped view
+        such as ``otto.get_lab()`` gives the canonical lab it reads.
         """
         from .invocation import RunPolicy, current_policy
 
         if policy is None:
             ambient = current_policy()
             policy = RunPolicy(variant=ambient.variant, teardown_deadline=ambient.teardown_deadline)
-        self.lab = lab
+        self.lab = lab  # the setter: a view is unwrapped, the lab-dependent state starts empty
         self.policy = policy
         self.cov_decision = cov_decision
         self.include_projects = include_projects
@@ -483,10 +492,9 @@ class OttoContext:
         self.verb = None
         self._recorded = None
         self._outer = try_get_context()
-        self._scopes_refusal = None
         self._bootstrap_result = bootstrap
         self._bootstrap_refusal = None
-        self._scope_verdicts = None
+        self._scoped = _scoped
 
     @contextmanager
     def coverage_collection_preserved(self) -> "Generator[None, None, None]":
@@ -695,10 +703,10 @@ class OttoContext:
         sentinel library lab and unreachable projects have no coverage
         configuration to find and answer ``False`` quietly.
         """
-        if self.lab.name == LIBRARY_LAB_NAME:
+        if self._lab.name == LIBRARY_LAB_NAME:
             return False
         try:
-            projects = self.projects
+            projects = self.unscoped.projects
         except Exception as exc:  # noqa: BLE001 — no projects reachable ⇒ no [coverage] ⇒ off
             logger.debug(f"otto: coverage detection unavailable ({exc!r}); ctx.cov is False")
             return False
@@ -737,30 +745,110 @@ class OttoContext:
         return any(is_instrumented(product) for host in hosts for product in host.products)
 
     def get_host(self, host_id: str, **overrides: Unpack[HostOverrides]) -> "UnixHost":
-        """Look up *host_id* in the active lab and apply any keyword overrides.
+        """Look up *host_id* among the hosts this run targets and apply any keyword overrides.
+
+        In a scoped command (:attr:`scoped`) a lab host resolves when an
+        active project's ``[project]`` declaration targets it, or when no
+        project declares one; the built-in runner and the containers on it
+        always resolve, and a container resolves exactly when its parent
+        does. An unscoped command resolves any lab host. Only the named id is
+        judged: a successful lookup never walks the fleet.
 
         Handing a host out registers nothing: the host registers with the
         event loop it connects on, and that loop's cleanup closes it.
+
+        Raises:
+            otto.lab.HostOutOfScopeError: *host_id* is in the lab but outside
+                this run's scope; the message names why and the fix. It is a
+                :class:`KeyError`.
+            KeyError: No host in the lab has *host_id*; the message lists the
+                ids this run targets.
+            otto.session.ProjectLoadError: The scope verdicts refused, where
+                a fleet walk would.
         """
-        host = self.lab.hosts.get(host_id)
-        if host is None:
-            # The sentinel LIBRARY_LAB_NAME lab is what run_tests() installs
-            # for a library caller with no active context (see
-            # otto.suite.run._session_context) — it never carries hosts, so
-            # get_host() always fails here. Point a caller who hits this at the
-            # real fix (open_context) rather than leaving them staring at an
-            # empty "Available: []". A normal, lab-backed miss is untouched.
-            breadcrumb = (
-                " — no lab is loaded; run inside 'async with otto.open_context(lab=...)'"
-                if self.lab.name == LIBRARY_LAB_NAME
-                else ""
-            )
-            raise KeyError(
-                f"No host {host_id!r} in lab {self.lab.name!r}. "
-                f"Available: {sorted(self.lab.hosts)}{breadcrumb}"
-            )
-        resolved = _apply_option_overrides(cast("Any", host), **overrides)
+        judge = self._host_scope()
+        if not judge.admits(host_id):
+            raise judge.refusal(host_id)
+        resolved = _apply_option_overrides(cast("Any", self._lab.hosts[host_id]), **overrides)
         return cast("UnixHost", resolved)
+
+    def targetable_ids(self) -> "list[str]":
+        """Return the ids of the hosts this run may target, in the lab's order.
+
+        The hosts :meth:`get_host` resolves: in a scoped command, the hosts
+        the active projects' declarations admit (the whole lab when none
+        declares) plus the built-in runner and its containers; in an unscoped
+        command, every lab host. Read live, so a container registered mid-run
+        is judged when asked.
+
+        Raises:
+            otto.session.ProjectLoadError: The scope verdicts refused, where
+                a fleet walk would.
+        """
+        return self._host_scope().targetable_ids()
+
+    def _host_scope(self) -> "HostScope":
+        """Build this run's scope judge over the canonical lab and the command's verdict.
+
+        Built per call, so it reads the lab as it stands. The verdicts are read
+        only when the judge calls for them, which an unscoped judge never does.
+        """
+
+        def verdicts() -> ScopeVerdicts:
+            return ScopeVerdicts(
+                scopes=self._resolve_scopes(),
+                exclude_projects=self.exclude_projects,
+            )
+
+        return HostScope(
+            lab=self._lab,
+            scoped=self._scoped,
+            verdicts=verdicts,
+            empty_refusal=self.empty_scope_refusal,
+        )
+
+    def empty_scope_refusal(self) -> "ProjectScopeError | None":
+        """Return the refusal a scoped command meets when no host is in play, or ``None``.
+
+        The one answer to "is this run's scope empty": some project declares a
+        ``[project]`` scope and no host is in play (the built-in runner and its
+        containers never count). The refusal names the settings files to widen,
+        or the ``--exclude-projects`` to drop when that switch emptied the scope;
+        it is the text an unbound fleet walk refuses with. ``None`` in an
+        unscoped command (:attr:`scoped`), when no project declares a scope, and
+        whenever a host is in play.
+
+        Raises:
+            otto.session.ProjectLoadError: The scope verdicts refused, where a
+                fleet walk would.
+        """
+        if not self._scoped:
+            return None
+        from .config.scope import ProjectScopeError  # function-scope: the scope layer
+
+        try:
+            # The walk's own refusal, read as a value: an unbound walk refuses
+            # exactly when nothing is in play under a declaration.
+            self.admissible_ids()
+        except ProjectScopeError as refusal:
+            return refusal
+        return None
+
+    def require_targets(self) -> None:
+        """Refuse a scoped command that has no host in play, before it does anything.
+
+        Raises :meth:`empty_scope_refusal`'s refusal when there is one, and
+        returns otherwise.
+
+        Raises:
+            otto.bootstrap.ProjectScopeError: Some project declares a scope and
+                no host is in play.
+            otto.session.ProjectLoadError: The scope verdicts refused, where a
+                fleet walk would.
+        """
+        refusal = self.empty_scope_refusal()
+        if refusal is not None:
+            raise refusal
 
     async def sweep_loop(
         self, loop: asyncio.AbstractEventLoop, *, label: str, deadline: float | None = None
@@ -810,26 +898,131 @@ class OttoContext:
         return self._bootstrap_result
 
     @property
+    def lab(self) -> "LabView":
+        """The run's lab as this command reads it, only the hosts the run targets when scoped.
+
+        In a scoped command (:attr:`scoped`) it is a
+        :class:`~otto.lab.ScopedLab` over the run's canonical lab:
+        ``hosts`` holds the hosts :meth:`get_host` resolves, and a write
+        reaches the canonical lab. In an unscoped command it is the canonical
+        :class:`~otto.labs.loader.Lab` itself. :attr:`unscoped` ``.lab`` is
+        always the canonical lab.
+
+        Assigning replaces the canonical lab, and the scope verdicts are
+        resolved afresh over the new one. A scoped view is unwrapped: the
+        context takes the canonical lab it reads. Every reader, a view kept
+        from before and the installed peer-host resolver included, reads the
+        new lab from then on.
+
+        Raises:
+            otto.session.ProjectLoadError: Reading the view's ``hosts`` raises
+                it where the scope verdicts refuse, as a fleet walk would.
+        """
+        if not self._scoped:
+            return self._lab
+        if self._view is None:
+            from .lab_view import ScopedLab  # function-scope: a foundation leaf, read on first use
+
+            self._view = ScopedLab(self)
+        return self._view
+
+    @lab.setter
+    def lab(self, value: "LabView") -> None:
+        from .lab_view import whole_lab  # function-scope: a foundation leaf
+
+        self._lab = whole_lab(value)
+        # Everything resolved over the replaced lab is resolved again over this one.
+        self._scope_verdicts = None
+        self._scopes_refusal = None
+        self._view = None
+
+    @override
+    def __setattr__(self, name: str, value: object) -> None:
+        """Set *name*; a project switch also drops what was resolved under the old one.
+
+        The scope verdicts classify load errors by the ``-I`` / ``-E`` switches,
+        so a switch assigned after the first read is judged afresh, as a new
+        :attr:`lab` is.
+        """
+        object.__setattr__(self, name, value)
+        if name in _PROJECT_SWITCHES:
+            object.__setattr__(self, "_scope_verdicts", None)
+            object.__setattr__(self, "_scopes_refusal", None)
+
+    @property
+    def scoped(self) -> bool:
+        """Whether this run's command sees only the active projects and the hosts they target.
+
+        ``True`` for every context but one built for a command that opted out
+        (``scoped=False`` at :func:`~otto.cli.registry.register_cli_command`,
+        or ``__cli_scoped__ = False`` on its leaf). Fixed when the context is
+        built; :attr:`unscoped` reads the whole universe whatever this says.
+        """
+        return self._scoped
+
+    @property
+    def unscoped(self) -> "UnscopedView":
+        """This run's whole universe, the lab and every project, read past any project scope.
+
+        The one spelling for code that must see everything the run holds,
+        whatever ``host_patterns``, ``lab_patterns`` or ``-E`` admit: scope
+        resolution's own inputs, a hop's lookup, coverage configuration, the
+        driving project. See :class:`UnscopedView`.
+        """
+        return UnscopedView(self)
+
+    @property
     def projects(self) -> "list[Project]":
-        """Every project this run parsed, a dependency-skipped one included.
+        """The projects taking part in this run, in discovery order.
+
+        In a scoped command (:attr:`scoped`), a project switched off with
+        ``-E``, outside the loaded lab's ``lab_patterns``, or whose
+        ``host_patterns`` match no host there is absent; ``-I`` brings one
+        back. In an unscoped command it is every project the run parsed, as
+        :attr:`unscoped`'s ``projects`` always is. Either way a
+        dependency-skipped project is present when it takes part.
 
         A fresh list on every read: changing it changes nothing here. A list
         of projects is not deeply immutable; what is promised is the membership
         and the order. With no project roots it is empty ("known empty").
 
         Raises:
+            otto.session.ProjectLoadError: In a scoped command, a project
+                failed to load in a way that stops a run, where a fleet walk
+                would refuse.
             Exception: whatever discovery raised, when the projects cannot be
                 read ("unavailable"); the same exception on every read.
         """
-        return list(self._bootstrap_snapshot().projects)
+        return self._taking_part(self.unscoped.projects)
 
     @property
     def ordered_projects(self) -> "list[Project]":
-        """The projects a fleet-wide walk visits, in dependency order, skipped projects absent.
+        """The projects taking part in this run, in dependency order, skipped projects absent.
 
-        A fresh list on every read, from the same result as :attr:`projects`.
+        A fresh list on every read, from the same result and narrowed the
+        same way as :attr:`projects`; in an unscoped command it is
+        :attr:`unscoped`'s ``ordered_projects``.
+
+        Raises:
+            otto.session.ProjectLoadError: In a scoped command, a project
+                failed to load in a way that stops a run, where a fleet walk
+                would refuse.
+            Exception: whatever discovery raised, when the projects cannot be
+                read; the same exception on every read.
         """
-        return list(self._bootstrap_snapshot().ordered_projects)
+        return self._taking_part(self.unscoped.ordered_projects)
+
+    def _taking_part(self, projects: "list[Project]") -> "list[Project]":
+        """Keep the *projects* that take part when scoped, in the order given; all when unscoped.
+
+        Not cached: the verdicts it reads are, and the filter is one lookup
+        per project. Scope resolution reads :attr:`unscoped`, never this.
+        """
+        if not self._scoped:
+            return projects
+        from .config.scope import participating  # function-scope: the scope layer
+
+        return participating(projects, ctx=self).kept
 
     def _resolve_scopes(self) -> "dict[str, ProjectScope]":
         """Resolve the per-project scope verdicts once and cache them; read them with ``scopes_of``.
@@ -839,12 +1032,13 @@ class OttoContext:
         and :func:`~otto.config.scope.require_current_scope` refuses on it.
         Fleet iteration does NOT read the stored
         :attr:`~otto.config.scope.ProjectScope.universe`; it re-asks
-        :func:`~otto.config.scope.project_targets` per host through
+        :func:`~otto.config.scope.host_targeted` per host through
         :func:`~otto.config.scope.scoped_ids`, so a container registered after
         the verdicts were first resolved is still scoped correctly.
 
         Lazy, not computed at construction, because resolving them needs the
-        projects, which come from :attr:`projects`'s one bootstrap result. A context
+        projects, which come from :attr:`unscoped`'s ``projects``, the one
+        bootstrap result, never the narrowed :attr:`projects`. A context
         is built in plenty of places that never walk a fleet (library
         FD-model callers, the ``LIBRARY_LAB_NAME`` sentinel session, unit
         tests holding a hand-built ``Lab``), and making every one of them pay
@@ -881,7 +1075,7 @@ class OttoContext:
         if self._scopes_refusal is not None:
             raise self._scopes_refusal
         if self._scope_verdicts is None:
-            if self.lab.name == LIBRARY_LAB_NAME:
+            if self._lab.name == LIBRARY_LAB_NAME:
                 self._scope_verdicts = {}
             else:
                 try:
@@ -893,13 +1087,8 @@ class OttoContext:
 
     def _resolve_verdicts(self) -> "dict[str, ProjectScope]":
         """Refuse any load error that is fatal here, then resolve each parsed project's verdict."""
-        from .config.scope import (
-            OUT_OF_SCOPE_REASON,
-            SWITCHED_OFF_REASON,
-            _not_switched_off,
-            resolve_scopes,
-        )
-        from .host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
+        from .config.scope import _not_switched_off, host_outside
+        from .host.builtin_hosts import builtin_ids, lab_scopes
         from .session.errors import ProjectLoadError
         from .session.projects import classify_load_errors
         from .utils import name_by_reason
@@ -907,7 +1096,7 @@ class OttoContext:
         result = self._bootstrap_snapshot()
         verdicts = classify_load_errors(
             result,
-            list(self.lab.component_names),
+            list(self._lab.component_names),
             include=list(self.include_projects),
             exclude=list(self.exclude_projects),
         )
@@ -915,15 +1104,12 @@ class OttoContext:
             raise ProjectLoadError(
                 verdicts.fatal, demoted=verdicts.demoted, required=verdicts.required
             )
-        scopes = resolve_scopes(
-            result.projects,  # every parsed project: a dependency skip never hides a declaration
-            self.lab.component_names,
-            self.lab.hosts,
-            # `local` is the runner, never fleet — and its `source_lab` is
-            # stamped with whichever component the CLI listed first, so keying
-            # membership on that stamp would make `-l a+b` and `-l b+a` resolve
-            # differently. `include_local=True` remains the walk's own opt-in.
-            exclude_ids=frozenset({BUILTIN_LOCAL_HOST_ID}),
+        # Every parsed project: a dependency skip never hides a declaration.
+        # The runner and its containers are in no universe, by identity.
+        scopes = lab_scopes(
+            result.projects,
+            component_names=self._lab.component_names,
+            hosts=self._lab.hosts,
         )
         declared = [scope for scope in scopes.values() if scope.declared]
         if declared:
@@ -934,17 +1120,24 @@ class OttoContext:
             # universe is not counted (``scoped_ids`` drops it the same way).
             active = _not_switched_off(declared, self.exclude_projects)
             union = frozenset().union(*(scope.universe for scope in active))
-            declared_union = frozenset().union(*(scope.universe for scope in declared))
             excluded = sum(1 for scope in scopes.values() if scope.excluded)
-            # `local` is in no universe by construction (exclude_ids above),
+            # The runner side is in no universe by construction (lab_scopes),
             # so it is never "outside" the fleet.
-            outside = {
-                host_id: SWITCHED_OFF_REASON if host_id in declared_union else OUT_OF_SCOPE_REASON
-                for host_id in self.lab.hosts
-                if host_id != BUILTIN_LOCAL_HOST_ID and host_id not in union
-            }
+            runner_side = builtin_ids(self._lab.hosts)
+            outside: dict[str, str] = {}
+            for host_id, host in self._lab.hosts.items():
+                if host_id in runner_side:
+                    continue
+                record = host_outside(
+                    host,
+                    scopes,
+                    lab_name=self._lab.name,
+                    exclude_projects=self.exclude_projects,
+                )
+                if record is not None:
+                    outside[host_id] = record.reason
             line = (
-                f"fleet of interest: {len(union)} of {len(self.lab.hosts)} lab hosts "
+                f"fleet of interest: {len(union)} of {len(self._lab.hosts)} lab hosts "
                 f"({len(scopes)} project(s), {excluded} excluded)"
             )
             if outside:
@@ -987,11 +1180,14 @@ class OttoContext:
                 fleet walk). ``False`` returns it as the answer it is.
 
         Returns:
-            The admissible ids — possibly empty when *require_nonempty* is
-            ``False``.
+            The admissible ids, the built-in runner and its containers
+            included whatever any declaration says (they are judged by
+            identity; a walk's ``include_local`` decides whether it reaches
+            them) — possibly empty when *require_nonempty* is ``False``.
 
         Raises:
-            otto.bootstrap.ProjectScopeError: Nothing is admissible while some
+            otto.bootstrap.ProjectScopeError: Nothing is in play (the admissible
+                set less the runner side) while some
                 project declared a ``[project]`` scope (spec §10 row 5) — framed
                 against *owner* when the walk was bound to one, so a project whose
                 own fleet is empty is not reported as the whole fleet's;
@@ -1000,17 +1196,76 @@ class OttoContext:
             otto.session.ProjectLoadError: The scope verdicts refused: a project failed
                 to load in a way that stops a run. No flag suppresses it.
         """
-        from .config.scope import require_nonempty_fleet, scoped_ids
+        from .host.builtin_hosts import admitted_ids, require_nonempty_in_play
 
         scopes = self._resolve_scopes()
-        admissible = scoped_ids(
-            self.lab.hosts, scopes, owner, exclude_projects=self.exclude_projects
+        admissible = admitted_ids(
+            self._lab.hosts, scopes, owner, exclude_projects=self.exclude_projects
         )
         if require_nonempty:
-            require_nonempty_fleet(
-                scopes, admissible, owner, exclude_projects=self.exclude_projects
+            require_nonempty_in_play(
+                admissible,
+                hosts=self._lab.hosts,
+                scopes=scopes,
+                owner=owner,
+                exclude_projects=self.exclude_projects,
             )
         return admissible
+
+    def _owner_in_play(self, owner: "str | None") -> "set[str]":
+        """Return the hosts in play for *owner*'s walk: its admitted set less the runner side.
+
+        The one answer to "which of a project's own hosts are in play", and,
+        for ``owner=None``, which hosts of the union are. The runner and its
+        containers are admitted by identity, whatever any declaration says, so
+        counting them would make every declared scope look non-empty in a lab
+        that holds the runner; the empty-fleet refusal judges this set.
+
+        Args:
+            owner: ``Project.name`` bounding the walk, or ``None`` for the union.
+
+        Returns:
+            The ids in play, possibly empty.
+
+        Raises:
+            otto.bootstrap.ProjectScopeError: *owner* names no resolved project.
+            otto.session.ProjectLoadError: The scope verdicts refused.
+        """
+        from .host.builtin_hosts import without_runner_side
+
+        return without_runner_side(
+            self.admissible_ids(owner=owner, require_nonempty=False), self._lab.hosts
+        )
+
+    def _hosts_in_play(self) -> "set[str]":
+        """Return this run's hosts in play: the hosts a reservation requirement covers.
+
+        The owner-less union's in-play set (:meth:`_owner_in_play` with no
+        owner): the admissible ids with the refusal off, less the runner side.
+        Every reservation reader reaches this one set: the gate
+        (``otto.reservations.check``), and ``otto reservation check`` and the
+        completer's gate through :func:`otto.fleet.get_hosts_in_play`. It never
+        refuses an empty declared fleet, so a refusal can be rendered over it
+        without recursing.
+
+        An empty declared fleet reads as ZERO hosts in play: the requirement is
+        the lab-level set alone. A run that goes on to walk its fleet still
+        refuses that fleet, with the walk's message.
+
+        The runner side is never in play: otto can always run on the machine it
+        is running on, so a reservation standing between a user and ``otto host
+        local <verb>`` (or a container on it) costs them a run and buys nobody a
+        slot. The subtraction is here rather than in the admission because
+        scoping answers a different question: the runner is admitted by
+        identity, and ``include_local=True`` is a fleet walk's own opt-in. The
+        runner is recognised by identity, never by its id: a lab may declare
+        its OWN ``local`` entry (``load_lab`` then injects nothing), and that
+        host's ``resources`` are as real as any other's.
+
+        Raises:
+            otto.session.ProjectLoadError: The scope verdicts refused.
+        """
+        return self._owner_in_play(None)
 
     def all_hosts(
         self,
@@ -1044,11 +1299,15 @@ class OttoContext:
 
         The built-in ``local`` host (the machine otto runs on, injected by
         ``load_lab`` for targeted ``otto host local`` use) is NOT part of the
-        fleet: deploy/monitor/coverage sweeps must never silently operate on
-        the runner itself, and it is not a ``RemoteHost``. Pass
-        ``include_local=True`` to opt it in; ``get_host("local")`` always
-        resolves it. Both flags apply AFTER scoping, which is what keeps
-        ``include_local=True`` working under a declaration. Their exclusions
+        fleet, nor is a container on it: deploy/monitor/coverage sweeps must
+        never silently operate on the runner itself, and it is not a
+        ``RemoteHost``. Pass ``include_local=True`` to opt it in (a container
+        on it needs *include_containers* as well); ``get_host("local")``
+        always resolves it. Both flags apply AFTER scoping, and scoping
+        admits the runner by identity whatever any ``host_patterns`` say, so
+        ``include_local=True`` reaches it under any declaration and in either
+        ``-l`` component order. A container on any other host is admitted
+        exactly when its parent is. Their exclusions
         stay silent when *pattern* is ``None``: an unnarrowed walk over a fleet
         that happens to hold only containers is the long-standing "empty lab,
         empty walk" case, not a selection anyone typed and got wrong.
@@ -1058,7 +1317,8 @@ class OttoContext:
                 ``None`` (the default) yields the whole base set.
             include_containers: Also yield
                 :class:`~otto.host.docker_host.DockerContainerHost` entries.
-            include_local: Also yield the built-in ``local`` host.
+            include_local: Also yield the built-in ``local`` host (and, with
+                *include_containers*, the containers on it).
             _scope_owner: Internal. ``Project.name`` whose universe bounds this
                 walk; the project-scoped context view supplies it, and a plain
                 context leaves it ``None`` for the union. Underscored because
@@ -1112,12 +1372,12 @@ class OttoContext:
             # The other way a selection ends up empty, and the one the count
             # above cannot see: the pattern matched, and the membership flags
             # below then removed every match. Reading the survivors off
-            # `self.lab.hosts.values()` — the SAME mapping the yield loop walks,
+            # `self._lab.hosts.values()` — the SAME mapping the yield loop walks,
             # in the same order, through the same `_flag_holding_out` rule — is
             # what keeps this prediction and that loop from ever disagreeing
             # about who is a fleet member.
             hidden_by = _flags_hiding_every_match(
-                [host for host in self.lab.hosts.values() if host.id in matched],
+                [host for host in self._lab.hosts.values() if host.id in matched],
                 include_containers=include_containers,
                 include_local=include_local,
                 owner=_scope_owner,
@@ -1130,7 +1390,7 @@ class OttoContext:
                     matched_size=len(matched),
                 )
             selected = matched
-        for host in self.lab.hosts.values():
+        for host in self._lab.hosts.values():
             if host.id not in selected:
                 continue
             held_out_by = _flag_holding_out(
@@ -1262,6 +1522,50 @@ class OttoContext:
         return ProjectContextView(self, name)
 
 
+@final
+class UnscopedView:
+    """A run's whole universe, read past any project scope: its lab and every parsed project.
+
+    Returned by :attr:`OttoContext.unscoped`, never built by hand. Read-only
+    and live: each read answers from the context as it stands, so a lab
+    assigned to ``ctx.lab`` later is the lab read here.
+
+    It is the explicit spelling for code that must see everything the run
+    holds, whatever the projects' ``[project]`` declarations or ``-I`` / ``-E``
+    admit: resolving the scope itself, a hop's lookup, coverage
+    configuration, the driving project.
+    """
+
+    __slots__ = ("_ctx",)
+
+    def __init__(self, ctx: "OttoContext") -> None:
+        self._ctx = ctx
+
+    def __otto_summary__(self) -> str:
+        """Return the one-line identity a failing ``expect()`` report shows, the lab's name only."""
+        return f"<{type(self).__name__} lab={self.lab.name}>"
+
+    @property
+    def lab(self) -> "Lab":
+        """The run's canonical lab, every host it holds, in scope or not."""
+        return self._ctx._lab  # noqa: SLF001 — the context is this module's own
+
+    @property
+    def projects(self) -> "list[Project]":
+        """Every project the run parsed, a dependency-skipped one included; a fresh list each read.
+
+        Raises:
+            Exception: whatever discovery raised, when the projects cannot be
+                read; the same exception on every read.
+        """
+        return list(self._ctx._bootstrap_snapshot().projects)  # noqa: SLF001 — this module's own
+
+    @property
+    def ordered_projects(self) -> "list[Project]":
+        """The parsed projects in dependency order, dependency-skipped ones absent; a fresh list."""
+        return list(self._ctx._bootstrap_snapshot().ordered_projects)  # noqa: SLF001 — this module's own
+
+
 _OWNER_MISMATCH = """\
 a fleet walk through project '{project}'s context view was passed owner={passed!r}.
 
@@ -1306,8 +1610,10 @@ class ProjectContextView:
     view was built still arrives. A host handed out here registers with the
     event loop it connects on, and that loop's cleanup closes it.
 
-    ``get_host`` is deliberately NOT narrowed (§6): explicit targeting beats
-    scoping, and a project naming a jump host it does not own must still reach it.
+    ``get_host`` resolves what the context's :meth:`~OttoContext.get_host`
+    resolves: the hosts this run targets, across every active project, not
+    only this one's. A host the project names as a hop or a console server
+    needs only lab membership, so it still resolves as a peer.
 
     Owner-less host verbs stay dispatchable through
     :meth:`do_for_all_hosts` by passing ``with_owner=False``. That opt-out is
@@ -1418,6 +1724,34 @@ def record_options(ctx: OttoContext, recorded: "RecordedOptions") -> None:
     ctx.verb = recorded.group
 
 
+def new_run_context(
+    *,
+    lab: "Lab",
+    selection: "ScopeSelection",
+    policy: "RunPolicy | None",
+    bootstrap: "BootstrapResult | None",
+    scoped: bool = True,
+) -> OttoContext:
+    """Build a run's context from its prepared parts: the one construction seam.
+
+    Every builder of a run's context comes here: the CLI's lab context,
+    :func:`open_context` and remote path completion's lookup. Each keeps its
+    own lifecycle and presentation; this decides what the context holds.
+    *selection*'s ``-I`` and ``-E`` become the context's switches, *policy*
+    and *bootstrap* are used as given, and *scoped* is the command's scope
+    verdict (:attr:`OttoContext.scoped`). The context is built, not
+    installed.
+    """
+    return OttoContext(
+        lab=lab,
+        include_projects=tuple(selection.include),
+        exclude_projects=tuple(selection.exclude),
+        policy=policy,
+        bootstrap=bootstrap,
+        _scoped=scoped,
+    )
+
+
 def prepared_policy(
     *,
     variant: "Variant | None" = None,
@@ -1462,7 +1796,7 @@ def fill_teardown_deadline(policy: "RunPolicy") -> None:
 @asynccontextmanager
 async def open_context(
     *,
-    lab: "Lab | str | list[str]",
+    lab: "LabView | str | list[str]",
     include_projects: "list[str] | None" = None,
     exclude_projects: "list[str] | None" = None,
     variant: Variant | None = None,
@@ -1501,10 +1835,25 @@ async def open_context(
     containers started in the body (``compose_up``) are ingested under the
     variant you pass.
 
+    A :class:`~otto.labs.loader.Lab` you pass as *lab* also keeps the
+    declared-container placement it was built with: the projects given
+    placeholders and their parent. To match
+    ``open_context(include_projects=..., exclude_projects=...)``, build it
+    with ``build_lab(..., selection=ScopeSelection(labs=<the same components>,
+    include=<the same>, exclude=<the same>))``
+    (:class:`~otto.session.ScopeSelection`).
+
     *lab* is a lab name, a ``+``-joined combination, a list of either (each
     item split like a repeated ``--lab``), or a
-    :class:`~otto.labs.loader.Lab`. It installs no logging (see
+    :class:`~otto.labs.loader.Lab`. A scoped view such as ``otto.get_lab()``
+    opens over the canonical lab it reads, so the new context judges its own
+    scope over every host. It installs no logging (see
     :func:`otto.session.install_logging`).
+
+    The context it installs is scoped, as a scoped command's is:
+    ``ctx.lab`` holds only the hosts the run's projects target. Unlike the
+    CLI it does not refuse an empty scope; call
+    :meth:`OttoContext.require_targets` for that.
 
     On exit it releases its cleanup boundary on the running loop, and the
     last release closes the hosts that connected on that loop. A nested
@@ -1555,8 +1904,9 @@ async def open_context(
     refuse_inside_a_sweep("open_context")
     policy_binding = install_policy(policy)  # ingest reads the variant while the lab is built
     try:
-        from .config.scope import refused_names
+        from .config.scope import ScopeSelection, refused_names
         from .declared import compose
+        from .lab_view import whole_lab
         from .labs.loader import Lab, split_lab_names
         from .session.dependencies import check_dependencies
         from .session.lab import build_lab
@@ -1573,6 +1923,8 @@ async def open_context(
             exclude_projects or [],
             refused=refused_names(result.errors),
         )
+        if not isinstance(lab, (str, list)):
+            lab = whole_lab(lab)  # a scoped view opens over the canonical lab it reads
         if isinstance(lab, Lab):
             labs = list(lab.component_names)
         elif isinstance(lab, str):
@@ -1580,11 +1932,17 @@ async def open_context(
         else:
             # Each item splits on `+`, as each repeated `--lab` value does.
             labs = [name for item in lab for name in split_lab_names(item)]
+        # The one selection this run's context derives its switches from.
+        scope = ScopeSelection(
+            labs=tuple(labs), include=tuple(selection.include), exclude=tuple(selection.exclude)
+        )
         for demoted in check_projects(result=result, labs=labs, selection=selection).demoted:
             logger.warning("%s", demoted.message)
         # A `Lab` object is used as given: `build_lab` (and the `otto.inventory`
         # import it makes, ~77 modules) never runs for it.
-        resolved_lab = lab if isinstance(lab, Lab) else build_lab(result.projects, labs=labs)
+        resolved_lab = (
+            lab if isinstance(lab, Lab) else build_lab(result.projects, labs=labs, selection=scope)
+        )
         # As the CLI does: the gate is built after the lab and before the
         # context, so an unbuildable backend refuses with nothing to undo.
         from pathlib import Path
@@ -1599,10 +1957,9 @@ async def open_context(
         )
         if holder and gate.identity is not None:
             logger.info("reservations: acting as %r (holder=)", gate.identity.username)
-        ctx = OttoContext(
+        ctx = new_run_context(
             lab=resolved_lab,
-            include_projects=tuple(selection.include),
-            exclude_projects=tuple(selection.exclude),
+            selection=scope,
             policy=policy,
             bootstrap=result,
         )

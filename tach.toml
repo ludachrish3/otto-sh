@@ -304,6 +304,10 @@ depends_on = [
     # name_by_reason, the one "ids grouped by reason" formatter (monitor's
     # dropped-hosts line shares it). A foundation leaf, so no cycle.
     "otto.utils",
+    # ctx.lab hands out the scoped view (ScopedLab) in a scoped command, and
+    # the setter and open_context take the canonical lab a view reads
+    # (whole_lab). Function-local; a foundation leaf, so no cycle.
+    "otto.lab_view",
 ]
 
 [[modules]]
@@ -413,6 +417,9 @@ depends_on = [
     # otto.invocation: the active run's lab (require_run), never the
     # fleet at otto.fleet (spec 2026-10-11 placement-and-phases §3.9).
     "otto.invocation",
+    # otto.lab_view: container registrations, their rollback and the use-case
+    # facts read the whole lab (whole_lab). A foundation leaf, so no cycle.
+    "otto.lab_view",
 ]
 
 [[modules]]
@@ -462,7 +469,9 @@ layer = "run"
 # below the run layer.
 # DEBT: the otto.host edge's module-scope half is fleet.py's
 # DEFAULT_COMMAND_TIMEOUT default (Tier 1.7).
-depends_on = ["otto.config.scope", "otto.run_context", "otto.host", "otto.reservations"]
+# otto.lab_view: fleet_of_interest reads a scoped view through to its
+# canonical lab (whole_lab). Function-local; a foundation leaf, so no cycle.
+depends_on = ["otto.config.scope", "otto.run_context", "otto.host", "otto.reservations", "otto.lab_view"]
 
 [[modules]]
 path = "otto.filesystem"
@@ -524,7 +533,9 @@ depends_on = ["otto.errors"]
 [[modules]]
 path = "otto.session.activation"
 layer = "run"
-depends_on = ["otto.session.errors", "otto.config.scope"]
+# otto.session.projects: owner_refusal's required-owner exemption is load-error
+# classification's walk (required_by_active). Function-scope.
+depends_on = ["otto.session.errors", "otto.config.scope", "otto.models.dependencies", "otto.session.projects"]
 
 [[modules]]
 path = "otto.session.dependencies"
@@ -687,6 +698,14 @@ layer = "foundation"
 depends_on = []
 
 [[modules]]
+path = "otto.lab_view"
+layer = "foundation"
+# The lab a run reads, scoped or whole (LabView, ScopedLab, whole_lab): a leaf
+# the topology and run layers read, so it imports no otto module at runtime.
+# Lab, Host and Link are named under TYPE_CHECKING only.
+depends_on = []
+
+[[modules]]
 path = "otto.kmodcov"
 layer = "foundation"
 # otto.version: export_tree() writes the exporting otto's version into the
@@ -730,6 +749,8 @@ layer = "sources"
 # one templating core. otto.config.home: the jsonnet lab source records the
 # last lab names it rendered in the workspace home (a diagnostic record that
 # holds lab names only). Both sit below this layer.
+# otto.lab_view: `Lab + view` refuses a scoped view before the merge changes
+# anything (refuse_view_merge). A foundation leaf, so the edge cannot cycle.
 depends_on = [
     "otto.registry",
     "otto.link",
@@ -741,6 +762,7 @@ depends_on = [
     "otto.utils",
     "otto.templating",
     "otto.config.home",
+    "otto.lab_view",
 ]
 
 [[modules]]
@@ -765,7 +787,9 @@ layer = "topology"
 # otto.utils: _check_rows.py waits for the echo listeners through wait_for_async.
 # otto.models.base: derive.py states why a declared link was refused through
 # failure_reason, the foundation leaf otto.models itself builds on.
-depends_on = ["otto.lifecycle", "otto.models", "otto.models.base", "otto.host", "otto.errors", "otto.check", "otto.result", "otto.utils", "otto.link.impairer", "otto.link.netem", "otto.link.params"]
+# otto.lab_view: the self-lockout guard and its endpoint check read the whole
+# lab (whole_lab), a foundation leaf.
+depends_on = ["otto.lifecycle", "otto.models", "otto.models.base", "otto.host", "otto.errors", "otto.check", "otto.result", "otto.utils", "otto.link.impairer", "otto.link.netem", "otto.link.params", "otto.lab_view"]
 
 # The impairment vocabulary and the impairer registry, carved out of otto.link
 # into the foundation layer (spec 2026-10-11 placement-and-phases §3.3), so the
@@ -1143,7 +1167,8 @@ layer = "topology"
 # NOTE: no otto.link here (and none the other way) — see otto.link above.
 # otto.check IS allowed: it's the shared check core (otto tunnel check uses
 # it the same way otto link check does), and otto.check imports neither.
-depends_on = ["otto.host", "otto.models", "otto.registry", "otto.lifecycle", "otto.logger", "otto.errors", "otto.check", "otto.utils"]
+# otto.lab_view: add_tunnel's conflict scan reads the whole lab (whole_lab).
+depends_on = ["otto.host", "otto.models", "otto.registry", "otto.lifecycle", "otto.logger", "otto.errors", "otto.check", "otto.utils", "otto.lab_view"]
 
 [[modules]]
 path = "otto.utils"

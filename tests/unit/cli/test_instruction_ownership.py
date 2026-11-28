@@ -13,7 +13,7 @@ them a defect this branch already ate once:
   ``lab(s) )``.
 * **The gate has to be REACHED.** ``TestPreambleWiring`` drives the real
   ``command_preamble`` and observes the refusal come out of *it*; testing
-  :func:`~otto.cli.invoke.refuse_inactive_instruction` alone could not tell a
+  :func:`~otto.cli.invoke.refuse_inactive_owner` alone could not tell a
   wired gate from an orphaned function.
 * **The ctx-chain walk has to be NARROW.** ``otto host <id> get`` must reach
   its body untouched, so the "not dispatched through run" arm is injected
@@ -36,7 +36,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from otto.cli import invoke
-from otto.cli.invoke import refuse_inactive_instruction
+from otto.cli.invoke import refuse_inactive_owner
 from otto.cli.registry import CommandSpec
 from otto.context import OttoContext
 from otto.instruction_catalog import INSTRUCTIONS, STANDALONE_INSTRUCTIONS, InstructionEntry
@@ -45,6 +45,7 @@ from otto.registry import registering_project
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.clickctx import ChainLeaf, chain
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.rootoptions import make_root_options
 from tests._fixtures.scoping import verdict
 
@@ -54,13 +55,18 @@ def _context(
     include: "tuple[str, ...]" = (),
     exclude: "tuple[str, ...]" = (),
     scopes: "dict[str, Any] | None" = None,
+    projects: "tuple[str, ...]" = ("project2",),
 ) -> OttoContext:
-    """A real context with these switches, whose verdicts are *scopes* as given."""
+    """A real context with these switches, whose verdicts are *scopes* as given.
+
+    *projects* are the parsed projects, by name: an owner is judged only as
+    one of them.
+    """
     ctx = OttoContext(
         lab=Lab(name="t"),
         include_projects=tuple(include),
         exclude_projects=tuple(exclude),
-        bootstrap=fake_bootstrap_result([]),
+        bootstrap=fake_bootstrap_result([fake_project(name) for name in projects]),
     )
     seed_scope_verdicts(ctx, scopes or {})
     return ctx
@@ -191,6 +197,13 @@ _FOLDING_CASES = [
 _FOLDING_CASE_IDS = [case[0] for case in _FOLDING_CASES]
 
 
+_RUN = CommandSpec(name="run", loader=None)
+"""The spec ``otto run <instruction>`` dispatches under: otto's own, with no owner."""
+
+_HOST = CommandSpec(name="host", loader=None)
+"""The spec ``otto host <id> <verb>`` dispatches under: otto's own, with no owner."""
+
+
 def _dispatch_ctx(instruction_name: str) -> Any:
     """The chain ``otto run <instruction>`` builds: root -> run -> leaf.
 
@@ -264,7 +277,7 @@ class TestRefusal:
         _install_entry("flash-b", "project2")
         self._wire_context(monkeypatch, exclude=("project2",))
         with pytest.raises(typer.Exit) as excinfo:
-            refuse_inactive_instruction(_dispatch_ctx("flash-b"))
+            refuse_inactive_owner(_dispatch_ctx("flash-b"), _RUN)
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
         assert "'flash-b' belongs to project 'project2'" in out
@@ -274,11 +287,11 @@ class TestRefusal:
     def test_active_owner_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_entry("flash-b", "project2")
         self._wire_context(monkeypatch)
-        refuse_inactive_instruction(_dispatch_ctx("flash-b"))  # must not raise
+        refuse_inactive_owner(_dispatch_ctx("flash-b"), _RUN)  # must not raise
 
     def test_first_party_is_never_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._wire_context(monkeypatch, exclude=("otto",))
-        refuse_inactive_instruction(_dispatch_ctx("install"))  # must not raise
+        refuse_inactive_owner(_dispatch_ctx("install"), _RUN)  # must not raise
 
     def test_lab_excluded_owner_names_both_fixes(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -286,7 +299,7 @@ class TestRefusal:
         _install_entry("flash-b", "project2")
         self._wire_context(monkeypatch, scopes={"project2": verdict("project2", excluded=True)})
         with pytest.raises(typer.Exit) as excinfo:
-            refuse_inactive_instruction(_dispatch_ctx("flash-b"))
+            refuse_inactive_owner(_dispatch_ctx("flash-b"), _RUN)
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
         assert "inactive for the loaded lab(s) [bench] (lab_patterns: project2-lab)" in out
@@ -304,7 +317,7 @@ class TestRefusal:
         _install_entry("flash-b", "project2")
         self._wire_context(monkeypatch, scopes={"project2": verdict("project2", universe=())})
         with pytest.raises(typer.Exit) as excinfo:
-            refuse_inactive_instruction(_dispatch_ctx("flash-b"))
+            refuse_inactive_owner(_dispatch_ctx("flash-b"), _RUN)
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
         assert "its [project] host_patterns (.*) match no host" in out
@@ -318,7 +331,7 @@ class TestRefusal:
         self._wire_context(
             monkeypatch, scopes={"project2": verdict("project2", declared=False, universe=())}
         )
-        refuse_inactive_instruction(_dispatch_ctx("flash-b"))  # must not raise
+        refuse_inactive_owner(_dispatch_ctx("flash-b"), _RUN)  # must not raise
 
     def test_include_rescues_an_owner_its_lab_verdict_excluded(
         self, monkeypatch: pytest.MonkeyPatch
@@ -330,14 +343,14 @@ class TestRefusal:
             include=("project2",),
             scopes={"project2": verdict("project2", excluded=True)},
         )
-        refuse_inactive_instruction(_dispatch_ctx("flash-b"))  # must not raise
+        refuse_inactive_owner(_dispatch_ctx("flash-b"), _RUN)  # must not raise
 
     def test_an_unregistered_leaf_name_is_not_refused(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A statically-declared ``run`` child (not in the registry) has no owner to judge."""
         self._wire_context(monkeypatch, exclude=("project2",))
-        refuse_inactive_instruction(_dispatch_ctx("not-an-instruction"))  # must not raise
+        refuse_inactive_owner(_dispatch_ctx("not-an-instruction"), _RUN)  # must not raise
 
     def test_non_run_leaves_pass_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``otto host <id> get`` is not instruction dispatch — the gate must not look.
@@ -348,7 +361,7 @@ class TestRefusal:
         """
         _install_entry("get", "project2")
         self._wire_context(monkeypatch, exclude=("project2",))
-        refuse_inactive_instruction(chain("otto", "host", "get"))  # must not raise
+        refuse_inactive_owner(chain("otto", "host", "get"), _HOST)  # must not raise
 
     def test_a_sub_group_under_run_is_judged_by_the_group_name(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -362,7 +375,7 @@ class TestRefusal:
         _install_entry("flash-b", "project2")
         self._wire_context(monkeypatch, exclude=("project2",))
         with pytest.raises(typer.Exit) as excinfo:
-            refuse_inactive_instruction(chain("otto", "run", "flash-b", "sub"))
+            refuse_inactive_owner(chain("otto", "run", "flash-b", "sub"), _RUN)
         assert excinfo.value.exit_code == 1
         assert "'flash-b' belongs to project 'project2'" in capsys.readouterr().out
 
@@ -382,10 +395,11 @@ class TestRefusalRendering:
         ctx = _context(
             exclude=(owner,) if excluded_by_switch else (),
             scopes={} if scope is None else {owner: scope},
+            projects=(owner,),
         )
         monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
         with pytest.raises(typer.Exit) as excinfo:
-            refuse_inactive_instruction(_dispatch_ctx("flash-b"))
+            refuse_inactive_owner(_dispatch_ctx("flash-b"), _RUN)
         assert excinfo.value.exit_code == 1
 
     def test_the_lab_list_brackets_survive_rendering(

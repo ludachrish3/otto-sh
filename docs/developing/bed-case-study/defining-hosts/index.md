@@ -155,8 +155,9 @@ host that belongs to several labs is reached through any one of them:
 ```
 
 The `fleet of interest` line reports the project's `[project]` scope
-({doc}`../boards-of-interest`); an explicitly named host like `test1` is
-never scoped by it.
+({doc}`../boards-of-interest`). `otto host` reaches `test1` because that scope
+targets it; a host it leaves out, such as `test3`, is refused
+({ref}`project-scope-hosts`).
 
 Paste the pin into the host's entry and the next connection skips every
 probe. In this template a VM's host entry is its `host` argument, so the pin

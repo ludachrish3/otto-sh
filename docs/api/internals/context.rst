@@ -8,5 +8,3 @@ them. The public names are on :doc:`/api/context`.
 .. currentmodule:: otto.run_context
 
 .. autodata:: otto.run_context.T
-
-.. autodata:: otto.run_context.LIBRARY_LAB_NAME

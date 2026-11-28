@@ -82,7 +82,7 @@ def test_get_host_unknown_id_normal_lab_message_has_no_breadcrumb():
     with pytest.raises(KeyError) as excinfo:
         ctx.get_host("does-not-exist")
     message = str(excinfo.value)
-    assert message == ("\"No host 'does-not-exist' in lab 't'. Available: ['test1']\"")
+    assert message == "No host 'does-not-exist' in lab 't'. Available: ['test1']"
     assert "open_context" not in message
     assert "no lab is loaded" not in message
 
@@ -242,7 +242,9 @@ def test_bare_accessors_delegate_to_active_context():
     ctx = OttoContext(lab=lab)
     token = set_context(ctx)
     try:
-        assert cm.get_lab() is lab
+        # A scoped context hands out its view; the canonical lab is behind it.
+        assert cm.get_lab() is ctx.lab
+        assert ctx.unscoped.lab is lab
         assert {h.id for h in cm.all_hosts()} == set(lab.hosts)
         first = next(iter(lab.hosts))
         assert cm.get_host(first) is lab.hosts[first]
@@ -336,7 +338,7 @@ async def test_open_context_with_a_lab_object_never_builds_an_inventory_binding(
 
     lab = _lab_with("test1")
     async with otto.open_context(lab=lab) as ctx:
-        assert ctx.lab is lab
+        assert ctx.unscoped.lab is lab
 
 
 @pytest.mark.asyncio
@@ -747,9 +749,9 @@ async def test_open_context_builds_the_lab_build_lab_builds(
     placeholder_labs: "list[Lab]" = []
     real_register = compose.register_declared_container_hosts
 
-    def _spy(lab, projects):
+    def _spy(lab, projects, **kw):
         placeholder_labs.append(lab)
-        return real_register(lab, projects)
+        return real_register(lab, projects, **kw)
 
     monkeypatch.setattr(compose, "register_declared_container_hosts", _spy)
     project = installed_projects(
@@ -763,7 +765,8 @@ async def test_open_context_builds_the_lab_build_lab_builds(
         assert set(ctx.lab.hosts) == set(expected.hosts)
         assert "alt1" in ctx.lab.hosts  # the project's [[lab.sources]] record
         assert ctx.lab.hosts["alt1"].ssh_options.port == 2222  # the project's [host_preferences]
-        assert placeholder_labs[-1] is ctx.lab  # the declared containers were registered on it
+        # the declared containers were registered on the canonical lab
+        assert placeholder_labs[-1] is ctx.unscoped.lab
 
 
 @pytest.mark.asyncio
@@ -798,7 +801,7 @@ async def test_a_list_of_labs_is_split_like_repeated_lab_flags(monkeypatch):
         seen["gate"] = list(labs)
         return real_check_projects(result=result, labs=labs, selection=selection)
 
-    def _build_lab(projects, labs):
+    def _build_lab(projects, labs, **_kw):
         seen["build"] = list(labs)
         return _lab_with("test1")
 
@@ -839,7 +842,7 @@ async def test_a_lab_objects_component_names_are_the_gates_labs(monkeypatch, cap
     lab = _lab_with("test1")
     with caplog.at_level(logging.WARNING, logger="otto.context"):
         async with otto.open_context(lab=lab) as ctx:
-            assert ctx.lab is lab
+            assert ctx.unscoped.lab is lab
     assert "inactive for this run (not applicable to lab(s) [t])" in caplog.text
 
 
@@ -937,7 +940,7 @@ async def test_the_variant_is_set_for_the_lab_build_and_the_body(monkeypatch):
 
     seen_at_build = []
 
-    def _build_lab(projects, labs):
+    def _build_lab(projects, labs, **_kw):
         seen_at_build.append(variant())
         return _lab_with("test1")
 

@@ -44,7 +44,7 @@ from .socat import (
 
 if TYPE_CHECKING:
     from ..host.docker_host import DockerContainerHost
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
 
 logger = logging.getLogger(__name__)
 
@@ -132,12 +132,15 @@ async def _container_ip(container: Any) -> str:
     return ip
 
 
-def _host_or_raise(lab: "Lab", host_id: str) -> Any:
-    """Look one host up, or raise the lab-data error a real run raises."""
-    host = lab.hosts.get(host_id)
-    if host is None:
-        raise ValueError(f"unknown host {host_id!r}")
-    return host
+def _host_or_raise(lab: "LabView", host_id: str) -> Any:
+    """Look one host up, or raise the lab-data error a real run and a dry run raise alike.
+
+    A host that is in the lab and outside the run's scope keeps its refusal's
+    text, which names the fix; any other miss is an unknown host.
+    """
+    from ..host.targeting import host_or_value_error
+
+    return host_or_value_error(lab, host_id, unknown_message=f"unknown host {host_id!r}")
 
 
 def _resolve_static(host_id: str, host: Any, iface: str | None) -> ResolvedHop:
@@ -172,7 +175,7 @@ def _resolve_static(host_id: str, host: Any, iface: str | None) -> ResolvedHop:
     return resolved
 
 
-async def resolve_endpoint(lab: "Lab", spec: EndpointSpec) -> ResolvedHop:
+async def resolve_endpoint(lab: "LabView", spec: EndpointSpec) -> ResolvedHop:
     """Resolve ``(host_id, iface)`` off the live lab (iface rules per spec §6.3/§8).
 
     Public: ``otto tunnel check`` resolves each endpoint through this too.
@@ -201,14 +204,16 @@ async def resolve_endpoint(lab: "Lab", spec: EndpointSpec) -> ResolvedHop:
     return _resolve_static(host_id, host, iface)
 
 
-def validate_path(lab: "Lab", specs: list[EndpointSpec]) -> None:
-    """Every chain refusal that needs no device — length, duplicates, containers, bash.
+def validate_path(lab: "LabView", specs: list[EndpointSpec]) -> None:
+    """Every chain refusal that needs no device — length, duplicates, lookup, containers, bash.
 
     Split out of :func:`resolve_chain` so the ``--dry-run`` planner
     (``planned_chain``) makes the SAME refusals from the SAME data rather
-    than an approximation of them. All four read declared lab fields only, so
+    than an approximation of them. All five read declared lab fields only, so
     a dry run answers each one completely; a chain refused here is not
-    "not measured", it is decided.
+    "not measured", it is decided. The lookup is the per-hop one
+    (:func:`resolve_endpoint` and the planner make it too), so a hop the lab
+    does not hold, or one outside the run's scope, is refused here first.
 
     THE ``has_bash`` REFUSAL IS THE LOAD-BEARING ONE. It is what makes
     ``otto.tunnel.manage.add_tunnel`` a PROTECTED path in the
@@ -227,10 +232,10 @@ def validate_path(lab: "Lab", specs: list[EndpointSpec]) -> None:
         if host_id in seen:
             raise ValueError(f"host {host_id!r} appears more than once in the chain")
         seen.add(host_id)
+    hosts = [_host_or_raise(lab, host_id) for host_id, _iface in specs]
     last = len(specs) - 1
-    for i, (host_id, _iface) in enumerate(specs):
-        host = lab.hosts.get(host_id)
-        if host is None or not _is_container(host):
+    for i, ((host_id, _iface), host) in enumerate(zip(specs, hosts, strict=True)):
+        if not _is_container(host):
             continue
         if i not in (0, last):
             raise ValueError(
@@ -243,10 +248,7 @@ def validate_path(lab: "Lab", specs: list[EndpointSpec]) -> None:
                 f"container {host_id!r} must neighbor its parent host {parent_id!r} "
                 f"in the chain (got {neighbor!r})"
             )
-    for host_id, _iface in specs:
-        host = lab.hosts.get(host_id)
-        if host is None:
-            continue  # unknown-host error is raised by the per-hop resolution
+    for (host_id, _iface), host in zip(specs, hosts, strict=True):
         if not host.has_bash:
             raise ValueError(
                 f"host {host_id!r} cannot be part of a tunnel path (has_bash=False) — "
@@ -255,7 +257,7 @@ def validate_path(lab: "Lab", specs: list[EndpointSpec]) -> None:
             )
 
 
-async def resolve_chain(lab: "Lab", specs: list[EndpointSpec]) -> list[ResolvedHop]:
+async def resolve_chain(lab: "LabView", specs: list[EndpointSpec]) -> list[ResolvedHop]:
     """Resolve + validate the whole ordered chain (spec §6, §8 container rules).
 
     Public: ``otto tunnel check`` resolves the chain it will probe this same way.
@@ -733,7 +735,7 @@ class PlannedHop:
     host: Any
 
 
-def planned_hop(lab: "Lab", spec: EndpointSpec) -> PlannedHop:
+def planned_hop(lab: "LabView", spec: EndpointSpec) -> PlannedHop:
     """Resolve one hop without contacting anything, or say the address is unknowable.
 
     The pure half of :func:`resolve_endpoint`, and the split between the two hop
@@ -767,13 +769,40 @@ def planned_hop(lab: "Lab", spec: EndpointSpec) -> PlannedHop:
     return PlannedHop(hop=static.hop, ip=static.ip, host=static.host)
 
 
-def planned_chain(lab: "Lab", specs: list[EndpointSpec]) -> list[PlannedHop]:
+def planned_chain(lab: "LabView", specs: list[EndpointSpec]) -> list[PlannedHop]:
     """Validate and resolve the whole chain purely — :func:`resolve_chain`'s twin, no device.
 
     Public: ``otto tunnel check`` makes its refusals and plans its dry run from this too.
     """
     validate_path(lab, specs)
     return [planned_hop(lab, spec) for spec in specs]
+
+
+@dataclass(frozen=True)
+class PlannedPath:
+    """The path, and the ``--dest``, resolved as far as lab data goes."""
+
+    chain: list[PlannedHop]
+    dest: PlannedHop | None
+
+
+def planned_path(
+    lab: "LabView", specs: list[EndpointSpec], *, dest: EndpointSpec | None
+) -> PlannedPath:
+    """Make every refusal the chain and its ``--dest`` get from lab data, before any device.
+
+    The one pre-contact judgment of a whole tunnel path: the chain's refusals
+    (:func:`validate_path`), each hop's pure resolution, the ``--dest``
+    lookup (a host outside the run's scope is refused here) and
+    :func:`ensure_dest_outside_chain`. ``add_tunnel`` makes it before it
+    resolves any hop live, since resolving a container contacts its parent;
+    its dry run and ``otto tunnel check`` plan from its answer.
+    """
+    chain = planned_chain(lab, specs)
+    dest_hop = planned_hop(lab, dest) if dest is not None else None
+    if dest_hop is not None:
+        ensure_dest_outside_chain(dest_hop.hop.host, {p.hop.host for p in chain})
+    return PlannedPath(chain, dest_hop)
 
 
 def _unresolved_addresses(unresolved: list[str]) -> str:
@@ -849,7 +878,7 @@ def _unchecked_launch_and_verify(count: int) -> str:
 
 
 def _plan_add(
-    lab: "Lab",
+    lab: "LabView",
     specs: list[EndpointSpec],
     *,
     port: int,
@@ -882,10 +911,8 @@ def _plan_add(
     :attr:`AddedTunnel.carrier_fwd` so no caller can read them as an
     allocation.
     """
-    planned = planned_chain(lab, specs)
-    dest_hop = planned_hop(lab, dest) if dest else None
-    if dest_hop is not None:
-        ensure_dest_outside_chain(dest_hop.hop.host, {p.hop.host for p in planned})
+    path = planned_path(lab, specs, dest=dest)
+    planned, dest_hop = path.chain, path.dest
     tunnel = Tunnel(
         protocol=protocol,
         service_port=port,
@@ -974,7 +1001,7 @@ def ensure_dest_outside_chain(dest_host: str, chain_host_ids: set[str]) -> None:
 
 
 async def add_tunnel(
-    lab: "Lab",
+    lab: "LabView",
     *,
     hosts: list[EndpointSpec],
     port: int,
@@ -1030,18 +1057,23 @@ async def add_tunnel(
             carrier_obj=carrier_obj,
             idle_timeout=idle_timeout,
         )
+    # Every refusal lab data can make, the destination's scope included,
+    # before a container hop's resolution contacts its parent.
+    planned_path(lab, hosts, dest=dest)
     resolved = await resolve_chain(lab, hosts)
     dest_hop = await resolve_endpoint(lab, dest) if dest else None
-    if dest_hop is not None:
-        ensure_dest_outside_chain(dest_hop.hop.host, {r.hop.host for r in resolved})
     tunnel = Tunnel(
         protocol=protocol,
         service_port=port,
         path=tuple(r.hop for r in resolved),
         dest=dest_hop.hop.host if dest_hop else None,
     )
+    from ..lab_view import whole_lab
+
     async with _add_lock(tunnel.id):
-        _check_conflicts(await discover_tunnels(lab), tunnel)
+        # The whole lab, past any project scope: a live tunnel on a host no
+        # project targets still holds its id and its service port.
+        _check_conflicts(await discover_tunnels(whole_lab(lab)), tunnel)
         for r in resolved:
             await _require_tools(r.host, carrier_obj)
 
@@ -1141,7 +1173,7 @@ class RemovedReport:
     Appended, per the rule :attr:`AddedTunnel.plan` states."""
 
 
-async def _reap(lab: "Lab", predicate: Any) -> RemovedReport:
+async def _reap(lab: "LabView", predicate: Any) -> RemovedReport:
     """Discover, kill matching pids per host, then re-scan to verify (spec §10)."""
     observations, unreachable_discovery = await discover_observations(lab)
     ids: set[str] = set()
@@ -1210,7 +1242,7 @@ _UNCHECKED_REAP_OUTCOME = (
 )
 
 
-def _plan_remove(lab: "Lab", *, tunnel_id: str | None) -> RemovedReport:
+def _plan_remove(lab: "LabView", *, tunnel_id: str | None) -> RemovedReport:
     """Preview :func:`remove_tunnel` / :func:`remove_all_tunnels` without contacting anything.
 
     What lab data alone proves is the SCOPE of the sweep, and that is the part
@@ -1241,7 +1273,7 @@ def _plan_remove(lab: "Lab", *, tunnel_id: str | None) -> RemovedReport:
     )
 
 
-async def remove_tunnel(lab: "Lab", *, tunnel_id: str) -> RemovedReport:
+async def remove_tunnel(lab: "LabView", *, tunnel_id: str) -> RemovedReport:
     """Reap one tunnel by id, then verify its processes are actually gone.
 
     Under ``--dry-run`` this returns a plan and kills nothing — see
@@ -1252,7 +1284,7 @@ async def remove_tunnel(lab: "Lab", *, tunnel_id: str) -> RemovedReport:
     return await _reap(lab, lambda t: t.id == tunnel_id)
 
 
-async def remove_all_tunnels(*, lab: "Lab") -> RemovedReport:
+async def remove_all_tunnels(*, lab: "LabView") -> RemovedReport:
     """Reap every otto tunnel (owner-agnostic), with the same verify pass.
 
     Under ``--dry-run`` this returns a plan and kills nothing. The

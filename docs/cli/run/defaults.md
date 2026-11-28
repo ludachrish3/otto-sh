@@ -47,8 +47,10 @@ otto --lab my_lab run install
 
 That walk is:
 
-1. Otto takes the run's projects in dependency order from the run's context
-   (`ctx.ordered_projects`), one snapshot of what bootstrap computed.
+1. Otto takes every parsed project in dependency order from the run's context
+   (`ctx.unscoped.ordered_projects`, one snapshot of what bootstrap computed;
+   {ref}`project-scope-python`), and skips each one that does not take part in
+   the run, saying why ({doc}`../projects`).
 2. Each project gets its `ProjectActions` — the subclass it registered, or otto's
    default — constructed with that project and that project's *view* of the live
    context.
@@ -261,13 +263,11 @@ goes through**, never by an argument the call site has to remember:
 | Walk goes through | Base set |
 | ----------------- | -------- |
 | `self.ctx` inside a `ProjectActions` (the project's view) | that project's universe |
-| the plain context (`otto.context.get_context()`, host-global steps) | the **union** of every declaring project's universe, less the projects switched off with `-E` ({ref}`projects-excluded-hosts-leave-play`) |
-| either, when **no** project in the run declared `[project]` | the whole loaded lab |
+| the plain context (`otto.context.get_context()`, host-global steps) | the hosts in play ({ref}`project-scope-hosts`) |
 
-So a run in which no project declares `[project]` is not scoped at all. The
-fallback is all-or-nothing: it applies when *nothing* declared, not per project,
-so a product-less project joining a run does not restore the whole lab for
-everyone.
+The hosts in play are the union of the declaring projects' hosts, less
+`-E`; when no project declares `[project]` they are the whole loaded lab.
+{ref}`project-scope-hosts` is the one home of that rule.
 
 Two things are **outside** the fleet: the built-in `local` host (pass
 `include_local=True`) and Docker containers (`include_containers=True`).
@@ -349,12 +349,11 @@ out ever reaches it, so name a lab host instead.
 Coverage walks always include container hosts and never the built-in `local`
 host, so for `[coverage] hosts` only a `local`-only pattern lands here.
 
-### Explicit targeting is never scoped
+### Explicit targeting is scoped too
 
-`otto host <id> <verb>`, `ctx.get_host("id")` and the host-id listing
-`otto host` prints reach any host in the loaded lab, declaration or not, so
-a project can name a machine it hops through without owning it, and a scoping
-typo never blocks `otto host`.
+`otto host <id> <verb>`, `ctx.get_host("id")` and the host-id listing reach
+only the hosts the run may target; {ref}`project-scope-hosts` has the rule,
+its exceptions and the refusal.
 
 ### When a declaration and the loaded lab disagree
 
@@ -442,8 +441,11 @@ the library that owns it rather than issuing `tc` or `kill` itself:
 
 | Step | Call | Scope |
 | ---- | ---- | ----- |
-| `--reset-impairments` | `otto.link.manage.repair_all(lab=lab)` | every static link in the lab — only the impairable ones can carry otto's netem |
-| `--remove-tunnels` | `otto.tunnel.manage.remove_all_tunnels(lab=lab)` | every otto tunnel, found by scanning |
+| `--reset-impairments` | `otto.link.manage.repair_all(lab=ctx.unscoped.lab)` | every static link in the lab, in the run's scope or not — only the impairable ones can carry otto's netem |
+| `--remove-tunnels` | `otto.tunnel.manage.remove_all_tunnels(lab=ctx.unscoped.lab)` | every otto tunnel in the lab, found by scanning |
+
+Both run even when no host is in play; {ref}`project-scope-empty` says what
+`cleanup` declines then.
 
 Two consequences worth knowing before you rely on either.
 

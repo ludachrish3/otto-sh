@@ -75,6 +75,15 @@ class _Ctx:
         # {project: [host ids]}: the project view's fleet, narrower than the lab's.
         self.fleets = fleets or {}
 
+    @property
+    def unscoped(self):
+        """The double's whole universe: its own lab and project lists, as the context's are."""
+        return self
+
+    def empty_scope_refusal(self):
+        """``None``: this double's walks reach its hosts, so its scope is never empty."""
+        return
+
     def all_hosts(self, _scope_owner=None, **kw):
         del kw
         if _scope_owner in self.fleets:

@@ -4,8 +4,9 @@ Each project under ``docs/examples`` that has ``.otto/settings.toml`` is copied
 (the whole examples tree, so sibling references resolve) into a temporary
 directory and run through ``otto --list-products`` and ``otto --lab <lab> -n run
 install`` with that copy as its only project. The lab is the one a reader of the
-example uses: the project's single literal ``[project] lab_patterns`` entry, or
-else the only lab ``otto --list-labs`` reports. A project with a
+example uses: the project's first ``[project] lab_patterns`` entry when it is a
+literal lab name (an example that works in several labs lists the one its
+reader starts in first), or else the only lab ``otto --list-labs`` reports. A project with a
 ``CMakeLists.txt`` is also configured, built and has its tests run by
 ``ctest``. A project that declares ``[[docker.use_cases]]`` (as otto reads
 them: :func:`otto.config.scope.declared_use_case_names`) then has each
@@ -37,7 +38,7 @@ EXAMPLES = ROOT / "docs" / "examples"
 LITERAL_LAB = re.compile(r"[A-Za-z0-9_.-]+")
 LISTED_LAB = re.compile(r"\u2022\s+(\S+)")
 NO_LAB = (
-    "cannot tell which lab a reader uses: give [project] lab_patterns one "
+    "cannot tell which lab a reader uses: start [project] lab_patterns with a "
     "literal lab name, or keep the example to one lab"
 )
 TIMEOUT_S = 600
@@ -123,10 +124,11 @@ def _lab(project: Project, otto: str, env: "dict[str, str]") -> str:
 
     Raises:
         _ExampleError: The lab listing failed, or neither it nor the settings
-            name exactly one lab.
+            name a lab: the first ``lab_patterns`` entry is not a literal lab
+            name and the listing does not hold exactly one lab.
     """
     patterns = project.settings.get("project", {}).get("lab_patterns", [])
-    if len(patterns) == 1 and LITERAL_LAB.fullmatch(patterns[0]):
+    if patterns and LITERAL_LAB.fullmatch(patterns[0]):
         return patterns[0]
     listed = _execute([otto, "--list-labs"], project.root, env)
     reason = _reason(listed)

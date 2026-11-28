@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from ..invocation import ActiveRun
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
     from .identity import ReservationIdentity, ResolvedIdentity
     from .protocol import Reservation, ReservationBackend
     from .report import ReservationReport
@@ -117,30 +117,26 @@ class ReservationGateResult:
 def _hosts_in_play(run: "ActiveRun") -> set[str]:
     """Return *run*'s hosts in play: the hosts a reservation requirement covers.
 
-    *run*'s admissible ids with the refusal off
-    (``admissible_ids(require_nonempty=False)``), less the built-in ``local``
-    host. Every reservation reader reaches this one set: the gate here, and
-    ``otto reservation check`` and the completer's gate through
-    :func:`otto.fleet.get_hosts_in_play`.
-
-    An empty declared fleet reads as ZERO hosts in play — the requirement is
-    the lab-level set alone — and never as an abort; a run that goes on to walk
-    its fleet still refuses that fleet with the same message.
-
-    The built-in ``local`` host is never in play: otto can always run on the
-    machine it is running on, so a reservation standing between a user and
-    ``otto host local <verb>`` costs them a run and buys nobody a slot. The
-    subtraction is here rather than in :func:`~otto.config.scope.scoped_ids`
-    because scoping answers a different question — ``include_local=True`` is a
-    fleet WALK's own opt-in and keeps working untouched. ``is_builtin_host``
-    rather than an ``id != "local"`` test: a lab may declare its OWN ``local``
-    entry (``load_lab`` then injects nothing), and that host's ``resources``
-    are as real as any other's.
+    The run's own answer (``OttoContext._hosts_in_play``): its admissible ids
+    with the refusal off, less the runner side. Every reservation reader
+    reaches this one set: the gate here, and ``otto reservation check`` and
+    the completer's gate through :func:`otto.fleet.get_hosts_in_play`. An
+    empty declared fleet reads as ZERO hosts in play, never as an abort.
     """
-    from ..host.builtin_hosts import is_builtin_host
+    return run._hosts_in_play()  # noqa: SLF001 — the active run's protocol member; this is its reader
 
-    in_play = run.admissible_ids(require_nonempty=False)
-    return {hid for hid in in_play if not is_builtin_host(run.lab.hosts.get(hid))}
+
+def requirement_lab(run: "ActiveRun") -> "LabView":
+    """Return the lab a reservation requirement over *run* reads, the run's whole lab.
+
+    Never the command's scoped view (``ctx.lab``): the hosts in play already
+    carry the scope, and a named host or its hop may be one no project
+    targets, so the requirement looks every host up in the whole lab and
+    reads the lab's own resources there. The one answer for every
+    requirement reader: the gate's own default, ``otto reservation check``,
+    ``otto host``'s named-host gate and the remote completer's gate.
+    """
+    return run.unscoped.lab
 
 
 @final
@@ -169,17 +165,24 @@ class ReservationGate:
 
     @staticmethod
     def _lab_and_hosts(
-        lab: "Lab | None", host_ids: "Iterable[str] | None"
-    ) -> "tuple[Lab, Iterable[str] | None]":
-        """Use an explicit lab as given; otherwise the active run's lab and its hosts in play."""
+        lab: "LabView | None", host_ids: "Iterable[str] | None"
+    ) -> "tuple[LabView, Iterable[str] | None]":
+        """Use an explicit lab as given; otherwise the active run's whole lab and its hosts in play.
+
+        The lab is :func:`requirement_lab`'s: the hosts in play already carry
+        the scope, so the requirement reads each of them, and the lab's own
+        resources, without judging the scope again.
+        """
         if lab is not None:
             return lab, host_ids
         from ..invocation import require_run
 
         run = require_run()
-        return run.lab, (_hosts_in_play(run) if host_ids is None else host_ids)
+        return requirement_lab(run), (_hosts_in_play(run) if host_ids is None else host_ids)
 
-    def report(self, lab: "Lab", *, host_ids: "Iterable[str] | None" = None) -> "ReservationReport":
+    def report(
+        self, lab: "LabView", *, host_ids: "Iterable[str] | None" = None
+    ) -> "ReservationReport":
         """Report what this gate's user needs from *lab* and holds.
 
         A status report ignores ``-R``: the backend is built now if the gate
@@ -204,7 +207,7 @@ class ReservationGate:
         )
 
     def evaluate(
-        self, *, lab: "Lab | None" = None, host_ids: "Iterable[str] | None" = None
+        self, *, lab: "LabView | None" = None, host_ids: "Iterable[str] | None" = None
     ) -> ReservationGateResult:
         """Run the reservation check (or the skip path) and report the outcome.
 
@@ -268,16 +271,18 @@ class ReservationGate:
         announce_expiring(report=report)
         return ReservationGateResult(checked=True, skipped=False, warning=None, report=report)
 
-    def check_hosts(self, *, lab: "Lab", hosts: "Iterable[object]") -> "ReservationReport | None":
+    def check_hosts(
+        self, *, lab: "LabView", hosts: "Iterable[object]"
+    ) -> "ReservationReport | None":
         """Require the OWN slots of the named hosts the fleet left out.
 
         Returns ``None`` when there is nothing to check. Needs an installed
         :class:`~otto.context.OttoContext`, because it reads the hosts in play
         off the active run.
 
-        ``otto host <id> --hop <id>`` is deliberately unscoped (explicit
-        targeting beats scoping) while :meth:`evaluate` requires only the
-        fleet of interest. Element- and host-level slots make that gap
+        A ``--hop`` reaches any host in the lab, and so does the target of a
+        verb that opts out of scoping, while :meth:`evaluate` requires only
+        the fleet of interest. Element- and host-level slots make that gap
         reachable: a project scoped to ``slot1`` would pass the gate holding
         ``slot-1`` and then touch ``slot2``. *hosts* is every host the caller
         names, a jump host included: reaching a fleet host through an
@@ -286,10 +291,11 @@ class ReservationGate:
         ``-R`` and a gate with no backend are no-ops, and the null backend
         answers inside the report. Short-circuits, in this order:
 
-        * The built-in ``local`` host is skipped, as it is never a host in
-          play: naming the machine otto is running on must never need a slot.
-          A lab that declares its OWN ``local`` entry is not this host and is
-          not skipped.
+        * The runner side is skipped: the built-in ``local`` host and the
+          containers on it, as neither is ever a host in play. Naming the
+          machine otto is running on must never need a slot. A lab that
+          declares its OWN ``local`` entry is not this host, and neither it
+          nor a container on it is skipped.
         * A host the fleet already covers is skipped; :meth:`evaluate` asked
           the backend for exactly that set.
         * A remaining host that declares neither ``resources`` nor element
@@ -305,7 +311,7 @@ class ReservationGate:
         MissingReservationError
             A remaining host's resources are not all held.
         """
-        from ..host.builtin_hosts import is_builtin_host
+        from ..host.builtin_hosts import is_runner_side
         from ..invocation import require_run
         from .report import build_report
 
@@ -317,7 +323,7 @@ class ReservationGate:
         outside = [
             host
             for host in hosts
-            if getattr(host, "id", None) not in fleet and not is_builtin_host(host)
+            if getattr(host, "id", None) not in fleet and not is_runner_side(host)
         ]
 
         def _declares(host: object) -> bool:
@@ -449,7 +455,7 @@ class ResourceOrigin:
 
 
 def required_resource_origins(
-    *, lab: "Lab", host_ids: "Iterable[str] | None" = None
+    *, lab: "LabView", host_ids: "Iterable[str] | None" = None
 ) -> list[ResourceOrigin]:
     """Every (resource, level, owner) the run needs, sorted by resource → level → owner.
 
@@ -483,7 +489,7 @@ def required_resource_origins(
     return sorted(origins, key=lambda o: (o.resource, _LEVEL_ORDER[o.level], o.owner))
 
 
-def required_resources(*, lab: "Lab", host_ids: "Iterable[str] | None" = None) -> set[str]:
+def required_resources(*, lab: "LabView", host_ids: "Iterable[str] | None" = None) -> set[str]:
     """Every resource identifier the run needs — derived from :func:`required_resource_origins`.
 
     ``host_ids`` selects the hosts in play (``None`` means every host in the
@@ -540,7 +546,7 @@ def refusal_message(report: "ReservationReport") -> str:
 
 def check_reservations(
     *,
-    lab: "Lab",
+    lab: "LabView",
     username: str,
     backend: "ReservationBackend",
     host_ids: "Iterable[str] | None" = None,
@@ -551,8 +557,8 @@ def check_reservations(
 
     Parameters
     ----------
-    lab : Lab
-        The lab about to be used.
+    lab : LabView
+        The lab about to be used: a :class:`~otto.labs.loader.Lab` or a scoped view of one.
     username : str
         The reservation-system identity to check against.
     backend : ReservationBackend

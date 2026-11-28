@@ -234,26 +234,60 @@ async def test_a_stopped_server_cancels_the_collection_task(lab):
 
 
 @pytest.mark.asyncio
-async def test_tunnel_discovery_covers_the_whole_lab_not_the_selection(lab):
+async def test_monitor_tunnel_source_unscoped_links_scoped(lab, monkeypatch):
+    """The tunnel source scans the whole lab; the declared links are the run's lab's.
+
+    Tunnels traverse hosts metric collection was never pointed at, and hosts
+    no project targets, so the source reads ``ctx.unscoped.lab``, past the
+    selection (``web1``) and the scope alike. The declared links come from
+    ``get_lab()``. ``OttoContext.unscoped`` is a stand-in over a lab other
+    than the run's, so each read shows which one it took.
+    """
+    from otto.monitor.session import MonitorSession
+    from otto.run_context import reset_context, set_context
+
     seen = []
 
     async def discover(active_lab):
         seen.append(active_lab)
         return []
 
+    scoped = SimpleNamespace(links=[])
     whole = SimpleNamespace(links=[])
+    built = {}
+    real_build = MonitorSession.build
+
+    def build(**kwargs):
+        built.update(kwargs)
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(
+        OttoContext,
+        "unscoped",
+        property(lambda _ctx: SimpleNamespace(lab=whole, projects=[])),
+        raising=False,
+    )
+    monkeypatch.setattr("otto.monitor.live._enforce_driving_project_scope", lambda: None)
+    monkeypatch.setattr(MonitorSession, "build", build)
     server = MagicMock(serve=AsyncMock())
-    with (
-        patch("otto.fleet.get_lab", return_value=whole),
-        patch("otto.tunnel.records.discover_tunnel_records", side_effect=discover),
-        patch("otto.monitor.server.MonitorServer", return_value=server) as server_cls,
-        patch("otto.monitor.collector.MetricCollector.run", new=AsyncMock()),
-        patch("otto.monitor.collector.MetricCollector.close", new=AsyncMock()),
-    ):
-        await run_live(hosts="web1")
-        collector = server_cls.call_args.args[0]  # run_live passes it positionally
-        await collector._tunnel_source()
-    assert seen == [whole]
+    binding = set_context(OttoContext(lab=Lab(name="rig")))
+    try:
+        with (
+            patch("otto.fleet.get_lab", return_value=scoped),
+            patch("otto.tunnel.records.discover_tunnel_records", side_effect=discover),
+            patch("otto.monitor.server.MonitorServer", return_value=server) as server_cls,
+            patch("otto.monitor.collector.MetricCollector.run", new=AsyncMock()),
+            patch("otto.monitor.collector.MetricCollector.close", new=AsyncMock()),
+        ):
+            await run_live(hosts="web1")
+            collector = server_cls.call_args.args[0]  # run_live passes it positionally
+            await collector._tunnel_source()
+    finally:
+        reset_context(binding)
+    assert built["declared"] is scoped.links
+    # By identity: the two stand-in labs are equal by value.
+    assert len(seen) == 1
+    assert seen[0] is whole
 
 
 def _context_over(projects):

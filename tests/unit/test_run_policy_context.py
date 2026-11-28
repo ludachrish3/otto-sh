@@ -180,7 +180,7 @@ def _without_the_root_callback(monkeypatch, build_lab):
     patch_bootstrap(monkeypatch, [])  # ensure_lab_context reads the composition root
     monkeypatch.setattr(
         "otto.session.lab.build_lab_and_view",
-        lambda projects, labs: BuiltLab(
+        lambda projects, labs, **_kw: BuiltLab(
             lab=build_lab(projects, labs), view=InventoryView.of_default(inventory=None)
         ),
     )
@@ -200,7 +200,7 @@ def test_a_cli_context_built_without_the_root_callback_takes_the_root_options_va
     from otto.cli.invoke import ensure_lab_context
     from tests._fixtures.rootoptions import make_root_options
 
-    _without_the_root_callback(monkeypatch, lambda projects, labs: Lab(name="rig"))
+    _without_the_root_callback(monkeypatch, lambda projects, labs, **_kw: Lab(name="rig"))
     with typer.Context(TyperGroup(name="otto")) as ctx:
         ctx.meta["_otto_root_options"] = make_root_options(labs=["rig"], field=True, dry_run=True)
         built = ensure_lab_context(ctx)
@@ -217,7 +217,7 @@ def test_a_cli_context_built_without_the_root_callback_takes_the_discovered_dead
     from otto.cli.invoke import ensure_lab_context
     from tests._fixtures.rootoptions import make_root_options
 
-    _without_the_root_callback(monkeypatch, lambda projects, labs: Lab(name="rig"))
+    _without_the_root_callback(monkeypatch, lambda projects, labs, **_kw: Lab(name="rig"))
     monkeypatch.setattr("otto.config.project.discovered_teardown_deadline", lambda: 60.0)
     with typer.Context(TyperGroup(name="otto")) as ctx:
         ctx.meta["_otto_root_options"] = make_root_options(labs=["rig"])
@@ -314,6 +314,102 @@ def test_peer_lookup_prefers_the_back_reference_then_the_installed_resolver():
         reset_context(binding)
     with pytest.raises(RuntimeError, match="cannot resolve hop"):
         orphan._lab_host(other_jump.id, role="hop")
+
+
+def test_resolver_reads_lab_live():
+    """The installed resolver answers from the context's lab on every lookup, a later one too."""
+    first, second = Lab(name="first"), Lab(name="second")
+    peer = make_host("test2")
+    second.add_host(peer)
+    ctx = OttoContext(lab=first)
+    binding = set_context(ctx)
+    try:
+        resolver = installed_resolver()
+        assert resolver is not None
+        assert (resolver.name, dict(resolver.hosts)) == ("first", {})
+        ctx.lab = second
+        assert resolver.name == "second"
+        assert resolver.hosts["test2"] is peer
+        later = make_host("test1")
+        second.add_host(later)
+        assert resolver.hosts["test1"] is later
+    finally:
+        reset_context(binding)
+
+
+def test_unbacklinked_hop_chain_resolves_through_unscoped_resolver(tmp_path, monkeypatch):
+    """A two-hop chain whose hops no project targets resolves through the whole lab.
+
+    ``a-dut`` hops through ``a-jump``, which hops through ``b-jump``, and only
+    ``a-dut`` is in scope. No host keeps a lab back-reference, so each hop is
+    looked up through the installed resolver. ``ctx.lab`` is narrowed to the
+    in-scope host, as a scoped view shows it, and ``OttoContext.unscoped`` is
+    a stand-in over the whole lab: a resolver that read ``ctx.lab`` misses
+    ``a-jump``.
+    """
+    from types import SimpleNamespace
+
+    from tests._fixtures.fleet import scope_workspace
+
+    ws = scope_workspace(tmp_path, labs=("alpha", "beta"))
+    whole = ws.lab
+    assert {"a-jump", "b-jump"}.isdisjoint(ws.ctx.admissible_ids())  # both hops out of scope
+    for host in whole.hosts.values():
+        if getattr(host, "_lab", None) is not None:
+            host._lab = None
+    ws.ctx.lab = Lab(
+        name=whole.name,
+        component_names=list(whole.component_names),
+        hosts={"a-dut": whole.hosts["a-dut"]},
+    )
+    stand_in = SimpleNamespace(lab=whole)
+    monkeypatch.setattr(OttoContext, "unscoped", property(lambda _ctx: stand_in), raising=False)
+
+    jump = whole.hosts["a-dut"].hop_host()
+    assert jump is whole.hosts["a-jump"]
+    assert jump.hop_host() is whole.hosts["b-jump"]
+
+
+def test_unbacklinked_hop_chain_resolves_past_the_view(tmp_path, monkeypatch):
+    """Regression: a two-hop chain no project targets resolves while ``ctx.lab`` is the scoped view.
+
+    The real view, not a stand-in: ``RemoteHost._resolve_peer`` reaches each
+    hop through the installed resolver, which reads ``ctx.unscoped.lab``. The
+    view's ``hosts`` is made unreadable, so a resolver that read ``ctx.lab``
+    fails here.
+    """
+    from otto.lab_view import ScopedLab
+    from tests._fixtures.fleet import scope_workspace
+
+    def _unreadable(_view):
+        raise AssertionError("the peer resolver read the scoped view")
+
+    ws = scope_workspace(tmp_path, labs=("alpha", "beta"))
+    whole = ws.lab
+    for host in whole.hosts.values():
+        if getattr(host, "_lab", None) is not None:
+            host._lab = None
+    monkeypatch.setattr(ScopedLab, "hosts", property(_unreadable))
+
+    jump = whole.hosts["a-dut"].hop_host()
+    assert jump is whole.hosts["a-jump"]
+    assert jump.hop_host() is whole.hosts["b-jump"]
+
+
+@pytest.mark.asyncio
+async def test_open_context_accepts_view_and_unwraps():
+    """Fail-first: ``open_context(lab=view)`` opens over the canonical lab the view reads.
+
+    Before, a view fell into the branch for a list of lab names.
+    """
+    from otto.lab_view import ScopedLab
+
+    lab = Lab(name="rig")
+    outer = OttoContext(lab=lab)
+    async with context.open_context(lab=ScopedLab(outer)) as inner:
+        assert inner.unscoped.lab is lab
+        assert isinstance(inner.lab, ScopedLab)
+        assert inner.lab.name == "rig"
 
 
 @pytest.mark.asyncio

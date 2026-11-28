@@ -256,7 +256,7 @@ host_patterns = ["sensor-.*"]
 With that in place, `_provide` above never sees a host of lab `floor`, and
 never sees `gw-1` in `bench1` either.
 
-Two cases are admitted — the provider runs for them unscoped:
+Two cases are admitted — the provider runs for them whatever the declaration says:
 
 - **A host with no lab attribution** — one built outside the lab loader by a
   direct `create_host_from_dict` call, and the built-in `local` host.

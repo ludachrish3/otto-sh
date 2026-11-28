@@ -60,18 +60,19 @@ class _World:
 
 @pytest.fixture(scope="module")
 def world(tmp_path_factory):
-    """Hosts ``h1 h2 h3 h1.r1.api local`` (in that lab order) and eight projects.
+    """Hosts ``h1 h2 h3 h1.r1.api local local.r1.db`` (in that lab order) and eight projects.
 
     ``h1``/``h2`` sit in lab ``a``, ``h3`` in lab ``b``; the container joins
     lab ``a``; ``local`` is stamped ``a`` (``add_builtin_local`` stamps the
-    first component). The projects are chosen so each §8 axis has a case that
-    tells a right answer from a wrong one:
+    first component), and a container runs on it. The projects are chosen so
+    each §8 axis has a case that tells a right answer from a wrong one:
 
     * ``plain`` declares nothing;
     * ``alpha`` admits ``h1`` and the container, and owns a product on the
       container; ``beta`` admits ``h2``;
-    * ``every-a`` admits all of lab ``a``, ``local`` included, while
-      ``alpha``/``beta``/``bravo`` do not admit ``local``;
+    * ``every-a`` admits all of lab ``a``, and ``local``'s stamp with it,
+      while ``alpha``/``beta``/``bravo`` patterns miss ``local``: the runner
+      is admitted by identity whatever they say;
     * ``bravo`` admits lab ``b``; ``ghost`` applies to no loaded lab;
     * ``dup-first`` and ``dup-second`` are both named ``dup`` and admit
       different hosts, so "last wins" is observable.
@@ -84,6 +85,9 @@ def world(tmp_path_factory):
     container.products = [types.SimpleNamespace(name="app", owner="alpha")]
     lab.add_host(container)
     add_builtin_local(lab)
+    # A container on the built-in runner follows the runner: a walk reaches it
+    # only when it admits the runner (include_local) as well as containers.
+    lab.add_host(_container(lab.hosts["local"], "db", "a"))
     projects = {
         "plain": _project(base, "plain"),
         "alpha": _project(base, "alpha", labs=["a"], hosts=["h1", r"h1\.r1\.api"]),
@@ -94,7 +98,7 @@ def world(tmp_path_factory):
         "dup-first": _project(base / "first", "dup", labs=["a"], hosts=["h2"]),
         "dup-second": _project(base / "second", "dup", labs=["b"], hosts=[".*"]),
     }
-    assert list(lab.hosts) == ["h1", "h2", "h3", "h1.r1.api", "local"]
+    assert list(lab.hosts) == ["h1", "h2", "h3", "h1.r1.api", "local", "local.r1.db"]
     return _World(lab=lab, projects=projects)
 
 
@@ -149,8 +153,9 @@ def oracle(world):
 
     ``None`` records a walk that refused an empty declared fleet: §3's first
     stated exception, where the query answers ``[]``. The refusal is checked to
-    be exactly that one — the walk's own admissible set, read without the
-    refusal, is empty — so no other ``ProjectScopeError`` can hide behind it.
+    be exactly that one — the walk's own hosts in play (its admissible set
+    less the runner side) are empty — so no other ``ProjectScopeError`` can
+    hide behind it.
 
     Module-scoped, so it runs OUTSIDE the root conftest's per-test bootstrap
     state restore: it must never reach the real composition root, whose cached
@@ -186,7 +191,7 @@ def oracle(world):
                     )
                 ]
             except ProjectScopeError:
-                assert not ctx.admissible_ids(owner=case.owner, require_nonempty=False), case
+                assert not ctx._owner_in_play(case.owner), case
                 walked = None
             results.append((case, walked))
     return results
@@ -298,12 +303,18 @@ def _mutant_local_flag_ignored(lab, *, projects, **kw):
     return fleet_of_interest(lab, projects=projects, **{**kw, "include_local": False})
 
 
-def _mutant_local_flag_bypasses_scope(lab, *, projects, **kw):
-    """Axis: a declaring scope that does NOT admit ``local``. The flag adds it anyway."""
+def _mutant_runner_judged_by_patterns(lab, *, projects, **kw):
+    """Axis: a declaration whose patterns miss ``local``. The runner is dropped, not admitted."""
     got = fleet_of_interest(lab, projects=projects, **kw)
-    if kw["include_local"] and "local" not in got:
-        got = [*got, "local"]
+    if any(_declares(project) for project in projects):
+        got = [host_id for host_id in got if host_id != "local"]
     return got
+
+
+def _mutant_runner_container_dropped(lab, *, projects, **kw):
+    """Axis: a container on the runner with both flags on. It is dropped, not walked."""
+    got = fleet_of_interest(lab, projects=projects, **kw)
+    return [host_id for host_id in got if host_id != "local.r1.db"]
 
 
 def _mutant_first_duplicate_wins(lab, *, projects, **kw):
@@ -328,7 +339,8 @@ _MUTANTS = {
     "-E matching no project": _mutant_unknown_exclude_refused,
     "include_containers": _mutant_containers_flag_ignored,
     "include_local": _mutant_local_flag_ignored,
-    "local outside the scope": _mutant_local_flag_bypasses_scope,
+    "runner under a declaration": _mutant_runner_judged_by_patterns,
+    "a container on the runner": _mutant_runner_container_dropped,
     "duplicate names": _mutant_first_duplicate_wins,
 }
 
@@ -407,7 +419,7 @@ def test_the_query_reads_nothing_but_its_arguments(world, monkeypatch):
 def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):
     """The walk, its empty-selection prediction and the query share one helper.
 
-    A planted rule that holds out ``h2`` alone, and admits the container and
+    A planted rule that holds out ``h2`` alone, and admits the containers and
     ``local`` with both flags off, can only reach all three readers if each one
     asks the helper rather than repeating the isinstance tests.
     """
@@ -419,7 +431,7 @@ def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):
     plain = world.projects["plain"]
     ctx = install_scoped_context(world.lab, [plain])
 
-    expected = ["h1", "h3", "h1.r1.api", "local"]
+    expected = ["h1", "h3", "h1.r1.api", "local", "local.r1.db"]
     assert [host.id for host in ctx.all_hosts()] == expected
     assert fleet_of_interest(world.lab, projects=[plain]) == expected
     with pytest.raises(EmptySelectionError) as excinfo:
@@ -436,3 +448,28 @@ def test_owner_is_not_normalized_in_the_query_or_the_walk(world):
         list(ctx.for_project(name="Alpha").all_hosts())
     with pytest.raises(ProjectScopeError):
         fleet_of_interest(world.lab, projects=projects, owner="Alpha")
+
+
+# ── a lab entry that reuses the id ``local`` ──────────────────────────────────
+
+
+def test_fleet_of_interest_agrees_with_walk_on_lab_local(tmp_path):
+    """A lab host whose id is ``local`` is ordinary to the query, the walk and their verdict.
+
+    The query and the walk re-ask the patterns host by host, so each reaches
+    it. The verdict both resolve through one function must hold it too: D3
+    reads that verdict, and a declaration whose walk reaches a host must not
+    be refused as admitting none.
+    """
+    from otto.config.scope import require_current_scope
+
+    lab = _lab(("local", "a"), ("h2", "a"))
+    project = _project(tmp_path, "r1", labs=["a"], hosts=["local"])
+    ctx = install_scoped_context(lab, [project])
+
+    walk = [host.id for host in ctx.all_hosts()]
+    assert fleet_of_interest(lab, projects=[project]) == walk == ["local"]
+    owner_walk = [host.id for host in ctx.for_project(name="r1").all_hosts()]
+    assert fleet_of_interest(lab, projects=[project], owner="r1") == owner_walk == ["local"]
+    assert scopes_of(ctx)["r1"].universe == frozenset(walk)
+    require_current_scope(scopes_of(ctx), "r1")  # returns quietly: the fleet is not empty

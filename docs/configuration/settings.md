@@ -473,9 +473,11 @@ At startup, otto validates the declarations after discovering every project in
   init modules load before its dependents'). Projects with no declared
   dependencies keep `OTTOPATH` order exactly.
 
-Inspect the outcome at runtime via {func}`otto.bootstrap.get_projects` — each project
-carries a `dependencies` list with per-dependency status and the provider's
-version.
+Inspect the outcome at runtime through `ctx.unscoped.projects`, which holds
+every parsed project ({ref}`project-scope-python`; `ctx.projects` holds only
+those taking part), or {func}`otto.bootstrap.get_projects` outside a run. Each
+project carries a `dependencies` list with per-dependency status and the
+provider's version.
 
 ### `[dependencies]` names projects; `pyproject.toml` names packages
 

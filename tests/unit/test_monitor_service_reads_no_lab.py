@@ -15,7 +15,7 @@ lab and its hosts) is ``otto.fleet`` (spec 2026-10-11 placement-and-phases
 so a file that reached either the fleet or the facade fails. The lab model and
 its loader live in ``otto.labs.loader`` (§3.7), banned by module: the rest of
 ``otto.labs`` is the lab sources, which read no run. The run's projects are read
-from ``otto.declared`` (``current_projects``, §3.9), banned by module too: nothing
+from ``otto.declared`` (``unscoped_projects``, §3.9), banned by module too: nothing
 else under ``otto/monitor`` reads the composed state or the declared entries.
 
 A name imported through a package facade (``from otto.monitor import
@@ -30,7 +30,7 @@ statement). A name imported from a package counts as its submodule too, as tach
 resolves it (``from otto import tunnel`` is ``otto.tunnel``).
 
 It also reads every literal string the import system resolves, with the string
-audit's own reader (``strings_in`` in ``tests/unit/test_dynamic_import_audit.py``):
+audit's own reader (``strings_in`` in ``tests/_fixtures/import_strings.py``):
 ``importlib.import_module("...")``, ``Ref("pkg.module:attr")``, a lazy table's
 entry, a ``register_cli_command`` loader. The audit judges a string only when
 its target lies in another tach module, and ``live.py`` shares ``otto.monitor``
@@ -61,16 +61,14 @@ what they say it does, because the ``tach`` floor floats.
 """
 
 import ast
-from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import CHECKOUT_ROOT
-from tests.unit.test_dynamic_import_audit import strings_in
+from tests._fixtures.import_strings import strings_in
+from tests._fixtures.import_walk import SRC, ImportWalk, package_of
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-SRC = CHECKOUT_ROOT / "src"
 MONITOR = SRC / "otto" / "monitor"
 RUNNER = MONITOR / "live.py"
 FACADE = MONITOR / "__init__.py"
@@ -86,54 +84,11 @@ LAB = [
     "otto.tunnel",
 ]
 BANNED = [*LAB, RUNNER_MODULE]
-SKIPPED_TESTS = ["TYPE_CHECKING", "typing.TYPE_CHECKING"]
-
-
-def package_of(path: Path) -> str:
-    """Return the package a relative import in the file at *path* resolves against.
-
-    That is its directory, for a package's ``__init__.py`` and a module alike.
-    """
-    return ".".join(path.relative_to(SRC).parent.parts)
-
-
-def _resolve(package: str, node: ast.ImportFrom) -> str:
-    if not node.level:
-        return node.module or ""
-    base = package.split(".")
-    base = base[: len(base) - node.level + 1]
-    return ".".join([*base, *([node.module] if node.module else [])])
-
-
-class _Imports(ast.NodeVisitor):
-    def __init__(self, package: str, lines: "list[str]") -> None:
-        self.package = package
-        self.lines = lines
-        self.found: list[list] = []
-
-    def _is_elif(self, node: ast.If) -> bool:
-        return self.lines[node.lineno - 1][node.col_offset :].startswith("elif")
-
-    def visit_If(self, node: ast.If) -> None:
-        self.visit(node.test)
-        if self._is_elif(node) or ast.unparse(node.test) not in SKIPPED_TESTS:
-            for statement in node.body:
-                self.visit(statement)
-        for statement in node.orelse:
-            self.visit(statement)
-
-    def visit_Import(self, node: ast.Import) -> None:
-        self.found += [[node.lineno, alias.name] for alias in node.names]
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        module = _resolve(self.package, node)
-        self.found.append([node.lineno, module])
-        self.found += [[node.lineno, f"{module}.{alias.name}"] for alias in node.names]
 
 
 def imports(text: str, package: str = "otto.monitor") -> "list[list]":
     """Each ``[line, module]`` an import statement in *text* names, as tach resolves it."""
-    finder = _Imports(package, text.split("\n"))
+    finder = ImportWalk(package, text.split("\n"))
     finder.visit(ast.parse(text))
     return finder.found
 
@@ -198,7 +153,7 @@ def test_the_scan_sees_the_runner_read_the_lab() -> None:
         for _, module in imports(RUNNER.read_text(encoding="utf-8"), package_of(RUNNER))
         if _banned(module) and not module.startswith(RUNNER_MODULE)
     }
-    reads = {"all_hosts", "current_projects", "get_lab", "get_context", "discover_tunnel_records"}
+    reads = {"all_hosts", "unscoped_projects", "get_lab", "get_context", "discover_tunnel_records"}
     assert reads <= seen, sorted(reads - seen)
 
 

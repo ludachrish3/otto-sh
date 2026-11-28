@@ -68,7 +68,7 @@ from .sentinel import (
 if TYPE_CHECKING:
     from ipaddress import IPv4Interface
 
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
 
 _IMPAIR_HOST_TIMEOUT = 30.0
 VERIFY_FAILED = "post-apply verify failed"
@@ -401,15 +401,52 @@ def find_link(*, lab: Any, ident: str) -> Link:
     link can be acted on — a completer that offered everything this accepts
     would offer mostly guaranteed errors.
 
-    Raises a :class:`ValueError` listing every known id when *ident* matches
-    neither, so a typo'd CLI argument gets a usable hint.
+    Raises a :class:`ValueError` when *ident* matches neither. A link the
+    whole lab holds and *lab* leaves out, because one of its endpoints is a
+    lab host outside the run's scope, is named with that endpoint's refusal,
+    which says how to reach it. Any other miss lists every known id, so a
+    typo'd CLI argument gets a usable hint.
     """
     links = lab.static_links()
     for link in links:
-        if link.id == ident or (link.name is not None and link.name == ident):
+        if _names(link, ident):
             return link
+    _refuse_out_of_scope_link(lab, ident)
     known = ", ".join(sorted(link.id for link in links)) or "<none>"
     raise ValueError(f"no link {ident!r} in the loaded lab (known: {known})")
+
+
+def _names(link: Link, ident: str) -> bool:
+    """Report whether *ident* is *link*'s id or its ``name``."""
+    return link.id == ident or (link.name is not None and link.name == ident)
+
+
+def _refuse_out_of_scope_link(lab: Any, ident: str) -> None:
+    """Raise when the whole lab has link *ident* and *lab* refuses one of its endpoints.
+
+    It reads the whole lab (``otto.lab_view.whole_lab``) to find the link a
+    scoped view dropped, and looks each endpoint the lab holds up in *lab*
+    through :func:`lab_host`, so the refusal is the one every link verb
+    gives for that host. An endpoint the lab does not contain is not judged
+    here: such a link stays in the view.
+    """
+    from ..lab_view import whole_lab
+
+    whole = whole_lab(lab)
+    if whole is lab:
+        return
+    for link in whole.static_links():
+        if not _names(link, ident):
+            continue
+        for end in (link.a, link.b):
+            if end.host not in whole.hosts:
+                continue
+            try:
+                lab_host(lab, end.host)
+            except ValueError as refused:
+                raise ValueError(
+                    f"link {ident!r} has an endpoint outside this run's scope: {refused}"
+                ) from refused
 
 
 async def _exec(host: Any, cmd: str) -> Any:
@@ -482,11 +519,18 @@ async def _root_run(host: Any, cmd: str) -> Any:
 
 
 def lab_host(lab: Any, host_id: str) -> Any:
-    """Look up *host_id* in *lab*; a missing host is a rich :class:`ValueError`."""
-    try:
-        return lab.hosts[host_id]
-    except KeyError as e:
-        raise ValueError(f"link references host {host_id!r} not in the loaded lab") from e
+    """Look up *host_id* in *lab*; a miss is a rich :class:`ValueError`.
+
+    A host that is in the lab and outside the run's scope keeps its refusal's
+    text, which names the fix; any other miss says the lab does not hold it.
+    Endpoints, the in-path middlebox and ``otto link check`` all look their
+    hosts up here.
+    """
+    from ..host.targeting import host_or_value_error
+
+    return host_or_value_error(
+        lab, host_id, unknown_message=f"link references host {host_id!r} not in the loaded lab"
+    )
 
 
 def _impairer_for(host: Any) -> LinkImpairer:
@@ -541,11 +585,18 @@ def _ensure_endpoints_are_loaded(lab: Any, link: Link) -> None:
     into every real lab, so it is never genuinely missing — but a lab that
     omits it must still get the local-host refusal rather than this one, and
     running first would otherwise let this rule shadow it.
+
+    It reads the whole lab (``otto.lab_view.whole_lab``), past any project
+    scope: whether an endpoint is out of the run's scope is a separate
+    question, and the lab still holds the host either way.
     """
+    from ..lab_view import whole_lab
+
+    hosts = whole_lab(lab).hosts
     missing = [
         end.host
         for end in (link.a, link.b)
-        if end.host != BUILTIN_LOCAL_HOST_ID and end.host not in lab.hosts
+        if end.host != BUILTIN_LOCAL_HOST_ID and end.host not in hosts
     ]
     if missing:
         names = ", ".join(repr(h) for h in missing)
@@ -581,14 +632,20 @@ def _hop_dependents(lab: Any, transit_host_id: str) -> list[tuple[str, str]]:
     These are the hosts that reach otto only by hopping through
     *transit_host_id*: impairing the facing netdev on that host would cut them
     off, so their management ip must be protected there (:func:`ensure_not_hop_transit`).
+
+    It walks the whole lab (``otto.lab_view.whole_lab``): a dependent no
+    project targets is still cut off by the impairment.
     """
+    from ..lab_view import whole_lab
+
+    whole = whole_lab(lab)
     dependents: list[tuple[str, str]] = []
-    for host in lab.hosts.values():
+    for host in whole.hosts.values():
         host_id = getattr(host, "id", "")
         if host_id in ("", transit_host_id, BUILTIN_LOCAL_HOST_ID):
             continue
         ip = getattr(host, "ip", "") or ""
-        if ip and _hop_chain_includes(lab, host, transit_host_id):
+        if ip and _hop_chain_includes(whole, host, transit_host_id):
             dependents.append((host_id, ip))
     return dependents
 
@@ -1213,8 +1270,9 @@ def _planned_placements(
     ensure_not_local_link(link)
     if link.impair:
         # Resolves the middlebox so a lab-data error (a link naming a host that
-        # is not in the lab) is still the loud ValueError a real run raises,
-        # rather than being lost behind "could not be resolved".
+        # is not in the lab, or one outside the run's scope) is still the loud
+        # ValueError a real run raises, rather than being lost behind "could
+        # not be resolved".
         lab_host(lab, link.impair)
         return None
     return endpoint_placements(link, directions)
@@ -1399,7 +1457,7 @@ def _plan_repair(lab: Any, link: Link, *, selector: Selector | None) -> DryRunPl
 
 
 async def impair_link(
-    lab: "Lab",
+    lab: "LabView",
     *,
     ident: str,
     params: ImpairmentParams,
@@ -1544,7 +1602,9 @@ async def impair_link(
     return ImpairReport(link.id, applied)
 
 
-async def repair_link(lab: "Lab", *, ident: str, selector: Selector | None = None) -> RepairReport:
+async def repair_link(
+    lab: "LabView", *, ident: str, selector: Selector | None = None
+) -> RepairReport:
     """Clear link *ident*'s impairment state and cancel its timers.
 
     Bare (``selector=None``): clears EVERYTHING per placement that has any
@@ -1642,7 +1702,7 @@ def describe_out_of_scope(report: RepairReport) -> str:
     )
 
 
-async def repair_all(*, lab: "Lab") -> RepairAllReport:
+async def repair_all(*, lab: "LabView") -> RepairAllReport:
     """Repair every static link in *lab*; never raises.
 
     A link that structurally can't be impaired (:class:`ValueError` — neither
@@ -1828,7 +1888,7 @@ async def read_link_state(lab: Any, link: Link) -> LinkState:
         return LinkState(link, {}, impairable=True, read_errors=dict.fromkeys(_BOTH, str(e)))
 
 
-async def read_link_states(lab: "Lab") -> list[LinkState]:
+async def read_link_states(lab: "LabView") -> list[LinkState]:
     """Read the current impairment state of every static link.
 
     This is the ``list``/GUI-overlay feed.

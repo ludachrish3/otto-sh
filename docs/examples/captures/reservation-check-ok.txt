@@ -1,8 +1,7 @@
 $ otto --lab busybox --holder chris reservation check
 INFO     [reservations] acting as 'chris' (--holder)
-INFO     fleet of interest: 5 of 7 lab hosts (1 project(s), 0 excluded); outside it: test1 (no
-         declared project targets it)
-reservations required by lab busybox for chris (5
+INFO     fleet of interest: 6 of 7 lab hosts (1 project(s), 0 excluded)
+reservations required by lab busybox for chris (6
                 host(s) in play)
 ╭────────────────┬─────────┬─────────────┬──────╮
 │ resource       │ level   │ owner       │ held │
@@ -10,5 +9,6 @@ reservations required by lab busybox for chris (5
 │ bb-bench       │ lab     │ busybox     │ yes  │
 │ bb1350-chassis │ element │ bb1350      │ yes  │
 │ bb1350-slot    │ host    │ bb1350-qemu │ yes  │
+│ test1-chassis  │ element │ test1       │ yes  │
 ╰────────────────┴─────────┴─────────────┴──────╯
 OK — all required resources are reserved.

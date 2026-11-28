@@ -153,26 +153,39 @@ class TestBootstrapDemotion:
 
 
 class TestWalkWithEverythingExcluded:
-    def test_status_skips_every_switched_off_project_without_dialing(self, tmp_path):
-        """Every project switched off: both get a line, and nobody is dialed.
+    """Every declaring project switched off: nothing is in play, so the scope is empty."""
 
-        THE EXIT CODE IS PINNED AT 1 AS AN OBSERVATION, not as an endorsement.
-        ``status`` documents 1 as "fully uninstalled", and
-        ``orchestrator._aggregate`` reaches it here because zero counted projects
-        aggregate to UNINSTALLED by its stated rule. That rule was chosen for
-        the counted-project case (a docs-only project contributes no state); a run
-        that switched EVERY project off asked about nothing, which is a third
-        answer the three-member code cannot express. Left as-is deliberately:
-        changing the aggregate would move ``is_uninstalled()`` and the
-        converges that branch on it, which is a decision about the install-state
-        vocabulary, not about activation. If that decision is taken, this
-        assertion is the one that must change with it.
+    def test_status_refuses_the_empty_scope_without_dialing(self, tmp_path):
+        """``status`` refuses up front with the switch text, and nobody is dialed (R-EMPTY).
+
+        It used to print one skip line per switched-off project and exit 1 as
+        "fully uninstalled"; the one refusal replaces those lines.
         """
         result = _run(["-E", "project1,project2", "run", "status"], lab="unix_alt", xdir=tmp_path)
         blob = result.stdout + result.stderr
-        assert "project 'project1' switched off for this run" in blob
-        assert "project 'project2' switched off for this run" in blob
         assert result.returncode == 1, blob
+        assert "no host is in play" in blob
+        assert "switched off: project1" in blob
+        assert "skipping it for status" not in blob
+
+    def test_cleanup_dry_run_previews_the_declined_steps(self, tmp_path):
+        """``-n run cleanup`` runs under the empty scope and previews what the real run declines."""
+        result = _run(
+            ["-E", "project1,project2", "-n", "run", "cleanup"], lab="unix_alt", xdir=tmp_path
+        )
+        blob = result.stdout + result.stderr
+        assert result.returncode == 0, blob
+        assert "debug-log sweep skipped: no host is in play" in blob
+        assert "toolchain removal skipped: no host is in play" in blob
+        assert "project 'project1' switched off for this run" in blob
+
+    def test_list_hosts_warns_and_lists_only_the_runner(self, tmp_path):
+        """``--list-hosts`` warns with the refusal on stderr and lists the runner alone."""
+        result = _run(["-E", "project1,project2", "--list-hosts"], lab="unix_alt", xdir=tmp_path)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stderr.startswith("warning: no host is in play")
+        listed = [line for line in result.stdout.splitlines() if line.startswith("\u2022")]
+        assert listed == ["\u2022 local"]
 
 
 class TestListLabsScope:

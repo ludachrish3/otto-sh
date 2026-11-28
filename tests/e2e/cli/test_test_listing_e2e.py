@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e._otto_subprocess import PROJECT_E2E, assert_no_output_dir, run_otto
+from tests.e2e._scope_workspace import scoped_roots
 
 pytestmark = pytest.mark.hostless
 
@@ -65,42 +66,13 @@ def test_list_tests_class_scoped(tmp_path: Path) -> None:
 # ── scope: only the projects that take part ──────────────────────────────────
 
 
-def _scoped_roots(tmp_path: Path) -> str:
-    """``project_a`` is always active and carries the lab; ``project_b`` applies to ``beta``."""
-    import json
-    import os
-
-    from tests._fixtures.labdata import lab_json_v2
-    from tests._fixtures.project_scaffold import make_project
-
-    document = lab_json_v2([{"ip": "192.0.2.1", "element": "a", "labs": ["alpha"]}])
-    a = make_project(
-        tmp_path / "project_a",
-        name="project_a",
-        tests=["tests"],
-        extra='[[lab.sources]]\nbackend = "json"\npaths = ["labdata"]\n',
-        files={
-            "labdata/lab.json": json.dumps(document),
-            "tests/test_a.py": "def test_in_a(): pass\n",
-        },
-    )
-    b = make_project(
-        tmp_path / "project_b",
-        name="project_b",
-        tests=["tests"],
-        extra='[project]\nlab_patterns = ["beta"]\nhost_patterns = [".*"]\n',
-        files={"tests/test_b.py": "def test_in_b(): pass\ndef test_only_b(): pass\n"},
-    )
-    return f"{a}{os.pathsep}{b}"
-
-
 def _otto(tmp_path: Path, argv: list[str], **kwargs):
     return run_otto(
         argv,
         xdir=tmp_path / "x",
         roots=None,
         extra_argv_prefix=["-R", *kwargs.pop("prefix", [])],
-        extra_env={"OTTOPATH": _scoped_roots(tmp_path), **kwargs.pop("env", {})},
+        extra_env={"OTTOPATH": scoped_roots(tmp_path), **kwargs.pop("env", {})},
         **kwargs,
     )
 

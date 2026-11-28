@@ -16,6 +16,7 @@ from otto.link.params import ImpairmentParams, LinkImpairer, Selector
 from otto.link.placement import FlowDirection
 from otto.link.sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel_v3
 from otto.result import CommandResult, Results, Status
+from tests._fixtures.fleet import DoubleLab
 from tests.conftest import active_context
 
 from ._tc_render import render_scoped_tree
@@ -92,13 +93,7 @@ class FakeHost:
         return Results.collect(items=[self._result(cmd)])
 
 
-@dataclass
-class FakeLab:
-    hosts: dict
-    links: list
-
-    def static_links(self) -> list:
-        return list(self.links)
+FakeLab = DoubleLab
 
 
 LINK = Link(
@@ -127,6 +122,26 @@ class TestFindLink:
         lab, *_ = _bed()
         with pytest.raises(ValueError, match=f"known: {LINK.id}"):
             find_link(lab=lab, ident="nope")
+
+
+def test_self_lockout_guard_reads_whole_lab(monkeypatch) -> None:
+    """The endpoint check and the hop-dependent walk read the whole lab, past any scope.
+
+    A dependent no project targets is still cut off by an impairment on its
+    transit, and an endpoint out of the run's scope is still in the lab. The
+    guard is handed a lab holding ``test1`` alone, which
+    ``otto.lab_view.whole_lab`` maps to the whole bed, where ``test3`` hops
+    through ``test1``.
+    """
+    from otto.link.manage import _ensure_endpoints_are_loaded, _hop_dependents
+
+    whole, test1, _test2, test3 = _bed()
+    test3.hop = "test1"  # type: ignore[attr-defined]
+    narrow = FakeLab(hosts={"test1": test1}, links=list(whole.links))
+    monkeypatch.setattr("otto.lab_view.whole_lab", lambda lab: whole if lab is narrow else lab)
+
+    _ensure_endpoints_are_loaded(narrow, LINK)  # test2 is in the whole lab: no refusal
+    assert _hop_dependents(narrow, "test1") == [("test3", "10.10.200.13")]
 
 
 class TestEndpointImpair:
