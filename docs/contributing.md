@@ -1414,7 +1414,9 @@ closed terminal) keeps the bed only while something of it still runs; once
 its workers are gone the next acquirer takes the lease over, saying whose it
 was and that it was dead. A red lane does not wait for that: every step that
 can fail between a lane's acquire and its release ends in `$(call bed_fail)`, which
-captures the step's status, releases the lease and exits with that status, so
+captures the step's status, names any guest that crashed under the run
+([a guest that restarted](#bed-guest-restarts)), releases the lease and exits
+with that status, so
 a failing `make vm-health` or `make qemu-restart` does not strand the bed (no
 `make bed-release` after a red health check). That release is the ordinary
 one: it drains the run's own processes first and keeps the lease, naming
@@ -1541,9 +1543,44 @@ last line is `bed-reap: clean`:
   removers ran. A qdisc tree otto did not place is reported as foreign and left
   alone: clear it by hand with `sudo tc qdisc del dev <netdev> root`.
 
+(bed-guest-restarts)=
+
+One more kind of line is not dirt on the bed, and fails the lane all the same
+when it says `DURING THIS RUN`:
+
+```text
+bed-reap: guest unit zephyr-qemu-v4_4_lfs.service on test4 was restarted by systemd once DURING THIS RUN (up since Fri 2026-11-27 05:10:21 CST)
+bed-reap:     [07:57:42.300,000] <err> os: >>> ZEPHYR FATAL ERROR 2: Stack overflow on CPU 0
+bed-reap:     [07:57:42.300,000] <err> os: Current thread: 0x1842a0 (shell_telnet)
+```
+
+A bed guest that crashes is restarted by its systemd unit within seconds and
+then answers every probe as healthy, so nothing else shows the crash. Each reap
+reads every guest unit's restart count (`NRestarts`, which a restart by hand
+sets back to 0) and keeps it on the lease record. `DURING THIS RUN` means the
+count rose since this run's previous reap: a test that used that guest in
+that span may have failed or slowed because of the guest, not because of the
+change under test, and a test that passed did so against a guest that crashed
+under the run. So the reap fails the lane: it exits 3 after the line
+`bed-reap: a guest unit was restarted DURING THIS RUN: the lane fails (the bed is clean)`,
+and it frees the bed first, because nothing is left on it to clean. Find the
+crash in the indented lines, which are the last crash lines of the unit's
+journal on the hop, then run the lane again: a restart fails one reap only.
+The same run has the new count on its lease record, and a new run's first
+look names it as `before this run`. `before this run` is printed once, by the run's first
+reap that reads the unit, for a unit that had already restarted; it stays until the unit is
+restarted by hand, so find the cause first
+(`journalctl -u <unit>` on the hop); it fails nothing, and neither does a hop
+whose units could not be read. A lane that fails for another reason prints the
+same lines just before it frees the bed, so that red lane names the guest
+itself (with the lab down that costs the failing lane one connection attempt
+per hop, up to 10 s each when the hop does not answer).
+
 Fix what the lines name, then run the reap again. A reap at a lane's start that
 fails stops the lane before any of its tests run, so the red is the bed's, not
-your change's. The reap refuses a bed another live run holds, and a run of your
+your change's (that includes a guest that restarted between two lanes of one
+`make gate-tip`: the second lane's opening reap is a later look of the same
+run). The reap refuses a bed another live run holds, and a run of your
 own whose processes are still running: wait for them, or kill them, then run it
 again. An interrupted `make gate-tip` runs the same reap by itself
 ([an interrupted gate](#gate-interrupt)).
@@ -1624,7 +1661,9 @@ Recover a wedged embedded bed with `make qemu-restart`; probe the whole lab with
 `make vm-health` (which also adds a `console` row per bed serial console that
 logs in, healthy at `AT-LOGIN`; a Zephyr console gets no extra row, because its
 own row is already a dial of that single-client console; that row holds the
-console about 5 s for its uptime, so about 16 s for the three), and put a
+console about 5 s for its uptime, so about 16 s for the three; and that lists,
+below its table, every guest unit systemd has restarted, with the last crash
+lines of its journal: [a guest that restarted](#bed-guest-restarts)), and put a
 console that a run left logged in back at its login prompt with
 `make console-logout`. The 3.7
 guests wedge by design of two upstream Zephyr bugs that are deliberately left in

@@ -1624,6 +1624,7 @@ def test_after_a_restart_a_hopped_unix_row_is_polled_until_up(monkeypatch):
     monkeypatch.setattr(lab_health, "_check_hopped_unix", fake_check)
     monkeypatch.setattr(lab_health, "_restart_qemu", lambda hosts, hops: 0)
     monkeypatch.setattr(lab_health, "_print_report", lambda hosts, hops, logout=False: True)
+    monkeypatch.setattr(lab_health, "_read_guest_units", lambda hosts, hops: ([], []))
     monkeypatch.setattr(lab_health, "_RESTART_SETTLE_S", 0)
     monkeypatch.setattr(lab_health, "_GUEST_POLL_S", 0.01)
     monkeypatch.setattr(lab_health.shutil, "which", lambda name: "/usr/bin/sshpass")
@@ -1691,3 +1692,219 @@ def test_the_reap_and_console_logout_reset_the_same_consoles_the_same_way(monkey
     reap = console_dials(lambda: lab_health.reset_logged_in_consoles(lab_file))
     assert reap == logout
     assert len(reap) == 1
+
+
+# -- guest units systemd restarted (#1389) -------------------------------------
+
+
+_SHOW = """\
+NRestarts=0
+Id=zephyr-qemu-v3_7_lfs.service
+ActiveEnterTimestamp=Fri 2026-11-27 06:49:56 CST
+
+NRestarts=3
+Id=zephyr-qemu-v4_4_lfs.service
+ActiveEnterTimestamp=Fri 2026-11-27 05:10:21 CST
+"""
+_JOURNAL_NEWEST_FIRST = (
+    "[07:57:42.300,000] \x1b[1;31m<err> os: Current thread: 0x1842a0 (logging)\x1b[0m\n"
+    "[07:57:42.300,000] <err> os: >>> ZEPHYR FATAL ERROR 0: CPU exception on CPU 0\n"
+)
+
+
+def _run_guest_units_probe(tmp_path, *, journal: str = _JOURNAL_NEWEST_FIRST) -> tuple[str, str]:
+    """Run the probe with ``systemctl`` and ``journalctl`` doubles; (stdout, the journal calls)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (tmp_path / "show.txt").write_text(_SHOW)
+    (tmp_path / "journal.txt").write_text(journal)
+    (bin_dir / "systemctl").write_text(f'#!/bin/sh\ncat "{tmp_path}/show.txt"\n')
+    (bin_dir / "journalctl").write_text(
+        f'#!/bin/sh\necho "$@" >> "{tmp_path}/journal.calls"\ncat "{tmp_path}/journal.txt"\n'
+    )
+    for tool in ("systemctl", "journalctl"):
+        (bin_dir / tool).chmod(0o755)
+    proc = subprocess.run(  # the probe under test, with the doubles first on PATH
+        [sys.executable, "-c", lab_health._GUEST_UNITS_PROBE, "FATAL|panic", "zephyr-qemu-*"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+    )
+    calls = tmp_path / "journal.calls"
+    return proc.stdout, calls.read_text() if calls.exists() else ""
+
+
+def test_the_guest_units_probe_prints_each_unit_and_a_restarted_units_last_crash(tmp_path):
+    """A restarted unit's crash lines come oldest first, colour codes removed; a unit that
+    never restarted has its journal left alone (a search of every journal took over 25 s)."""
+    out, journal_calls = _run_guest_units_probe(tmp_path)
+    log = "LOG\tzephyr-qemu-v4_4_lfs.service\t"
+    assert out.splitlines() == [
+        "UNIT\tzephyr-qemu-v3_7_lfs.service\t0\tFri 2026-11-27 06:49:56 CST",
+        "UNIT\tzephyr-qemu-v4_4_lfs.service\t3\tFri 2026-11-27 05:10:21 CST",
+        f"{log}[07:57:42.300,000] <err> os: >>> ZEPHYR FATAL ERROR 0: CPU exception on CPU 0",
+        f"{log}[07:57:42.300,000] <err> os: Current thread: 0x1842a0 (logging)",
+    ]
+    (call,) = journal_calls.splitlines()
+    assert "-u zephyr-qemu-v4_4_lfs.service" in call
+    assert call.endswith("-g FATAL|panic")
+
+
+def test_the_guest_units_probe_drops_journalctls_no_entries_line(tmp_path):
+    out, _ = _run_guest_units_probe(tmp_path, journal="-- No entries --\n")
+    assert [line for line in out.splitlines() if line.startswith("LOG")] == []
+
+
+_ZEPHYR_HOP = {
+    "element": "test4",
+    "ip": "10.10.200.14",
+    "creds": [{"login": "vagrant", "password": _HOP_PASSWORD}],
+}
+_GUEST_LAB = [
+    _SERVER,
+    _ZEPHYR_HOP,
+    {"element": "plain", "ip": "10.10.200.13", "creds": [{"login": "vagrant", "password": "x"}]},
+    {
+        "element": "bb1161",
+        "ip": "198.51.100.1",
+        "hop": "test1",
+        "creds": [{"login": "r", "password": "o"}],
+    },
+    {"element": "z44", "ip": "192.0.2.4", "hop": "test4"},
+    {"element": "lost", "ip": "192.0.2.5", "hop": "gone"},
+]
+
+
+def test_guest_unit_restarts_asks_each_guest_hop_once_for_the_restart_globs(monkeypatch):
+    zephyr_hop_says = (
+        "UNIT\tzephyr-qemu-v4_4_lfs.service\t2\tFri 2026-11-27\n"
+        "LOG\tzephyr-qemu-v4_4_lfs.service\t>>> ZEPHYR FATAL ERROR 2: Stack overflow\n"
+        "LOG\tzephyr-qemu-v4_4_lfs.service\tCurrent thread: 0x1 (shell_telnet)\n"
+        "UNIT\tzephyr-qemu-cov.service\t0\tWed 2026-11-11"
+    )
+    answers = {
+        "10.10.200.11": (0, "UNIT\tbusybox-qemu-1.16.1.service\t0\tWed 2026-11-11", ""),
+        "10.10.200.14": (0, zephyr_hop_says, ""),
+    }
+    calls = []
+
+    def fake(ip, user, password, cmd, timeout=25.0):
+        calls.append((ip, cmd))
+        return answers[ip]
+
+    monkeypatch.setattr(lab_health, "_run_ssh", fake)
+    monkeypatch.setattr(lab_health, "_load_hosts", lambda path: _GUEST_LAB)
+
+    units, unread = lab_health.guest_unit_restarts(DEFAULT_HOSTS)
+
+    assert [ip for ip, _ in calls] == ["10.10.200.11", "10.10.200.14"], "guest hops only, once"
+    for _, cmd in calls:
+        for glob in lab_health.GUEST_UNIT_GLOBS:
+            assert shlex.quote(glob) in cmd
+    assert unread == [("gone", "not in lab")]
+    assert units == [
+        {
+            "hop": "test1",
+            "unit": "busybox-qemu-1.16.1.service",
+            "restarts": 0,
+            "since": "Wed 2026-11-11",
+            "log": [],
+        },
+        {
+            "hop": "test4",
+            "unit": "zephyr-qemu-cov.service",
+            "restarts": 0,
+            "since": "Wed 2026-11-11",
+            "log": [],
+        },
+        {
+            "hop": "test4",
+            "unit": "zephyr-qemu-v4_4_lfs.service",
+            "restarts": 2,
+            "since": "Fri 2026-11-27",
+            "log": [
+                ">>> ZEPHYR FATAL ERROR 2: Stack overflow",
+                "Current thread: 0x1 (shell_telnet)",
+            ],
+        },
+    ]
+
+
+def test_a_hop_that_does_not_answer_is_named_and_the_others_are_still_read(monkeypatch):
+    def fake(ip, user, password, cmd, timeout=25.0):
+        if ip == "10.10.200.11":
+            return 255, "", "ssh: connect timed out"
+        return 0, "UNIT\tzephyr-qemu-v4_4_lfs.service\t0\tFri", ""
+
+    monkeypatch.setattr(lab_health, "_run_ssh", fake)
+    units, unread = lab_health._read_guest_units(_GUEST_LAB, _hop_index(_GUEST_LAB))
+    assert [u["unit"] for u in units] == ["zephyr-qemu-v4_4_lfs.service"]
+    assert unread == [("gone", "not in lab"), ("test1", "ssh: connect timed out")]
+
+
+def test_the_restart_and_the_restart_report_read_one_list_of_unit_globs(monkeypatch):
+    """One decision: a guest unit `make qemu-restart` restarts is one the report watches."""
+    lab = [*_GUEST_LAB[:2], _GUEST_LAB[4]]
+    calls = _fake_ssh(monkeypatch, "")
+    lab_health._restart_qemu(lab, _hop_index(lab))
+    lab_health._read_guest_units(lab, _hop_index(lab))
+    restart, report = (c["cmd"] for c in calls)
+    quoted = " ".join(shlex.quote(glob) for glob in lab_health.GUEST_UNIT_GLOBS)
+    assert restart.endswith(f"systemctl restart {quoted}")
+    assert report.endswith(quoted)
+
+
+def test_the_report_names_a_restarted_guest_unit_with_its_crash_lines(monkeypatch, capsys):
+    monkeypatch.setattr(
+        lab_health,
+        "_read_guest_units",
+        lambda hosts, hops: (
+            [
+                {"hop": "test4", "unit": "a.service", "restarts": 0, "since": "Wed", "log": []},
+                {
+                    "hop": "test4",
+                    "unit": "zephyr-qemu-v4_4_lfs.service",
+                    "restarts": 253,
+                    "since": "Fri 2026-11-27 05:10:21 CST",
+                    "log": [">>> ZEPHYR FATAL ERROR 0", "Current thread: 0x1842a0 (logging)"],
+                },
+            ],
+            [("test1", "rc=255")],
+        ),
+    )
+    lab_health._print_guest_units([], {})
+    out = capsys.readouterr().out
+    assert (
+        "  test4  zephyr-qemu-v4_4_lfs.service  253 restart(s), up since "
+        "Fri 2026-11-27 05:10:21 CST\n"
+        "      >>> ZEPHYR FATAL ERROR 0\n"
+        "      Current thread: 0x1842a0 (logging)\n"
+    ) in out
+    assert "a.service" not in out
+    assert "Guest units not read on test1: rc=255" in out
+
+
+def test_a_bed_with_no_restarted_guest_unit_says_so_in_one_line(monkeypatch, capsys):
+    unit = {"hop": "test4", "unit": "a.service", "restarts": 0, "since": "Wed", "log": []}
+    monkeypatch.setattr(lab_health, "_read_guest_units", lambda hosts, hops: ([unit], []))
+    lab_health._print_guest_units([], {})
+    assert capsys.readouterr().out.strip() == (
+        "Guest units: none of 1 restarted by systemd since its last start."
+    )
+
+
+@pytest.mark.parametrize("healthy", [True, False])
+def test_a_restarted_guest_unit_does_not_change_the_health_checks_exit_status(
+    monkeypatch, tmp_path, capsys, healthy
+):
+    """The count is a report: the table alone decides the status."""
+    lab = tmp_path / "lab.json"
+    lab.write_text('{"elements": []}')
+    monkeypatch.setattr(lab_health.shutil, "which", lambda name: "/usr/bin/sshpass")
+    monkeypatch.setattr(lab_health, "_print_report", lambda hosts, hops, *, logout=False: healthy)
+    unit = {"hop": "test4", "unit": "z.service", "restarts": 9, "since": "Fri", "log": []}
+    monkeypatch.setattr(lab_health, "_read_guest_units", lambda hosts, hops: ([unit], []))
+    assert lab_health.main(["--hosts", str(lab)]) == (0 if healthy else 1)
+    assert "z.service  9 restart(s)" in capsys.readouterr().out

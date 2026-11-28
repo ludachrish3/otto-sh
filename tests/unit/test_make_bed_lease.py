@@ -157,11 +157,22 @@ def test_a_nested_make_re_enters_the_outer_hold(root, extra, tmp_path):
 
 
 @pytest.mark.timeout(300)
-def test_a_failing_step_releases_the_lease_and_keeps_its_status(root, extra):
-    """#1011: a failing step still frees the lease, and the recipe fails with the step's status."""
-    red = _make(root, "red", extra=extra, start_new_session=True)
+def test_a_failing_step_releases_the_lease_and_keeps_its_status(root, extra, tmp_path):
+    """#1011: a failing step still frees the lease, and the recipe fails with the step's status.
+
+    Before the release it asks the reap for the guest units that restarted (#1389). The
+    reap here is a stand-in that notes its arguments: the real one asks the lab's hops
+    over SSH, which no unit test may do.
+    """
+    asked = tmp_path / "reap-args.txt"
+    reap = tmp_path / "reap-stub"
+    reap.write_text(f'#!/bin/sh\necho "$*" >> "{asked}"\n', encoding="utf-8")
+    reap.chmod(0o755)
+    red = _make(root, "red", f"BED_REAP={reap}", extra=extra, start_new_session=True)
     assert red.returncode == 2, red.stdout + red.stderr  # make's own status for a failed recipe
     assert "Error 7" in red.stderr, red.stderr  # the step's status is the recipe's
+    (line,) = asked.read_text(encoding="utf-8").splitlines()
+    assert line.endswith("--guests-only"), line
     assert "released by pid" in red.stdout, red.stdout
     assert "free" in _make(root, "bed-status").stdout
 
