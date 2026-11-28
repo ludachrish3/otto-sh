@@ -69,6 +69,7 @@ selected by some stage of it (issue #566).
 
 import ast
 import dataclasses
+import functools
 import itertools
 import os
 import re
@@ -1846,7 +1847,17 @@ _PRIMARY_CI_SESSIONS = ("tests_hostless_unit", "tests_hostless_e2e", "tests_host
 
 
 def primary_ci_legs() -> "list[_Leg]":
-    """The pull request's hostless legs on the primary Python, read from the noxfile."""
+    """The pull request's hostless legs on the primary Python, read from the noxfile.
+
+    A fresh list each call over one reading per process (:func:`_primary_ci_legs`).
+    """
+    return list(_primary_ci_legs())
+
+
+@functools.cache
+def _primary_ci_legs() -> "tuple[_Leg, ...]":
+    """:func:`primary_ci_legs`, read once per process: the noxfile does not change while tests
+    run, and the censuses ask for these legs once per row and once per census test (#1253)."""
     legs: "list[_Leg]" = []
     for session in _PRIMARY_CI_SESSIONS:
         legs += _legs_including_markerless(
@@ -1855,7 +1866,7 @@ def primary_ci_legs() -> "list[_Leg]":
                 _REPO / "noxfile.py", resolve_names=True, scope=session, python="3.10"
             ),
         )
-    return legs
+    return tuple(legs)
 
 
 def release_legs() -> "list[_Leg]":
@@ -1866,8 +1877,17 @@ def release_legs() -> "list[_Leg]":
 def make_legs(start: str) -> "list[_Leg]":
     """Every pytest leg `make <start>` reaches.
 
-    Labelled `Makefile:<target>` or `noxfile.py:<session>@<python>`.
+    Labelled `Makefile:<target>` or `noxfile.py:<session>@<python>`. A fresh list each
+    call over one reading per target per process (:func:`_make_legs`).
     """
+    return list(_make_legs(start))
+
+
+@functools.cache
+def _make_legs(start: str) -> "tuple[_Leg, ...]":
+    """:func:`make_legs`, read once per target per process: the Makefile and the noxfile do
+    not change while tests run, and the gate-scope censuses ask for the same targets' legs once
+    per row and once per tracked module (#1253)."""
     text = (_REPO / _MAKEFILE).read_text()
     variables = _makefile_marker_variables(text)
     assignments = _makefile_assignments(text)
@@ -1884,7 +1904,7 @@ def make_legs(start: str) -> "list[_Leg]":
                     _REPO / "noxfile.py", resolve_names=True, scope=session, python=python
                 ),
             )
-    return legs
+    return tuple(legs)
 
 
 # The release's test surface, spelled out. Equal to release_legs() — see
