@@ -222,6 +222,9 @@ dev = [
     # package is what lives here: `requests` itself is a direct runtime
     # dependency above, but nothing at runtime imports these stubs.
     "types-requests>=2.32",
+    # The docs site search (scripts/docs_search.py); the extra ships the
+    # indexer binary with word-stem support.
+    "pagefind[extended]>=1.6.0,<2",
 ]
 # Architecture-gate tools, kept OUT of the dev group on purpose: tach ships a
 # `pytest11` entry-point plugin whose Rust extension installs a C-level Ctrl-C

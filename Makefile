@@ -2170,6 +2170,9 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 cliff.toml                          \
                 docs/_build/.release-tags           \
                 scripts/docs_api_reference.py       \
+                scripts/docs_search.py              \
+                $(shell find docs/_templates -type f) \
+                docs/_static/custom.css             \
                 scripts/build_example_archives.py   \
                 api/public.toml                     \
 

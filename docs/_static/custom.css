@@ -55,3 +55,47 @@ body[data-md-color-scheme="slate"],
 .otto-index-hero p {
     font-size: 1.1rem;
 }
+
+/* Site search: Pagefind's search box in the header, in place of the theme's
+   (docs/_templates/partials/search.html). The theme's own overlay and its
+   small-screen toggle are gone, so the box is always shown, and on a narrow
+   screen it takes the free width of the header. */
+label.md-header__button[for="__search"] {
+  display: none;
+}
+.md-search.otto-search {
+  display: flex;
+  flex: 0 1 24rem;
+  min-width: 10rem;
+  margin-left: 0.8rem;
+  --pf-text: var(--md-default-fg-color);
+  --pf-background: var(--md-default-bg-color);
+}
+.md-search.otto-search {
+  align-items: center;
+  gap: 0.4rem;
+}
+.otto-search-offline {
+  margin: 0;
+  font-size: 0.6rem;
+  color: var(--md-primary-bg-color);
+}
+.otto-search pagefind-searchbox {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* A phone: the area filter gives its width to the search box, and the results
+   open across the whole screen under the header instead of the box's width. */
+@media screen and (max-width: 44.984375em) {
+  .otto-search pagefind-filter-dropdown {
+    display: none;
+  }
+  .otto-search .pf-searchbox-dropdown {
+    position: fixed;
+    left: 0.4rem;
+    right: 0.4rem;
+    top: 3rem;
+    width: auto;
+    max-height: calc(100vh - 3.6rem);
+  }
+}

@@ -691,6 +691,10 @@ location with no configuration: open `docs-bundle/otto/index.html` directly
 python3 -m http.server --directory docs-bundle 8000
 ```
 
+The site's search box works only when the tree is served: browsers refuse the
+search's scripts on a page opened from disk, so a `file://` page shows the
+command above in its place.
+
 Links into typer and pydantic docs are **not** rewritten and remain live URLs: neither
 publishes an offline archive, and unlike the Read the Docs sites their mkdocs layouts do
 not mirror cleanly with `wget`. Sibling directories you leave unpopulated yield broken
