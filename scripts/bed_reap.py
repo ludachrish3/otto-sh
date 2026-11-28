@@ -7,7 +7,7 @@ after a killed or interrupted run. The spec is
 docs/superpowers/specs/2026-11-01-bed-lease-design.md ("Decisions: the reap").
 
 ``uv run python scripts/bed_reap.py --lab <lab file> --pid PID
-[--unless-all-under DIR -- PATHS...] [--full] [--restart-qemu]``
+[--unless-all-under DIR -- PATHS...] [--full] [--restart-qemu] [--guests-only]``
 
 In order, printing one line per thing removed and ``bed-reap: clean`` when
 there was nothing:
@@ -32,12 +32,29 @@ there was nothing:
    adds the whole-bed health report, Zephyr consoles included; it runs after
    ``make qemu-restart`` with ``--restart-qemu``, so a wedged guest is
    restarted before its console is judged, re-entering this run's lease.
-5. The after-snapshot of every host, taken last: its residual dirt is the
+5. The guest units (``lab_health.guest_unit_restarts``): a guest that crashed
+   is restarted by its systemd unit and answers every later probe as healthy,
+   so the reap reads each unit's restart count and prints a ``guest unit``
+   line for one that rose since this run's last look, with the last crash
+   lines of its journal; the run's first look prints the units that had
+   restarted before it. The counts are kept on the lease record. A unit
+   restarted DURING THE RUN fails the lane (exit 3): its tests ran against a
+   guest that crashed under them, whatever they reported. The bed itself is
+   clean then, so the lease this run holds is released before the exit (the
+   lane's recipe stops at the failing reap, before its own release). Restarts
+   from before the run, and a hop that could not be read, are lines only.
+6. The after-snapshot of every host, taken last: its residual dirt is the
    verdict, printed, and exit 1 if anything remains, any host was unreachable
    or any step failed.
 
+``--guests-only`` does step 5 alone, for a run that holds the lease, and always
+exits 0: a lane that fails runs it before its release (the Makefile's
+``bed_fail``), so a lane that is already red names the guest that restarted
+under it.
+
 Nothing here names a host, an IP or a lab path: a different ``--lab`` reaps a
-different cell. Exit 0 clean, 1 refused or still dirty, 2 usage.
+different cell. Exit 0 clean, 1 refused or still dirty, 2 usage, 3 clean but a
+guest unit was restarted during the run.
 """
 
 import argparse
@@ -70,6 +87,7 @@ from scripts.lab_health import (  # noqa: E402
     _load_hosts,
     console_recovery,
     direct_ssh_host_ids,
+    guest_unit_restarts,
     hopped_ssh_host_ids,
     reset_logged_in_consoles,
     wait_for_hopped_ssh,
@@ -84,6 +102,8 @@ CONSOLE_TARGETS = {False: ["console-logout"], True: ["qemu-restart", "LOGOUT_CON
 so the lines live there. The restart resets the consoles in the same run, after the
 guests are back: a console left logged in is reset before the report judges it."""
 EXIT_DIRTY = 1
+EXIT_GUEST_RESTARTED = 3
+"""A clean bed on which systemd restarted a guest unit during the run: the lane fails."""
 PURPOSE = "bed-reap"
 
 
@@ -225,6 +245,101 @@ def _reset_consoles(lab_file: Path, out: "Outcome") -> None:
         )
 
 
+def _unit_key(unit: dict) -> str:
+    """Name a guest unit on the lease record: ``hop/unit``."""
+    return f"{unit['hop']}/{unit['unit']}"
+
+
+def _guest_restarts(
+    units: list[dict], before: "dict[str, int] | None"
+) -> "list[tuple[dict, int, bool]]":
+    """Each restarted unit of *units* as ``(unit, count, during_this_run)``.
+
+    The one rule for what a restart count means against the counts of the
+    run's last look (*before*, by :func:`_unit_key`; ``None`` on its first).
+    A unit's first look (the run's, or a later one for a unit whose hop had
+    not answered until now) is before the run: nothing says when those
+    restarts happened. A later look counts a unit whose count rose, by the
+    difference; a count that fell means the unit was started by hand since
+    (that sets it to 0), so all of the new count is the run's.
+    """
+    found: list[tuple[dict, int, bool]] = []
+    for unit in units:
+        now = unit["restarts"]
+        was = None if before is None else before.get(_unit_key(unit))
+        count = now if was is None or now < was else now - was
+        if count > 0:
+            found.append((unit, count, was is not None))
+    return found
+
+
+def guest_restart_lines(units: list[dict], before: "dict[str, int] | None") -> list[str]:
+    """Say which guest *units* systemd restarted, against the counts of the last look.
+
+    *units* is :func:`~scripts.lab_health.guest_unit_restarts`'s list and
+    *before* is :func:`_guest_restarts`'s, whose rule this prints. Each line
+    is followed by the unit's last crash lines, indented.
+    """
+    return _restart_lines(_guest_restarts(units, before))
+
+
+def _restart_lines(found: "list[tuple[dict, int, bool]]") -> list[str]:
+    """Print :func:`_guest_restarts`'s answer: a line per unit, its crash lines indented."""
+    lines: list[str] = []
+    for unit, count, during in found:
+        times = "once" if count == 1 else f"{count} times"
+        when = "DURING THIS RUN" if during else "before this run"
+        since = f" (up since {unit['since']})" if unit["since"] else ""
+        lines.append(
+            f"guest unit {unit['unit']} on {unit['hop']} was restarted by systemd {times} "
+            f"{when}{since}"
+        )
+        lines.extend(f"    {text}" for text in unit["log"])
+    return lines
+
+
+def _note_guest_restarts(cell: Cell, notes: list[str]) -> bool:
+    """Add the guest-restart lines since this run's last look to *notes*; keep the new counts.
+
+    Returns whether a guest unit was restarted during this run. The caller's
+    run holds the lease. A hop that did not answer, or a read that raised, is
+    a note and no restart: a count that could not be read fails no lane.
+    """
+    try:
+        units, unread = guest_unit_restarts(cell.lab_file)
+        record = bed_lease.read_record(cell)
+        if record is None:
+            return False
+        found = _guest_restarts(units, record.guest_restarts)
+        notes.extend(_restart_lines(found))
+        during = any(d for _u, _c, d in found)
+        notes.extend(f"guest units not read on {hop}: {why}" for hop, why in unread)
+        counts = {_unit_key(u): u["restarts"] for u in units}
+        # A hop that did not answer keeps its last counts for the next look.
+        silent = {hop for hop, _why in unread}
+        kept = {
+            key: count
+            for key, count in (record.guest_restarts or {}).items()
+            if key.partition("/")[0] in silent
+        }
+        bed_lease.record_guest_restarts(cell, {**kept, **counts})
+    except Exception as exc:  # noqa: BLE001 -- an unread count is a line, never a verdict
+        notes.append(f"guest units not read: {exc}")
+        return False
+    return during
+
+
+def report_guest_restarts(cell: Cell, pid: int) -> None:
+    """Print the guest-restart lines for *pid*'s run, when that run holds the lease."""
+    record = bed_lease.read_record(cell)
+    if record is None or not bed_lease.is_run_member(record, pid):
+        return
+    notes: list[str] = []
+    _note_guest_restarts(cell, notes)
+    for line in notes:
+        _say(line)
+
+
 # --- the hosts --------------------------------------------------------------------
 
 
@@ -246,6 +361,10 @@ class Outcome:
     """Steps that raised: a remover on a host (the rest of that host is skipped), a build."""
     links_touched: bool = False
     """A timer was cancelled or an otto qdisc cleared: the declared links get a repair pass."""
+    notes: list[str] = field(default_factory=list)
+    """The guest-unit lines: the units systemd restarted, the hops that were not read."""
+    guest_restarted: bool = False
+    """A guest unit was restarted during this run: the lane fails, on a bed that may be clean."""
 
     @property
     def clean(self) -> bool:
@@ -415,23 +534,32 @@ def _hold(cell: Cell, pid: int) -> "str | None":
 
 
 def reap(cell: Cell, pid: int, *, full: bool = False, restart_qemu: bool = False) -> int:
-    """Run the reap for *pid*'s run on *cell*; print what it did; the exit status."""
+    """Run the reap for *pid*'s run on *cell*; print what it did; the exit status.
+
+    The lease is the caller's to release, :data:`EXIT_GUEST_RESTARTED` included.
+    """
     refusal = _hold(cell, pid)
     if refusal is not None:
         _say(refusal)
         return EXIT_DIRTY
-    clean = False
+    out: "Outcome | None" = None
     try:
-        clean = _reap_held(cell, full=full, restart_qemu=restart_qemu)
+        out = _reap_held(cell, full=full, restart_qemu=restart_qemu)
     finally:
         # On the record, so a release keeps the lease after a failed reap even
-        # when the reap ran in a nested lane (an escaped exception counts).
-        bed_lease.record_reap(cell, clean=clean)
-    return 0 if clean else EXIT_DIRTY
+        # when the reap ran in a nested lane (an escaped exception counts). A
+        # guest that restarted leaves the bed clean: that lease is released.
+        bed_lease.record_reap(cell, clean=out is not None and out.clean)
+    if not out.clean:
+        return EXIT_DIRTY
+    if out.guest_restarted:
+        _say("a guest unit was restarted DURING THIS RUN: the lane fails (the bed is clean)")
+        return EXIT_GUEST_RESTARTED
+    return 0
 
 
-def _reap_held(cell: Cell, *, full: bool, restart_qemu: bool) -> bool:
-    """Reap *cell* under the lease the caller holds; print what was done; whether it is clean."""
+def _reap_held(cell: Cell, *, full: bool, restart_qemu: bool) -> Outcome:
+    """Reap *cell* under the lease the caller holds; print what was done; the outcome."""
     lab = bed_lease.load_labs(cell.lab_file, cell.labs)
     out = Outcome()
     hosts = _await_hopped_guests(cell.lab_file, unix_bed_hosts(lab, cell.lab_file), out)
@@ -444,6 +572,7 @@ def _reap_held(cell: Cell, *, full: bool, restart_qemu: bool) -> bool:
             _reset_consoles(cell.lab_file, out)
         if full and await run_lab_health(restart_qemu=restart_qemu) != 0:
             out.failures.append("the console step reported an unhealthy bed")
+        out.guest_restarted = _note_guest_restarts(cell, out.notes)
         await _judge_unix(hosts, snapshots, out)
 
     asyncio.run(_run())
@@ -453,12 +582,14 @@ def _reap_held(cell: Cell, *, full: bool, restart_qemu: bool) -> bool:
         _say(f"unreachable {line}")
     for line in out.failures:
         _say(f"failed {line}")
+    for line in out.notes:
+        _say(line)
     for host, leftovers in out.residual.items():
         if leftovers:
             print(_hygiene().format_residual_report(host, leftovers), flush=True)
     if out.clean:
         _say("clean")
-    return out.clean
+    return out
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -471,25 +602,50 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--restart-qemu", action="store_true", help="with --full: restart the guests"
     )
+    parser.add_argument(
+        "--guests-only",
+        action="store_true",
+        help="only report the guest units systemd restarted since this run's last look; exit 0",
+    )
     return parser
 
 
 def _check_flags(args: argparse.Namespace) -> None:
     if args.restart_qemu and not args.full:
         raise UsageError("--restart-qemu needs --full")
+    if args.guests_only and args.full:
+        raise UsageError("--guests-only reports and reaps nothing: it takes no --full")
+
+
+def _reap_for_a_lane(cell: Cell, args: argparse.Namespace) -> int:
+    """Reap as a lane's recipe step does; free a clean bed the step is about to fail on."""
+    status = reap(cell, args.pid, full=args.full, restart_qemu=args.restart_qemu)
+    if status == EXIT_GUEST_RESTARTED:
+        # The recipe stops at this failing step, before its own release, and the
+        # bed is clean: free it here (a nested lane's hold is its outer run's
+        # and stays, by the release's own rule).
+        bed_lease.release(cell, args.pid, force=False)
+    return status
 
 
 def main(argv: "list[str] | None" = None) -> int:
-    """Parse the CLI and reap; 0 clean, 1 refused or dirty, 2 usage."""
+    """Parse the CLI and reap; 0 clean, 1 refused or dirty, 2 usage, 3 a guest restarted."""
     args = _parser().parse_args(argv)
     try:
         if classifier_says_skip(args):
-            _say("no bed path in PATHS, no reap")
+            if not args.guests_only:
+                _say("no bed path in PATHS, no reap")
             return 0
         _check_flags(args)
         require_pid(args.pid)
-        cell = bed_lease.load_cell(args.lab, root_from(args.root))
-        return reap(cell, args.pid, full=args.full, restart_qemu=args.restart_qemu)
+        if args.guests_only:
+            # Names the cell only, as a release does: a lab that does not load must
+            # not add a second failure to a lane that is already failing.
+            report_guest_restarts(
+                bed_lease.load_cell(args.lab, root_from(args.root), resources=False), args.pid
+            )
+            return 0
+        return _reap_for_a_lane(bed_lease.load_cell(args.lab, root_from(args.root)), args)
     except UsageError as exc:
         print(f"bed-reap: {exc}", file=sys.stderr)
         return EXIT_USAGE

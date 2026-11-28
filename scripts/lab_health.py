@@ -39,6 +39,12 @@ With ``--restart-qemu`` the script first restarts the ``zephyr-qemu-*``,
 waits for the guests to boot, then runs the health check. Use it to recover a
 wedged bed (e.g. after the embedded test gate reports "console wedged").
 
+* **Guest units.** After the table, the report lists every guest unit systemd
+  has restarted since its last start (``NRestarts``), with the last crash
+  lines of its journal. A guest that crashes is restarted by its unit and
+  answers its row as ``up``, so the count is what shows the crash. It does not
+  change the exit status.
+
 Exit status is non-zero if any host is unreachable/unresponsive.
 
 Usage::
@@ -834,15 +840,152 @@ def reset_logged_in_consoles(lab_file: Path) -> list[tuple[str, dict]]:
     ]
 
 
+GUEST_UNIT_GLOBS = (
+    "zephyr-qemu-*.service",
+    "zephyr-snmp-relay-*.service",
+    "busybox-qemu-*.service",
+    "chaos-qemu-*.service",
+)
+"""The systemd units behind the bed's guests, as globs a hop expands against its loaded
+units. Every hop gets every glob: one that matches nothing there is a no-op. The restart
+(:func:`_restart_qemu`) and the restart report (:func:`guest_unit_restarts`) both read it."""
+
+# What a guest's last crash looks like in its unit's journal, as a journalctl
+# ``--grep`` pattern: Zephyr's fatal-error banner and the thread it names (a
+# stack overrun under the stack guard reads ">>> ZEPHYR FATAL ERROR 2: Stack
+# overflow" then "Current thread: 0x... (shell_telnet)"), and a Linux panic.
+_CRASH_LINES = "ZEPHYR FATAL ERROR|Current thread|Kernel panic"
+
+# Runs on a hop VM (which has python3): argv is the crash pattern, then the unit
+# globs. Prints one "UNIT<TAB>id<TAB>NRestarts<TAB>ActiveEnterTimestamp" line per
+# loaded unit a glob matches and, for a unit systemd has restarted, up to two
+# "LOG<TAB>id<TAB>line" lines: the last journal lines matching the pattern, oldest
+# first, colour codes removed. NRestarts counts systemd's own restarts
+# (Restart=) since the unit was last started by hand, which sets it back to 0.
+# Only a restarted unit's journal is read, and for 10 s at most: the BusyBox
+# units log their whole console, and a search of all of them takes over 25 s.
+_GUEST_UNITS_PROBE = r"""
+import re, subprocess, sys
+pattern, globs = sys.argv[1], sys.argv[2:]
+show = subprocess.run(
+    ["systemctl", "show", "-p", "Id", "-p", "NRestarts", "-p", "ActiveEnterTimestamp", *globs],
+    capture_output=True, text=True,
+).stdout
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+for block in show.split("\n\n"):
+    unit = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+    if not unit.get("Id"):
+        continue
+    count = unit.get("NRestarts", "")
+    print("UNIT", unit["Id"], count, unit.get("ActiveEnterTimestamp", ""), sep="\t")
+    if not count.isdigit() or int(count) == 0:
+        continue
+    try:
+        found = subprocess.run(
+            ["journalctl", "-u", unit["Id"], "--no-pager", "-o", "cat", "-r", "-n", "2",
+             "-g", pattern],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+    except subprocess.TimeoutExpired:
+        found = ""
+    for line in reversed(found.splitlines()):
+        line = ANSI.sub("", line).strip()
+        if line and not line.startswith("-- "):
+            print("LOG", unit["Id"], line[:200], sep="\t")
+"""
+
+
+def _guest_hop_ids(hosts: list[dict]) -> list[str]:
+    """Return the ids of the hops that front a guest, sorted.
+
+    Console guests are selected by the SAME shape rule as ``_is_ssh_host`` /
+    ``_print_report`` (credentials plus hop), never by an ``os_type``
+    literal: keying on ``os_type == "embedded"`` silently matched nothing
+    once the lab data moved to ``os_type: "zephyr"`` (commit 41cf70c), and
+    would today miss the BusyBox guests, which are ``os_type: "unix"``.
+    """
+    return sorted({h["hop"] for h in hosts if not _is_ssh_host(h) and h.get("hop")})
+
+
+def guest_unit_restarts(lab_file: Path) -> tuple[list[dict], list[tuple[str, str]]]:
+    """Read how often systemd restarted each guest unit; ``(units, hops that did not answer)``.
+
+    Over the lab file's hosts (:func:`_read_guest_units`): one SSH per hop
+    that fronts a guest (:func:`_guest_hop_ids`), running
+    :data:`_GUEST_UNITS_PROBE` over :data:`GUEST_UNIT_GLOBS`. Each unit is
+    ``{"hop", "unit", "restarts", "since", "log"}``: ``restarts`` is the
+    unit's ``NRestarts`` (systemd's own restarts since the unit was last
+    started by hand), ``since`` when it last came up, and ``log`` the last
+    crash lines of a restarted unit's journal. A guest that crashes is
+    restarted by its unit (``Restart=``) and answers the next probe as
+    healthy, so this count is the only thing that shows the crash. A hop that
+    is not in the lab or did not answer is in the second list, as ``(hop, why)``.
+    """
+    hosts = _load_hosts(lab_file)
+    return _read_guest_units(hosts, _hop_index(hosts))
+
+
+def _read_guest_units(
+    hosts: list[dict], hops: dict[str, dict]
+) -> tuple[list[dict], list[tuple[str, str]]]:
+    """Ask each guest hop of *hosts* for its units; :func:`guest_unit_restarts`'s answer."""
+    units: list[dict] = []
+    unread: list[tuple[str, str]] = []
+    for hop_id in _guest_hop_ids(hosts):
+        hop = hops.get(hop_id)
+        if hop is None:
+            unread.append((hop_id, "not in lab"))
+            continue
+        rc, out, err = _run_probe_on_hop(hop, _GUEST_UNITS_PROBE, _CRASH_LINES, *GUEST_UNIT_GLOBS)
+        if rc != 0:
+            unread.append((hop_id, err or f"rc={rc}"))
+            continue
+        by_unit: dict[str, dict] = {}
+        for line in out.splitlines():
+            kind, _, rest = line.partition("\t")
+            if kind == "UNIT":
+                unit, count, since = [*rest.split("\t"), "", ""][:3]
+                if count.isdigit():
+                    by_unit[unit] = {
+                        "hop": hop_id,
+                        "unit": unit,
+                        "restarts": int(count),
+                        "since": since,
+                        "log": [],
+                    }
+            elif kind == "LOG":
+                unit, _, text = rest.partition("\t")
+                if unit in by_unit:
+                    by_unit[unit]["log"].append(text)
+        units.extend(by_unit[name] for name in sorted(by_unit))
+    return units, unread
+
+
+def _print_guest_units(hosts: list[dict], hops: dict[str, dict]) -> None:
+    """Print the guest units systemd has restarted, each with its last crash lines.
+
+    A report, never a verdict: the exit status of the health check is the
+    table's. A restarted guest answers its row as ``up``.
+    """
+    units, unread = _read_guest_units(hosts, hops)
+    restarted = [u for u in units if u["restarts"]]
+    print()
+    if not restarted:
+        print(f"Guest units: none of {len(units)} restarted by systemd since its last start.")
+    else:
+        print("Guest units restarted by systemd (a guest that crashed) since their last start:")
+        for u in restarted:
+            since = f", up since {u['since']}" if u["since"] else ""
+            print(f"  {u['hop']}  {u['unit']}  {u['restarts']} restart(s){since}")
+            for line in u["log"]:
+                print(f"      {line}")
+    for hop_id, why in unread:
+        print(f"Guest units not read on {hop_id}: {why}")
+
+
 def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
     """Restart the QEMU + SNMP-relay units on every hop that fronts a guest."""
-    # Select console guests by the SAME shape rule as ``_is_ssh_host`` /
-    # ``_print_report`` (credentials plus hop), never by an ``os_type``
-    # literal: keying on ``os_type == "embedded"`` here silently matched
-    # nothing once the lab data moved to ``os_type: "zephyr"`` (commit
-    # 41cf70c), and would today miss the BusyBox guests, which are
-    # ``os_type: "unix"``.
-    hop_ids = sorted({h["hop"] for h in hosts if not _is_ssh_host(h) and h.get("hop")})
+    hop_ids = _guest_hop_ids(hosts)
     if not hop_ids:
         print("No console guests with a hop in the lab; nothing to restart.")
         return 0
@@ -859,10 +1002,7 @@ def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
         # every glob: on a hop with no busybox units the pattern matches
         # nothing and is a no-op, the same reason the zephyr globs are safe on
         # test1.
-        units = (
-            "'zephyr-qemu-*.service' 'zephyr-snmp-relay-*.service'"
-            " 'busybox-qemu-*.service' 'chaos-qemu-*.service'"
-        )
+        units = " ".join(shlex.quote(glob) for glob in GUEST_UNIT_GLOBS)
         cmd = f"echo {shlex.quote(password)} | sudo -S systemctl restart {units}"
         rc, _out, err = _run_ssh(hop["ip"], user, password, cmd, timeout=60)
         if rc == 0:
@@ -976,7 +1116,9 @@ def main(argv: list[str] | None = None) -> int:
                 wait_for_hopped_ssh(host, hops)
         print()
 
-    return 0 if _print_report(hosts, hops, logout=args.logout_consoles) else 1
+    healthy = _print_report(hosts, hops, logout=args.logout_consoles)
+    _print_guest_units(hosts, hops)
+    return 0 if healthy else 1
 
 
 if __name__ == "__main__":

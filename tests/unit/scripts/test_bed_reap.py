@@ -9,6 +9,7 @@ in a root of this test's own, with the drain stubbed (an xdist sibling is a
 
 import asyncio
 import contextlib
+import json
 import os
 import types
 from dataclasses import dataclass
@@ -83,6 +84,9 @@ class Doubles:
         self.repair_failures: list[str] = []
         self.consoles: list = []
         """What ``reset_logged_in_consoles`` answers: ``(element, result)`` pairs."""
+        self.guest_units: list = []
+        """What ``guest_unit_restarts`` answers: the units, then the hops that did not."""
+        self.guest_hops_unread: list = []
 
     async def snapshot_host(self, host):
         if host.id in self.unreachable:
@@ -131,6 +135,11 @@ def doubles(monkeypatch, tmp_path):
         return list(d.consoles)
 
     monkeypatch.setattr(bed_reap, "reset_logged_in_consoles", reset_consoles)
+    monkeypatch.setattr(
+        bed_reap,
+        "guest_unit_restarts",
+        lambda lab_file: ([dict(u) for u in d.guest_units], list(d.guest_hops_unread)),
+    )
 
     async def reap_docker(host):
         d.calls.append(("reap_docker", host.id))
@@ -824,3 +833,268 @@ def test_a_hopped_guest_whose_sshd_never_answers_is_unreachable(
     assert status == bed_reap.EXIT_DIRTY
     assert "bed-reap: unreachable ubu2404-qemu: DOWN" in out
     assert "ubu2404-qemu" not in [c[1] for c in doubles.calls if len(c) > 1]
+
+
+# --- the guest units systemd restarted (#1389) ----------------------------------------
+
+
+def _unit(restarts: int, *, unit="zephyr-qemu-v4_4_lfs.service", hop="test4", log=()) -> dict:
+    return {"hop": hop, "unit": unit, "restarts": restarts, "since": "Fri 05:10", "log": list(log)}
+
+
+_CRASH = (">>> ZEPHYR FATAL ERROR 2: Stack overflow", "Current thread: 0x1 (shell_telnet)")
+_KEY = "test4/zephyr-qemu-v4_4_lfs.service"
+
+
+def test_the_first_look_names_what_restarted_before_the_run():
+    lines = bed_reap.guest_restart_lines([_unit(0, unit="a.service"), _unit(3, log=_CRASH)], None)
+    assert lines == [
+        (
+            "guest unit zephyr-qemu-v4_4_lfs.service on test4 was restarted by systemd 3 times "
+            "before this run (up since Fri 05:10)"
+        ),
+        "    >>> ZEPHYR FATAL ERROR 2: Stack overflow",
+        "    Current thread: 0x1 (shell_telnet)",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("before", "now", "said"),
+    [
+        ({_KEY: 3}, 3, None),
+        ({_KEY: 3}, 4, "once DURING THIS RUN"),
+        ({_KEY: 0}, 2, "2 times DURING THIS RUN"),
+        ({}, 1, "once before this run"),  # the unit's own first look: nothing says when
+        ({_KEY: 5}, 2, "2 times DURING THIS RUN"),  # started by hand since: all of it is new
+        ({_KEY: 5}, 0, None),
+    ],
+)
+def test_a_later_look_names_only_what_restarted_since_the_last_one(before, now, said):
+    lines = bed_reap.guest_restart_lines([_unit(now)], before)
+    if said is None:
+        assert lines == []
+    else:
+        (line,) = lines
+        assert f"was restarted by systemd {said} (up since" in line
+
+
+def test_a_reap_keeps_each_guest_units_restart_count_on_the_lease(cell, doubles, lab, capsys):
+    doubles.guest_units = [_unit(3, log=_CRASH), _unit(0, unit="busybox-qemu-1.16.1.service")]
+    status, out = _reap(cell, capsys)
+    assert status == 0, "restarts from before the run fail nothing"
+    assert "bed-reap: guest unit zephyr-qemu-v4_4_lfs.service on test4 was restarted" in out
+    assert "3 times before this run" in out
+    assert out.strip().splitlines()[-1] == "bed-reap: clean"
+    record = bed_lease.read_record(cell)
+    assert record is not None
+    assert record.guest_restarts == {_KEY: 3, "test4/busybox-qemu-1.16.1.service": 0}
+
+
+def test_a_guest_that_restarts_under_a_lane_is_named_by_the_lanes_last_reap(
+    cell, doubles, lab, capsys
+):
+    """The lane's first reap reads the counts; its last one names the unit that rose,
+    quoting the crash, and fails the lane; the next reap of the same run does not say
+    it again."""
+    doubles.guest_units = [_unit(0)]
+    _, first = _reap(cell, capsys)
+    assert "guest unit" not in first
+    doubles.guest_units = [_unit(1, log=_CRASH)]
+    status, last = _reap(cell, capsys)
+    assert status == bed_reap.EXIT_GUEST_RESTARTED
+    assert last.strip().splitlines()[-2:] == [
+        "bed-reap: clean",
+        "bed-reap: a guest unit was restarted DURING THIS RUN: the lane fails (the bed is clean)",
+    ]
+    record = bed_lease.read_record(cell)
+    assert record is not None
+    assert not record.reap_failed, "the bed is clean: a release frees it"
+    assert (
+        "bed-reap: guest unit zephyr-qemu-v4_4_lfs.service on test4 was restarted by systemd "
+        "once DURING THIS RUN (up since Fri 05:10)\n"
+        "bed-reap:     >>> ZEPHYR FATAL ERROR 2: Stack overflow\n"
+        "bed-reap:     Current thread: 0x1 (shell_telnet)\n"
+    ) in last
+    status, again = _reap(cell, capsys)
+    assert status == 0
+    assert "guest unit" not in again
+
+
+def test_a_dirty_bed_outranks_a_guest_that_restarted(cell, doubles, lab, capsys):
+    """Dirt keeps the lease; the guest's restart is still named."""
+    doubles.guest_units = [_unit(0)]
+    _reap(cell, capsys)
+    doubles.guest_units = [_unit(1)]
+    doubles.guest_hops_unread = []
+    doubles.unreachable.add("test1")
+    status, out = _reap(cell, capsys)
+    assert status == bed_reap.EXIT_DIRTY
+    assert "once DURING THIS RUN" in out
+    assert "the lane fails" not in out
+    record = bed_lease.read_record(cell)
+    assert record is not None
+    assert record.reap_failed
+
+
+def test_the_lanes_reap_step_frees_the_clean_bed_it_fails_on(
+    tmp_path, doubles, lab, monkeypatch, capsys
+):
+    """A recipe stops at the failing reap, before its release: the step frees the bed."""
+    cell = bed_lease.Cell("tech1", LAB, ["unix"], [], tmp_path)
+    monkeypatch.setattr(bed_lease, "load_cell", lambda lab_file, root, **kw: cell)
+    doubles.guest_units = [_unit(0)]
+    assert _main(tmp_path, "--pid", str(ME)) == 0
+    assert bed_lease.read_record(cell) is not None, "a clean reap leaves the release to the lane"
+    doubles.guest_units = [_unit(1)]
+    assert _main(tmp_path, "--pid", str(ME)) == bed_reap.EXIT_GUEST_RESTARTED
+    assert bed_lease.read_record(cell) is None
+    assert "the lane fails" in capsys.readouterr().out
+
+
+def test_a_nested_lanes_reap_step_fails_and_leaves_the_outer_runs_lease(
+    tmp_path, doubles, lab, monkeypatch, capsys
+):
+    """Under `make gate-tip`, another lane or a `make bed-lease` hold, the lease is the
+    outer run's: the failing step frees nothing."""
+    cell = bed_lease.Cell("tech1", LAB, ["unix"], [], tmp_path)
+    monkeypatch.setattr(bed_lease, "load_cell", lambda lab_file, root, **kw: cell)
+    outer = os.getppid()
+    with mock.patch.dict(os.environ, lease_free_environ(BED_LEASE_ROOT=str(tmp_path)), clear=True):
+        assert bed_lease.acquire(cell, outer, "an outer run") == 0
+    doubles.guest_units = [_unit(0)]
+    assert _main(tmp_path, "--pid", str(ME)) == 0
+    doubles.guest_units = [_unit(1)]
+    assert _main(tmp_path, "--pid", str(ME)) == bed_reap.EXIT_GUEST_RESTARTED
+    record = bed_lease.read_record(cell)
+    assert record is not None, "the outer run still holds the bed"
+    assert record.pid == outer
+    out = capsys.readouterr().out
+    assert "the lane fails" in out
+    assert f"not held by pid {ME}" in out, "the release itself refused"
+
+
+def test_a_hop_that_did_not_answer_keeps_its_last_counts(cell, doubles, lab, capsys):
+    doubles.guest_units = [_unit(2), _unit(0, unit="busybox-qemu-1.16.1.service", hop="test1")]
+    _reap(cell, capsys)
+    doubles.guest_units = [_unit(0, unit="busybox-qemu-1.16.1.service", hop="test1")]
+    doubles.guest_hops_unread = [("test4", "ssh timed out after 25s")]
+    status, out = _reap(cell, capsys)
+    assert status == 0
+    assert "bed-reap: guest units not read on test4: ssh timed out after 25s" in out
+    record = bed_lease.read_record(cell)
+    assert record is not None
+    assert record.guest_restarts == {_KEY: 2, "test1/busybox-qemu-1.16.1.service": 0}
+
+
+def test_a_hop_first_read_late_in_a_run_has_its_standing_restarts_named_as_before_the_run(
+    cell, doubles, lab, capsys
+):
+    """A hop that was silent at the run's first look left no counts: its guests' old
+    restarts are not this run's."""
+    doubles.guest_hops_unread = [("test4", "ssh timed out after 25s")]
+    _reap(cell, capsys)
+    doubles.guest_hops_unread = []
+    doubles.guest_units = [_unit(253)]
+    _, out = _reap(cell, capsys)
+    assert "253 times before this run" in out
+    assert "DURING THIS RUN" not in out
+    doubles.guest_units = [_unit(254)]
+    status, out = _reap(cell, capsys)
+    assert status == bed_reap.EXIT_GUEST_RESTARTED
+    assert "once DURING THIS RUN" in out
+
+
+def test_a_unit_that_never_came_up_is_named_without_an_up_since():
+    unit = {**_unit(2), "since": ""}
+    (line,) = bed_reap.guest_restart_lines([unit], None)
+    assert line.endswith("was restarted by systemd 2 times before this run")
+
+
+def test_a_guest_unit_read_that_raises_is_a_line_and_the_reap_stays_clean(
+    cell, doubles, lab, monkeypatch, capsys
+):
+    def boom(lab_file):
+        raise OSError("sshpass: not found")
+
+    monkeypatch.setattr(bed_reap, "guest_unit_restarts", boom)
+    status, out = _reap(cell, capsys)
+    assert status == 0
+    assert "bed-reap: guest units not read: sshpass: not found" in out
+
+
+def test_guests_only_reports_for_the_run_that_holds_the_lease_and_reaps_nothing(
+    tmp_path, doubles, lab, capsys
+):
+    """What a failing lane runs before its release: the report alone, always exit 0."""
+    cell = bed_lease.Cell("tech1", LAB, [], [], tmp_path)
+    assert bed_lease.acquire(cell, ME, "a lane") == 0
+    bed_lease.record_guest_restarts(cell, {_KEY: 0})
+    doubles.guest_units = [_unit(1, log=_CRASH)]
+    capsys.readouterr()
+    assert _main(tmp_path, "--pid", str(ME), "--guests-only") == 0
+    out = capsys.readouterr().out
+    assert "once DURING THIS RUN" in out
+    assert "Current thread: 0x1 (shell_telnet)" in out
+    assert "clean" not in out
+    assert doubles.calls == [], "no remover, no console reset, no snapshot"
+    record = bed_lease.read_record(cell)
+    assert record is not None
+    assert record.guest_restarts == {_KEY: 1}
+
+
+def test_guests_only_says_nothing_when_the_run_does_not_hold_the_bed(
+    tmp_path, doubles, lab, monkeypatch, capsys
+):
+    """A lane that failed before its acquire, or without a lease, has nothing to compare."""
+    asked = []
+    monkeypatch.setattr(bed_reap, "guest_unit_restarts", lambda lab_file: asked.append(1))
+    assert _main(tmp_path, "--pid", str(ME), "--guests-only") == 0
+    assert capsys.readouterr().out == ""
+    assert asked == []
+    assert not (tmp_path / "tech1.json").exists(), "it takes no lease"
+
+
+def test_guests_only_does_not_load_the_lab(tmp_path, doubles, monkeypatch, capsys):
+    """Like a release: a lab that does not load must not add a failure to a failing lane."""
+    seen = {}
+    real = bed_lease.load_cell
+
+    def load_cell(lab_file, root, **kw):
+        seen.update(kw)
+        return real(lab_file, root, **kw)
+
+    monkeypatch.setattr(bed_lease, "load_cell", load_cell)
+    assert _main(tmp_path, "--pid", str(ME), "--guests-only") == 0
+    assert seen == {"resources": False}
+
+
+def test_guests_only_with_full_is_a_usage_error(tmp_path, doubles, lab, capsys):
+    assert _main(tmp_path, "--pid", str(ME), "--guests-only", "--full") == bed_lease.EXIT_USAGE
+    assert "--guests-only reports and reaps nothing" in capsys.readouterr().err
+
+
+def test_a_unit_only_quick_that_fails_asks_no_hop(tmp_path, doubles, lab, monkeypatch, capsys):
+    asked = []
+    monkeypatch.setattr(bed_reap, "guest_unit_restarts", lambda lab_file: asked.append(1))
+    status = _main(
+        tmp_path,
+        "--pid",
+        str(ME),
+        "--guests-only",
+        "--unless-all-under",
+        "tests/unit",
+        "--",
+        "tests/unit/x.py",
+    )
+    assert status == 0
+    assert asked == []
+
+
+def test_a_lease_record_written_before_the_guest_counts_reads_as_no_look_yet(cell):
+    assert bed_lease.acquire(cell, ME, "a lane") == 0
+    data = json.loads(cell.record_path.read_text())
+    del data["guest_restarts"]
+    cell.record_path.write_text(json.dumps(data))
+    record = bed_lease.read_record(cell)
+    assert record is not None
+    assert record.guest_restarts is None

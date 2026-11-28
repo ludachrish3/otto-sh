@@ -325,15 +325,6 @@ LAB_FILE := tests/_fixtures/lab_data/tech1/lab.jsonnet
 BED_LEASE := uv run python scripts/bed_lease.py --lab $(LAB_FILE)
 bed_acquire = @$(BED_LEASE) acquire --pid $$PPID --purpose "$(1)"
 bed_release = @$(BED_LEASE) release --pid $$PPID $(1)
-# THE RELEASE ON FAILURE. `make` stops a recipe at its first failing line, so a
-# step between the acquire and the release that fails would end the recipe with
-# the lease still held by its own dead `make` (#1011). Every step in a lane's
-# recipe that can fail ends in `$(call bed_fail)`: the step's own status is
-# captured, the lease released (the drain and the kept-while-workers-run rule
-# are the release's own) and the recipe exits with that status. A nested
-# `$(MAKE)` lane's release is not its holder's, so it keeps the outer hold.
-# $(1) is the classifier a conditional lease (`make quick`) passes on.
-bed_fail = || { rc=$$?; $(BED_LEASE) release --pid $$PPID $(1); exit $$rc; }
 # The bed reap (docs/contributing.md, "The bed reap"; scripts/bed_reap.py): every
 # lane reaps what an earlier run left right after its acquire, and again at a
 # green exit before its release; a red lane is reaped by the next start.
@@ -345,9 +336,24 @@ BED_REAP := uv run python scripts/bed_reap.py --lab $(LAB_FILE)
 # release keeps a lease so noted: a reap that fails inside a nested `$(MAKE)`
 # lane reaches the outer lane as a failed step, whose `bed_fail` then keeps it
 # too. A bare `exit` in a guarded step would end the shell before `bed_fail`
-# runs; pass a status on with `( exit $$rc )`.
+# runs; pass a status on with `( exit $$rc )`. One failed reap does free the bed,
+# by itself: exit 3, a clean bed on which a guest was restarted during the run.
 # It takes trailing arguments (`$(call bed_reap) --full`).
 bed_reap = @$(BED_REAP) --pid $$PPID
+# THE RELEASE ON FAILURE. `make` stops a recipe at its first failing line, so a
+# step between the acquire and the release that fails would end the recipe with
+# the lease still held by its own dead `make` (#1011). Every step in a lane's
+# recipe that can fail ends in `$(call bed_fail)`: the step's own status is
+# captured, the guest units systemd restarted during the run are named (the
+# reap's `--guests-only`: a guest that crashed under the lane is restarted and
+# looks healthy afterwards, so the red lane says so itself; it prints nothing
+# when none did and never changes the status: a GREEN lane with such a guest
+# is failed by its closing reap), the lease released (the drain
+# and the kept-while-workers-run rule are the release's own) and the recipe
+# exits with that status. A nested `$(MAKE)` lane's release is not its holder's,
+# so it keeps the outer hold. $(1) is the classifier a conditional lease
+# (`make quick`) passes on.
+bed_fail = || { rc=$$?; $(BED_REAP) --pid $$PPID --guests-only $(1); $(BED_LEASE) release --pid $$PPID $(1); exit $$rc; }
 
 # Arms the asyncio transport-leak detector (tests/conftest.py +
 # tests/_fixtures/_transport_leaks.py). One token so "which lanes are armed"

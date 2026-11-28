@@ -2810,8 +2810,10 @@ def test_the_lease_macros_are_what_the_recipes_rely_on() -> None:
     assert "\nBED_LEASE := uv run python scripts/bed_lease.py --lab $(LAB_FILE)\n" in text
     assert '\nbed_acquire = @$(BED_LEASE) acquire --pid $$PPID --purpose "$(1)"\n' in text
     assert "\nbed_release = @$(BED_LEASE) release --pid $$PPID $(1)\n" in text
+    # A failing step names the guests that restarted under it (#1389), then releases.
     assert (
-        "\nbed_fail = || { rc=$$?; $(BED_LEASE) release --pid $$PPID $(1); exit $$rc; }\n" in text
+        "\nbed_fail = || { rc=$$?; $(BED_REAP) --pid $$PPID --guests-only $(1); "
+        "$(BED_LEASE) release --pid $$PPID $(1); exit $$rc; }\n" in text
     )
     assert "\nBED_REAP := uv run python scripts/bed_reap.py --lab $(LAB_FILE)\n" in text
     assert "\nbed_reap = @$(BED_REAP) --pid $$PPID\n" in text

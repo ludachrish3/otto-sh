@@ -123,6 +123,13 @@ class Record:
     that fails inside a nested ``$(MAKE)`` lane reaches the outer lane only as
     "the nested make failed". A record without the key reads as ``False``.
     """
+    guest_restarts: "dict[str, int] | None" = None
+    """Each guest unit's systemd restart count as this run last read it, by ``hop/unit``.
+
+    ``None`` until the run's first look (:func:`record_guest_restarts`). The
+    bed reap compares the next look against it to name a guest that restarted
+    during the run.
+    """
 
     @classmethod
     def from_json(cls, data: dict) -> "Record":
@@ -568,6 +575,15 @@ def record_reap(cell: Cell, *, clean: bool) -> None:
         record = read_record(cell)
         if record is not None and record.reap_failed == clean:
             record.reap_failed = not clean
+            write_record(cell, record)
+
+
+def record_guest_restarts(cell: Cell, counts: "dict[str, int]") -> None:
+    """Note on the held record each guest unit's restart count as the run just read it."""
+    with _lock(cell):
+        record = read_record(cell)
+        if record is not None and record.guest_restarts != counts:
+            record.guest_restarts = counts
             write_record(cell, record)
 
 

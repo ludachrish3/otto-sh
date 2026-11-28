@@ -643,11 +643,17 @@ def _uv_stub(path: Path, body: str) -> None:
     argv instead of the lane's), so that one call runs on this interpreter,
     against the root the caller's `BED_LEASE_ROOT` names. The script is this
     checkout's, whatever directory the recipe runs in.
+
+    A failing step's `bed_fail` also runs the reap's `--guests-only` report
+    before that release. It asks the lab's hops over SSH, which is no part of
+    a recipe's order, so that one call succeeds and does nothing.
     """
     path.write_text(
         "#!/bin/sh\n"
         'case "$1 $2 $3" in "run python scripts/bed_lease.py") shift 3; '
         f'exec "{sys.executable}" "{CHECKOUT_ROOT}/scripts/bed_lease.py" "$@" ;; esac\n'
+        'case "$1 $2 $3 $*" in "run python scripts/bed_reap.py "*" --guests-only"*) '
+        "exit 0 ;; esac\n"
         f"{body}\n",
         encoding="utf-8",
     )
