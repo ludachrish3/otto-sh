@@ -10,6 +10,7 @@ import io
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -269,3 +270,25 @@ class TestListTests:
         result = runner.invoke(_test_app(), [])
         assert result.exit_code == 2
         assert "at least one test name or -m" in result.output
+
+
+# ---------------------------------------------------------------------------
+# --list-hosts reads the scoped lab (spec 4.6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("argv", [["--list-hosts"], ["host", "--list-hosts"]], ids=["root", "host"])
+def test_list_hosts_targetable_only(monkeypatch, tmp_path: Path, argv: list[str]) -> None:
+    """Both spellings list the targetable hosts, not ``a-jump`` (in the lab, no project's)."""
+    from tests._fixtures.fleet import dispatch_root, scope_workspace
+
+    ws = scope_workspace(tmp_path)
+    assert "a-jump" in ws.lab.hosts
+
+    result = dispatch_root(monkeypatch, argv, lab=ws.lab, projects=[ws.inscope, ws.outscope])
+
+    assert result.exit_code == 0, (result.output, repr(result.exception))
+    listed = [line for line in result.stdout.splitlines() if line.startswith("\u2022")]
+    # inscope targets a-dut; local is always targetable; a-jump is in the lab
+    # and no project's, and beta's hosts are not loaded.
+    assert listed == ["\u2022 a-dut", "\u2022 local"]

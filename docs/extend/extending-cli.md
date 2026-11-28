@@ -184,7 +184,7 @@ it always blocks *execution*.
 
 `register_cli_command()` takes keyword-only metadata, mirrored on
 {class}`~otto.cli.registry.CommandSpec`. `@cli_command()` accepts `lab_free`,
-`output_dir`, `gate`, `dry_run_preview` and `accepts_options`, but not `async_leaves` or
+`output_dir`, `gate`, `scoped`, `dry_run_preview` and `accepts_options`, but not `async_leaves` or
 `overwrite`, which only `register_cli_command()` takes. The registering module
 is not metadata you pass: the engine records it, and
 `CLI_COMMANDS.origin(name=name)` reads it back. The first three rows are the ones
@@ -195,6 +195,7 @@ most commands set:
 | `lab_free`   | `False` | Skips lab bootstrap *and* CLI session setup (no banner, no logging init) for this command. Use for commands that never touch lab state. |
 | `output_dir` | `True`  | Creates a per-invocation artifact directory under `--xdir` before the command body runs.                                                |
 | `gate`       | `True`  | Runs the reservation gate before dispatch (ignored entirely when `lab_free=True`).                                                      |
+| `scoped`     | `True`  | The command sees only this run's projects and the hosts they target. `False` lets it see every project and lab host — see [Project scope](#extending-cli-scope). |
 | `dry_run_preview` | `False` | Under `--dry-run`, `False` stops the invocation after validation and prints the would-run block, so a command written without dry runs in mind never reaches a device. `True` runs the body, which must short-circuit at its own `is_dry_run()` branch (the shape `link` and `tunnel` use). One leaf can opt in alone with `cli_exposed(dry_run_preview=True)`. |
 | `accepts_options` | `None` | Whether the command offers the flags of options classes a project registers for it. `None` answers by the lab: a command that uses the lab accepts, a `lab_free` one does not. See [A project's options on your command](#a-projects-options-on-your-command). |
 | `async_leaves` | `False` | `register_cli_command()` only. Every leaf under the command must be `async def`; otto refuses a sync leaf when it is invoked. `run` sets it. |
@@ -232,7 +233,70 @@ The built-ins span the whole matrix — read them as worked examples
   branch needs the lab. Do not hand-call the gate's `.evaluate()` instead: that
   skips the refusals the opening runs before it.
 - **`run`, `test`, `host`** keep the defaults: the full lab-aware,
-  output-dir-creating, gate-checked path.
+  output-dir-creating, gate-checked, scoped path.
+
+(extending-cli-scope)=
+
+## Project scope
+
+Everything otto hands your verb — `ctx.lab`, `get_host`, `ctx.projects`, the
+walks — is already narrowed to this run's projects and hosts; you never
+filter. {ref}`project-scope` is the rule, and
+{ref}`project-scope-python` says what each of those objects holds.
+
+A command is scoped unless it opts out.  What to set:
+
+| What your command needs | What to set |
+| ----------------------- | ----------- |
+| only this run's hosts and projects | nothing: the default |
+| one read of the whole lab, inside a scoped command | read `ctx.unscoped.lab` or `ctx.unscoped.projects`; set nothing |
+| every lab host and every project, for the whole command | `scoped=False` at `register_cli_command()` or `@cli_command()` |
+| one leaf under a scoped group, or one host verb, unscoped | `__cli_scoped__ = False` on that callback or `@cli_exposed` method |
+| to run when no host is in play | `__cli_empty_scope_ok__ = True` on the callback |
+
+`scoped=False` opts the whole command out: `ctx.lab` is the whole
+{class}`~otto.labs.loader.Lab`, and `get_host` resolves any lab host.  otto's
+own `init`, `env`, `cache` and `lab` are registered that way, because they
+diagnose every source.  One leaf opts out alone by setting
+`__cli_scoped__ = False` on its callback right after the function:
+
+```python
+@app.command()
+def audit(ctx: typer.Context) -> None:
+    """Read every lab host, whatever the run's projects target."""
+    ...
+
+
+audit.__cli_scoped__ = False
+```
+
+A host verb ({doc}`cli-exposed-verbs`) opts out the same way: set the
+attribute on the `@cli_exposed` method, and `otto host <id> <verb>` then runs
+on a lab host the scope does not admit, while the host's other verbs still
+refuse it.  Three things stay scoped under an opt-out:
+
+- **Who may run the command.**  A plugin command registered by a project
+  that does not take part in the run is refused, `scoped=False` or not
+  ({ref}`project-scope-active`).
+- **Docker placement.**  The lab is built once, with placement judged by the
+  run's scope, so a `scoped=False` command that picks a docker parent from
+  the whole lab may choose a different parent than the one its declared
+  containers were placed on.  Name the parent explicitly rather than rely on
+  the default.
+- **Remote path completion.**  TAB on a remote path is judged by the scope,
+  so for an opted-out host verb it offers no remote path on a host outside
+  the scope, though the command itself runs there.
+
+A command is **gated** when it runs the reservation gate before dispatch:
+`gate=True`, the default (see the spec table above), and not
+`lab_free=True`.  A scoped, gated command refuses before it runs when no host
+is in play ({ref}`project-scope-empty`).  A recovery leaf that must run anyway
+sets `__cli_empty_scope_ok__ = True` on its callback
+({data}`~otto.cli.invoke.EMPTY_SCOPE_ATTR`), as otto's `run cleanup`, `link
+repair`, `tunnel list` and `tunnel remove` do.  The host verbs carry it
+already, because each judges its own target.  A leaf that contacts no host
+needs neither attribute: `gate=False` or `__cli_gate__ = False` already skips
+the refusal.
 
 ## A project's options on your command
 

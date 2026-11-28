@@ -12,6 +12,8 @@ documented there, once:
   :func:`~otto.run_context.set_context` and :func:`~otto.run_context.reset_context`:
   the active run;
 - :class:`~otto.run_context.ProjectContextView`, one project's view of a run;
+- :class:`~otto.run_context.UnscopedView`, a run's whole universe, read past
+  any project scope (:attr:`~otto.run_context.OttoContext.unscoped`);
 - :class:`~otto.run_context.HostOverrides`, the per-call host overrides every
   fleet entry accepts, named once;
 - :func:`~otto.run_context.variant`, :func:`~otto.run_context.set_variant` and
@@ -47,6 +49,7 @@ if TYPE_CHECKING:
         HostOverrides,
         OttoContext,
         ProjectContextView,
+        UnscopedView,
         get_context,
         open_context,
         reset_context,
@@ -66,6 +69,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "HostOverrides": "otto.run_context",
     "OttoContext": "otto.run_context",
     "ProjectContextView": "otto.run_context",
+    "UnscopedView": "otto.run_context",
     "get_context": "otto.run_context",
     "open_context": "otto.run_context",
     "reset_context": "otto.run_context",
@@ -107,6 +111,7 @@ __all__ = [
     "OttoContext",
     "ProjectContextView",
     "RunPolicy",
+    "UnscopedView",
     "Variant",
     "get_context",
     "open_context",

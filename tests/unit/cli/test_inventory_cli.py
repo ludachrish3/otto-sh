@@ -1045,3 +1045,60 @@ def test_the_inventory_option_help_names_the_inventories_table_literally(project
         result = _run([verb, "--help"])
         assert result.exit_code == 0, result.output
         assert "`[[inventories]]` entry's name" in result.output, verb
+
+
+# ── Participation: only the participating projects' tables are read ─────────
+
+_REFUSING_SWITCHES = {
+    "-E": (["-E", "inv_project"], {}),
+    "-l": (["-l", "beta"], {}),
+    "OTTO_LAB": ([], {"OTTO_LAB": "beta"}),
+}
+"""Each way ``inv_project`` (``lab_patterns = ['alpha']``) stops taking part."""
+
+_ADMITTING_SWITCHES = {
+    "no switch": ([], {}),
+    "-l alpha": (["-l", "alpha"], {}),
+    "-I restores": (["-l", "beta", "-I", "inv_project"], {}),
+}
+
+
+@pytest.mark.parametrize("verb", ["lookup test1", "list", "export {out}", "diff {file}", "refresh"])
+def test_inventory_verbs_honour_E_lab_and_OTTO_LAB(tmp_path, monkeypatch, verb):  # noqa: N802 — the switches' own spelling
+    """Fail-first: under ``-E``, ``-l`` and ``OTTO_LAB`` a non-participating table is not read.
+
+    The project's ``[inventory]`` is the only one declared, so a verb that
+    still read it would answer from it; one that honours the selection finds
+    no inventory at all. ``-I`` brings the project back. Driven through the
+    root app, where the root options are parsed.
+    """
+    from otto.cli.main import app
+
+    inventory_file = tmp_path / "inventory.json"
+    inventory_file.write_text(json.dumps(_RECORDS))
+    _scaffold(
+        tmp_path,
+        monkeypatch,
+        inventory_toml=(
+            "[project]\nlab_patterns = ['alpha']\n\n"
+            f'[inventory]\nbackend = "json"\npath = "{inventory_file}"\n'
+        ),
+    )
+    monkeypatch.delenv("OTTO_LAB", raising=False)
+    side = tmp_path / "side.json"
+    side.write_text(json.dumps(_RECORDS))
+
+    def invoke(switches, env, out):
+        args = verb.format(out=out, file=side).split()
+        return runner.invoke(app, [*switches, "inventory", *args], env=env)
+
+    no_inventory = 2 if verb.startswith("diff") else 1
+    for shape, (switches, env) in _REFUSING_SWITCHES.items():
+        result = invoke(switches, env, tmp_path / f"refused-{len(switches)}-{len(env)}.json")
+        assert result.exit_code == no_inventory, (shape, result.output)
+        assert "no inventory is configured" in result.output, (shape, result.output)
+
+    for shape, (switches, env) in _ADMITTING_SWITCHES.items():
+        result = invoke(switches, env, tmp_path / f"admitted-{len(switches)}.json")
+        assert "no inventory is configured" not in result.output, (shape, result.output)
+        assert f"json:{inventory_file}" in " ".join(result.output.split()), (shape, result.output)

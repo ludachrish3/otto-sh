@@ -133,6 +133,17 @@ def test_the_install_preview_targets_the_project_s_own_lab(tmp_path):
     assert "--lab bench -n run install" in log.read_text().splitlines()
 
 
+def test_a_project_in_several_labs_previews_its_first_listed_lab(tmp_path):
+    """The first ``lab_patterns`` entry, when literal, is the lab the reader starts in."""
+    root = tmp_path / "examples"
+    example = make_project(root / "a", extra='[project]\nlab_patterns = ["bench", "floor"]\n')
+    otto, log = _recording_otto(tmp_path, ["bench", "floor"])
+    assert cde.check(example, root, otto=otto) == []
+    lines = log.read_text().splitlines()
+    assert "--lab bench -n run install" in lines
+    assert "--list-labs" not in lines
+
+
 def test_a_project_without_a_literal_lab_uses_the_only_lab_listed(tmp_path):
     root = tmp_path / "examples"
     example = make_project(root / "a")

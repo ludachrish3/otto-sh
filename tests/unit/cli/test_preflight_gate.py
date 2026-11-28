@@ -333,7 +333,7 @@ class TestPreambleWiring:
     def _quiet_preamble(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Everything the preamble does EXCEPT this gate, stubbed to nothing."""
         monkeypatch.setattr(invoke, "ensure_lab_session", lambda ctx, spec: None)
-        monkeypatch.setattr(invoke, "refuse_inactive_instruction", lambda ctx: None)
+        monkeypatch.setattr(invoke, "refuse_inactive_owner", lambda ctx, spec: None)
         monkeypatch.setattr(invoke, "stop_at_dry_run_seam", lambda ctx, spec: None)
 
     def test_the_preamble_refuses_an_unsatisfied_active_project(

@@ -274,6 +274,12 @@ async def add_multi_hop_tunnel():
     added = await add_tunnel(
         lab, hosts=[("test1", None), ("test3", None), ("test2", None)], port=6001
     )
-    live = await discover_tunnels(lab)  # every tunnel found right now
+    live = await discover_tunnels(lab)  # every tunnel on the hosts in scope
     report = await remove_tunnel(lab, tunnel_id=added.tunnel.id)
 ```
+
+`get_lab()` is the run's scoped view ({ref}`project-scope-python`): `add_tunnel`
+refuses a host outside the scope, and `discover_tunnels` and `remove_tunnel`
+search only the hosts in it. To find or remove a tunnel on a host that has
+since left the scope, pass `otto.context.get_context().unscoped.lab`, as
+`otto tunnel list` and `remove` do.

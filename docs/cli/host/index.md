@@ -31,18 +31,25 @@ otto host <HOST_ID> ls [PATH] [--all]
 otto host --list-hosts
 ```
 
-`otto host` is **not** scoped by any project's `[project]` declaration: naming a
-host explicitly reaches it wherever it is in the loaded lab, and the "Available
-hosts" listing printed for an unknown id enumerates the whole lab.  Explicit
-targeting beats scoping — see
-{ref}`project-scope`.
+The target is **scoped** ({ref}`project-scope-hosts`): `otto host <id>` on a
+lab host this run's projects do not target prints the refusal and exits 1,
+before any connection and under `--dry-run` too.  Its help is the refusal as
+well: `otto host test3 --help`, a bare `otto host test3` and `otto host test3
+exec --help` print that one line and no menu, and exit 1.  A verb that opts
+out of scoping ({ref}`extending-cli-scope`) is the exception: it runs on such
+a host, its `--help` prints, and that host's menu lists only those verbs.  An
+id no host has prints `No host with ID`, and the "Available hosts" listing
+under it names only the hosts the run may target.  `otto host local` always
+resolves.
 
-Reservations follow the hosts you name, not the scope.  A host you name — the
-target or the `--hop` — that is outside your project's fleet has its own
-element- and host-level identifiers checked before the command runs, on top of
-the fleet's.  So reaching past the scope still means holding what the host you
-reached needs, and hopping through a host still means holding the hop
-({doc}`../reservation/index`).
+A `--hop` is **not** scoped: it may be any host in the loaded lab, because a
+host reached as a hop needs only lab membership.  An unknown hop lists every
+host in the lab.
+
+Reservations follow the hosts you name, not the scope.  A `--hop` outside your
+project's fleet has its own element- and host-level identifiers checked before
+the command runs, on top of the fleet's, so hopping through a host still means
+holding the hop ({doc}`../reservation/index`).
 
 ## The host verb model
 
@@ -125,13 +132,15 @@ when called from Python with no explicit `user=` of its own.
 
 ## Listing hosts
 
-Use `--list-hosts` to see which host IDs are available in the loaded lab:
+Use `--list-hosts` to see which host IDs this run may target:
 
 ```bash
 otto --lab my_lab host --list-hosts
 ```
 
-This is the same `--list-hosts` option available on the top-level `otto` command.
+It needs a lab (`--lab` or `OTTO_LAB`) and lists only the hosts in scope
+({ref}`project-scope-hosts`).  This is the same `--list-hosts` option available
+on the top-level `otto` command.
 ## Tab completion
 
 Host ids tab-complete from the loaded lab, including the built-in `local`

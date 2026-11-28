@@ -129,7 +129,7 @@ def detect_for_lab(projects: "list[Project] | None" = None) -> InstrumentationRe
     a container (spec §13).
     """
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from ..declared import current_projects
+    from ..declared import unscoped_projects
     from ..fleet import all_hosts
 
     if projects is None:
@@ -139,7 +139,7 @@ def detect_for_lab(projects: "list[Project] | None" = None) -> InstrumentationRe
         from .. import bootstrap
 
         del bootstrap
-        projects = current_projects()
+        projects = unscoped_projects()
     cov_config = get_cov_config(projects)
     pattern = load_hosts_pattern(cov_config)
     return detect(all_hosts(pattern=pattern, include_containers=True))

@@ -14,8 +14,8 @@ import pytest
 from otto import bootstrap as bs
 from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
 from otto.config.env import is_otto_env_var
-from otto.config.scope import resolve_scopes, scopes_of
-from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
+from otto.config.scope import scopes_of
+from otto.host.builtin_hosts import lab_scopes
 from otto.run_context import LIBRARY_LAB_NAME, OttoContext, set_context
 from otto.session.errors import ProjectLoadError
 from tests._fixtures.bootstrap_seam import patch_bootstrap
@@ -165,7 +165,7 @@ def test_row11_remote_completion_meets_the_refusal(tmp_path, monkeypatch):
     from otto.cli import remote_completion as rc
 
     _use(monkeypatch, _write(tmp_path, "good", labs="rig"), _unparseable(tmp_path))
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: _rig())
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs, **_kw: _rig())
     with pytest.raises(ProjectLoadError):  # remote_path_completer's catch-all turns it into []
         rc._required_for(_chain())
 
@@ -174,7 +174,7 @@ def test_row12_remote_completion_carries_include_projects(tmp_path, monkeypatch)
     from otto.cli import remote_completion as rc
 
     _use(monkeypatch, _write(tmp_path, "a"), _write(tmp_path, "b", labs="other", init_fails=True))
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: _rig())
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs, **_kw: _rig())
     rc._required_for(_chain())  # lab-inactive: demoted, no refusal
     with pytest.raises(ProjectLoadError):
         rc._required_for(_chain(include_projects=["b"]))
@@ -251,10 +251,53 @@ def test_row19_a_healthy_tree_resolves_the_verdicts_it_always_did(tmp_path, monk
     b = _write(tmp_path, "b", labs="rig", hosts="slot2", extra="")
     _use(monkeypatch, b, a)
     lab = _rig()
-    expected = resolve_scopes(
-        bs.bootstrap().ordered_projects,
-        lab.component_names,
-        lab.hosts,
-        exclude_ids=frozenset({BUILTIN_LOCAL_HOST_ID}),
+    expected = lab_scopes(
+        bs.bootstrap().ordered_projects, component_names=lab.component_names, hosts=lab.hosts
     )
     assert scopes_of(OttoContext(lab=lab)) == expected
+
+
+def test_row8_the_sentinel_lab_never_composes(monkeypatch):
+    """Fail-first: the library sentinel's host reads never compose the projects.
+
+    A hostless library context must keep its unknown-host error and its
+    ``open_context`` breadcrumb even where composition is unavailable, so
+    iteration, the targetable ids and an unknown lookup read no project.
+    """
+    from otto.lab import HostOutOfScopeError, Lab
+
+    def unavailable():
+        raise RuntimeError("composition unavailable")
+
+    monkeypatch.setattr("otto.declared.compose", unavailable)
+    ctx = OttoContext(lab=Lab(name=LIBRARY_LAB_NAME))
+
+    assert list(ctx.all_hosts()) == []
+    assert ctx.targetable_ids() == []
+    assert list(ctx.lab.hosts) == []
+    with pytest.raises(KeyError) as missing:
+        ctx.get_host("dut")
+    assert not isinstance(missing.value, HostOutOfScopeError)
+    assert "open_context" in str(missing.value)
+
+
+@pytest.mark.parametrize("switch", ["exclude_projects", "include_projects"])
+def test_row6_changing_the_switches_classifies_the_load_errors_again(tmp_path, monkeypatch, switch):
+    """Fail-first: a switch changed after the first read is judged, not the cached verdict.
+
+    ``b``'s init failed. Switched off (``-E b``), or lab-inactive, it only
+    demotes; switched back on, it is an active project whose failure refuses.
+    """
+    labs = "rig" if switch == "exclude_projects" else "other"
+    _use(monkeypatch, _write(tmp_path, "a"), _write(tmp_path, "b", labs=labs, init_fails=True))
+    exclude = ("b",) if switch == "exclude_projects" else ()
+    ctx = OttoContext(lab=_rig(), exclude_projects=exclude)
+    assert scopes_of(ctx)["b"].declared
+
+    if switch == "exclude_projects":
+        ctx.exclude_projects = ()
+    else:
+        ctx.include_projects = ("b",)
+
+    with pytest.raises(ProjectLoadError):
+        scopes_of(ctx)

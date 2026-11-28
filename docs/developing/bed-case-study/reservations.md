@@ -25,9 +25,10 @@ element and on its host:
 
 Holding `bb-bench` is holding the bench; `bb1350-chassis` the element;
 `bb1350-slot` one host in it. The fleet of interest from
-{doc}`boards-of-interest` is what is in play — five guests — so the
-requirement is the bench plus the chassis and slot identifiers of the guests
-that declare them. The built-in `local` host is never in play.
+{doc}`boards-of-interest` is what is in play — under `--lab busybox`, the five
+guests and `test1` — so the requirement is the bench plus the identifiers
+those hosts and their elements declare: `test1`'s element declares
+`test1-chassis`. The built-in `local` host is never in play.
 {doc}`../../cli/reservation/index` defines the three levels and how the
 required set is computed from the hosts in play;
 {doc}`../../configuration/lab-config` is the field reference for
@@ -59,7 +60,7 @@ names `chris`, so the walkthrough passes `--holder`. `alice` holds nothing:
 :language: text
 ```
 
-`chris` holds all three:
+`chris` holds all four:
 
 ```{literalinclude} ../../examples/captures/reservation-check-ok.txt
 :language: text

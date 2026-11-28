@@ -1,7 +1,7 @@
 """Click context CHAINS for the tests that drive the leaf preamble or a completer directly.
 
 ``command_preamble`` and the pieces it calls read a leaf ``click.Context``, and
-one of them — :func:`~otto.cli.invoke.refuse_inactive_instruction` — walks
+one of them — :func:`~otto.cli.invoke.refuse_inactive_owner` — walks
 ``ctx.parent`` up to the group that dispatched it, while
 :func:`~otto.cli.invoke.scope_selection` reads the root's parsed parameters
 through ``ctx.find_root()``. A fake that stops at the leaf therefore models

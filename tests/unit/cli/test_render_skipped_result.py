@@ -43,3 +43,18 @@ def test_the_message_is_escaped_not_read_as_markup(capsys):
     render_leaf_value(Result(status=Status.Skipped, msg="[bold]x[/bold] [oops]"), _policy())
 
     assert "skipped: [bold]x[/bold] [oops]" in capsys.readouterr().out
+
+
+def test_a_message_that_names_a_skip_is_still_labelled(capsys):
+    """The label never depends on the message's text, whatever command made it.
+
+    A skip message that itself contains ``skipped: `` (here an install's) is
+    labelled like any other: the renderer does not sniff its words.
+    """
+    msg = "tool install skipped: already at 1.2.3\nconfig sync skipped: unchanged"
+    render_leaf_value(Result(status=Status.Skipped, msg=msg))
+
+    assert capsys.readouterr().out.splitlines() == [
+        "skipped: tool install skipped: already at 1.2.3",
+        "config sync skipped: unchanged",
+    ]

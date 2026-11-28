@@ -433,3 +433,46 @@ def test_a_typod_exclude_with_no_projects_is_the_switch_refusal_not_no_project(m
     result = runner.invoke(app, ["-E", "typo", "--list-products"], env=WIDE)
     assert result.exit_code == 2, result.output
     assert "no project 'typo'" in result.output
+
+
+def test_list_products_and_tools_lab_hosts_targetable_only(monkeypatch, tmp_path):
+    """Each product and tool row names the targetable hosts only; ``a-jump``'s own rows are gone."""
+    from tests._fixtures.fleet import dispatch_root, scope_workspace
+
+    ws = scope_workspace(tmp_path)
+    for host in ws.lab.hosts.values():
+        host.products = [ProbeProduct(f"prod-{host.id}")]
+        host.dev_tools = [ProbeProduct(f"tool-{host.id}")]
+    projects = [ws.inscope, ws.outscope]
+
+    for flag, prefix in (("--list-products", "prod"), ("--list-tools", "tool")):
+        result = dispatch_root(monkeypatch, [flag], lab=ws.lab, projects=projects, env=WIDE)
+        assert result.exit_code == 0, (result.output, repr(result.exception))
+        rows = [line for line in result.stdout.splitlines() if line.startswith("\u2502")]
+        assert any(f"{prefix}-a-dut" in line for line in rows), result.stdout
+        assert any(f"{prefix}-local" in line for line in rows), result.stdout
+        assert not any("a-jump" in line for line in rows), result.stdout
+
+
+def test_list_products_unused_judged_over_targetable_hosts(monkeypatch, tmp_path):
+    """``--list-products`` judges what is unused over the targetable hosts, at its call site.
+
+    ``plain`` declares no ``[project]``, so its entries pass the scope gate on
+    every lab host; its ``fw`` matches only ``a-jump``, which the declaring
+    projects leave out of the run. Through the root dispatch, ``fw`` matches
+    no host the run may target; judged over the whole lab it would match.
+    """
+    from tests._fixtures.fleet import dispatch_root, scope_workspace
+
+    ws = scope_workspace(tmp_path, mixed=True)
+    plain = ws.ctx.unscoped.projects[2]
+    plain.declared_products = [_entry(plain, "fw", artifact="build/fw.bin", match={"id": "a-jump"})]
+
+    result = dispatch_root(
+        monkeypatch, ["--list-products"], lab=ws.lab, projects=ws.ctx.unscoped.projects, env=WIDE
+    )
+
+    assert result.exit_code == 0, (result.output, repr(result.exception))
+    lines = result.stdout.splitlines()
+    assert "not used in this lab:" in lines, result.stdout
+    assert "  fw (shell, plain): no host matches" in lines, result.stdout

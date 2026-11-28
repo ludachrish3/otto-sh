@@ -349,8 +349,11 @@ network, so this runs as-is:
 >>> reset_context(token)
 ```
 
-The trailing `reset_context` restores the prior active context — always pair it
-with `set_context` (or use `otto.open_context`, which does both for you).
+The context built by hand is scoped like any other
+({ref}`project-scope-python`); here no project declares `[project]`, so every
+lab host is in scope.  The trailing `reset_context` restores the prior active
+context — always pair it with `set_context` (or use `otto.open_context`, which
+does both for you).
 
 (library-output)=
 ## Where a library call writes its output
@@ -579,7 +582,6 @@ import asyncio
 from pathlib import Path
 
 import otto
-from otto.bootstrap import get_projects
 from otto.coverage import collect_coverage, resolve_report_inputs, run_coverage_report
 
 
@@ -599,8 +601,9 @@ async def main():
         # does, then render an HTML report from the collected cov/ directory.
         # Pass overwrite=True to re-render into a directory that already
         # holds a report (it is cleared first); without it, a non-empty
-        # report_dir raises DestinationError.
-        inputs = resolve_report_inputs(get_projects())
+        # report_dir raises DestinationError. Coverage configuration reads
+        # every parsed project, as `otto cov report` does: ctx.unscoped.
+        inputs = resolve_report_inputs(ctx.unscoped.projects)
         store = await run_coverage_report(
             [cov_dir], output_dir=Path("./coverage-run/report"), inputs=inputs, overwrite=True
         )
@@ -610,6 +613,9 @@ async def main():
 
 asyncio.run(main())
 ```
+
+`ctx.unscoped` is the run's whole universe, past the projects' scope
+({ref}`project-scope-python`).
 
 ### `CollectResult`
 

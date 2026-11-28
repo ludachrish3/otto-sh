@@ -248,6 +248,7 @@ UNIT_TREES = {
         "tests/unit/test_lab_data_hops.py",
         "tests/unit/test_lab_facade.py",
         "tests/unit/test_monitor_service_reads_no_lab.py",
+        "tests/unit/test_scoped_lab.py",
     ],
     "session": ["tests/unit/session", "tests/integration/host"],
     "logger": ["tests/unit/logger", "tests/integration/logger"],
@@ -296,6 +297,7 @@ UNIT_TREES = {
     "utils": ["tests/unit"],
     "version": ["tests/unit"],
     "declared": ["tests/unit"],
+    "lab_view": ["tests/unit"],
     "__main__": ["tests/unit"],
 }
 

@@ -2,7 +2,8 @@
 
 The world (:func:`scope_world`):
 
-- project ``a`` (``lab_patterns = ["alpha.*"]``) registers :class:`AFlags` for ``"flash"``,
+- project ``a`` (``lab_patterns = ["alpha.*"]``; every project here has
+  ``host_patterns = [".*"]``) registers :class:`AFlags` for ``"flash"``,
   and requires ``lib``;
 - project ``b`` (``lab_patterns = ["beta.*"]``) registers ``BFlags`` for ``"flash"`` by the
   lazy string form (:data:`B_FLAGS`): its module, :data:`B_FLAGS_MODULE`, is written to the
@@ -15,8 +16,8 @@ The fixture plugin commands (``tests/_fixtures/plugin_commands.py``) are registe
 accepting. :meth:`ScopeWorld.override_install` gives a project an ``install`` body with an
 options class of its own, so ``otto run install`` carries that project's body flags. The
 labs ``alpha1`` and ``beta1`` are declared by :func:`recording_repository`, which the world
-uses as its lab sources, and load with no host: the projects' flags follow the ``-l``
-names, never a loaded lab.
+uses as its lab sources, and load with one host each, so the project a lab selects has a
+host in play: the projects' flags follow the ``-l`` names, never a loaded lab.
 
 :func:`recording_repository` stands in for every project's lab sources and records every
 read of them, so a test can say that nothing read a lab source before the preamble did.
@@ -81,8 +82,16 @@ class Free:
     free: Annotated[int, typer.Option(help="A level no project owns.")] = 0
 
 
-def _scope(*patterns: str) -> ProjectScopeConfig:
-    return ProjectScopeConfig(lab_patterns=[re.compile(p) for p in patterns], host_patterns=[])
+def _scope(*patterns: str, hosts: "tuple[str, ...]" = (".*",)) -> ProjectScopeConfig:
+    """A ``[project]`` table: ``lab_patterns`` *patterns*, ``host_patterns`` *hosts*.
+
+    Every host of a matched lab by default; ``hosts=()`` declares a project
+    that takes part in a lab yet targets no host there.
+    """
+    return ProjectScopeConfig(
+        lab_patterns=[re.compile(p) for p in patterns],
+        host_patterns=[re.compile(h) for h in hosts],
+    )
 
 
 def _requires(name: str) -> Any:
@@ -267,8 +276,10 @@ UNKNOWN_LAB = "Lab {name!r} is not declared by the world's source"
 class RecordingRepository:
     """A lab source that declares ``alpha1`` and ``beta1`` and records every read of it.
 
-    Every load is recorded first. A declared lab loads with no host; any other
-    name is refused as a source refuses an undeclared lab
+    Every load is recorded first. A declared lab loads with one host,
+    ``<lab>-host``, so a project whose ``lab_patterns`` match the lab has a
+    host in play and a scoped command runs rather than refusing an empty
+    scope. Any other name is refused as a source refuses an undeclared lab
     (``LabNotFoundError``, the words :data:`UNKNOWN_LAB` gives).
     """
 
@@ -279,12 +290,12 @@ class RecordingRepository:
 
     def load_lab(self, name: Any, **_: Any) -> Any:
         from otto.labs.errors import LabNotFoundError
-        from otto.labs.loader import Lab
+        from tests._fixtures.fleet import _lab
 
         self.reads.append(f"load_lab {name}")
         if name not in self.labs:
             raise LabNotFoundError(UNKNOWN_LAB.format(name=name))
-        return Lab(name=name)
+        return _lab((f"{name}-host", name))
 
     def list_labs(self) -> "list[str]":
         self.reads.append("list_labs")

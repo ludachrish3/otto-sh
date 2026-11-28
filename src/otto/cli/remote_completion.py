@@ -24,6 +24,8 @@ from ..config.remote_completion_cache import ListingEntry
 if TYPE_CHECKING:
     import typer
 
+    from ..run_context import OttoContext
+
 LIST_DEADLINE_SECONDS = 2.0
 """Hard wall-clock budget for the remote ``ls``; a slower host completes nothing."""
 
@@ -258,6 +260,35 @@ def _store_listing_for(host_id: str, directory: str, entries: "list[ListingEntry
     store_listing(host_id, directory, entries, datetime.now(tz=timezone.utc))
 
 
+def _lookup_context(chain: _ChainParams) -> "OttoContext":
+    """Build the context the completed command would run under: its lab and its switches.
+
+    The one builder both completion paths share, :func:`_load_host` and
+    :func:`_required_for`: the lab the chain's ``-l`` names, built from every
+    discovered project, under a context that carries the chain's ``-I`` and
+    ``-E`` (through :func:`otto.run_context.new_run_context`, the one
+    construction seam), so a lookup and a requirement judge projects as the
+    command will. Built, not installed.
+    """
+    # The composition root: importing it installs the initiator that composes
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
+    from .. import bootstrap
+
+    del bootstrap
+    from ..config.scope import ScopeSelection
+    from ..declared import get_projects
+    from ..run_context import new_run_context
+    from ..session.lab import build_lab
+
+    selection = ScopeSelection(
+        labs=tuple(chain.labs),
+        include=tuple(chain.include_projects),
+        exclude=tuple(chain.exclude_projects),
+    )
+    lab = build_lab(get_projects(), labs=chain.labs, selection=selection)
+    return new_run_context(lab=lab, selection=selection, policy=None, bootstrap=None)
+
+
 def _load_host(chain: _ChainParams) -> "tuple[Any, Any]":
     """Build the lab + host exactly as the real command would; return (host, ctx token).
 
@@ -265,27 +296,20 @@ def _load_host(chain: _ChainParams) -> "tuple[Any, Any]":
     opened until the exec in :func:`_live_listing`. The returned token must be
     handed to :func:`_release_context`; the caller owns that in a ``finally``.
 
-    Mirrors :func:`otto.cli.host.resolve_cli_host` (hop resolution then
-    ``--term`` override-copy) so completion sees the same host the command
-    will use.
+    Mirrors :func:`otto.cli.host.resolve_cli_host` (the hop through the one
+    hop lookup, :func:`otto.cli.host_lookup.hop_host`, then the ``--term``
+    override-copy) so completion sees the same host the command will use,
+    under the command's own context (:func:`_lookup_context`).
     """
-    # The composition root: importing it installs the initiator that composes
-    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
-    from .. import bootstrap
-
-    del bootstrap
-    from ..declared import get_projects
     from ..fleet import get_host
-    from ..run_context import OttoContext, _apply_option_overrides, set_context
-    from ..session.lab import build_lab
+    from ..run_context import _apply_option_overrides, set_context
+    from .host_lookup import hop_host
 
-    projects = get_projects()
-    lab = build_lab(projects, labs=chain.labs)
-    token = set_context(OttoContext(lab=lab))
+    token = set_context(_lookup_context(chain))
     try:
         host = get_host(chain.host_id)
         if chain.hop:
-            host.hop = get_host(chain.hop).id
+            host.hop = hop_host(chain.hop).id
             host.rebuild_connections()
         if chain.term:
             host = _apply_option_overrides(host, term=chain.term)
@@ -408,43 +432,39 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     command itself then fails loudly through ``check_projects``.
 
     Every host the user NAMED joins the fleet, even when no project declared it —
-    the target and the ``--hop``. ``otto host <id> --hop <id>`` is deliberately
-    unscoped (explicit targeting beats scoping), and :func:`_load_host` opens a
+    the target and the ``--hop``. A ``--hop`` needs only lab membership, so it
+    may be a host no project targets, and :func:`_load_host` opens a
     session to the target THROUGH the hop, so a TAB about to contact either
     must demand that host's own slot. The hop is not a lesser target: reaching
     a fleet host through an unreserved jump box is still using the jump box.
+    The one exception is the runner side: the built-in runner and the
+    containers on it (:func:`otto.host.builtin_hosts.is_runner_side`) are never
+    hosts in play, so naming one demands no slot, as the command gate's
+    ``check_hosts`` decides for a named host.
 
-    Looked up through ``lab.hosts``, so an id the command will actually
-    contact resolves to its host rather than being dropped as unknown. That
-    is a pure lookup over the mapping this function already built — it opens
-    nothing, which is what keeps the gate strictly first. An unresolvable name
+    Looked up through the whole lab's ``hosts``
+    (:func:`otto.reservations.check.requirement_lab`, as the command's
+    ``check_hosts`` reads them), so an id the command will actually
+    contact resolves to its host rather than being dropped as unknown: a hop
+    needs only lab membership, so a hop no project targets still demands its
+    slot. That is a pure lookup over the mapping this function already built —
+    it opens nothing, which is what keeps the gate strictly first. An unresolvable name
     answers ``None`` and is skipped: passing it on would be a ``ValueError``
     out of the walk, and :func:`remote_path_completer`'s catch-all would leave
     the user a dead TAB with no explanation.
     """
-    # The composition root: importing it installs the initiator that composes
-    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
-    from .. import bootstrap
-
-    del bootstrap
-    from ..declared import get_projects
     from ..fleet import get_hosts_in_play
-    from ..host.builtin_hosts import is_builtin_host
-    from ..reservations.check import required_resources
-    from ..run_context import OttoContext, reset_context, set_context
-    from ..session.lab import build_lab
+    from ..host.builtin_hosts import is_runner_side
+    from ..reservations.check import required_resources, requirement_lab
+    from ..run_context import reset_context, set_context
 
-    lab = build_lab(get_projects(), labs=chain.labs)
-    ctx = OttoContext(
-        lab=lab,
-        include_projects=tuple(chain.include_projects),
-        exclude_projects=tuple(chain.exclude_projects),
-    )
+    ctx = _lookup_context(chain)
+    lab = requirement_lab(ctx)
     token = set_context(ctx)
     try:
         named = [lab.hosts.get(h) for h in (chain.host_id, chain.hop) if h]
         host_ids = get_hosts_in_play() | {
-            host.id for host in named if host is not None and not is_builtin_host(host)
+            host.id for host in named if host is not None and not is_runner_side(host)
         }
         return required_resources(lab=lab, host_ids=host_ids)
     finally:

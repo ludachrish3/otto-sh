@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import final
 
+from ..config.scope import HostOutOfScopeError
 from ..errors import FieldError
 from ..host.errors import HostUnreachableError
 from ..host.host import exec_own, is_dry_run, refuse_declined_fact
@@ -23,7 +24,7 @@ from ..utils import Status
 from .compose import compose_command, is_docker_capable, use_case_project
 
 if TYPE_CHECKING:
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
 
 
 class DockerVerbError(FieldError, ValueError):
@@ -36,24 +37,42 @@ class DockerVerbError(FieldError, ValueError):
     """
 
 
-def _capable(lab: "Lab") -> "Iterator[tuple[str, UnixHost]]":
+def _capable(lab: "LabView") -> "Iterator[tuple[str, UnixHost]]":
     """Yield ``(id, host)`` for each docker-capable unix host of *lab*, in lab order."""
     for hid, host in lab.hosts.items():
         if is_docker_capable(host):
             yield hid, host
 
 
-def capable_ids(lab: "Lab") -> "list[str]":
+def capable_ids(lab: "LabView") -> "list[str]":
     """Return the docker-capable unix host ids of *lab*, sorted."""
     return sorted(hid for hid, _ in _capable(lab))
 
 
-def _no_capable_host(lab: "Lab") -> DockerVerbError:
-    """Build the refusal for a lab with no docker-capable host (both entry points raise it)."""
+def _no_capable_host(lab: "LabView") -> DockerVerbError:
+    """Build the refusal for a lab that offers no docker-capable host (both entry points raise it).
+
+    When the whole lab does hold docker-capable hosts and the run's scope
+    leaves every one of them out, the refusal names them and the
+    ``settings.toml`` files whose ``host_patterns`` would bring one in.
+    Otherwise it says that no host is marked ``docker_capable``.
+    """
+    # Function-scope, as every reader of the whole lab imports it.
+    from ..lab_view import settings_files_of, whole_lab
+
+    outside = capable_ids(whole_lab(lab))
+    if outside:
+        files = ", ".join(settings_files_of(lab))
+        widen = f"; widen host_patterns in {files}" if files else ""
+        return DockerVerbError(
+            f"no docker-capable host in lab {lab.name!r} is in scope; "
+            f"capable but outside: {', '.join(outside)}{widen}",
+            field="parent",
+        )
     return DockerVerbError(f"no host in lab {lab.name!r} is marked docker_capable", field="parent")
 
 
-def default_docker_parent(*, lab: "Lab") -> UnixHost:
+def default_docker_parent(*, lab: "LabView") -> UnixHost:
     """Return the parent a docker verb uses when none is named: the one rule.
 
     Exactly one docker-capable unix host in *lab* is it. Several: the one with
@@ -79,11 +98,20 @@ def default_docker_parent(*, lab: "Lab") -> UnixHost:
     )
 
 
-def docker_parent(*, lab: "Lab", parent: "str | None") -> UnixHost:
-    """Return the docker-capable unix host *parent* names in *lab*, or the default (one rule)."""
+def docker_parent(*, lab: "LabView", parent: "str | None") -> UnixHost:
+    """Return the docker-capable unix host *parent* names in *lab*, or the default (one rule).
+
+    A *parent* that is in the lab but outside the run's scope is refused with
+    the scope's own text, which names why and the fix.
+    """
     if parent is None:
         return default_docker_parent(lab=lab)
-    candidate = lab.hosts.get(parent)
+    try:
+        candidate = lab.hosts[parent]
+    except HostOutOfScopeError as refused:
+        raise DockerVerbError(str(refused), field="parent") from refused
+    except KeyError:
+        candidate = None
     if not is_docker_capable(candidate):
         raise DockerVerbError(
             f"{parent!r} is not a docker-capable unix host in lab {lab.name!r}; "
@@ -93,7 +121,7 @@ def docker_parent(*, lab: "Lab", parent: "str | None") -> UnixHost:
     return candidate
 
 
-def docker_parents(*, lab: "Lab", parent: "str | None") -> "list[UnixHost]":
+def docker_parents(*, lab: "LabView", parent: "str | None") -> "list[UnixHost]":
     """Every docker-capable unix host of *lab* in lab order, or the one *parent* names.
 
     The ``--parent`` rule of the fan-out verbs, in one place: ``None`` is the

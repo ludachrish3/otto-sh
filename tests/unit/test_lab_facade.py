@@ -28,6 +28,11 @@ from scripts.docs_api_reference import (
 
 APPENDIX_F = [
     "EmptySelectionError",
+    # Project scope (spec 2026-11-24 §3.5, §3.7): the out-of-scope refusal, and
+    # the lab a scoped command reads.
+    "HostOutOfScopeError",
+    "LabView",
+    "ScopedLab",
     "Lab",
     "all_hosts",
     "do_for_all_hosts",

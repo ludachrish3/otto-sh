@@ -137,7 +137,9 @@ def acme(make_otto_context):
     register_options(Acme, verbs=["run", "test"])
     ctx = make_otto_context("test1")
     seen: list[int] = []
-    for host in ctx.lab.hosts.values():
+    # The canonical lab: reading the scoped ``ctx.lab`` here would resolve the
+    # run's projects before each test wires the one it runs.
+    for host in ctx.unscoped.lab.hosts.values():
         host.products = [Agent(seen)]
     return ctx, seen
 
@@ -290,7 +292,7 @@ def test_under_otto_host_the_hook_reads_the_default(acme, monkeypatch) -> None:
     patch_bootstrap(monkeypatch, [])
     monkeypatch.setattr(
         "otto.session.lab.build_lab_and_view",
-        lambda projects, labs: BuiltLab(
+        lambda projects, labs, **_kw: BuiltLab(
             lab=Lab(name="x"), view=InventoryView.of_default(inventory=None)
         ),
     )

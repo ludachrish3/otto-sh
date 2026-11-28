@@ -25,7 +25,7 @@ from .test_resolve_select import _frag, _project
 def _admit_all_scopes():
     """No `[project]` scope narrows anything.
 
-    build_facts calls the real scope_for_project/project_targets; without this,
+    build_facts calls the real scope_for_project/host_targeted; without this,
     scope_for_project would reach for otto's config bootstrap, which unit tests
     don't have. Individual tests override this with a nested patch to
     exercise real scoping.
@@ -230,10 +230,8 @@ def test_build_facts_hosts_scoped_to_union_of_participating_projects():
         patch.object(resolve_mod, "scope_for_project", side_effect=lambda name: name),
         patch.object(
             resolve_mod,
-            "project_targets",
-            side_effect=lambda scope, lab_name, hid: (
-                (scope, hid) in {("a", "test3"), ("b", "test1")}
-            ),
+            "host_targeted",
+            side_effect=lambda scope, host: (scope, host.id) in {("a", "test3"), ("b", "test1")},
         ),
     ):
         facts = build_facts(
@@ -245,6 +243,50 @@ def test_build_facts_hosts_scoped_to_union_of_participating_projects():
             scratch_dir="/tmp/s",
         )
     assert set(facts["hosts"]) == {"test1", "test3"}
+
+
+def test_docker_facts_hosts_follow_parent():
+    """A host with a parent publishes its address exactly when its parent is targeted.
+
+    Judged by the real predicate over a real declaration: ``a-dut`` exactly,
+    and anything on ``a-jump`` by its id but not ``a-jump``. Judged by its own
+    id, each host on a parent would land on the wrong side.
+
+    The child here is a stand-in unix host with a ``parent``, a shape
+    production does not build: the facts publish unix hosts only, and a real
+    container is not one. So this proves the facts judge through
+    ``host_targeted``; it is not coverage of containers in ``facts["hosts"]``.
+    """
+    import re
+
+    from otto.config.scope import ProjectScopeConfig
+
+    pinned = ProjectScopeConfig(
+        lab_patterns=[re.compile("alpha")],
+        host_patterns=[re.compile("a-dut"), re.compile(r"a-jump\..*")],
+    )
+    dut = _host("a-dut", "10.10.200.11")
+    jump = _host("a-jump", "10.10.200.12")
+    hosts = {"a-dut": dut, "a-jump": jump}
+    for parent, ip in ((dut, "10.10.200.21"), (jump, "10.10.200.22")):
+        child = _host(f"{parent.id}.r1.api", ip)
+        child.parent = parent
+        hosts[child.id] = child
+    for host in hosts.values():
+        host.source_lab = "alpha"
+    lab = MagicMock(spec=Lab)
+    lab.hosts = hosts
+    sel = Selection(use_case="integration", fragments=[SelectedFragment(_project("a"), _frag())])
+    with patch.object(resolve_mod, "scope_for_project", return_value=pinned):
+        facts = build_facts(
+            sel,
+            lab,
+            compose_project="p",
+            parent_id="a-dut",
+            files={},
+            scratch_dir="/tmp/s",
+        )
+    assert set(facts["hosts"]) == {"a-dut", "a-dut.r1.api"}
 
 
 def test_build_facts_parent_names_unknown_host_refused():

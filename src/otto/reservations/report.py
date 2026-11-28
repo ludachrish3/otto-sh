@@ -27,7 +27,7 @@ from .check import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
     from .protocol import Reservation, ReservationBackend
 
 
@@ -86,7 +86,7 @@ class ReservationReport:
 
 def build_report(
     *,
-    lab: "Lab",
+    lab: "LabView",
     username: str,
     backend: "ReservationBackend",
     host_ids: "Iterable[str] | None" = None,

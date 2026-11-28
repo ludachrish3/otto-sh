@@ -22,7 +22,7 @@ from .model import ProcKey, Tunnel
 from .sentinel import SENTINEL_PREFIX, ParsedSentinel, parse_sentinel
 
 if TYPE_CHECKING:
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +226,7 @@ async def _scan_hosts(hosts: list[Any]) -> tuple[list[tuple[str, Observation]], 
 
 # DEBT(no-tuple-return): observations plus error list; converts with scan().
 # ast-grep-ignore: no-tuple-return
-async def discover_observations(lab: "Lab") -> tuple[list[tuple[str, Observation]], list[str]]:
+async def discover_observations(lab: "LabView") -> tuple[list[tuple[str, Observation]], list[str]]:
     """Every tagged tunnel process across the lab's ``has_bash`` hosts."""
     hosts = [h for h in lab.hosts.values() if h.has_bash]
     return await _scan_hosts(hosts)
@@ -341,7 +341,7 @@ def group_observations(
     return out
 
 
-async def discover_tunnels(lab: "Lab") -> TunnelDiscovery:
+async def discover_tunnels(lab: "LabView") -> TunnelDiscovery:
     """Discover live otto tunnels across the lab (the monitor-facing surface).
 
     UNDER ``--dry-run`` THIS HAS NO SHORT-CIRCUIT OF ITS OWN, on purpose.

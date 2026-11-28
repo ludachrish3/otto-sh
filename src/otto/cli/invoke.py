@@ -56,8 +56,11 @@ if TYPE_CHECKING:
     from ..config.project import Project
     from ..config.scope import Participation, PreLabReason, ScopeSelection
     from ..coverage.config import DestinationError
+    from ..declared import BootstrapResult
     from ..errors import FieldError
     from ..inventory.view import InventoryView
+    from ..invocation import ContextBinding, RunPolicy
+    from ..labs.loader import Lab
     from ..params import RecordedOptions
     from ..reservations.check import ReservationBackendError
     from ..result import Result
@@ -958,6 +961,21 @@ def ensure_inline_lab(ctx: typer.Context) -> None:
         ensure_lab_context(ctx)
 
 
+def warn_empty_scope() -> None:
+    """Print the empty-scope refusal as a warning on stderr, when the run's scope is empty.
+
+    For the inline host listings (``--show-lab``, ``--list-hosts``), which show
+    the lab rather than act on it. Each calls it after :func:`ensure_inline_lab`:
+    it still lists what may be targeted, which under an empty scope is the
+    built-in runner alone, and the warning says why.
+    """
+    from ..run_context import get_context
+
+    refusal = get_context().empty_scope_refusal()
+    if refusal is not None:
+        typer.echo(f"warning: {refusal}", err=True)
+
+
 @dataclasses.dataclass(frozen=True)
 class RootOptions:
     """The root-callback options the preamble needs, stashed on ``ctx.meta``.
@@ -1061,6 +1079,51 @@ def command_spec(ctx: typer.Context) -> "CommandSpec":
     return spec
 
 
+_SCOPE_SPEC_KEY = "_otto_scope_spec"
+"""``ctx.meta`` key: the spec the root dispatch resolved, recorded before any group runs."""
+
+_LEAF_SCOPED_KEY = "_otto_leaf_scoped"
+"""``ctx.meta`` key: the leaf's own scope verdict, once :func:`command_preamble` has it."""
+
+
+def record_scope_verdict(ctx: typer.Context, *, spec: "CommandSpec") -> None:
+    """Record *spec* as the invocation's command, for its scope verdict.
+
+    Called by the root dispatch as it resolves the command, before any group
+    callback runs and before any parse-time probe can build a lab context, so
+    the first context the invocation builds already has the command's verdict.
+    The spec itself is recorded: :func:`leaf_is_scoped` reads it with whatever
+    leaf the verdict is for.
+    """
+    ctx.meta[_SCOPE_SPEC_KEY] = spec
+
+
+def recorded_spec(ctx: typer.Context) -> "CommandSpec | None":
+    """Return the spec :func:`record_scope_verdict` recorded, or ``None`` when none was.
+
+    ``None`` when the root dispatch never resolved a registered command: a
+    root flag with no command, or a test that drives a group directly.
+    """
+    from .registry import CommandSpec
+
+    spec = ctx.meta.get(_SCOPE_SPEC_KEY)
+    assert spec is None or isinstance(spec, CommandSpec), (  # noqa: S101 — internal invariant: only record_scope_verdict writes it
+        f"meta[{_SCOPE_SPEC_KEY!r}] holds {type(spec).__name__}, not CommandSpec"
+    )
+    return spec
+
+
+def invocation_scoped(ctx: typer.Context) -> bool:
+    """Return the invocation's scope verdict before its leaf is known: its command's."""
+    return leaf_is_scoped(recorded_spec(ctx), None)
+
+
+def _scope_verdict_in_force(ctx: typer.Context) -> bool:
+    """Return the verdict for a lab context built now: the leaf's once known, else the command's."""
+    leaf = ctx.meta.get(_LEAF_SCOPED_KEY)
+    return invocation_scoped(ctx) if leaf is None else bool(leaf)
+
+
 def ensure_cli_session(ctx: typer.Context) -> None:
     """Initialise CLI logging once per invocation (idempotent).
 
@@ -1136,10 +1199,18 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     through, for :func:`session_inventory_view`; resolves reservation state (stashed on
     ``ctx.meta['otto_reservation']``), and installs an ``OttoContext`` with
     :func:`~otto.context.set_context`, registering its reset on the root Click
-    context's ``call_on_close`` so it ends with the invocation. Guarded by
-    ``ctx.meta['_otto_lab_ready']`` so repeated calls are cheap and register once.
+    context's ``call_on_close`` so it ends with the invocation. Repeated calls
+    are cheap and register once: the lab, the bootstrap result, the policy and
+    the reservation gate are built at the first.
     No banner, no logging init, no output dir — those belong to
     :func:`ensure_cli_session` / :func:`command_preamble`.
+
+    The context gets the invocation's scope verdict (:func:`leaf_is_scoped`):
+    the command's until :func:`command_preamble` knows the leaf, then the
+    leaf's. When a call finds the installed context's verdict differs (a
+    parse-time probe built it before the leaf was known), the context is
+    replaced over the same lab, bootstrap result and policy, with no second
+    build and no second gate; the replaced context is reset at once.
 
     Raises (never prints) :class:`~otto.session.LabBuildError` or
     :class:`~otto.reservations.check.ReservationBackendError`: the loud callers wrap
@@ -1171,14 +1242,67 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
         return _ensure_lab_context(ctx, recorded)
 
 
+@dataclasses.dataclass
+class _LabRun:
+    """What :func:`ensure_lab_context` built and installed for one invocation.
+
+    Kept on ``ctx.meta`` so a verdict change replaces the context over the
+    same lab, bootstrap result and policy. The reservation gate stays where
+    the first build put it, on ``ctx.meta["otto_reservation"]``.
+    """
+
+    lab: "Lab"
+    bootstrap: "BootstrapResult"
+    policy: "RunPolicy"
+    context: "OttoContext | None" = None
+    """The context installed now; replaced, with :attr:`binding`, on a verdict change."""
+    binding: "ContextBinding | None" = None
+    """The install of :attr:`context`, which the invocation's close resets."""
+
+
+_LAB_RUN_KEY = "_otto_lab_run"
+"""``ctx.meta`` key: the invocation's :class:`_LabRun`, once the lab is built."""
+
+
 def _ensure_lab_context(ctx: typer.Context, recorded: "RecordedOptions | None") -> "OttoContext":
     """:func:`ensure_lab_context`'s body, run inside the pending mark *recorded*."""
-    from ..run_context import fill_teardown_deadline, get_context
+    from ..run_context import get_context
 
     meta = ctx.meta
-    if meta.get("_otto_lab_ready"):
-        return get_context()
+    scoped = _scope_verdict_in_force(ctx)
+    run = cast("_LabRun | None", meta.get(_LAB_RUN_KEY))
+    if run is not None:
+        if run.context is not None and run.context.scoped == scoped:
+            return get_context()
+        # A context built before the leaf was known (a parse-time probe) has
+        # the command's verdict and the leaf's differs: it is reset now and
+        # replaced below over the same lab, bootstrap result and policy, so
+        # nothing is built or gated twice. The replacement carries the replaced
+        # context's own record (its pending mark, or the leaf's record once the
+        # leaf has read its flags); with none, the command's mark.
+        if run.context is not None and run.context._recorded is not None:  # noqa: SLF001 — the replaced context's own record, carried whole
+            recorded = run.context._recorded  # noqa: SLF001 — as above
+        _reset_lab_run(run)
+    else:
+        run = _build_lab_run(ctx)
+    from ..run_context import new_run_context
 
+    context = new_run_context(
+        lab=run.lab,
+        selection=scope_selection(ctx),
+        policy=run.policy,
+        bootstrap=run.bootstrap,
+        scoped=scoped,
+    )
+    _install_lab_run(ctx, run, context, recorded)
+    return get_context()
+
+
+def _build_lab_run(ctx: typer.Context) -> _LabRun:
+    """Build the invocation's lab, bootstrap result, policy and reservation gate, once."""
+    from ..run_context import fill_teardown_deadline
+
+    meta = ctx.meta
     opts = root_options(ctx)
 
     from ..bootstrap import bootstrap
@@ -1202,9 +1326,10 @@ def _ensure_lab_context(ctx: typer.Context, recorded: "RecordedOptions | None") 
     # `--lab` is not a hard-required Typer option (so lab-free subcommands can
     # run without it); the build refuses an empty selection (`no_labs`) before
     # any lab side effect, for everything that does need a lab.
-    built = build_lab_and_view(projects, labs=list(opts.labs or []))
+    built = build_lab_and_view(projects, labs=list(opts.labs or []), selection=scope_selection(ctx))
     lab = built.lab
-    # The build registered the declared container placeholders. Its view is the
+    # The build registered the declared container placeholders, for the
+    # projects that take part under the invocation's switches. Its view is the
     # session's: a verb that reads the inventories again reads this one.
     meta[_INVENTORY_VIEW_KEY] = built.view
 
@@ -1230,32 +1355,48 @@ def _ensure_lab_context(ctx: typer.Context, recorded: "RecordedOptions | None") 
         )
 
     meta["otto_reservation"] = reservation_gate
+    return _LabRun(lab=lab, bootstrap=result, policy=policy)
 
-    # Install the runtime context: lab + the run policy installed above + the
-    # per-invocation project switches (-I/-E), which every activation question
-    # reads back through otto.config.scope.active. Its reset runs when Click
-    # closes this invocation's root context, before the policy's (registered
-    # first, by the root callback or the fallback above), so the context
-    # never outlives the invocation. Installed here, outside the command's
-    # event loop: the leaf's coroutine runs later under run_command, in a copy
-    # of this execution context.
-    from ..run_context import OttoContext, record_options, reset_context, set_context
 
-    context = OttoContext(
-        lab=lab,
-        include_projects=opts.include_projects,
-        exclude_projects=opts.exclude_projects,
-        policy=policy,
-        bootstrap=result,
-    )
-    token = set_context(context)
-    ctx.find_root().call_on_close(lambda: reset_context(token))
+def _install_lab_run(
+    ctx: typer.Context,
+    run: _LabRun,
+    context: "OttoContext",
+    recorded: "RecordedOptions | None",
+) -> None:
+    """Install *context* as *run*'s, record the command's mark on it, and register its reset.
+
+    The runtime context carries the lab, the run policy and the
+    per-invocation project switches (-I/-E), which every activation question
+    reads back through ``otto.config.scope.active``. Its reset runs when Click
+    closes this invocation's root context, before the policy's (registered
+    first, by the root callback or the fallback in :func:`_build_lab_run`),
+    so the context never outlives the invocation; one reset is registered,
+    at the first install, and it resets whichever context *run* holds then.
+    Installed outside the command's event loop: the leaf's coroutine runs
+    later under ``run_command``, in a copy of this execution context.
+    *recorded*, the command's mark (the leaf's own record once the leaf has
+    read its flags), outlives the block on the context, until the leaf
+    records or :func:`settle_options` clears it.
+    """
+    from ..run_context import record_options, set_context
+
+    first = ctx.meta.get(_LAB_RUN_KEY) is None
+    run.context, run.binding = context, set_context(context)
+    if first:
+        ctx.meta[_LAB_RUN_KEY] = run
+        ctx.find_root().call_on_close(lambda: _reset_lab_run(run))
     if recorded is not None:
-        # The mark outlives the block on the context, until the leaf records
-        # or ``settle_options`` clears it.
         record_options(context, recorded)
-    meta["_otto_lab_ready"] = True
-    return get_context()
+
+
+def _reset_lab_run(run: _LabRun) -> None:
+    """Reset the context *run* holds, if any: at the invocation's close, or before a replacement."""
+    from ..run_context import reset_context
+
+    binding, run.context, run.binding = run.binding, None, None
+    if binding is not None:
+        reset_context(binding)
 
 
 _INVENTORY_VIEW_KEY = "otto_inventory_view"
@@ -1642,8 +1783,10 @@ def open_live_lab(ctx: typer.Context, spec: "CommandSpec", *, gate: bool) -> Non
 
     The ONE sequence every command that reaches lab hosts runs, in this order:
     :func:`ensure_lab_session` (the lab verdicts it installs are the input to
-    what follows), :func:`refuse_inactive_instruction`,
-    :func:`refuse_unsatisfied_dependencies`, then, when *gate* is true,
+    what follows), :func:`refuse_inactive_owner`,
+    :func:`refuse_unsatisfied_dependencies`, then, when *gate* is true, the
+    empty-scope refusal (``OttoContext.require_targets``, skipped for a leaf
+    :func:`leaf_allows_empty_scope` exempts) and
     :func:`present_reservation_gate`. A run that is being refused must not
     first be warned about the reservations it would have needed, so the gate
     is last.
@@ -1655,14 +1798,26 @@ def open_live_lab(ctx: typer.Context, spec: "CommandSpec", *, gate: bool) -> Non
     this sequence; :func:`command_preamble` runs it after, for every command.
     """
     ensure_lab_session(ctx, spec)
-    refuse_inactive_instruction(ctx)
+    refuse_inactive_owner(ctx, spec)
     refuse_unsatisfied_dependencies()
     if gate:
+        if not leaf_allows_empty_scope(ctx.command.callback):
+            from ..run_context import get_context
+
+            get_context().require_targets()
         present_reservation_gate(ctx)
 
 
-def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
-    """Refuse dispatching a project-owned instruction whose project is inactive (spec §5).
+def refuse_inactive_owner(inner_ctx: typer.Context, spec: "CommandSpec") -> None:
+    """Refuse a project-owned root command or instruction whose project does not take part.
+
+    Judges, with the lab (tier L), the project that registered *spec*'s root
+    command, then, for a leaf dispatched through ``otto run``, the project that
+    registered the instruction. The verdict is
+    :func:`otto.session.check_instruction_active`'s: otto's own commands and
+    instructions have no owner and are never refused, and an owner that a
+    participating project requires runs. A lab-free command's root owner is
+    judged before any lab, in :func:`command_preamble`.
 
     Runs in the leaf preamble AFTER the lab session exists, so the verdict can
     come from :func:`otto.config.scope.active` — the one authority — rather than
@@ -1680,6 +1835,38 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
     it. A usage error would tell the reader to fix their typing, which is the
     wrong place to look.
     """
+    owned = [(spec.name, _root_owner(spec))]
+    name = _dispatched_instruction(inner_ctx)
+    if name is not None:
+        from ..instruction_catalog import INSTRUCTIONS
+
+        owned.append((name, INSTRUCTIONS.project(name=name)))
+    owned = [(name, owner) for name, owner in owned if owner is not None]
+    if not owned:
+        return  # otto's own: nothing to judge, and nothing more to import
+    from ..run_context import get_context
+    from ..session.activation import check_instruction_active
+    from ..session.errors import InstructionInactiveError
+
+    try:
+        for name, owner in owned:
+            check_instruction_active(name=name, owner=owner, ctx=get_context())
+    except InstructionInactiveError as e:
+        _fail_inactive_owner(e)
+
+
+def _root_owner(spec: "CommandSpec") -> "str | None":
+    """Return the project whose init import registered *spec*'s root command, or ``None``.
+
+    ``None`` for otto's own commands and for a spec the registry does not hold.
+    """
+    from .registry import CLI_COMMANDS
+
+    return CLI_COMMANDS.project(name=spec.name) if spec.name in CLI_COMMANDS else None
+
+
+def _dispatched_instruction(inner_ctx: typer.Context) -> "str | None":
+    """Return the registered instruction *inner_ctx* dispatches through ``otto run``, else None."""
     # Climb to the node whose PARENT is the ``run`` group -- for an ordinary
     # instruction that is the leaf itself, and for one registered as a
     # sub-group (``add_typer``) it is the group, whose name is the registry
@@ -1694,35 +1881,51 @@ def refuse_inactive_instruction(inner_ctx: typer.Context) -> None:
     ):
         node = node.parent
     if node.parent is None:
-        return  # not dispatched through `otto run`
+        return None  # not dispatched through `otto run`
 
     # `or ""`: click types `info_name` as `str | None`, and an unnamed node owns
     # nothing -- "" is never a registered instruction, so the one lookup below
     # covers both "no name" and "not an instruction" without a second branch.
     name = node.info_name or ""
-    if name not in INSTRUCTIONS:
-        return  # a statically-declared `run` child; nobody owns it
-    owner = INSTRUCTIONS.project(name=name)
+    return name if name in INSTRUCTIONS else None  # a statically-declared `run` child: no owner
 
-    from ..run_context import get_context
-    from ..session.activation import check_instruction_active
+
+def _refuse_pre_lab_owner(ctx: typer.Context, spec: "CommandSpec") -> None:
+    """Refuse a lab-free root command whose project does not take part, judged before any lab.
+
+    Tier P: the verdict comes from ``-l`` (or ``OTTO_LAB``), ``-I`` and ``-E``
+    alone (:func:`scope_selection`), over every project the run parsed, so a
+    project whose ``host_patterns`` match nothing still takes part here, and
+    so do the projects it requires. The judgement is the one
+    :func:`refuse_inactive_owner` asks for, and the refusal renders the same.
+    """
+    owner = _root_owner(spec)
+    if owner is None:
+        return  # otto's own: nothing to judge, and nothing more to import
+    from ..declared import get_projects
+    from ..session.activation import refuse_owner
     from ..session.errors import InstructionInactiveError
 
     try:
-        check_instruction_active(name=name, owner=owner, ctx=get_context())
+        refuse_owner(spec.name, owner, projects=get_projects, selection=scope_selection(ctx))
     except InstructionInactiveError as e:
-        # Through `fail`, never a hand-rolled `[red]` f-string: the message
-        # interpolates a lab list and the literal table name `[project]`, and rich
-        # DELETES `[word]` as markup unless it is escaped -- the demotion warning
-        # a few functions up was observed rendering "lab(s) [unix]" as "lab(s) )"
-        # for exactly this reason. `print_error` prints it literally; the
-        # `error-render-through-helper` ast-grep rule keeps this route the only one.
-        # soft_wrap: the hint's whole job is to hand over a runnable switch. Rich
-        # folds between WORDS at the console width, so at 80 columns an ordinary
-        # project name splits `or: -I firmware-integration` across the fold and the
-        # token cannot be pasted. The detail line above is prose and would be fine
-        # folded; the hint is not, and they share one render.
-        fail(_inactive_instruction_text(e), soft_wrap=True)
+        _fail_inactive_owner(e)
+
+
+def _fail_inactive_owner(err: "InstructionInactiveError") -> "NoReturn":
+    """Print *err* in flag spelling and exit 1: the one rendering of an owner refusal."""
+    # Through `fail`, never a hand-rolled `[red]` f-string: the message
+    # interpolates a lab list and the literal table name `[project]`, and rich
+    # DELETES `[word]` as markup unless it is escaped -- the demotion warning
+    # a few functions up was observed rendering "lab(s) [unix]" as "lab(s) )"
+    # for exactly this reason. `print_error` prints it literally; the
+    # `error-render-through-helper` ast-grep rule keeps this route the only one.
+    # soft_wrap: the hint's whole job is to hand over a runnable switch. Rich
+    # folds between WORDS at the console width, so at 80 columns an ordinary
+    # project name splits `or: -I firmware-integration` across the fold and the
+    # token cannot be pasted. The detail line above is prose and would be fine
+    # folded; the hint is not, and they share one render.
+    fail(_inactive_instruction_text(err), soft_wrap=True)
 
 
 def _inactive_instruction_text(err: "InstructionInactiveError") -> str:
@@ -1760,7 +1963,7 @@ def refuse_unsatisfied_dependencies() -> None:
     """Refuse when an ACTIVE project declares a Python requirement this env lacks (spec §3).
 
     Runs in the leaf preamble AFTER the lab session exists, for the same reason
-    :func:`refuse_inactive_instruction` does and no other: severity here is an
+    :func:`refuse_inactive_owner` does and no other: severity here is an
     ACTIVATION question, and :func:`otto.config.scope.active` -- the one
     authority -- needs the lab verdicts the session installs. The spec asked for
     this check inside ``bootstrap()``, which runs before any of that exists;
@@ -1859,6 +2062,19 @@ GATE_ATTR = "__cli_gate__"
 that loads a lab but contacts no host (``otto cov report``, ``otto docker
 use-cases``). ``False`` exempts the leaf; absent means gated. Read the same way
 as ``__cli_output_dir__``, by :func:`leaf_is_gated`."""
+
+
+SCOPED_ATTR = "__cli_scoped__"
+"""Per-leaf opt-out from project scope, for a leaf under a scoped group that
+must see every project and lab host. ``False`` opts the leaf out; absent means
+scoped. Read the same way as ``__cli_output_dir__``, by :func:`leaf_is_scoped`."""
+
+EMPTY_SCOPE_ATTR = "__cli_empty_scope_ok__"
+"""Per-leaf exemption from the empty-scope refusal, for a recovery leaf that
+must run when no host is in play (``otto run cleanup``, ``otto link repair``,
+``otto tunnel list`` and ``remove``, the host verbs). ``True`` exempts the leaf;
+absent means refused. Read the same way as ``__cli_output_dir__``, by
+:func:`leaf_allows_empty_scope`."""
 
 
 def leaf_is_lab_free(spec: "CommandSpec", callback: object) -> bool:
@@ -1991,14 +2207,38 @@ def _from_top_level(ctx: Any) -> list[Any]:
     return chain[top:]
 
 
+def leaf_is_scoped(spec: "CommandSpec | None", callback: object) -> bool:
+    """Decide whether this leaf sees only the active projects and the hosts they target.
+
+    The one reader of the scope switch. A group registered ``scoped=False``
+    and a leaf marked ``__cli_scoped__ = False`` opt out; everything else is
+    scoped, a missing *spec* (no registered command resolved) included.
+    *callback* is ``None`` while the leaf is not yet known, which is the
+    command's own verdict.
+    """
+    return (spec is None or spec.scoped) and bool(getattr(callback, SCOPED_ATTR, True))
+
+
+def leaf_allows_empty_scope(callback: object) -> bool:
+    """Decide whether this leaf runs when its scope puts no host in play.
+
+    The one reader of :data:`EMPTY_SCOPE_ATTR`: only a leaf marked ``True``
+    runs; every other gated leaf is refused (:func:`open_live_lab`).
+    """
+    return bool(getattr(callback, EMPTY_SCOPE_ATTR, False))
+
+
 def command_preamble(ctx: typer.Context) -> None:
     """Run once when a real (non-help) command invocation starts.
 
     Order: ``-I``/``-E`` names are validated → an active project's bootstrap
-    errors fail loud → lab-free commands skip the lab slice → CLI session
-    (logging) → lab context → per-command output dir → an inactive project's
-    instruction is refused → an active project's unsatisfied Python dependencies
-    are refused → reservation gate → the command's options are prepared
+    errors fail loud → a lab-free command whose project does not take part is
+    refused, judged before any lab → the leaf's scope verdict
+    (:func:`leaf_is_scoped`) is recorded → lab-free commands skip the lab
+    slice → CLI session (logging) → lab context → per-command output dir → a
+    root command or instruction whose project does not take part is refused →
+    an active project's unsatisfied Python dependencies are refused → an empty
+    scope is refused → reservation gate → the command's options are prepared
     (:func:`prepare_command_options`; a bad value is a usage error here, and a
     leaf that records no options has its pending mark cleared) → the dry-run
     seam. ``--help`` paths never
@@ -2031,7 +2271,18 @@ def command_preamble(ctx: typer.Context) -> None:
     # same per-leaf mechanism ``ensure_lab_session`` reads for the output dir:
     # ``otto cov kmodcov export`` writes a local directory and touches no host.
     callback = ctx.command.callback
-    if not leaf_is_lab_free(spec, callback):
+    lab_free = leaf_is_lab_free(spec, callback)
+    # A lab-free leaf never opens the lab, so its root owner is judged here,
+    # before any lab; a lab-bound one is judged with the lab, in open_live_lab.
+    if lab_free:
+        _refuse_pre_lab_owner(ctx, spec)
+    # The leaf's scope verdict, for every leaf (a lab-free one may open its
+    # own lab): every lab context built from here on gets it, and one a
+    # parse-time probe built with the command's verdict is replaced. Read
+    # with the same spec as the gate, lab-free and output-dir verdicts: the
+    # recorded one serves only the parse time before the leaf is known.
+    meta[_LEAF_SCOPED_KEY] = leaf_is_scoped(spec, callback)
+    if not lab_free:
         open_live_lab(ctx, spec, gate=leaf_is_gated(spec, callback))
 
     # The values are validated before the seam, so a dry run fails the same

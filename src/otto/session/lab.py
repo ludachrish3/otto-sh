@@ -9,6 +9,7 @@ from .errors import LabBuildError
 
 if TYPE_CHECKING:
     from ..config.project import Project
+    from ..config.scope import ScopeSelection
     from ..inventory.view import InventoryView
     from ..labs.loader import Lab
 
@@ -45,19 +46,44 @@ class BuiltLab:
 
 
 def build_lab(
-    projects: "list[Project]", *, labs: list[str], view: "InventoryView | None" = None
+    projects: "list[Project]",
+    *,
+    labs: list[str],
+    view: "InventoryView | None" = None,
+    selection: "ScopeSelection | None" = None,
+    _unscoped_placement: bool = False,
 ) -> "Lab":
     """Build lab(s) *labs* exactly as ``otto --lab`` does, and return the lab.
 
     The lab of :func:`build_lab_and_view`, whose description of the build,
     its arguments and its errors hold here unchanged; call that instead to
     keep the inventory view the lab was built through.
+
+    The declared containers are placed under the run's switches, passed as
+    ``selection=ScopeSelection(labs=..., include=..., exclude=...)``: *labs*
+    as split component names, and the ``-I`` / ``-E`` project names. Only a
+    project that takes part under them gets placeholders, under the default
+    docker parent among the hosts those projects target. With no
+    *selection*, no project is switched on or off. A lab built here and
+    passed to :func:`otto.open_context <otto.context.open_context>` keeps
+    this placement, so build it with the switches you open the context with.
     """
-    return build_lab_and_view(projects, labs=labs, view=view).lab
+    return build_lab_and_view(
+        projects,
+        labs=labs,
+        view=view,
+        selection=selection,
+        _unscoped_placement=_unscoped_placement,
+    ).lab
 
 
 def build_lab_and_view(
-    projects: "list[Project]", *, labs: list[str], view: "InventoryView | None" = None
+    projects: "list[Project]",
+    *,
+    labs: list[str],
+    view: "InventoryView | None" = None,
+    selection: "ScopeSelection | None" = None,
+    _unscoped_placement: bool = False,
 ) -> BuiltLab:
     """Build lab(s) *labs* exactly as ``otto --lab`` does, and keep the view it read through.
 
@@ -86,9 +112,11 @@ def build_lab_and_view(
     refuses with the same error either way. The load decides every component's
     availability once, in one status report over every source, the same
     report ``otto --list-labs`` shows. That much is the load step
-    (``otto.session.lab.load_lab_and_view``), called here. Last, each
-    project's declared docker services become placeholder hosts, so they list
-    and complete before ``compose up``.
+    (``otto.session.lab.load_lab_and_view``), called here. Last, the declared
+    docker services of each project that takes part under *selection* (see
+    :func:`build_lab`) become placeholder hosts, under the default docker
+    parent among the hosts the run may target, so they list and complete
+    before ``compose up``.
 
     Raises what ``load_lab_and_view`` raises.
     """
@@ -96,7 +124,9 @@ def build_lab_and_view(
 
     from ..docker.compose import register_declared_container_hosts
 
-    register_declared_container_hosts(built.lab, projects)
+    register_declared_container_hosts(
+        built.lab, projects, selection=selection, unscoped=_unscoped_placement
+    )
     return built
 
 

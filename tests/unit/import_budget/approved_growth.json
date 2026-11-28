@@ -862,13 +862,18 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "otto:logger": 4,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-310.pyc": 1,
+        "otto:session": 4
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4); the scope verdicts this lookup reads classify load errors through otto.session.projects, as the command itself does (otto:session +4)."
     },
     {
       "surface": "completion_remote_path_hit_reserved",
@@ -876,13 +881,17 @@
       "buckets": {
         "other": 6,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "otto:logger": 4,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-310.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "dispatch_local_warm",
@@ -890,12 +899,16 @@
       "buckets": {
         "other": 66,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
-        "site:typer": 8
+        "site:typer": 8,
+        "fd": 2,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-310.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); fd +2: path-less descriptor calls the x86 CI runner measures and the aarch64 dev VM does not (there this surface's fd count is equal on main and the tip)."
     },
     {
       "surface": "dispatch_project_warm",
@@ -903,12 +916,15 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-310.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4)."
     },
     {
       "surface": "help_project",
@@ -946,12 +962,16 @@
         "fd": 3,
         "other": 138,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-310.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. A local exec runs in a bash session since #1261, not a /bin/sh -c subprocess: other is the bash process (the PATH lookup of bash and its start) and the session handshake's three stty calls, which a pipe session does not need (#1329, which lowers this amount and the surface's target_ratio when it lands). The amount is the x86 CI runner's (bash 93, stty 17 a call); the aarch64 dev VM measures 7 fewer (bash 44, stty 30 a call). fd: three more descriptor operations than the /bin/sh subprocess, measured on the x86 runner. The verb needs the session because exec is a short-lived run on every host family."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. A local exec runs in a bash session since #1261, not a /bin/sh -c subprocess: other is the bash process (the PATH lookup of bash and its start) and the session handshake's three stty calls, which a pipe session does not need (#1329, which lowers this amount and the surface's target_ratio when it lands). The amount is the x86 CI runner's (bash 93, stty 17 a call); the aarch64 dev VM measures 7 fewer (bash 44, stty 30 a call). fd: three more descriptor operations than the /bin/sh subprocess, measured on the x86 runner. The verb needs the session because exec is a short-lived run on every host family. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "host_local_get",
@@ -959,12 +979,16 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-310.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "host_local_put",
@@ -972,12 +996,16 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-310.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "test_project",
@@ -985,14 +1013,18 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:gojsonnet": 6,
         "site:jsonnet": 6,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-310.pyc": 1,
+        "workspace": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); workspace +1: one more read of the generated project's tests directory on the x86 runner, likewise equal on aarch64."
     },
     {
       "surface": "tracked_cache",
@@ -1040,12 +1072,15 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-310.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "tracked_host_probe",
@@ -1053,12 +1088,15 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-310.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "tracked_init",
@@ -1178,14 +1216,19 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "otto:logger": 4,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-311.pyc": 1,
+        "otto:session": 4
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4); the scope verdicts this lookup reads classify load errors through otto.session.projects, as the command itself does (otto:session +4)."
     },
     {
       "surface": "completion_remote_path_hit_reserved",
@@ -1193,14 +1236,18 @@
       "buckets": {
         "other": 5,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "otto:logger": 4,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-311.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "dispatch_local_warm",
@@ -1208,13 +1255,16 @@
       "buckets": {
         "other": 65,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-311.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4)."
     },
     {
       "surface": "dispatch_project_warm",
@@ -1222,13 +1272,16 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-311.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4)."
     },
     {
       "surface": "help_project",
@@ -1266,13 +1319,18 @@
       "buckets": {
         "other": 137,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "fd": 1,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-311.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. A local exec runs in a bash session since #1261, not a /bin/sh -c subprocess: other is the bash process (the PATH lookup of bash and its start) and the session handshake's three stty calls, which a pipe session does not need (#1329, which lowers this amount and the surface's target_ratio when it lands). The amount is the x86 CI runner's (bash 93, stty 17 a call); the aarch64 dev VM measures 7 fewer (bash 44, stty 30 a call). The verb needs the session because exec is a short-lived run on every host family."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. A local exec runs in a bash session since #1261, not a /bin/sh -c subprocess: other is the bash process (the PATH lookup of bash and its start) and the session handshake's three stty calls, which a pipe session does not need (#1329, which lowers this amount and the surface's target_ratio when it lands). The amount is the x86 CI runner's (bash 93, stty 17 a call); the aarch64 dev VM measures 7 fewer (bash 44, stty 30 a call). The verb needs the session because exec is a short-lived run on every host family. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4); fd +1: path-less descriptor calls the x86 CI runner measures and the aarch64 dev VM does not (there this surface's fd count is equal on main and the tip)."
     },
     {
       "surface": "host_local_get",
@@ -1280,13 +1338,17 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-311.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "host_local_put",
@@ -1294,13 +1356,17 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-311.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "test_project",
@@ -1308,15 +1374,19 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
         "site:gojsonnet": 6,
         "site:jsonnet": 6,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-311.pyc": 1,
+        "workspace": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); workspace +1: one more read of the generated project's tests directory on the x86 runner, likewise equal on aarch64."
     },
     {
       "surface": "tracked_cache",
@@ -1368,13 +1438,16 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-311.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "tracked_host_probe",
@@ -1382,13 +1455,16 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-311.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "tracked_init",
@@ -1515,14 +1591,19 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "otto:logger": 4,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-312.pyc": 1,
+        "otto:session": 4
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4); the scope verdicts this lookup reads classify load errors through otto.session.projects, as the command itself does (otto:session +4)."
     },
     {
       "surface": "completion_remote_path_hit_reserved",
@@ -1530,14 +1611,18 @@
       "buckets": {
         "other": 5,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "otto:logger": 4,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-312.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "dispatch_local_warm",
@@ -1545,13 +1630,16 @@
       "buckets": {
         "other": 65,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-312.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4)."
     },
     {
       "surface": "dispatch_project_warm",
@@ -1559,13 +1647,16 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-312.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4)."
     },
     {
       "surface": "help_project",
@@ -1603,13 +1694,18 @@
       "buckets": {
         "other": 137,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "fd": 1,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-312.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. A local exec runs in a bash session since #1261, not a /bin/sh -c subprocess: other is the bash process (the PATH lookup of bash and its start) and the session handshake's three stty calls, which a pipe session does not need (#1329, which lowers this amount and the surface's target_ratio when it lands). The amount is the x86 CI runner's (bash 93, stty 17 a call); the aarch64 dev VM measures 7 fewer (bash 44, stty 30 a call). The verb needs the session because exec is a short-lived run on every host family."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. A local exec runs in a bash session since #1261, not a /bin/sh -c subprocess: other is the bash process (the PATH lookup of bash and its start) and the session handshake's three stty calls, which a pipe session does not need (#1329, which lowers this amount and the surface's target_ratio when it lands). The amount is the x86 CI runner's (bash 93, stty 17 a call); the aarch64 dev VM measures 7 fewer (bash 44, stty 30 a call). The verb needs the session because exec is a short-lived run on every host family. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4); fd +1: path-less descriptor calls the x86 CI runner measures and the aarch64 dev VM does not (there this surface's fd count is equal on main and the tip)."
     },
     {
       "surface": "host_local_get",
@@ -1617,13 +1713,17 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-312.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "host_local_put",
@@ -1631,13 +1731,17 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-312.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "test_project",
@@ -1645,15 +1749,19 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
         "site:gojsonnet": 6,
         "site:jsonnet": 6,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-312.pyc": 1,
+        "workspace": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); workspace +1: one more read of the generated project's tests directory on the x86 runner, likewise equal on aarch64."
     },
     {
       "surface": "tracked_cache",
@@ -1705,13 +1813,16 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-312.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "tracked_host_probe",
@@ -1719,13 +1830,16 @@
       "buckets": {
         "other": 3,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-312.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "tracked_init",
@@ -1852,14 +1966,19 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "otto:logger": 4,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-313.pyc": 1,
+        "otto:session": 4
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4); the scope verdicts this lookup reads classify load errors through otto.session.projects, as the command itself does (otto:session +4)."
     },
     {
       "surface": "completion_remote_path_hit_reserved",
@@ -1867,14 +1986,18 @@
       "buckets": {
         "other": 6,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "otto:logger": 4,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-313.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "dispatch_local_warm",
@@ -1882,13 +2005,16 @@
       "buckets": {
         "other": 66,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-313.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4)."
     },
     {
       "surface": "dispatch_project_warm",
@@ -1896,13 +2022,16 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-313.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4)."
     },
     {
       "surface": "help_project",
@@ -1940,13 +2069,18 @@
       "buckets": {
         "other": 138,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "fd": 1,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-313.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. A local exec runs in a bash session since #1261, not a /bin/sh -c subprocess: other is the bash process (the PATH lookup of bash and its start) and the session handshake's three stty calls, which a pipe session does not need (#1329, which lowers this amount and the surface's target_ratio when it lands). The amount is the x86 CI runner's (bash 93, stty 17 a call); the aarch64 dev VM measures 7 fewer (bash 44, stty 30 a call). The verb needs the session because exec is a short-lived run on every host family."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. A local exec runs in a bash session since #1261, not a /bin/sh -c subprocess: other is the bash process (the PATH lookup of bash and its start) and the session handshake's three stty calls, which a pipe session does not need (#1329, which lowers this amount and the surface's target_ratio when it lands). The amount is the x86 CI runner's (bash 93, stty 17 a call); the aarch64 dev VM measures 7 fewer (bash 44, stty 30 a call). The verb needs the session because exec is a short-lived run on every host family. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4); fd +1: path-less descriptor calls the x86 CI runner measures and the aarch64 dev VM does not (there this surface's fd count is equal on main and the tip)."
     },
     {
       "surface": "host_local_get",
@@ -1954,13 +2088,17 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-313.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "host_local_put",
@@ -1968,13 +2106,17 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-313.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "test_project",
@@ -1982,15 +2124,19 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
         "site:gojsonnet": 6,
         "site:jsonnet": 6,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-313.pyc": 1,
+        "workspace": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); workspace +1: one more read of the generated project's tests directory on the x86 runner, likewise equal on aarch64."
     },
     {
       "surface": "tracked_cache",
@@ -2042,13 +2188,16 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-313.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "tracked_host_probe",
@@ -2056,13 +2205,16 @@
       "buckets": {
         "other": 4,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-313.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "tracked_init",
@@ -2190,14 +2342,19 @@
       "buckets": {
         "other": 5,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "otto:logger": 4,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-314.pyc": 1,
+        "otto:session": 4
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4); the scope verdicts this lookup reads classify load errors through otto.session.projects, as the command itself does (otto:session +4)."
     },
     {
       "surface": "completion_remote_path_hit_reserved",
@@ -2205,14 +2362,18 @@
       "buckets": {
         "other": 7,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "otto:logger": 4,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-314.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Remote path completion also imports otto.logger.formatters. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "dispatch_local_warm",
@@ -2220,13 +2381,16 @@
       "buckets": {
         "other": 67,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-314.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. other: the bash handshake runs three stty commands where v0.20.0 ran one (it saves the terminal settings and turns tab expansion off), two more child processes per local session. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4)."
     },
     {
       "surface": "dispatch_project_warm",
@@ -2234,13 +2398,16 @@
       "buckets": {
         "other": 5,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-314.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4)."
     },
     {
       "surface": "help_project",
@@ -2279,13 +2446,18 @@
       "buckets": {
         "other": 139,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "fd": 1,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-314.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. A local exec runs in a bash session since #1261, not a /bin/sh -c subprocess: other is the bash process (the PATH lookup of bash and its start) and the session handshake's three stty calls, which a pipe session does not need (#1329, which lowers this amount and the surface's target_ratio when it lands). The amount is the x86 CI runner's (bash 93, stty 17 a call); the aarch64 dev VM measures 7 fewer (bash 44, stty 30 a call). The verb needs the session because exec is a short-lived run on every host family."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. A local exec runs in a bash session since #1261, not a /bin/sh -c subprocess: other is the bash process (the PATH lookup of bash and its start) and the session handshake's three stty calls, which a pipe session does not need (#1329, which lowers this amount and the surface's target_ratio when it lands). The amount is the x86 CI runner's (bash 93, stty 17 a call); the aarch64 dev VM measures 7 fewer (bash 44, stty 30 a call). The verb needs the session because exec is a short-lived run on every host family. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4); fd +1: path-less descriptor calls the x86 CI runner measures and the aarch64 dev VM does not (there this surface's fd count is equal on main and the tip)."
     },
     {
       "surface": "host_local_get",
@@ -2293,13 +2465,17 @@
       "buckets": {
         "other": 5,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-314.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "host_local_put",
@@ -2307,13 +2483,17 @@
       "buckets": {
         "other": 5,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-314.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "test_project",
@@ -2321,15 +2501,19 @@
       "buckets": {
         "other": 5,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
         "site:gojsonnet": 6,
         "site:jsonnet": 6,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:*": 1,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-314.pyc": 1,
+        "workspace": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. site:gojsonnet or site:jsonnet: the test session reads the entry points of the Jsonnet binding, a dependency since #1176 (gojsonnet on Linux aarch64, jsonnet on x86_64; one of the two is installed). Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); workspace +1: one more read of the generated project's tests directory on the x86 runner, likewise equal on aarch64."
     },
     {
       "surface": "tracked_cache",
@@ -2385,13 +2569,16 @@
       "buckets": {
         "other": 5,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-314.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "tracked_host_probe",
@@ -2399,13 +2586,16 @@
       "buckets": {
         "other": 5,
         "otto:config": 4,
-        "otto:host": 24,
+        "otto:host": 28,
         "otto:inventory": 4,
         "otto:labs": 16,
         "site:c787785866c7b801238d__mypyc": 2,
-        "site:typer": 8
+        "site:typer": 8,
+        "otto:cli": 4,
+        "otto:lab_view": 2,
+        "otto:lab_view.cpython-314.pyc": 1
       },
-      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module."
+      "why": "Every project invocation: otto.config._typer (the root group's Typer adapter, #1118), otto.host.limitation (#935) and typer 0.29's parameter modules, as approved for run_bootstrapped; plus otto.host.inventory_ref, a module v0.20.0 already had that a project start now imports. site:*__mypyc is tomli 2.5.0's renamed shared library (the 2.4.1 name falls by the same amount). Loading the lab also imports modules added since v0.20.0: otto.host exit_status and process_stop (#935), value_reader and transfer.nc_scripts (#1296); otto.labs composition, documents and views and otto.inventory.view (#1176); and otto.labs.drops, which v0.20.0 had and the lab load now imports. other: the user lookup reads /etc/passwd and /etc/nsswitch.conf. Unjudged since v0.20.0 because the budget project did not run at the tag (#1289); approved by the maintainer. Since #1261 otto.host.session and otto.host.host import otto.host.cancel_safe, the bounded-await helpers that keep a cancel from being dropped while a session read completes, so every path that loads the session module pays for one more otto:host module. Project scope (#1336): a lab load or host lookup now imports otto.lab_view (the scoped view ctx.lab returns; otto:lab_view and its .pyc, plus one otto:* lookup in the package) and otto.host.targeting (the unknown and out-of-scope host errors and the targetable-id rule; otto:host +4); otto host's target goes through otto.cli.host_lookup (otto:cli +4)."
     },
     {
       "surface": "tracked_init",

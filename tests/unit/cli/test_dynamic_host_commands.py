@@ -888,8 +888,8 @@ def test_ls_path_stays_positional_and_power_state_positional(monkeypatch):
 
 def test_class_for_never_builds_a_host_during_completion(monkeypatch):
     """During shell completion (``ctx.resilient_parsing``), verb scoping must NOT
-    build the host: ``_class_for`` never calls ``host_class_for_id`` (which builds
-    one via ``get_host``), and defers instead to the cached class map.
+    read the lab: ``_class_for`` never calls ``host_class_for_id`` (which probes
+    the lab for the host's class), and defers instead to the cached class map.
     """
     from otto.cli import expose as expose_mod
 
@@ -1386,3 +1386,27 @@ async def test_ottos_own_connection_errors_pass_through_to_the_boundary():
         await cmd(ctx)
 
     host.close.assert_awaited_once()
+
+
+def test_synthesized_verb_carries_its_scope_opt_out():
+    """Fail-first: a verb's ``__cli_scoped__`` reaches its command's callback, like its markers.
+
+    The preamble and help admission read the leaf's verdict off
+    ``ctx.command.callback``; a verb that says nothing stays scoped.
+    """
+    from otto.cli.expose import _synthesize_command
+    from otto.cli.invoke import SCOPED_ATTR, leaf_is_scoped
+
+    @cli_exposed
+    async def opted_out(self) -> None: ...
+
+    setattr(opted_out, SCOPED_ATTR, False)
+
+    @cli_exposed
+    async def ordinary(self) -> None: ...
+
+    out = _synthesize_command("opted-out", "opted_out", "", opted_out)
+    plain = _synthesize_command("ordinary", "ordinary", "", ordinary)
+
+    assert leaf_is_scoped(None, out.callback) is False
+    assert leaf_is_scoped(None, plain.callback) is True

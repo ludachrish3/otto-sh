@@ -20,8 +20,9 @@ imported, it installs the **initiator**, the one way a reader down here
 starts composition. :func:`compose` is the one read that starts it: the
 complete result, else the in-progress one, else the initiator's. The project
 accessors (:func:`get_projects`, :func:`get_ordered_projects`, and
-:func:`current_projects` and :func:`current_ordered_projects`, which read the
-active run first) and :func:`scope_for_project` read through it.
+:func:`current_projects`, :func:`current_ordered_projects` and
+:func:`unscoped_projects`, which read the active run first) and
+:func:`scope_for_project` read through it.
 :func:`is_bootstrapped` and :func:`declared_for_host` read the published
 results only and never start composition. This module never imports
 :mod:`otto.bootstrap`: the root writes here, and nothing here reaches up to
@@ -663,24 +664,46 @@ def is_bootstrapped() -> bool:
 
 
 def current_projects() -> "list[Project]":
-    """Return the run's projects where no context object is in hand.
+    """Return the projects taking part in the run where no context object is in hand.
 
     The active run's ``projects`` when one is installed (the slot in
-    ``otto.invocation``), else the composition's (:func:`compose`). Code
-    that holds a context reads ``ctx.projects``. This is for the conveniences
-    that work with or without one (``prepare_run``, coverage's entry points,
-    docker's project reads). A fresh list on every call.
+    ``otto.invocation``): in a scoped command, only the projects taking part.
+    Else the composition's (:func:`compose`): with no lab and no switches,
+    every project, :func:`unscoped_projects`' answer. Code that holds a
+    context reads ``ctx.projects``. This is for the conveniences that work
+    with or without one (docker's project reads). A fresh list on every call.
     """
     from .invocation import installed_run  # function-scope: import-light
 
     run = installed_run()
     if run is not None:
         return run.projects
+    return unscoped_projects()
+
+
+def unscoped_projects() -> "list[Project]":
+    """Return every project the run parsed, past any project scope, where no context is in hand.
+
+    The active run's ``unscoped.projects`` when one is installed (the slot in
+    ``otto.invocation``), else the composition's (:func:`compose`). Code that
+    holds a context reads ``ctx.unscoped.projects``. This is for the
+    whole-universe readers that work with or without one: coverage
+    configuration and the monitor's TLS. A fresh list on every call.
+    """
+    from .invocation import installed_run  # function-scope: import-light
+
+    run = installed_run()
+    if run is not None:
+        return run.unscoped.projects
     return list(compose().projects)
 
 
 def current_ordered_projects() -> "list[Project]":
-    """Return :func:`current_projects` in dependency order, dependency-skipped projects absent."""
+    """Return :func:`current_projects` in dependency order, dependency-skipped projects absent.
+
+    The active run's ``ordered_projects`` when one is installed, narrowed as
+    its ``projects`` are; else the composition's.
+    """
     from .invocation import installed_run  # function-scope: import-light
 
     run = installed_run()
@@ -723,8 +746,9 @@ def declared_for_host(host: Any, seam_attr: str) -> list[DeclaredEntry]:
     """Collect every loaded project's *seam_attr* entries admitted for *host*.
 
     The declarative twin of the provider loops' §5 gate: a project's entries are
-    skipped when its ``[project]`` declaration does not target
-    ``(host.source_lab, host.id)``, with the same unstamped-host carve-out
+    skipped when its ``[project]`` declaration does not target *host*
+    (:func:`~otto.config.scope.host_targeted`, a container by its parent),
+    with the same unstamped-host carve-out
     (``source_lab == ""`` is not judged — hosts built outside the loader
     predate scoping). Unlike :func:`scope_for_project`'s admit-on-failure, a
     process that has composed nothing yields ``[]``: the entries LIVE in the
@@ -754,7 +778,7 @@ def declared_for_host(host: Any, seam_attr: str) -> list[DeclaredEntry]:
     if loaded is None:
         logger.debug("declared %s: nothing composed yet — no entries", seam_attr)
         return []
-    from .config.scope import project_targets  # function-scope: same import-light seam
+    from .config.scope import host_targeted  # function-scope: same import-light seam
 
     out: list[DeclaredEntry] = []
     for project in loaded.projects:
@@ -768,9 +792,7 @@ def declared_for_host(host: Any, seam_attr: str) -> list[DeclaredEntry]:
                 getattr(project, "name", "?"),
             )
             continue
-        if host.source_lab and not project_targets(
-            getattr(project, "project_scope", None), host.source_lab, host.id
-        ):
+        if host.source_lab and not host_targeted(getattr(project, "project_scope", None), host):
             logger.debug(
                 "declared %s: project %r does not target host %s of lab %r — skipped",
                 seam_attr,
@@ -787,9 +809,8 @@ def scope_for_project(owner: "str | None") -> "ProjectScopeConfig | None":
     """Look up the compiled ``[project]`` declaration of the project named *owner*.
 
     The NAME-to-declaration hop the ingest gate needs. A provider registration
-    carries the registering project's name
-    (:func:`otto.registry.get_registering_project`), while
-    :func:`~otto.config.scope.project_targets` judges a compiled
+    carries its owner's name (the project the registry stamped it with), while
+    :func:`~otto.config.scope.host_targeted` judges a host against a compiled
     :class:`~otto.config.scope.ProjectScopeConfig`. The projects that hold both
     come from :func:`compose`: the published result (inside a running
     composition, the in-progress one), else the initiator's answer, which
@@ -799,7 +820,7 @@ def scope_for_project(owner: "str | None") -> "ProjectScopeConfig | None":
     decision D2).
 
     EVERY "cannot answer" answers ``None``, which
-    :func:`~otto.config.scope.project_targets` reads as *admits everything*, and
+    :func:`~otto.config.scope.host_targeted` reads as *admits everything*, and
     that direction is deliberate. This lookup is consulted from the host
     factory, which runs in bare library use, in ``otto init`` scaffolding and
     in several hundred unit tests — none of which have a composition to ask.

@@ -554,6 +554,11 @@ class _OttoGroup(QuietCompletionGroup):
             static = super().get_command(ctx, cmd_name)
             return static if static is not None else self._cached_stub(cmd_name)
         if self._wants_real(ctx, cmd_name):
+            from .invoke import record_scope_verdict
+
+            # Before any group callback or parse-time probe runs, so the
+            # first lab context this invocation builds has its verdict.
+            record_scope_verdict(ctx, spec=spec)
             real = self._real(spec)
             if not ctx.resilient_parsing:
                 # A real parse (a dispatch, the command's --help) refuses a
@@ -878,6 +883,7 @@ def main(  # noqa: PLR0913 — CLI command params
         ensure_inline_lab,
         selection_from_params,
         settle_for_root_listing,
+        warn_empty_scope,
     )
 
     if probe and not dry_run:
@@ -970,6 +976,9 @@ def main(  # noqa: PLR0913 — CLI command params
         # `otto host --list-hosts`, which used to load nothing and traceback),
         # then print and exit.
         ensure_inline_lab(ctx)
+        # An empty scope is not refused here: the listing shows only the
+        # runner, and the warning says why.
+        warn_empty_scope()
         if show_lab:
             from ..run_context import get_context
             from .show_lab import render_lab

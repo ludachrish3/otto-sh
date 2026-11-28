@@ -2606,3 +2606,16 @@ def test_a_broken_sibling_leaves_the_checked_project_alone(tmp_path, monkeypatch
     expected = check_project(b, catalog=_catalog(healthy, b))
     assert expected.ok, _text(expected)
     assert check_project(b, catalog=_catalog(broken, b)) == expected
+
+
+def test_doctor_uses_canonical_placement(monkeypatch):
+    """The doctor loads a lab with its containers placed over the whole lab, not a run's scope."""
+    from otto.init import doctor
+
+    calls = []
+    monkeypatch.setattr(
+        "otto.session.lab.build_lab", lambda projects, **kw: calls.append(kw) or None
+    )
+    view = object()
+    assert doctor._load_problem([], name="bench", view=view) == []  # ty: ignore[invalid-argument-type]
+    assert calls == [{"labs": ["bench"], "view": view, "_unscoped_placement": True}]

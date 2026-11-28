@@ -1,4 +1,5 @@
 $ otto --lab example_lab cov report /tmp/otto-gs/xdir/quickstart-kmod/e2e --dir /tmp/otto-gs/xdir/quickstart-kmod/report
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
 INFO     unit unit/qs_wordcount: kept 1 source files of product qs_wordcount, dropped <n> others
 INFO     lcov capture ->
          /tmp/otto-gs/xdir/quickstart-kmod/report/_work/unit_unit_qs_wordcount_0.raw.info

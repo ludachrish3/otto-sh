@@ -41,7 +41,7 @@ from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.log_text import shown
 from tests.conftest import active_context
 
-from .test_cli import _uc, _uc_project
+from .test_cli import _participating, _uc, _uc_project
 from .test_deploy import _compose_file, _frag, _host, _lab, _project, _wire
 
 
@@ -207,7 +207,7 @@ def test_use_cases_shows_a_displacement_once(caplog):
     )
     with (
         caplog.at_level(logging.INFO),
-        patch("otto.declared.get_projects", return_value=[winner, loser]),
+        _participating([winner, loser]),
         patch("otto.fleet.get_lab", return_value=lab),
     ):
         result = _invoke("use-cases")
@@ -289,7 +289,7 @@ def test_use_cases_renders_through_describe(sentinel):
         UnixHost(ip="10.0.0.1", creds=[], element=Element(name="test3"), docker_capable=True)
     )
     with (
-        patch("otto.declared.get_projects", return_value=[winner, loser]),
+        _participating([winner, loser]),
         patch("otto.fleet.get_lab", return_value=lab),
     ):
         result = _invoke("use-cases")

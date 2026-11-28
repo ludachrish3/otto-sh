@@ -15,14 +15,15 @@ Resolution order, stated once and consulted by every enforcement point:
   `--include-projects`; a name in both is a usage error.
 - Otherwise, if the project declared a `[project]` table, its `lab_patterns` and
   `host_patterns` are matched against the loaded labs. A project no loaded lab
-  applies to — or one whose `host_patterns` match no host in the labs that do —
-  is inactive. See {ref}`project-scope`
+  applies to — or one whose `host_patterns` match no host in the labs that do,
+  a *host-starved* project — is inactive. See {ref}`project-scope`
   for that schema.
 - Otherwise the project is active. **A project that declared no `[project]` table is
   always active**, so a single-project workspace is unaffected and activation is
   opt-in.
 
-With no lab loaded there is no inference to make and every project is active.
+With no lab loaded there is no inference to make, so every project that `-E`
+has not switched off is active.
 
 ## The switches
 
@@ -69,8 +70,11 @@ another project's `init` module.
 
 ## What enforcement looks like
 
-Activation shows up at exactly five surfaces, and each says which axis
-decided.
+Activation bounds every surface: what a command lists, walks, targets or
+dispatches comes only from the projects that take part and the hosts they
+target ({ref}`project-scope`). The exceptions, the commands and lookups that
+must see the whole lab, are listed in {ref}`project-scope-exceptions`. Where
+activation leaves something out, otto says which axis decided, as below.
 
 ### Fleet walks skip the project, out loud
 
@@ -104,8 +108,10 @@ fleet-tools rig. A host that an active project also declares stays in play.
 
 Switching off *every* project that declares a fleet leaves no host in play. It
 never falls back to the whole lab, which is reserved for runs where no project
-declares `[project]` at all. A host-wide walk then refuses, naming the switch
-rather than your `host_patterns`:
+declares `[project]` at all. A command that would act on the lab then refuses
+before it runs ({ref}`project-scope-empty` lists the ones that still run),
+naming the switch rather than your `host_patterns`
+({ref}`project-scope-empty` tells the two refusals apart):
 
 ```text
 no host is in play: every project whose [project] declaration admits a host in
@@ -117,8 +123,8 @@ fleet walk would be empty.
 Drop --exclude-projects for a project whose hosts this run should reach.
 ```
 
-The reservation gate is not a walk, so it does not refuse: with no host in
-play, it requires only the lab's own resources.
+`otto reservation check` does not refuse: with no host in play, it requires
+only the lab's own resources.
 
 ### Instruction dispatch refuses, and tells you how to undo it
 
@@ -139,14 +145,27 @@ $ otto --lab radio -E radio-fw run flash-radio
 ```
 
 Both exit **1**. The hint is printed unwrapped whatever your terminal width,
-so it can be pasted as-is.
+so it can be pasted as-is.  `-I radio-fw` makes the project take part but adds
+no host: under `bench`, where radio-fw's patterns match none, what runs
+depends on whether another project puts a host in play
+({ref}`what a project forced on with -I meets <project-scope-forced-on>`).
 
 A third shape appears when the labs match but the hosts do not — the project's
 `host_patterns` select nothing in the loaded labs — and it names the patterns
 rather than the labs.
 
-First-party instructions (`status`, `install`, and the rest of the built-ins)
-have no owning project and are never refused.
+A project's root command (one its `init` module registered with
+`register_cli_command` or `@cli_command`) is refused the same way, with the
+same exit code and hint. A lab-free command is judged before any lab is
+loaded, from `-l` (or `OTTO_LAB`), `-I` and `-E` alone, so a project whose
+`host_patterns` match nothing still takes part there.
+
+Neither is refused when a participating project requires the owner, directly
+or through a chain of required dependencies, the same rule that keeps such a
+project's load errors fatal.
+
+First-party instructions and commands (`status`, `install`, `otto inventory`
+and the rest of the built-ins) have no owning project and are never refused.
 
 ### Tests and listings search only the active projects
 
@@ -310,6 +329,11 @@ empty.
 Widen host_patterns in /work/radio-fw/.otto/settings.toml (['.*'] is every
 host in those labs), or load a lab that holds the hosts this project targets.
 ```
+
+That refusal exits 1, and it is what you see when another project puts a host
+in play.  When none does, the empty-scope refusal comes first; every command's
+outcome, `otto run cleanup`'s skip line included, is in
+{ref}`the forced-on table <project-scope-forced-on>`.
 
 **Help and completion always list every instruction.** Activation is decided
 per invocation, and `otto run -h` is not an invocation of any instruction — so

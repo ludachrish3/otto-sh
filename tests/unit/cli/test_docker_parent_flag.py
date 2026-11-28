@@ -42,6 +42,16 @@ def _flat(output: str) -> str:
     return " ".join(output.replace("│", " ").split())
 
 
+def _unspaced(text: str) -> str:
+    """*text* with the panel's borders and every whitespace character removed.
+
+    For a message that carries a path: at 80 columns Rich breaks a path longer
+    than the panel mid-word (``…/pro`` then ``j/.otto``), which :func:`_flat`
+    would rejoin with a space. CI's ``tmp_path`` is long enough to be broken.
+    """
+    return "".join(text.replace("│", " ").split())
+
+
 def _empty_build_report():
     from otto.docker.reports import BuildReport
 
@@ -93,3 +103,25 @@ def test_the_old_flag_is_gone(lab_one_parent):
     result = _invoke("ps", "--on", "test3")
     assert result.exit_code == 2, result.output
     assert "No such option" in result.output
+
+
+def test_parent_flag_out_of_scope_refused(tmp_path):
+    """``--parent`` naming a lab host outside the scope exits 2 with the scope's own text."""
+    from tests._fixtures.fleet import install_scoped_double
+
+    lab = _lab(alt2=0, test3=0)
+    install_scoped_double(tmp_path, lab, targets=["test3"])
+    files = tmp_path / "proj" / ".otto" / "settings.toml"
+    result = DispatchRunner().invoke(
+        docker_cli.docker_app,
+        ["ps", "--parent", "alt2"],
+        spec_name="docker",
+        env={"COLUMNS": "400"},
+    )
+    assert result.exit_code == 2, result.output
+    assert _unspaced(
+        "host 'alt2' is in lab 'east' but outside this run's scope: no declared project "
+        "targets it. To reach it, add its id to [project] host_patterns (or its lab to "
+        f"lab_patterns) in {files}."
+    ) in _unspaced(result.output)
+    assert "--parent" in result.output

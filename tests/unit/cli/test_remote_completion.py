@@ -494,7 +494,7 @@ def test_required_for_is_scoped_to_the_fleet_of_interest(monkeypatch, tmp_path):
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
     project = _project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     patch_bootstrap(monkeypatch, [project])
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs, **_kw: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"slot-1"}
 
@@ -516,7 +516,7 @@ def test_required_for_drops_the_hosts_of_an_excluded_project(monkeypatch, tmp_pa
         _project(tmp_path, "r2", labs=["rig"], hosts=["slot2"]),
     ]
     patch_bootstrap(monkeypatch, projects)
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs, **_kw: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="")) == {"slot-1", "slot-2"}
     excluded = _chain(labs=("rig",), host_id="", exclude_projects=["r2"])
@@ -543,7 +543,7 @@ def test_required_for_adds_the_targeted_host_when_it_is_outside_the_fleet(monkey
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
     project = _project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     patch_bootstrap(monkeypatch, [project])
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs, **_kw: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="slot2")) == {"slot-1", "slot-2"}
 
@@ -567,7 +567,7 @@ def test_required_for_ignores_a_target_the_lab_does_not_hold(monkeypatch, tmp_pa
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     project = _project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     patch_bootstrap(monkeypatch, [project])
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs, **_kw: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="typo9")) == {"slot-1"}
 
@@ -590,7 +590,7 @@ def test_required_for_adds_the_hop_when_it_is_outside_the_fleet(monkeypatch, tmp
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
     project = _project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     patch_bootstrap(monkeypatch, [project])
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs, **_kw: lab)
 
     chain = rc._ChainParams(host_id="slot1", hop="slot2", term=None, labs=["rig"], holder="carol")
     assert rc._required_for(chain) == {"slot-1", "slot-2"}
@@ -617,9 +617,43 @@ def test_required_for_under_an_empty_declared_fleet_returns_the_lab_level_set(
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     project = _project(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
     patch_bootstrap(monkeypatch, [project])
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs, **_kw: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"rack-1"}
+
+
+def test_required_for_judges_a_named_container_on_the_runner_like_the_runner(monkeypatch):
+    """Naming a container on the built-in runner demands what naming the runner does.
+
+    Neither is ever a host in play: the derived set leaves the runner side out,
+    so the named-host exemption must use the same rule, as the command gate's
+    ``check_hosts`` does. Otherwise a TAB on the container demands its own
+    slot while the command it completes would not.
+
+    Red before: the container's chain came back ``{'rack-1', 'slot-api'}``.
+    """
+    from otto.host.docker_host import DockerContainerHost
+    from otto.labs.loader import Lab
+    from tests._fixtures.fleet import add_builtin_local
+
+    lab = add_builtin_local(Lab(name="rig"))
+    container = DockerContainerHost(
+        parent=lab.hosts["local"],
+        container_id="cid-api",
+        project="r1",
+        service="api",
+        compose_project="otto-r1",
+    )
+    container.resources = frozenset({"slot-api"})
+    lab.add_host(container)
+    lab.resources = {"rack-1"}  # a lab-level requirement, so each answer is non-empty
+    patch_bootstrap(monkeypatch, [])
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs, **_kw: lab)
+
+    as_runner = rc._required_for(_chain(labs=("rig",), host_id="local"))
+    as_container = rc._required_for(_chain(labs=("rig",), host_id=container.id))
+    assert as_runner == {"rack-1"}
+    assert as_container == as_runner
 
 
 def test_gate_never_skips_under_dash_r(monkeypatch, gate_env):

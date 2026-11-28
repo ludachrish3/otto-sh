@@ -433,7 +433,8 @@ elevation path, so one proxy function runs unmodified over all three.
 (the cred currently in control), and `host_id` (for error messages) —
 **not** the host object itself: calling `run()` mid-proxy on the very session
 being established would deadlock. Host-specific data rides in
-`target.params`.
+`target.params`; a proxy that needs more of its host reads it
+{ref}`the way a session-setup hook does <session-setup-host-attributes>`.
 
 The built-in `"su"` proxy — the default for any cred with no `proxy` field —
 is a proxy like any other, registered the same way:
@@ -567,6 +568,15 @@ wait for the session being opened, and otto refuses it by name
 ({ref}`session-setup-reentry`). A hook that leaves a session opened for a
 user (an `"exec_pool"` or `as_user=` session) as someone else is refused
 the same way; switch inside `session.as_user(...)` instead.
+
+(session-setup-host-attributes)=
+A hook that needs its host's attributes (its lab metadata, say) looks the
+host up by id in the whole lab:
+`otto.context.get_context().unscoped.lab.hosts[ctx.host_id]`. Not
+`get_host`: the hook also runs for a hop, and a hop may be outside the run's
+scope ({ref}`project-scope-hosts`). Read attributes only, and never call the
+host's session methods (`run`, `exec`, `send`) from a hook, for the reason
+above.
 
 ```python
 # .otto/init.py — registered via [init] in .otto/settings.toml

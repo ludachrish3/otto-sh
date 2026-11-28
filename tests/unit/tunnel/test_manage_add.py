@@ -25,6 +25,7 @@ from otto.tunnel.model import Direction, ProcKey, Role, Tunnel, TunnelHop
 from otto.tunnel.sentinel import ParsedSentinel, encode_sentinel, parse_sentinel
 from otto.tunnel.socat import FREE_PORT_PROBE_COMMAND, SocatCarrier, socket_dump_command
 from otto.utils import Status
+from tests._fixtures.fleet import DoubleLab
 from tests.conftest import active_context
 
 _LAUNCH_PREFIX = "bash -c 'if command -v systemd-run"
@@ -164,9 +165,7 @@ class FakeHost:
         return result
 
 
-@dataclass
-class FakeLab:
-    hosts: dict
+FakeLab = DoubleLab
 
 
 def _lab(**hosts: Any) -> FakeLab:
@@ -329,6 +328,32 @@ class TestRejectedBeforeLaunch:
         assert all("command -v socat" not in cmd for _h, cmd in calls)
         assert all(not cmd.startswith(_LAUNCH_PREFIX) for _h, cmd in calls)
         assert all(cmd != FREE_PORT_PROBE_COMMAND for _h, cmd in calls)
+
+    def test_add_tunnel_conflict_scan_reads_whole_lab(self, monkeypatch) -> None:
+        """The conflict scan covers the whole lab, past any project scope.
+
+        A live tunnel on a host no project targets still holds its id and its
+        service port. ``add_tunnel`` is handed the a/b pair, which
+        ``otto.lab_view.whole_lab`` maps to a lab holding a third host too, so
+        the lab the scan is handed shows which one it read.
+        """
+        narrow, calls, _tunnel = _pair()
+        whole = _lab(**narrow.hosts, c=FakeHost("c", ip="10.0.0.3", calls=calls))
+        scanned = []
+
+        class _ScannedError(Exception):
+            """Stops the add at its conflict scan, before any launch."""
+
+        async def _scan(lab):
+            scanned.append(lab)
+            raise _ScannedError
+
+        monkeypatch.setattr("otto.lab_view.whole_lab", lambda lab: whole if lab is narrow else lab)
+        monkeypatch.setattr(manage, "discover_tunnels", _scan)
+        with pytest.raises(_ScannedError):
+            asyncio.run(add_tunnel(narrow, hosts=[("a", None), ("b", None)], port=8080))
+        assert len(scanned) == 1
+        assert scanned[0] is whole
 
     def test_dest_in_chain_rejected(self) -> None:
         """``--dest`` naming a chain host would deliver into the reverse

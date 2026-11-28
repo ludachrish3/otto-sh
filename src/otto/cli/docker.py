@@ -410,15 +410,11 @@ def _default_use_case(use_case: str | None) -> str:
     if use_case is not None:
         return use_case
 
-    # The composition root: importing it installs the initiator that composes
-    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
-    from .. import bootstrap
-
-    del bootstrap
     from ..config.scope import declared_use_case_names
-    from ..declared import get_projects
+    from ..run_context import get_context
 
-    names = sorted(declared_use_case_names(get_projects()))
+    # The participating projects, the ones `deploy` selects fragments from.
+    names = sorted(declared_use_case_names(get_context().projects))
     if not names:
         fail(
             "otto docker: no active project declares [[docker.use_cases]] — there is "
@@ -992,12 +988,6 @@ def _use_cases(
     # a reason to exit 1.
     from rich.table import Table
 
-    # The composition root: importing it installs the initiator that composes
-    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
-    from .. import bootstrap
-
-    del bootstrap
-    from ..declared import get_projects
     from ..docker.observe import DockerVerbError, docker_parent
     from ..docker.resolve import (
         UseCaseResolutionError,
@@ -1006,8 +996,10 @@ def _use_cases(
         select_fragments,
     )
     from ..fleet import get_lab
+    from ..run_context import get_context
 
-    projects = get_projects()
+    # The participating projects, the ones `deploy` selects fragments from.
+    projects = get_context().projects
     declared = declared_use_cases(projects)
     if not declared:
         none_declared = "otto docker: no active project declares [[docker.use_cases]]."

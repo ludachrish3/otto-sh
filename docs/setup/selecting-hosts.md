@@ -175,7 +175,9 @@ async def reboot_dut() -> None:
     await dut.run("reboot")
 ```
 
-Use `get_host()` when you mean that device: a test pinned to one board, or a
-host outside the fleet. It is unscoped, so it reaches any host in the lab,
-and `get_host("local")` always resolves the local host. An id the lab does
-not hold raises `KeyError`, naming the ids it does.
+Use `get_host()` when you mean that device: a test pinned to one board. It
+reaches any host the run may target, and `get_host("local")` always resolves
+the local host. A lab host outside the run's scope raises
+`otto.lab.HostOutOfScopeError`, a `KeyError` naming the settings file to widen
+({ref}`project-scope-hosts`). An id the lab does not hold raises
+`UnknownHostError`, also a `KeyError`, naming the ids the run may target.

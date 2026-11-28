@@ -8,13 +8,18 @@ from otto.instructions import run_instruction
 from otto.labs.loader import Lab
 from otto.registry import registering_project
 from otto.session import InstructionInactiveError
-from tests._fixtures.bootstrap_seam import seed_scope_verdicts
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
+from tests._fixtures.fake_project import fake_project
 
 pytestmark = pytest.mark.asyncio
 
 
 def _ctx(*, exclude: "tuple[str, ...]" = ()) -> OttoContext:
-    ctx = OttoContext(lab=Lab(name="t"), exclude_projects=exclude)
+    ctx = OttoContext(
+        lab=Lab(name="t"),
+        exclude_projects=exclude,
+        bootstrap=fake_bootstrap_result([fake_project("acme")]),
+    )
     seed_scope_verdicts(ctx, {})
     return ctx
 

@@ -148,7 +148,7 @@ async def clean_coverage(
         missing_cov_config_error,
     )
     from ..config.scope import EmptySelectionError
-    from ..declared import current_projects
+    from ..declared import unscoped_projects
     from ..errors import is_containable
     from ..fleet import all_hosts, do_for_all_hosts
     from ..host.product import instrumented_products
@@ -164,7 +164,7 @@ async def clean_coverage(
         from .. import bootstrap
 
         del bootstrap
-        projects = current_projects()
+        projects = unscoped_projects()
     cov_config = get_cov_config(projects)
     if not cov_config:
         raise missing_cov_config_error(projects)
@@ -343,8 +343,8 @@ async def collect_coverage(
 
     Args:
         cov_dir: Destination directory for the collected coverage.
-        projects: Project list to resolve ``[coverage]`` from (defaults to the
-            run's projects, :func:`otto.declared.current_projects`).
+        projects: Project list to resolve ``[coverage]`` from (defaults to
+            every project the run parsed, the context's ``unscoped.projects``).
         tier: Tier name to annotate onto each capture; ``None`` resolves the
             sole e2e-kind tier. A caller that has already resolved a
             :class:`~otto.coverage.tiers.TierConfig` (e.g. ``otto cov get``,
@@ -385,7 +385,7 @@ async def collect_coverage(
         load_hosts_pattern,
         missing_cov_config_error,
     )
-    from ..declared import current_projects
+    from ..declared import unscoped_projects
     from ..fleet import all_hosts
     from ..host.embedded_host import EmbeddedHost
     from ..host.local_host import LocalHost
@@ -404,7 +404,7 @@ async def collect_coverage(
         from .. import bootstrap
 
         del bootstrap
-        projects = current_projects()
+        projects = unscoped_projects()
 
     cov_config = get_cov_config(projects)
     if not cov_config:

@@ -21,6 +21,7 @@ from otto.tunnel.manage import (
 from otto.tunnel.model import Direction, Role, Tunnel, TunnelHop
 from otto.tunnel.socat import SocatCarrier
 from otto.utils import Status
+from tests._fixtures.fleet import DoubleLab
 from tests.conftest import active_context
 
 
@@ -32,9 +33,7 @@ class FakeUnix:
     has_bash: bool = True
 
 
-@dataclass
-class FakeLab:
-    hosts: dict
+FakeLab = DoubleLab
 
 
 def _lab(**hosts: Any) -> FakeLab:

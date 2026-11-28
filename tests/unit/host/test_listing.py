@@ -894,3 +894,29 @@ def test_list_products_unused_list_participants_only(ingest):
     lab = ingest(projects, [_host("test1")])
     assert [u.project for u in listing.lab_rows(lab, projects, "products").unused] == ["project2"]
     assert listing.lab_rows(lab, projects[:1], "products").unused == []
+
+
+def test_unused_declared_and_providers_over_targetable(ingest):
+    """What is unused is judged over the hosts the run may target, not the whole lab."""
+    with registering_project("project1"):
+        register_product_provider(lambda host: [ProbeProduct("agent")] if host.id == "out" else [])
+    with registering_project("project2"):
+        register_product_provider(lambda host: [ProbeProduct("agent")] if host.id == "out" else [])
+    projects = [
+        _project(
+            "project1", products=[_entry("project1", "fw", artifact="f", match={"id": "out"})]
+        ),
+        _project("project2"),
+    ]
+    whole = ingest(projects, [_host("in"), _host("out")])
+    view = SimpleNamespace(name=whole.name, hosts={"in": whole.hosts["in"]})
+
+    # Declared, matching only ``out``: built there, so unused only when ``out`` is not read.
+    assert listing.lab_rows(whole, projects, "products").unused == [
+        listing.UnusedEntry(
+            "agent", "code (ProbeProduct)", "project2", "shadowed by an earlier entry named 'agent'"
+        )
+    ]
+    assert listing.lab_rows(view, projects, "products").unused == [
+        listing.UnusedEntry("fw", "shell", "project1", "no host matches")
+    ]

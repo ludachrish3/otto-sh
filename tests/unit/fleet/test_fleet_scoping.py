@@ -22,7 +22,14 @@ from otto.bootstrap import ProjectScopeError
 from otto.config.scope import EmptySelectionError, scopes_of
 from otto.context import OttoContext
 from otto.labs.loader import Lab
-from tests._fixtures.fleet import _lab, _project, add_builtin_local, install_scoped_context
+from tests._fixtures.fleet import (
+    _host,
+    _lab,
+    _project,
+    add_builtin_local,
+    install_scoped_context,
+    scope_workspace,
+)
 
 
 @pytest.fixture
@@ -531,17 +538,17 @@ async def test_late_joining_container_is_scoped_live(tmp_path, scoped_context):
 
     The resolver's ``universe`` is a snapshot taken at context creation; a walk
     that iterated it would miss every ``otto docker compose up`` container. Both
-    containers register the same way after creation, so the pair discriminates
-    "scoped live" from "not scoped at all".
+    containers register the same way after creation, one on a targeted parent
+    and one on a parent no project targets, so the pair discriminates "scoped
+    live" from "not scoped at all".
     """
-    lab = _lab(("h1", "a"))
-    project = _project(tmp_path, "r1", labs=["a"], hosts=["h1", r"h1\.r1\.api"])
+    lab = _lab(("h1", "a"), ("h2", "a"))
+    project = _project(tmp_path, "r1", labs=["a"], hosts=["h1"])
     ctx = scoped_context(lab, [project])
     assert scopes_of(ctx)["r1"].universe == frozenset({"h1"})  # the snapshot, pre-container
 
-    parent = lab.hosts["h1"]
-    lab.add_host(_container(parent, "api", "a"))
-    lab.add_host(_container(parent, "db", "a"))
+    lab.add_host(_container(lab.hosts["h1"], "api", "a"))
+    lab.add_host(_container(lab.hosts["h2"], "db", "a"))
 
     contacted = await _contacted(ctx, include_containers=True)
     assert sorted(contacted) == ["h1", "h1.r1.api"]
@@ -550,17 +557,266 @@ async def test_late_joining_container_is_scoped_live(tmp_path, scoped_context):
 # ── include_local / include_containers stay the walk's own knobs (§6) ─────────
 
 
-def test_local_is_kept_out_of_the_resolved_universe(tmp_path, scoped_context):
-    """The context passes ``exclude_ids={local}`` — the built-in runner is never fleet."""
-    from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, make_builtin_local_host
+def _universes(ctx):
+    return {name: scope.universe for name, scope in scopes_of(ctx).items()}
 
-    lab = _lab(("h1", "a"))
-    lab.add_host(make_builtin_local_host())
-    project = _project(tmp_path, "r1", labs=["a"], hosts=[".*"])
-    ctx = scoped_context(lab, [project])
 
-    assert BUILTIN_LOCAL_HOST_ID in lab.hosts  # `.*` really would admit it
-    assert scopes_of(ctx)["r1"].universe == frozenset({"h1"})
+def test_builtin_local_in_no_universe(tmp_path):
+    """The built-in runner is in no project's universe, the undeclared one's included.
+
+    ``plain`` declares nothing, so its universe is the whole lab by
+    construction: that is the hostile condition, a universe that really would
+    hold the runner if anything but its identity kept it out.
+    """
+    ws = scope_workspace(tmp_path, labs=("alpha", "beta"), mixed=True)
+
+    assert "local" in ws.lab.hosts
+    assert _universes(ws.ctx) == {
+        "inscope": {"a-dut"},
+        "outscope": {"b-dut"},
+        "plain": {"a-dut", "a-jump", "b-dut", "b-jump"},
+    }
+
+
+def test_runner_container_in_no_universe(tmp_path):
+    """A container on the built-in runner follows the runner: it is in no universe.
+
+    It is judged by its parent's identity, so the undeclared ``plain`` (the
+    whole lab) leaves it out, while a container on an ordinary host joins
+    every universe its parent is in.
+    """
+    from otto.host.builtin_hosts import builtin_ids
+
+    ws = scope_workspace(tmp_path, mixed=True)
+    ws.lab.add_host(_container(ws.lab.hosts["local"], "api", "alpha"))
+    ws.lab.add_host(_container(ws.lab.hosts["a-dut"], "db", "alpha"))
+
+    assert builtin_ids(ws.lab.hosts) == {"local", "local.r1.api"}
+    assert _universes(ws.ctx) == {
+        "inscope": {"a-dut", "a-dut.r1.db"},
+        "outscope": set(),
+        "plain": {"a-dut", "a-jump", "a-dut.r1.db"},
+    }
+
+
+def test_lab_host_named_local_is_scoped(tmp_path, caplog):
+    """A lab entry reusing the id ``local`` is an ordinary host, not the runner.
+
+    ``load_lab`` injects nothing over it, so it is in the universes its
+    patterns admit it to (the undeclared ``plain``'s, here), and outside a
+    declared union it is named like any other host.
+    """
+    lab_local = _host("local", "alpha", 9, subnet="192.0.2")
+    ws = scope_workspace(tmp_path, mixed=True, local_host=False, extra_hosts=[lab_local])
+
+    with caplog.at_level(logging.INFO, logger="otto.context"):
+        universes = _universes(ws.ctx)
+    assert universes == {
+        "inscope": {"a-dut"},
+        "outscope": set(),
+        "plain": {"a-dut", "a-jump", "local"},
+    }
+    (line,) = _fleet_lines(caplog)
+    assert line == (
+        "fleet of interest: 1 of 3 lab hosts (3 project(s), 1 excluded); "
+        "outside it: a-jump, local (no declared project targets it)"
+    )
+
+
+@pytest.mark.parametrize("exclude", [(), ("outscope",)], ids=["none-off", "outscope-off"])
+def test_component_order_does_not_change_universes(tmp_path, exclude):
+    """``-l alpha+beta`` and ``-l beta+alpha`` resolve the same universes.
+
+    The runner's ``source_lab`` stamp is the first component, so the two orders
+    really do stamp it (and the container on it) differently. ``wide`` admits
+    every host of ``alpha``, so a membership rule that let the stamp decide
+    would put the runner side in its universe under one order only: an
+    exclusion keyed on the id ``local`` still splits the orders on the
+    container, and no exclusion at all splits them on the runner too.
+    """
+    resolved = []
+    for labs in (("alpha", "beta"), ("beta", "alpha")):
+        root = tmp_path / "+".join(labs)
+        root.mkdir()
+        ws = scope_workspace(root, labs=labs, exclude_projects=exclude)
+        runner = ws.lab.hosts["local"]
+        assert runner.source_lab == labs[0]
+        ws.lab.add_host(_container(runner, "api", runner.source_lab))
+        wide = _project(root, "wide", labs=["alpha"], hosts=[".*"])
+        ctx = install_scoped_context(
+            ws.lab, [ws.inscope, ws.outscope, wide], exclude_projects=exclude
+        )
+        resolved.append(_universes(ctx))
+
+    forward, backward = resolved
+    assert forward == backward
+    assert forward == {"inscope": {"a-dut"}, "outscope": {"b-dut"}, "wide": {"a-dut", "a-jump"}}
+
+
+@pytest.mark.parametrize("exclude", [(), ("outscope",)], ids=["none-off", "outscope-off"])
+@pytest.mark.parametrize(
+    "labs", [("alpha", "beta"), ("beta", "alpha")], ids=["alpha+beta", "beta+alpha"]
+)
+def test_runner_container_membership_independent_of_order(tmp_path, labs, exclude):
+    """The runner and its container join a walk by the walk's flags, in either ``-l`` order.
+
+    ``wide`` admits every ``alpha`` host, so under ``alpha+beta`` the runner's
+    stamp (and its container's) matches ``wide`` and under ``beta+alpha`` it
+    does not: a rule that let the stamp decide splits the two orders on the
+    union walk, the owner-bound walk, the query and the in-play set alike.
+    """
+    from otto.fleet import fleet_of_interest, get_hosts_in_play
+
+    ws = scope_workspace(tmp_path, labs=labs, exclude_projects=exclude)
+    runner = ws.lab.hosts["local"]
+    ws.lab.add_host(_container(runner, "api", runner.source_lab))
+    wide = _project(tmp_path, "wide", labs=["alpha"], hosts=[".*"])
+    projects = [ws.inscope, ws.outscope, wide]
+    ctx = install_scoped_context(ws.lab, projects, exclude_projects=exclude)
+    union = {"a-dut", "a-jump"} | (set() if exclude else {"b-dut"})
+    owned = {"a-dut", "a-jump"}
+    runner_side = {"local", "local.r1.api"}
+
+    for include_local in (False, True):
+        flags = {"include_containers": True, "include_local": include_local}
+        with_runner = runner_side if include_local else set()
+        assert {h.id for h in ctx.all_hosts(**flags)} == union | with_runner
+        assert {
+            h.id for h in ctx.for_project(name="wide").all_hosts(**flags)
+        } == owned | with_runner
+        query = {"lab": ws.lab, "projects": projects, "exclude_projects": list(exclude), **flags}
+        assert set(fleet_of_interest(**query)) == union | with_runner
+        assert set(fleet_of_interest(**query, owner="wide")) == owned | with_runner
+    # The runner's container still needs include_containers as well.
+    assert {h.id for h in ctx.all_hosts(include_local=True)} == union | {"local"}
+    assert get_hosts_in_play() == union
+
+
+def test_runner_admitted_by_identity_under_declaration(tmp_path):
+    """Under a declaration whose patterns miss ``local``, ``include_local`` still reaches it.
+
+    The runner is admitted by identity (the owner's ruling), so the walk's own
+    flag is the only thing that decides; without it the runner stays out, and
+    it is never in play.
+    """
+    from otto.fleet import fleet_of_interest, get_hosts_in_play
+
+    ws = scope_workspace(tmp_path)
+    projects = [ws.inscope, ws.outscope]
+
+    assert [h.id for h in ws.ctx.all_hosts()] == ["a-dut"]
+    assert [h.id for h in ws.ctx.all_hosts(include_local=True)] == ["a-dut", "local"]
+    owner_walk = ws.ctx.for_project(name="inscope").all_hosts(include_local=True)
+    assert [h.id for h in owner_walk] == ["a-dut", "local"]
+    assert fleet_of_interest(ws.lab, projects=projects, include_local=True) == ["a-dut", "local"]
+    assert fleet_of_interest(ws.lab, projects=projects, owner="inscope", include_local=True) == [
+        "a-dut",
+        "local",
+    ]
+    assert get_hosts_in_play() == {"a-dut"}
+
+
+def test_empty_fleet_refusal_ignores_runner(tmp_path):
+    """A declaration that admits only the runner leaves nothing in play: the walk refuses.
+
+    The runner is admitted by identity whatever the patterns say, so counting
+    it would make every declaration look non-empty in a lab that holds it.
+    """
+    ws = scope_workspace(tmp_path)
+    runner_only = _project(tmp_path, "runner-only", labs=["alpha"], hosts=["local"])
+    ctx = install_scoped_context(ws.lab, [runner_only])
+
+    with pytest.raises(ProjectScopeError, match="runner-only"):
+        list(ctx.all_hosts(include_local=True))
+    with pytest.raises(ProjectScopeError, match="runner-only"):
+        list(ctx.for_project(name="runner-only").all_hosts(include_local=True))
+    assert ctx.admissible_ids(require_nonempty=False) == {"local"}
+
+    # An undeclared owner over a lab that holds only the runner, while another
+    # project declares: its base set is the whole lab, the runner alone, so
+    # nothing is in play and its walk gets the fleet-shaped refusal.
+    runner_lab = add_builtin_local(Lab(name="alpha"))
+    ctx = install_scoped_context(runner_lab, [runner_only, _project(tmp_path, "plain")])
+    with pytest.raises(ProjectScopeError, match=r"every fleet\s+walk would be empty"):
+        list(ctx.for_project(name="plain").all_hosts(include_local=True))
+
+
+def test_owner_walk_nonempty_while_union_empty(tmp_path):
+    """An owner switched off with ``-E`` keeps its own walk: the refusal judges the OWNER's set.
+
+    The union is empty (``inscope`` is off and ``outscope``'s lab is not
+    loaded), so a refusal fed the union would refuse a walk that has a host.
+    """
+    ws = scope_workspace(tmp_path, exclude_projects=("inscope",))
+
+    with pytest.raises(ProjectScopeError):
+        list(ws.ctx.all_hosts())
+    assert [h.id for h in ws.ctx.for_project(name="inscope").all_hosts()] == ["a-dut"]
+
+
+# ── a container is in scope exactly when its parent is ────────────────────────
+
+_PINNED = ["a-dut", r"a-jump\..*"]
+"""``a-dut`` exactly, and every container on ``a-jump`` by its id but not ``a-jump``.
+
+The pair tells "judged by its parent" from "judged by its own id": the
+container on ``a-dut`` matches no pattern itself, and the container on
+``a-jump`` matches one while its parent matches none.
+"""
+
+
+def _pinned(tmp_path, *, before_resolve=False):
+    """``pinned`` (``_PINNED`` on ``alpha``) installed over the workspace, with two containers.
+
+    The containers join after the verdicts were first read unless
+    *before_resolve*, which is how a declared placeholder joins: at lab build.
+    """
+    ws = scope_workspace(tmp_path)
+    pinned = _project(tmp_path, "pinned", labs=["alpha"], hosts=_PINNED)
+    ctx = install_scoped_context(ws.lab, [pinned])
+    containers = [
+        _container(ws.lab.hosts["a-dut"], "api", "alpha"),
+        _container(ws.lab.hosts["a-jump"], "api", "alpha"),
+    ]
+    if not before_resolve:
+        scopes_of(ctx)
+    for container in containers:
+        ws.lab.add_host(container)
+    return ctx, ws.lab, [pinned]
+
+
+def test_container_admitted_with_its_parent(tmp_path):
+    from otto.fleet import fleet_of_interest
+
+    ctx, lab, projects = _pinned(tmp_path)
+
+    assert "a-dut.r1.api" in ctx.admissible_ids()
+    assert [h.id for h in ctx.all_hosts(include_containers=True)] == ["a-dut", "a-dut.r1.api"]
+    owner_walk = ctx.for_project(name="pinned").all_hosts(include_containers=True)
+    assert [h.id for h in owner_walk] == ["a-dut", "a-dut.r1.api"]
+    assert fleet_of_interest(lab, projects=projects, include_containers=True) == [
+        "a-dut",
+        "a-dut.r1.api",
+    ]
+
+
+def test_container_of_out_of_scope_parent_refused(tmp_path):
+    from otto.fleet import fleet_of_interest
+
+    ctx, lab, projects = _pinned(tmp_path)
+
+    assert "a-jump.r1.api" not in ctx.admissible_ids()
+    assert "a-jump.r1.api" not in {h.id for h in ctx.all_hosts(include_containers=True)}
+    assert "a-jump.r1.api" not in fleet_of_interest(
+        lab, projects=projects, owner="pinned", include_containers=True
+    )
+
+
+def test_placeholder_in_universe_at_resolve_time(tmp_path):
+    """A container registered before resolution is in its parent's universes, and only those."""
+    ctx, _, _ = _pinned(tmp_path, before_resolve=True)
+
+    assert _universes(ctx) == {"pinned": {"a-dut", "a-dut.r1.api"}}
 
 
 @pytest.mark.asyncio
@@ -698,31 +954,32 @@ def test_require_nonempty_false_still_refuses_an_unknown_owner(tmp_path, scoped_
         ctx.admissible_ids(owner="typo", require_nonempty=False)
 
 
-# ── deliberately unscoped surfaces (§6) ───────────────────────────────────────
+# ── otto host's unknown-id listing: the targetable hosts ──────────────────────
 
 
-def test_the_otto_host_available_listing_ignores_the_universe(tmp_path, scoped_context, capsys):
-    """Explicit ``otto host <id>`` targeting beats scoping, and so does its "did you mean".
+def test_the_otto_host_available_listing_is_the_targetable_hosts(tmp_path, scoped_context, capsys):
+    """``otto host <id>``'s "did you mean" offers exactly the hosts ``get_host`` resolves.
 
-    ``get_host`` resolves an out-of-universe host, so the listing that fires
-    when an id is wrong must offer it too — a user told "Available hosts: h1"
-    while ``otto host h2 run`` works is being lied to. Iterating the fleet
-    generator here would also let this ERROR path raise the fleet's own
-    empty-universe complaint in place of the message the user came for.
+    A scoped command resolves only the hosts the run targets, so the listing
+    that fires when an id is wrong offers those and no other: offering ``h2``,
+    which no project targets, would send the user to an id that refuses.
+    Iterating the fleet generator here would also let this ERROR path raise
+    the fleet's own empty-universe complaint in place of the message the user
+    came for.
     """
     import typer
 
-    from otto.cli.host import _resolve_host
+    from otto.cli.host import _resolve_target
 
     lab = _lab(("h1", "a"), ("h2", "a"))
     scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=["h1"])])
 
     with pytest.raises(typer.Exit) as excinfo:
-        _resolve_host("nope")
+        _resolve_target("nope")
     assert excinfo.value.exit_code == 1  # a refusal, not a bare typer.Exit()'s 0
     listed = capsys.readouterr().out
-    assert "h1" in listed
-    assert "h2" in listed
+    assert "  - h1" in listed
+    assert "h2" not in listed
 
 
 def test_the_available_hosts_listing_prints_each_id_literally(
@@ -735,7 +992,7 @@ def test_the_available_hosts_listing_prints_each_id_literally(
     """
     import typer
 
-    from otto.cli.host import _resolve_host
+    from otto.cli.host import _resolve_target
     from tests._fixtures.literal_text import HOSTILE, assert_one_verbatim_line
 
     monkeypatch.setenv("COLUMNS", "40")
@@ -745,7 +1002,7 @@ def test_the_available_hosts_listing_prints_each_id_literally(
     lab.hosts["b:smile:"] = lab.hosts.pop("h2")
 
     with pytest.raises(typer.Exit) as excinfo:
-        _resolve_host("nope")
+        _resolve_target("nope")
     assert excinfo.value.exit_code == 1
     listed = capsys.readouterr().out
     assert_one_verbatim_line(listed, f"  - {HOSTILE}")
@@ -1031,16 +1288,24 @@ async def test_plain_context_walks_the_union_and_names_no_owner(tmp_path, scoped
     assert sorted(await _verb_saw(ctx)) == [("h1", None), ("h2", None)]
 
 
-def test_view_get_host_stays_unscoped(tmp_path, scoped_context):
-    """Explicit targeting beats scoping, through the view as through the context (§6).
+def test_view_get_host_is_scoped_like_the_context(tmp_path, scoped_context):
+    """The view's ``get_host`` is the context's: only the hosts this run targets resolve.
 
-    ``get_host`` is how a project's actions reach a host they NAME — a jump host,
-    a shared appliance — and the view narrows fleet walks, not lookups.
+    ``h2`` is in the lab and in no declaration, so both spellings refuse it
+    with the same out-of-scope text, and both resolve ``h1``.
     """
+    from otto.lab import HostOutOfScopeError
+
     lab = _lab(("h1", "a"), ("h2", "a"))
     ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=["h1"])])
+    view = ctx.for_project(name="r1")
 
-    assert ctx.for_project(name="r1").get_host("h2") is lab.hosts["h2"]
+    assert view.get_host("h1") is lab.hosts["h1"]
+    with pytest.raises(HostOutOfScopeError) as through_view:
+        view.get_host("h2")
+    with pytest.raises(HostOutOfScopeError) as through_context:
+        ctx.get_host("h2")
+    assert str(through_view.value) == str(through_context.value)
 
 
 # ── a project's own containers join its walk (#676) ───────────────────────────
@@ -1106,6 +1371,32 @@ async def test_include_containers_on_a_project_walk_still_means_every_container(
 
     ids = sorted(h.id for h in ctx.for_project(name="r1").all_hosts(include_containers=True))
     assert ids == ["h1", "h1.r1.api", "h1.r1.cache", "h1.r1.db", "h1.r1.tools"]
+
+
+def test_owner_walk_drops_its_own_runner_container_without_include_local(tmp_path):
+    """A container on the runner that the owner owns something on follows the runner.
+
+    The owner's walk admits its own containers without ``include_containers``,
+    but one on the runner still needs ``include_local``; the walk and the query
+    agree both ways.
+    """
+    from otto.fleet import fleet_of_interest
+
+    ws = scope_workspace(tmp_path)
+    owned = _container(ws.lab.hosts["local"], "api", "alpha")
+    owned.products = [_owned_by("inscope")]
+    ws.lab.add_host(owned)
+    projects = [ws.inscope, ws.outscope]
+
+    for include_local, expected in (
+        (False, ["a-dut"]),
+        (True, ["a-dut", "local", "local.r1.api"]),
+    ):
+        walk = ws.ctx.for_project(name="inscope").all_hosts(include_local=include_local)
+        query = fleet_of_interest(
+            ws.lab, projects=projects, owner="inscope", include_local=include_local
+        )
+        assert [h.id for h in walk] == query == expected, include_local
 
 
 @pytest.mark.asyncio

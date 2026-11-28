@@ -294,23 +294,22 @@ def apply_dev_tool_providers(host: "Host") -> None:
     :func:`otto.host.product.apply_product_providers`).
 
     A provider is SKIPPED — not called — when its registering project's
-    ``[project]`` declaration does not target ``(host.source_lab, host.id)``
-    (spec §5), under the identical rule and the identical carve-outs
+    ``[project]`` declaration does not target the host
+    (:func:`~otto.config.scope.host_targeted`, a container by its parent;
+    spec §5), under the identical rule and the identical carve-outs
     :func:`otto.host.product.apply_product_providers` documents. Gated here in
     its own right, not inherited from that seam: the two registries are
     deliberately separate, so a gate present in one loop and absent from the
     other would leave a project free to hang debug tooling on any host it liked.
     """
-    from ..config.scope import project_targets  # function-scope: import-light seam
+    from ..config.scope import host_targeted  # function-scope: import-light seam
     from ..declared import (
         scope_for_project,
     )  # at call time: a patch of the owner reaches both seams
 
     seen = {t.name for t in host.dev_tools}
     for provider, provider_owner in registered_dev_tool_providers():
-        if host.source_lab and not project_targets(
-            scope_for_project(provider_owner), host.source_lab, host.id
-        ):
+        if host.source_lab and not host_targeted(scope_for_project(provider_owner), host):
             logger.debug(
                 "dev tool provider: project %r does not target host %s of lab %r — not run",
                 provider_owner,

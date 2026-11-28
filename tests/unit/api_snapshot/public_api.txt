@@ -60,11 +60,12 @@ member	otto.cli.registry:CommandSpec.lab_free	field
 member	otto.cli.registry:CommandSpec.loader	field
 member	otto.cli.registry:CommandSpec.name	field
 member	otto.cli.registry:CommandSpec.output_dir	field
+member	otto.cli.registry:CommandSpec.scoped	field
 abstract	otto.cli.registry:CommandSpec	@final @manifest:subclass=false
 name	otto.cli.registry:cli_command	function
-call	otto.cli.registry:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:dry_run_preview:B:false KO:accepts_options:N
+call	otto.cli.registry:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:scoped:B:true KO:dry_run_preview:B:false KO:accepts_options:N
 name	otto.cli.registry:register_cli_command	function
-call	otto.cli.registry:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:accepts_options:N KO:overwrite:B:false
+call	otto.cli.registry:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:scoped:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:accepts_options:N KO:overwrite:B:false
 name	otto.config:CacheSetting	class
 mro	otto.config:CacheSetting	-
 call	otto.config:CacheSetting	sync	@manifest:construct=false
@@ -202,7 +203,7 @@ member	otto.context:HostResolver.name	property:g--
 requires	otto.context:HostResolver	hosts name
 name	otto.context:OttoContext	class
 mro	otto.context:OttoContext	-
-call	otto.context:OttoContext	sync	KO:lab:- KO:cov_decision:N KO:include_projects:T:[] KO:exclude_projects:T:[] KO:policy:N KO:bootstrap:N
+call	otto.context:OttoContext	sync	KO:lab:- KO:cov_decision:N KO:include_projects:T:[] KO:exclude_projects:T:[] KO:policy:N KO:bootstrap:N KO:_scoped:B:true
 member	otto.context:OttoContext.__eq__	method	sync	PK:other:-
 member	otto.context:OttoContext.admissible_ids	method	sync	KO:owner:N KO:require_nonempty:B:true
 member	otto.context:OttoContext.all_hosts	method	sync	KO:pattern:N KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:overrides:-
@@ -214,19 +215,24 @@ member	otto.context:OttoContext.cov_decision	field
 member	otto.context:OttoContext.coverage_collection_preserved	method	sync	-
 member	otto.context:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:kwargs:-
 member	otto.context:OttoContext.dry_run	property:g--
+member	otto.context:OttoContext.empty_scope_refusal	method	sync	-
 member	otto.context:OttoContext.exclude_projects	field
 member	otto.context:OttoContext.for_project	method	sync	KO:name:-
 member	otto.context:OttoContext.get_host	method	sync	PK:host_id:- VK:overrides:-
 member	otto.context:OttoContext.include_projects	field
-member	otto.context:OttoContext.lab	field
+member	otto.context:OttoContext.lab	property:gs-
 member	otto.context:OttoContext.log_command_output	property:g--
 member	otto.context:OttoContext.options	method	sync	PK:cls:-
 member	otto.context:OttoContext.ordered_projects	property:g--
 member	otto.context:OttoContext.output_dir	property:g--
 member	otto.context:OttoContext.policy	field
 member	otto.context:OttoContext.projects	property:g--
+member	otto.context:OttoContext.require_targets	method	sync	-
 member	otto.context:OttoContext.run_on_all_hosts	method	coroutine	PK:cmds:- KO:pattern:N KO:concurrent:B:true KO:timeout:F:0x1.e000000000000p+4 KO:_scope_owner:N KO:include_containers:B:false VK:overrides:-
+member	otto.context:OttoContext.scoped	property:g--
 member	otto.context:OttoContext.sweep_loop	method	coroutine	PK:loop:- KO:label:- KO:deadline:N
+member	otto.context:OttoContext.targetable_ids	method	sync	-
+member	otto.context:OttoContext.unscoped	property:g--
 member	otto.context:OttoContext.verb	field
 member	otto.context:OttoContext.verb_binding_preserved	method	sync	-
 member	otto.context:OttoContext.verb_option_source	method	sync	-
@@ -250,6 +256,13 @@ member	otto.context:RunPolicy.output_dir	field
 member	otto.context:RunPolicy.teardown_deadline	field
 member	otto.context:RunPolicy.variant	field
 abstract	otto.context:RunPolicy	@final @manifest:subclass=false
+name	otto.context:UnscopedView	class
+mro	otto.context:UnscopedView	-
+call	otto.context:UnscopedView	sync	@manifest:construct=false
+member	otto.context:UnscopedView.lab	property:g--
+member	otto.context:UnscopedView.ordered_projects	property:g--
+member	otto.context:UnscopedView.projects	property:g--
+abstract	otto.context:UnscopedView	@final @manifest:subclass=false
 name	otto.context:Variant	alias
 name	otto.context:get_context	function
 call	otto.context:get_context	sync	-
@@ -3604,7 +3617,7 @@ call	otto.init:scaffold_candidates	sync	PK:root:- KO:requested:N KO:all_areas:B:
 name	otto.init:scaffold_prerequisites	function
 call	otto.init:scaffold_prerequisites	sync	KO:root:- KO:areas:-
 name	otto.instructions:instruction	function
-call	otto.instructions:instruction	sync	VP:args:- KO:options:N KO:walk:N KO:continue_on_failure:N KO:require_dependencies:N KO:dry_run_preview:N KO:combine_results:N KO:render:N KO:name:N KO:help:N KO:overwrite:B:false
+call	otto.instructions:instruction	sync	VP:args:- KO:options:N KO:walk:N KO:continue_on_failure:N KO:require_dependencies:N KO:dry_run_preview:N KO:combine_results:N KO:render:N KO:name:N KO:help:N KO:overwrite:B:false KO:_allows_empty_scope:N
 name	otto.instructions:run_instruction	function
 call	otto.instructions:run_instruction	coroutine	PK:ctx:- KO:name:- KO:opts:N
 name	otto.inventory:BareReferenceRefused	class
@@ -3900,6 +3913,10 @@ mro	otto.lab:EmptySelectionError	{otto.errors:OttoError} @builtin:builtins.Value
 call	otto.lab:EmptySelectionError	sync	PK:pattern:- KO:base_size:- KO:excluded_by:N KO:matched_size:I:0
 member	otto.lab:EmptySelectionError.cli_message	method	sync	KO:walker:S:"this\u0020command"
 abstract	otto.lab:EmptySelectionError	-
+name	otto.lab:HostOutOfScopeError	class
+mro	otto.lab:HostOutOfScopeError	{otto.errors:OttoError} @builtin:builtins.KeyError @builtin:builtins.LookupError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.lab:HostOutOfScopeError	sync	PK:message:- KO:outside:N
+abstract	otto.lab:HostOutOfScopeError	-
 name	otto.lab:Lab	class
 mro	otto.lab:Lab	-
 call	otto.lab:Lab	sync	KO:name:- KO:resources:O KO:hosts:O KO:links:O KO:component_names:O KO:metadata:O
@@ -3913,6 +3930,29 @@ member	otto.lab:Lab.name	field
 member	otto.lab:Lab.resources	field
 member	otto.lab:Lab.static_links	method	sync	-
 abstract	otto.lab:Lab	@final @manifest:subclass=false
+name	otto.lab:LabView	protocol
+mro	otto.lab:LabView	-
+member	otto.lab:LabView.add_host	method	sync	PK:host:-
+member	otto.lab:LabView.component_names	property:g--
+member	otto.lab:LabView.hosts	property:g--
+member	otto.lab:LabView.links	property:g--
+member	otto.lab:LabView.metadata	property:g--
+member	otto.lab:LabView.name	property:g--
+member	otto.lab:LabView.resources	property:g--
+member	otto.lab:LabView.static_links	method	sync	-
+requires	otto.lab:LabView	__otto_summary__ add_host component_names hosts links metadata name resources static_links
+name	otto.lab:ScopedLab	class
+mro	otto.lab:ScopedLab	-
+call	otto.lab:ScopedLab	sync	@manifest:construct=false
+member	otto.lab:ScopedLab.add_host	method	sync	PK:host:-
+member	otto.lab:ScopedLab.component_names	property:g--
+member	otto.lab:ScopedLab.hosts	property:g--
+member	otto.lab:ScopedLab.links	property:g--
+member	otto.lab:ScopedLab.metadata	property:g--
+member	otto.lab:ScopedLab.name	property:g--
+member	otto.lab:ScopedLab.resources	property:g--
+member	otto.lab:ScopedLab.static_links	method	sync	-
+abstract	otto.lab:ScopedLab	@final @manifest:subclass=false
 name	otto.lab:all_hosts	function
 call	otto.lab:all_hosts	sync	KO:pattern:N KO:include_containers:B:false KO:include_local:B:false VK:overrides:-
 name	otto.lab:do_for_all_hosts	function
@@ -5880,10 +5920,19 @@ member	otto.session:RequiredProject.normalized_name	field
 member	otto.session:RequiredProject.reason	field
 member	otto.session:RequiredProject.required_by	field
 abstract	otto.session:RequiredProject	@final @manifest:subclass=false
+name	otto.session:ScopeSelection	class
+mro	otto.session:ScopeSelection	-
+call	otto.session:ScopeSelection	sync	KO:labs:- KO:include:- KO:exclude:-
+member	otto.session:ScopeSelection.__eq__	method	sync	PK:other:-
+member	otto.session:ScopeSelection.__hash__	method	sync	-
+member	otto.session:ScopeSelection.exclude	field
+member	otto.session:ScopeSelection.include	field
+member	otto.session:ScopeSelection.labs	field
+abstract	otto.session:ScopeSelection	@final @manifest:subclass=false
 name	otto.session:build_lab	function
-call	otto.session:build_lab	sync	PK:projects:- KO:labs:- KO:view:N
+call	otto.session:build_lab	sync	PK:projects:- KO:labs:- KO:view:N KO:selection:N KO:_unscoped_placement:B:false
 name	otto.session:build_lab_and_view	function
-call	otto.session:build_lab_and_view	sync	PK:projects:- KO:labs:- KO:view:N
+call	otto.session:build_lab_and_view	sync	PK:projects:- KO:labs:- KO:view:N KO:selection:N KO:_unscoped_placement:B:false
 name	otto.session:check_dependencies	function
 call	otto.session:check_dependencies	sync	KO:ctx:-
 name	otto.session:check_instruction_active	function
@@ -6248,7 +6297,7 @@ enum	otto:InstallState	PARTIAL	S:"partial"
 enum	otto:InstallState	UNINSTALLED	S:"uninstalled"
 name	otto:OttoContext	class
 mro	otto:OttoContext	-
-call	otto:OttoContext	sync	KO:lab:- KO:cov_decision:N KO:include_projects:T:[] KO:exclude_projects:T:[] KO:policy:N KO:bootstrap:N
+call	otto:OttoContext	sync	KO:lab:- KO:cov_decision:N KO:include_projects:T:[] KO:exclude_projects:T:[] KO:policy:N KO:bootstrap:N KO:_scoped:B:true
 member	otto:OttoContext.__eq__	method	sync	PK:other:-
 member	otto:OttoContext.admissible_ids	method	sync	KO:owner:N KO:require_nonempty:B:true
 member	otto:OttoContext.all_hosts	method	sync	KO:pattern:N KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:overrides:-
@@ -6260,19 +6309,24 @@ member	otto:OttoContext.cov_decision	field
 member	otto:OttoContext.coverage_collection_preserved	method	sync	-
 member	otto:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:kwargs:-
 member	otto:OttoContext.dry_run	property:g--
+member	otto:OttoContext.empty_scope_refusal	method	sync	-
 member	otto:OttoContext.exclude_projects	field
 member	otto:OttoContext.for_project	method	sync	KO:name:-
 member	otto:OttoContext.get_host	method	sync	PK:host_id:- VK:overrides:-
 member	otto:OttoContext.include_projects	field
-member	otto:OttoContext.lab	field
+member	otto:OttoContext.lab	property:gs-
 member	otto:OttoContext.log_command_output	property:g--
 member	otto:OttoContext.options	method	sync	PK:cls:-
 member	otto:OttoContext.ordered_projects	property:g--
 member	otto:OttoContext.output_dir	property:g--
 member	otto:OttoContext.policy	field
 member	otto:OttoContext.projects	property:g--
+member	otto:OttoContext.require_targets	method	sync	-
 member	otto:OttoContext.run_on_all_hosts	method	coroutine	PK:cmds:- KO:pattern:N KO:concurrent:B:true KO:timeout:F:0x1.e000000000000p+4 KO:_scope_owner:N KO:include_containers:B:false VK:overrides:-
+member	otto:OttoContext.scoped	property:g--
 member	otto:OttoContext.sweep_loop	method	coroutine	PK:loop:- KO:label:- KO:deadline:N
+member	otto:OttoContext.targetable_ids	method	sync	-
+member	otto:OttoContext.unscoped	property:g--
 member	otto:OttoContext.verb	field
 member	otto:OttoContext.verb_binding_preserved	method	sync	-
 member	otto:OttoContext.verb_option_source	method	sync	-
@@ -6387,7 +6441,7 @@ call	otto:all_hosts	sync	KO:pattern:N KO:include_containers:B:false KO:include_l
 name	otto:app	callable
 call	otto:app	sync	VP:args:- VK:kwargs:-
 name	otto:cli_command	function
-call	otto:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:dry_run_preview:B:false KO:accepts_options:N
+call	otto:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:scoped:B:true KO:dry_run_preview:B:false KO:accepts_options:N
 name	otto:get_context	function
 call	otto:get_context	sync	-
 name	otto:get_host	function
@@ -6403,7 +6457,7 @@ call	otto:open_context	asyncgen	KO:lab:- KO:include_projects:N KO:exclude_projec
 name	otto:options	function
 call	otto:options	sync	PO:cls:N KO:verbs:N KO:overwrite:B:false VK:dataclass_kwargs:-
 name	otto:register_cli_command	function
-call	otto:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:accepts_options:N KO:overwrite:B:false
+call	otto:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:scoped:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:accepts_options:N KO:overwrite:B:false
 name	otto:register_login_proxy	function
 call	otto:register_login_proxy	sync	PK:name:- PK:fn:- KO:undo:N KO:prompt:N KO:overwrite:B:false
 name	otto:register_options	function

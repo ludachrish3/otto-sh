@@ -114,7 +114,7 @@ async def get_coverage(
         missing_cov_config_error,
     )
     from ..config.scope import EmptySelectionError
-    from ..declared import current_projects
+    from ..declared import unscoped_projects
     from ..fleet import all_hosts
     from ..output_dir import LIBRARY_COV_GET, materialize_output_dir, resolve_output_dir
     from . import collect
@@ -133,7 +133,7 @@ async def get_coverage(
         from .. import bootstrap
 
         del bootstrap
-        projects = current_projects()
+        projects = unscoped_projects()
     cov_config = get_cov_config(projects)
     cov_project = get_cov_project(projects)
     if not cov_config or cov_project is None:

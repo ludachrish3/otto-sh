@@ -23,8 +23,8 @@ paths = ["lab_data"]
 
 # doc: begin project
 [project]
-lab_patterns = ["busybox"]
-host_patterns = ["bb.*-qemu"]
+lab_patterns = ["busybox", "unix", "embedded", "pyrepl"]
+host_patterns = ["bb.*-qemu", "test1", "test2", "test1-py", "zephyr.*"]
 # doc: end project
 
 # doc: begin product

@@ -175,26 +175,20 @@ def make_method_command(
 def host_class_for_id(host_id: str | None) -> type | None:
     """Resolve a host ID to its concrete host class, or ``None``.
 
-    Runs during arg parsing / completion (before the group callback populates
-    ``ctx.obj``). Calls :func:`get_host`, which builds the host on first access and
-    returns the cached instance thereafter — cheap on repeat, but the first call per
-    host does build it. Any failure (no lab loaded, unknown id) yields ``None`` → the
-    full (unscoped) menu, and the callback then raises its own clean error --
-    except ``OptionsNotAvailableError``: a host constructor that read an
-    option before the command read its flags is a defect, and is raised.
+    Runs during arg parsing, before the group callback records the request.
+    The class comes from :func:`otto.cli.host_lookup.host_class`, which reads
+    the run's whole lab: discovery is not admission, so a target outside the
+    run's scope still gets its class's menu, and its lookup refuses it later.
+    Any failure (no lab loaded, unknown id) yields ``None`` → the full menu,
+    and the leaf then raises its own clean error -- except
+    ``OptionsNotAvailableError``: a host constructor that read an option
+    before the command read its flags is a defect, and is raised.
     """
     if not host_id:
         return None
-    from ..params import OptionsNotAvailableError
+    from .host_lookup import host_class
 
-    try:
-        from ..fleet import get_host
-
-        return type(get_host(host_id))
-    except OptionsNotAvailableError:
-        raise
-    except Exception:  # noqa: BLE001 — completion fallback: no lab loaded / unknown id → return None for full menu
-        return None
+    return host_class(host_id)
 
 
 # Process-lifetime memo for the cold-cache fallback in `cached_host_class_for_id`
@@ -205,9 +199,9 @@ _discovered_host_classes: dict[str, str] | None = None
 def cached_host_class_for_id(host_id: str) -> type | None:
     """Completion-time class lookup: the cached class map, else the same collector over discovery.
 
-    Never builds a host and never probes a lab — ``host_class_for_id`` does
-    both, which is why ``HostGroup._class_for`` used to give up under
-    resilient parsing and offer every class's verbs. The map is
+    Never builds a host and never probes a lab — ``HostGroup._class_for``
+    probes one for ``host_class_for_id``, which is why it used to give up
+    under resilient parsing and offer every class's verbs. The map is
     ``host_classes_by_id`` from the ``names`` payload
     (:func:`otto.config.completion_cache.collect_host_classes_by_id`); on a
     cold cache the collector runs over ``otto.config.project.discover().projects``
@@ -363,10 +357,15 @@ def _synthesize_command(
     # it. Without the first line every host verb would be seam-stopped
     # regardless of what its author declared; without the second, `-n` would
     # exit 0 on a host that does not exist.
-    from .invoke import DRY_RUN_PREVIEW_ATTR, DRY_RUN_REFS_ATTR
+    from .invoke import DRY_RUN_PREVIEW_ATTR, DRY_RUN_REFS_ATTR, EMPTY_SCOPE_ATTR, SCOPED_ATTR
 
     setattr(cmd_fn, DRY_RUN_PREVIEW_ATTR, getattr(sample_func, DRY_RUN_PREVIEW_ATTR, False))
     setattr(cmd_fn, DRY_RUN_REFS_ATTR, host_dry_run_references)
+    # A host verb names its target, which its own lookup judges: under an empty
+    # scope `otto host local` still resolves, and any other target is refused there.
+    setattr(cmd_fn, EMPTY_SCOPE_ATTR, True)
+    # The verb's own scope opt-out, read by the preamble and by help admission.
+    setattr(cmd_fn, SCOPED_ATTR, getattr(sample_func, SCOPED_ATTR, True))
     tmp = typer.Typer()
     tmp.command(name=cli_name, help=help_text or None, cls=_make_verb_command())(cmd_fn)
     converted: Any = typer.main.get_command(tmp)
@@ -378,13 +377,30 @@ def _make_verb_command() -> "type[TyperCommand]":
     from typer.core import TyperArgument, TyperCommand
 
     class HostVerbCommand(TyperCommand):
-        """A host verb whose click parse error names the one-quoted-argument rule.
+        """A host verb: its parse error names the one-quoted-argument rule, its help is admitted.
 
         ``exec -- pfctl show`` leaves ``show`` as a second positional, and
         click's own "unexpected extra argument" does not say the command is one
         quoted argument. The sentence is added here, the one site every
         synthesized verb passes through, for any verb with exactly one positional.
+
+        A verb's ``--help`` never reaches the leaf, so the target is admitted
+        here before any help is rendered: a target outside the run's scope
+        refuses with exit 1 unless the verb opts out of scoping
+        (:func:`otto.cli.host_lookup.help_refusal`).
         """
+
+        @override
+        def get_help(self, ctx: Any) -> str:
+            parent = getattr(ctx, "parent", None)
+            host_id = (getattr(parent, "params", None) or {}).get("host_id")
+            if host_id and not getattr(ctx, "resilient_parsing", False):
+                from .host_lookup import help_refusal, refuse_target
+
+                refused = help_refusal(ctx, host_id=host_id, callback=self.callback)
+                if refused is not None:
+                    refuse_target(refused)
+            return super().get_help(ctx)
 
         @override
         def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
@@ -402,6 +418,32 @@ def _make_verb_command() -> "type[TyperCommand]":
                 raise
 
     return HostVerbCommand
+
+
+def _admitted_menu(
+    ctx: Any, names: list[str], *, callback_of: Callable[[str], object]
+) -> list[str]:
+    """Return the verbs of *names* that may run on the target; refuse when none may.
+
+    A target in the run's scope keeps the whole menu, and so does completion,
+    which admits nothing. For a target outside the scope only the verbs that
+    opt out of scoping are listed (*callback_of* gives a verb's callback), and
+    with none the menu refuses with the target's refusal, exit 1.
+    """
+    if getattr(ctx, "resilient_parsing", False):
+        return names
+    from .host_lookup import help_refusal, refuse_target
+
+    host_id = ctx.params["host_id"]
+    refused = help_refusal(ctx, host_id=host_id)
+    if refused is None:
+        return names
+    admitted = [
+        n for n in names if help_refusal(ctx, host_id=host_id, callback=callback_of(n)) is None
+    ]
+    if not admitted:
+        refuse_target(refused)
+    return admitted
 
 
 def _make_host_group() -> "type[TyperGroup]":
@@ -443,10 +485,11 @@ def _make_host_group() -> "type[TyperGroup]":
                 return cached_host_class_for_id(host_id)
             # Real dispatch with an id: the lab loads lazily (leaf-invoke preamble),
             # which runs AFTER this parse-time scoping. Ensure it here as a soft
-            # probe so ``host_class_for_id`` → ``get_host`` can resolve the concrete
-            # class. A failed probe (no --lab / broken backend) is harmless: the
-            # call below then returns None (full menu), and the leaf raises its own
-            # clean error.
+            # probe so ``host_class_for_id`` can read the concrete class off the
+            # whole lab. Discovery, not admission: the target's lookup judges it
+            # at dispatch, and help asks ``help_refusal``. A failed probe (no
+            # --lab / broken backend) is harmless: the call below then returns
+            # None (full menu), and the leaf raises its own clean error.
             from .invoke import try_ensure_lab
 
             try_ensure_lab(ctx)
@@ -483,7 +526,17 @@ def _make_host_group() -> "type[TyperGroup]":
             cls = self._class_for(ctx)
             if cls is None:
                 return list(super().list_commands(ctx))
-            return self.scoped_names(ctx, cls)
+            names = self.scoped_names(ctx, cls)
+            return _admitted_menu(
+                ctx, names, callback_of=lambda n: self.scoped_command(ctx, cls, n).callback
+            )
+
+        @override
+        def get_help(self, ctx: Any) -> str:
+            # The menu is admitted before any help is rendered: a refused
+            # target prints its refusal, not a usage block followed by it.
+            self.list_commands(ctx)
+            return super().get_help(ctx)
 
         def _class_command(self, cls: type, cmd_name: str, attr_name: str) -> Any:
             """Build (and cache) the verb's command from *cls*'s own method.

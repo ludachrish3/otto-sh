@@ -137,13 +137,13 @@ def test_declared_containers_are_registered(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         "otto.docker.compose.register_declared_container_hosts",
-        lambda lab, projects: calls.append((lab, list(projects))) or 0,
+        lambda lab, projects, **kw: calls.append((lab, list(projects), kw)) or 0,
     )
     project = _project(
         tmp_path / "r1", "r1", _SOURCES, {"lab/lab.json": [_host("alt1", "10.0.0.1")]}
     )
     lab = build_lab([project], labs=["merged"])
-    assert calls == [(lab, [project])]
+    assert calls == [(lab, [project], {"selection": None, "unscoped": False})]
 
 
 def test_the_merged_host_preferences_reach_the_load(tmp_path):
@@ -179,3 +179,127 @@ def test_build_lab_and_view_reports_an_unknown_lab_through_the_load_step(tmp_pat
         build_lab_and_view([project], labs=["nope"])
     assert exc.value.kind == "unknown_lab"
     assert raised == [exc.value]
+
+
+# ── declared-container placement (spec 2026-11-24 4.9, Q8, Q27) ──────────────
+
+_COMPOSE = '[[docker.composes]]\nname = "core"\npath = "docker/compose.yml"\nservices = ["api"]\n'
+
+
+def _scope(labs: "list[str]", hosts: "list[str]") -> str:
+    """A ``[project]`` table declaring *labs* and *hosts*."""
+    quoted = [", ".join(f"'{item}'" for item in items) for items in (labs, hosts)]
+    return f"[project]\nlab_patterns = [{quoted[0]}]\nhost_patterns = [{quoted[1]}]\n"
+
+
+def _docker_host(element: str, ip: str, *, priority: int = 0) -> dict:
+    return {**_host(element, ip), "docker_capable": True, "docker_priority": priority}
+
+
+def _docker_project(
+    root: Path,
+    name: str,
+    *,
+    scope: str,
+    sources: str = "",
+    labfiles: "dict[str, list[dict]] | None" = None,
+    use_case: "str | None" = None,
+) -> Project:
+    """A real project declaring *scope* and one compose (service ``api``), plus a use-case."""
+    extra = f"{sources}\n{scope}\n{_COMPOSE}"
+    if use_case is not None:
+        extra += f'\n[[docker.use_cases]]\nname = "{use_case}"\ncomposes = ["core"]\n'
+    sut = make_project(root, name=name, extra=extra, files={"docker/compose.yml": "services: {}\n"})
+    for rel, hosts in (labfiles or {}).items():
+        write_lab_json(root / rel, hosts)
+    return Project(root=sut)
+
+
+def _containers(lab) -> "list[str]":
+    from otto.host.docker_host import DockerContainerHost
+
+    return [hid for hid, host in lab.hosts.items() if isinstance(host, DockerContainerHost)]
+
+
+def test_default_build_lab_places_without_switches(tmp_path):
+    """With no selection, a project whose lab_patterns miss the built lab gets no placeholder."""
+    from otto.session import build_lab
+
+    here = _docker_project(
+        tmp_path / "here",
+        "here",
+        scope=_scope(["merged"], [".*"]),
+        sources=_SOURCES,
+        labfiles={"lab/lab.json": [_docker_host("alt1", "10.0.0.1")]},
+    )
+    away = _docker_project(tmp_path / "away", "away", scope=_scope(["elsewhere"], [".*"]))
+
+    lab = build_lab([here, away], labs=["merged"])
+    assert _containers(lab) == ["alt1.here.api"]
+
+
+def test_docker_free_build_resolves_no_scopes(tmp_path, monkeypatch):
+    """Regression: a build no project declares docker for resolves no scope, switches or not.
+
+    It fails before this change only because ``selection=`` is new; the old
+    build never resolved a scope here either.
+    """
+    from otto.host import builtin_hosts
+    from otto.session import ScopeSelection, build_lab
+
+    calls = []
+    monkeypatch.setattr(builtin_hosts, "lab_scopes", lambda *a, **kw: calls.append(a) or {})
+    project = _project(
+        tmp_path / "r1", "r1", _SOURCES, {"lab/lab.json": [_docker_host("alt1", "10.0.0.1")]}
+    )
+    selection = ScopeSelection(labs=("merged",), include=(), exclude=("r1",))
+    lab = build_lab([project], labs=["merged"], selection=selection)
+    assert "alt1" in lab.hosts
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_construction_with_switches(tmp_path, monkeypatch):
+    """``build_lab(selection=...)`` and ``open_context(exclude_projects=...)`` match the CLI.
+
+    ``keep`` targets ``alt1`` and ``drop`` targets ``alt2``, which ranks
+    higher, so the whole lab's default parent is ``alt2``. Under ``-E drop``
+    the placeholder, the context's default parent and the CLI's
+    ``docker use-cases`` listing all name ``alt1``.
+    """
+    from typer.testing import CliRunner
+
+    import otto
+    from otto.cli.main import app
+    from otto.docker.observe import default_docker_parent
+    from otto.session import ScopeSelection, build_lab
+    from tests._fixtures.bootstrap_seam import install_composed, patch_bootstrap
+
+    hosts = [_docker_host("alt1", "10.0.0.1"), _docker_host("alt2", "10.0.0.2", priority=10)]
+    keep = _docker_project(
+        tmp_path / "keep",
+        "keep",
+        scope=_scope(["merged"], ["alt1"]),
+        sources=_SOURCES,
+        labfiles={"lab/lab.json": hosts},
+        use_case="keepuc",
+    )
+    drop = _docker_project(
+        tmp_path / "drop", "drop", scope=_scope(["merged"], ["alt2"]), use_case="dropuc"
+    )
+    install_composed(monkeypatch, patch_bootstrap(monkeypatch, [keep, drop]))
+
+    selection = ScopeSelection(labs=("merged",), include=(), exclude=("drop",))
+    lab = build_lab([keep, drop], labs=["merged"], selection=selection)
+    assert _containers(lab) == ["alt1.keepuc.api"]
+    async with otto.open_context(lab=lab, exclude_projects=["drop"]) as ctx:
+        assert default_docker_parent(lab=ctx.lab).id == "alt1"
+
+    result = CliRunner().invoke(
+        app, ["--lab", "merged", "-E", "drop", "docker", "use-cases"], env={"COLUMNS": "200"}
+    )
+    assert result.exit_code == 0, result.output
+    assert "dropuc" not in result.output
+    table = result.output.split("use-case keepuc", 1)[1]  # after the scope's log line
+    assert "alt1" in table
+    assert "alt2" not in table

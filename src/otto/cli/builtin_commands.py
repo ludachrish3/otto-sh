@@ -4,6 +4,8 @@ The direct analog of the backend registries' ``_register_builtin_*``
 functions: otto's fifteen subcommand groups travel the same public
 :func:`~otto.cli.registry.register_cli_command` path a third-party plugin
 uses, with lazy ``"module:attr"`` loaders so nothing imports until dispatch.
+Every one is scoped by omission except the four that diagnose every source
+(``init``, ``env``, ``cache`` and ``lab``), which say ``scoped=False``.
 
 :mod:`otto.cli.registry` calls :func:`register_builtin_commands` as it loads,
 so importing the registry lists every built-in. The dependency runs one way at
@@ -25,6 +27,9 @@ def register_builtin_commands() -> None:
         lab_free=True,
         output_dir=False,
         gate=False,
+        # Unscoped: the doctor checks every project and every lab source,
+        # whatever the active projects declare.
+        scoped=False,
     )
     register_cli_command(
         "env",
@@ -33,13 +38,17 @@ def register_builtin_commands() -> None:
         lab_free=True,
         output_dir=False,
         gate=False,
+        # Unscoped: the environment serves every project in the workspace.
+        scoped=False,
         # F5: deliberately NO dry_run_preview. The lab-free dry-run seam stops
         # `otto env create -n` before the body and exits 0 -- creating nothing,
         # exactly as `otto init -n` scaffolds nothing. Opting out of that seam
         # would let -n build a venv.
     )
     register_cli_command(
-        "host", "otto.cli.host:host_app", help="Run commands and transfer files on lab hosts."
+        "host",
+        "otto.cli.host:host_app",
+        help="Run commands and transfer files on the lab hosts in this run's scope.",
     )
     register_cli_command(
         "cache",
@@ -54,6 +63,8 @@ def register_builtin_commands() -> None:
         lab_free=True,
         output_dir=False,
         gate=False,
+        # Unscoped: the caches hold every project's and every lab's entries.
+        scoped=False,
     )
     register_cli_command(
         "run",
@@ -174,6 +185,9 @@ def register_builtin_commands() -> None:
         lab_free=True,
         output_dir=False,
         gate=False,
+        # Unscoped: `render` and `explain` diagnose what every source makes
+        # of its files, whatever the active projects declare.
+        scoped=False,
     )
     register_cli_command(
         "schema",

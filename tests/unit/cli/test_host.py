@@ -9,6 +9,7 @@ Covers:
 """
 
 import asyncio
+import itertools
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,7 +20,7 @@ import typer
 from typer.testing import CliRunner
 
 from otto.cli import host as host_module
-from otto.cli.host import _host_id_completer, _resolve_host, host_app
+from otto.cli.host import _host_id_completer, host_app
 from otto.config.project import Project
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
@@ -246,32 +247,33 @@ class TestResolveHost:
     def test_valid_host_returns_host(self):
         mock_host = _make_host()
         with patch("otto.fleet.get_host", return_value=mock_host):
-            result = _resolve_host("router1")
+            result = host_module._resolve_target("router1")
         assert result is mock_host
 
     def test_invalid_host_exits(self):
-        # The "Available hosts" listing reads the lab's mapping directly rather
-        # than the fleet generator (explicit targeting is unscoped), so there is
-        # no all_hosts to stand in for — an empty lab is enough here, and
-        # tests/unit/fleet/test_fleet_scoping.py owns the unscoped-listing
-        # guard itself.
-        with patch("otto.fleet.get_host", side_effect=KeyError("nope")):
+        # The "Available hosts" listing is the ids the lookup's own miss
+        # carries, so the stand-in raises the lookup's error, as get_host does.
+        from otto.host.targeting import unknown_host_error
+
+        missed = unknown_host_error("nonexistent", lab_name="rig", available=["router1"])
+        with patch("otto.fleet.get_host", side_effect=missed):
             result = runner.invoke(host_app, ["nonexistent", "exec", "ls"])
 
         assert result.exit_code == 1
-        assert "No host with ID" in result.output
+        assert "No host with ID 'nonexistent'" in result.output
+        assert "  - router1" in result.output
 
 
 class TestResolveCliHostHop:
-    def test_hop_is_resolved_through_get_host_and_stored_by_id(self):
-        """``--hop`` is resolved through ``get_host`` — the same lab-lookup
-        boundary the target goes through — and the RESOLVED host's ``.id`` is
-        what gets stored on ``host.hop``, not the raw request string.
+    def test_hop_is_resolved_through_the_hop_lookup_and_stored_by_id(self):
+        """``--hop`` is resolved through the hop lookup (``otto.cli.host_lookup.hop_host``),
+        the target through ``get_host``, and the RESOLVED hop's ``.id`` is what
+        gets stored on ``host.hop``, not the raw request string.
 
         The hop request (``"hop-input"``) is deliberately a different string
         from the resolved host's id (``"dut47"``): if ``resolve_cli_host``
         skipped resolution and stored the raw request, or stored something
-        other than what ``get_host`` returned, ``host.hop`` would come back
+        other than what the hop lookup returned, ``host.hop`` would come back
         ``"hop-input"``, not ``"dut47"`` — and the call log would be missing
         the hop lookup entirely.
         """
@@ -283,6 +285,10 @@ class TestResolveCliHostHop:
             calls.append(host_id)
             if host_id == "router1":
                 return target_host
+            raise KeyError(host_id)
+
+        def _fake_hop_host(host_id: str) -> UnixHost:
+            calls.append(f"hop:{host_id}")
             if host_id == "hop-input":
                 return hop_host
             raise KeyError(host_id)
@@ -299,19 +305,21 @@ class TestResolveCliHostHop:
             },
         )
 
-        with patch("otto.fleet.get_host", side_effect=_fake_get_host):
+        with (
+            patch("otto.fleet.get_host", side_effect=_fake_get_host),
+            patch("otto.cli.host_lookup.hop_host", side_effect=_fake_hop_host),
+        ):
             host = host_module.resolve_cli_host(ctx)
 
-        assert calls == ["router1", "hop-input"]
+        assert calls == ["router1", "hop:hop-input"]
         assert host.hop == "dut47"
 
     def test_unknown_hop_fails_loud_through_the_same_path_as_an_unknown_target(
         self, tmp_path, capsys
     ):
         """A hop naming no host fails exactly like an unknown target does:
-        the same ``_resolve_host`` boundary, the same "No host with ID"
-        message, the same ``typer.Exit(1)`` — not a silently-``None`` hop and
-        not a different error shape.
+        the same "No host with ID" message, the same ``typer.Exit(1)`` — not a
+        silently-``None`` hop and not a different error shape.
         """
         _slot_fleet(tmp_path)
         ctx = _host_ctx(None, "slot1", hop="ghost-hop")
@@ -325,12 +333,156 @@ class TestResolveCliHostHop:
         assert "ghost-hop" in out
 
 
+def _hop_labs():
+    """The run's lab narrowed to the target, as a scoped view shows it, and the whole lab.
+
+    Only the whole lab holds the hop, ``jump1``. Fresh hosts on every call:
+    resolving a hop wires it onto the target.
+    """
+    from otto.labs.loader import Lab
+
+    target, jump = _make_host("router1"), _make_host("jump1")
+    narrow = Lab(name="rig", hosts={"router1": target})
+    whole = Lab(name="rig", hosts={"router1": target, "jump1": jump})
+    return narrow, whole
+
+
+def _unscoped_stand_in(monkeypatch, labs: dict) -> None:
+    """Patch ``OttoContext.unscoped`` to a stand-in over ``labs["whole"]``, read at each access."""
+    from otto.context import OttoContext
+
+    monkeypatch.setattr(
+        OttoContext,
+        "unscoped",
+        property(lambda _ctx: SimpleNamespace(lab=labs["whole"], projects=[])),
+        raising=False,
+    )
+
+
+def test_hop_and_remote_completion_share_hop_lookup(monkeypatch, capsys):
+    """``otto host --hop`` and its remote path completion resolve a hop through one lookup.
+
+    The lookup reads the run's whole lab, because a hop needs only lab
+    membership. ``ctx.lab`` holds only the target, as a scoped view shows it,
+    and ``OttoContext.unscoped`` is a stand-in over the whole lab, so a lookup
+    that read ``ctx.lab`` misses ``jump1``. Both entry points get the same
+    input, and a miss names the whole lab from either.
+    """
+    from otto.cli import host_lookup
+    from otto.cli import remote_completion as rc
+    from otto.context import OttoContext
+    from otto.run_context import reset_context, set_context
+
+    looked_up: list[str] = []
+    real_hop_host = host_lookup.hop_host
+
+    def _spy(host_id: str):
+        looked_up.append(host_id)
+        return real_hop_host(host_id)
+
+    labs: dict = {}
+    _unscoped_stand_in(monkeypatch, labs)
+    monkeypatch.setattr(host_lookup, "hop_host", _spy)
+    monkeypatch.setattr("otto.declared.get_projects", list)
+    # The completer builds its own lab: the narrowed one, as the command's context holds.
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda _projects, **_kw: labs["narrow"])
+
+    def _chain(hop: str):
+        return rc._ChainParams(host_id="router1", hop=hop, term=None, labs=["rig"], holder=None)
+
+    # `otto host router1 --hop jump1 ...`
+    labs["narrow"], labs["whole"] = _hop_labs()
+    binding = set_context(OttoContext(lab=labs["narrow"]))
+    try:
+        assert host_module.resolve_cli_host(_host_ctx(None, "router1", hop="jump1")).hop == "jump1"
+    finally:
+        reset_context(binding)
+
+    # Its remote path completion, from the same chain.
+    labs["narrow"], labs["whole"] = _hop_labs()
+    host, token = rc._load_host(_chain("jump1"))
+    rc._release_context(token)
+    assert host.hop == "jump1"
+    assert looked_up == ["jump1", "jump1"]
+
+    # A hop no lab host has: the completion's lookup names the whole lab ...
+    with pytest.raises(KeyError) as missed:
+        rc._load_host(_chain("ghost"))
+    assert missed.value.args[0] == "No host 'ghost' in lab 'rig'. Available: ['jump1', 'router1']"
+
+    # ... and so does the command's refusal.
+    binding = set_context(OttoContext(lab=labs["narrow"]))
+    try:
+        with pytest.raises(typer.Exit) as exc:
+            host_module.resolve_cli_host(_host_ctx(None, "router1", hop="ghost"))
+    finally:
+        reset_context(binding)
+    assert exc.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "No host with ID 'ghost'" in out
+    assert "  - jump1" in out
+    assert looked_up == ["jump1", "jump1", "ghost", "ghost"]
+
+    # One hop lab: with a stand-in for it, the lookup searches it from both
+    # entry points and the command's miss lists it, not the context's lab.
+    from otto.labs.loader import Lab
+
+    elsewhere = Lab(name="elsewhere", hosts={"jump9": _make_host("jump9")})
+    monkeypatch.setattr(host_lookup, "hop_lab", lambda: elsewhere)
+    labs["narrow"], labs["whole"] = _hop_labs()
+    with pytest.raises(KeyError) as missed:
+        rc._load_host(_chain("ghost"))
+    assert missed.value.args[0] == "No host 'ghost' in lab 'elsewhere'. Available: ['jump9']"
+    binding = set_context(OttoContext(lab=labs["narrow"]))
+    try:
+        with pytest.raises(typer.Exit) as refused:
+            host_module.resolve_cli_host(_host_ctx(None, "router1", hop="ghost"))
+        assert refused.value.exit_code == 1
+        assert host_module.resolve_cli_host(_host_ctx(None, "router1", hop="jump9")).hop == "jump9"
+    finally:
+        reset_context(binding)
+    out = capsys.readouterr().out
+    assert "  - jump9" in out
+    assert "  - jump1" not in out
+
+
+def test_named_reservation_check_reads_unscoped_lab(monkeypatch):
+    """The named-host reservation check judges a named host against the run's whole lab.
+
+    A named host, or its hop, may be one no project targets; its slot comes
+    from the lab that holds it. ``ctx.lab`` is narrowed to the target and
+    ``OttoContext.unscoped`` is a stand-in over the whole lab, so the lab the
+    gate is handed shows which one the check read.
+    """
+    from otto.context import OttoContext
+    from otto.run_context import reset_context, set_context
+
+    narrow, whole = _hop_labs()
+    _unscoped_stand_in(monkeypatch, {"whole": whole})
+    seen = []
+
+    def _check_hosts(*, lab, hosts):
+        seen.append((lab, [h.id for h in hosts]))
+
+    gate = SimpleNamespace(check_hosts=_check_hosts)
+    binding = set_context(OttoContext(lab=narrow))
+    try:
+        host_module._check_named_host_reservations(
+            SimpleNamespace(meta={"otto_reservation": gate}), [whole.hosts["jump1"]]
+        )
+    finally:
+        reset_context(binding)
+    assert len(seen) == 1
+    assert seen[0][0] is whole
+    assert seen[0][1] == ["jump1"]
+
+
 # ── An explicitly named host is reserved too ──────────────────────────────────
-#  `otto host <id> --hop <id>` reaches any host in the lab (explicit targeting
-#  beats scoping), while the preamble's gate requires only the fleet of interest
-#  (spec 2026-08-28 three-level-reservations §5). A host the fleet does not hold
-#  — target OR hop — therefore needs its OWN slot checked here, or the run
-#  touches hardware nobody reserved.
+#  A `--hop` reaches any host in the lab, and so does the target of a command
+#  that opted out of scoping, while the preamble's gate requires only the fleet
+#  of interest (spec 2026-08-28 three-level-reservations §5). A host the fleet
+#  does not hold, target or hop, therefore needs its OWN slot checked here, or
+#  the run touches hardware nobody reserved.
 
 
 class _SlotBackend(ReservationBackendBase):
@@ -360,15 +512,23 @@ class _SlotBackend(ReservationBackendBase):
         return [Reservation(user="dana", resource=resource)]
 
 
-def _slot_fleet(tmp_path):
-    """A two-host lab whose declared fleet is ``slot1`` alone; each host owns a slot."""
+def _slot_fleet(tmp_path, *, scoped=True):
+    """A two-host lab whose declared fleet is ``slot1`` alone; each host owns a slot.
+
+    A scoped command refuses ``slot2`` as a target at the lookup, before any
+    reservation is read, so a test that TARGETS it passes ``scoped=False``:
+    the context of a command that opted out of scoping, which resolves any
+    lab host while its hosts in play stay the declared fleet. A hop needs
+    only lab membership, so the hop tests stay scoped.
+    """
     from tests._fixtures.fleet import _lab as fleet_lab
     from tests._fixtures.fleet import _project, install_scoped_context
 
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    install_scoped_context(lab, [_project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    projects = [_project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])]
+    install_scoped_context(lab, projects, scoped=scoped)
     return lab
 
 
@@ -428,7 +588,7 @@ def test_targeting_a_host_outside_the_fleet_demands_its_own_slot(tmp_path, capsy
     Red at HEAD: ``resolve_cli_host`` returned the ``slot2`` host and no
     ``typer.Exit`` was raised.
     """
-    _slot_fleet(tmp_path)
+    _slot_fleet(tmp_path, scoped=False)
     ctx = _host_ctx(_gate({"slot-1"}), "slot2")
 
     with pytest.raises(typer.Exit) as exc:
@@ -441,9 +601,26 @@ def test_targeting_a_host_outside_the_fleet_demands_its_own_slot(tmp_path, capsy
     assert "dana" in out  # and who holds it
 
 
+def test_a_scoped_out_of_fleet_target_refuses_before_any_reservation_query(monkeypatch, tmp_path):
+    """``otto host slot2 …`` in a scoped command refuses at the lookup and queries nothing.
+
+    ``slot2`` is in the lab but in no declaration, so the scoped lookup
+    refuses it before the named-host reservation check runs.
+    """
+    _slot_fleet(tmp_path)
+    calls = _spy_build_report(monkeypatch)
+    ctx = _host_ctx(_gate({"slot-1"}), "slot2")
+
+    with pytest.raises(typer.Exit) as exc:
+        host_module.resolve_cli_host(ctx)
+
+    assert exc.value.exit_code == 1
+    assert calls == []
+
+
 def test_targeting_a_host_outside_the_fleet_proceeds_when_its_slot_is_held(tmp_path):
     """The check is a check, not a refusal: hold ``slot-2`` and ``slot2`` is reachable."""
-    _slot_fleet(tmp_path)
+    _slot_fleet(tmp_path, scoped=False)
     ctx = _host_ctx(_gate({"slot-1", "slot-2"}), "slot2")
 
     assert host_module.resolve_cli_host(ctx).id == "slot2"
@@ -471,7 +648,7 @@ def test_dash_r_skips_the_targeted_host_check_too(monkeypatch, tmp_path):
     ignored it would make ``-R`` stop working for exactly the command whose
     target is out of scope.
     """
-    _slot_fleet(tmp_path)
+    _slot_fleet(tmp_path, scoped=False)
     calls = _spy_build_report(monkeypatch)
     ctx = _host_ctx(_gate(set(), skip_check=True), "slot2")
 
@@ -481,7 +658,7 @@ def test_dash_r_skips_the_targeted_host_check_too(monkeypatch, tmp_path):
 
 def test_no_reservation_gate_on_the_context_is_a_no_op(tmp_path):
     """A lab-free or ungated invocation has no gate to read; targeting still works."""
-    _slot_fleet(tmp_path)
+    _slot_fleet(tmp_path, scoped=False)
     ctx = _host_ctx(None, "slot2")
 
     assert host_module.resolve_cli_host(ctx).id == "slot2"
@@ -535,7 +712,7 @@ def test_an_out_of_fleet_host_with_no_slot_of_its_own_is_never_queried(monkeypat
 
     Red at HEAD: the spy recorded one call with ``['gw']``.
     """
-    lab = _slot_fleet(tmp_path)
+    lab = _slot_fleet(tmp_path, scoped=False)
     lab.resources = {"rig-pdu"}  # a lab-level id, so the requirement is non-empty
     from tests._fixtures.fleet import _host
 
@@ -1211,7 +1388,7 @@ def test_naming_an_out_of_fleet_host_warns_that_its_own_slot_is_lapsing(tmp_path
     """
     import logging
 
-    _slot_fleet(tmp_path)
+    _slot_fleet(tmp_path, scoped=False)
     ctx = _host_ctx(_gate({"slot-1", "slot-2"}, ends={"slot-2": _soon_utc(1)}), "slot2")
 
     with caplog.at_level(logging.WARNING, logger="otto"):
@@ -1225,7 +1402,7 @@ def test_a_healthy_out_of_fleet_slot_says_nothing(tmp_path, caplog):
     """The negative half: a booking well outside the window is not news."""
     import logging
 
-    _slot_fleet(tmp_path)
+    _slot_fleet(tmp_path, scoped=False)
     ctx = _host_ctx(_gate({"slot-1", "slot-2"}, ends={"slot-2": _soon_utc(240)}), "slot2")
 
     with caplog.at_level(logging.WARNING, logger="otto"):
@@ -1245,7 +1422,7 @@ def test_warning_fires_only_once_for_an_out_of_fleet_host(tmp_path, caplog):
     """
     import logging
 
-    lab = _slot_fleet(tmp_path)
+    lab = _slot_fleet(tmp_path, scoped=False)
     lab.resources = {"rig-pdu"}
     gate = _gate({"rig-pdu", "slot-1", "slot-2"}, ends={"rig-pdu": _soon_utc(2)})
     ctx = _host_ctx(gate, "slot2")
@@ -1267,7 +1444,7 @@ def test_dash_r_suppresses_the_out_of_fleet_expiry_warning(tmp_path, caplog):
     """
     import logging
 
-    _slot_fleet(tmp_path)
+    _slot_fleet(tmp_path, scoped=False)
     ctx = _host_ctx(
         _gate({"slot-1", "slot-2"}, skip_check=True, ends={"slot-2": _soon_utc(1)}), "slot2"
     )
@@ -1304,7 +1481,7 @@ def test_a_null_backend_never_reaches_the_out_of_fleet_expiry_helper(tmp_path, c
                 "the null backend was queried; the is_null_backend guard is missing"
             )
 
-    _slot_fleet(tmp_path)
+    _slot_fleet(tmp_path, scoped=False)
     gate = ReservationGate(
         # WITH the username the check is for: without it the fetch this test
         # is trying to prove unreachable would fail on the base class's "no
@@ -1320,3 +1497,433 @@ def test_a_null_backend_never_reaches_the_out_of_fleet_expiry_helper(tmp_path, c
         assert host_module.resolve_cli_host(_host_ctx(gate, "slot2")).id == "slot2"
 
     assert "expires" not in caplog.text.lower()
+
+
+# ── The target is scoped; a --hop is not ──────────────────────────────────────
+#  Lab ``alpha`` holds ``a-dut``, ``a-jump`` and the built-in runner; the one
+#  project declares ``a-dut`` alone, so ``a-jump`` is in the lab and out of
+#  scope. Dispatch goes through the real root app over real parsed projects.
+
+
+def _alpha_lab(*extra_hosts):
+    """Lab ``alpha``: ``a-dut``, ``a-jump``, any *extra_hosts*, then the built-in runner."""
+    from tests._fixtures.fleet import _lab, add_builtin_local
+
+    lab = _lab(("a-dut", "alpha"), ("a-jump", "alpha"), component_names=["alpha"])
+    for host in extra_hosts:
+        lab.add_host(host)
+    return add_builtin_local(lab)
+
+
+def _inscope(tmp_path):
+    from tests._fixtures.fleet import _project
+
+    return _project(tmp_path, "inscope", labs=["alpha"], hosts=["a-dut"])
+
+
+def _refusal(project, host_id="a-jump"):
+    """The out-of-scope refusal for *host_id* in lab ``alpha``, *project* the one declarer."""
+    return (
+        f"host {host_id!r} is in lab 'alpha' but outside this run's scope: no declared "
+        "project targets it. To reach it, add its id to [project] host_patterns (or its "
+        f"lab to lab_patterns) in {project.root}/.otto/settings.toml."
+    )
+
+
+def _dispatch_alpha(monkeypatch, tmp_path, argv, *, lab=None):
+    from tests._fixtures.fleet import dispatch_root
+
+    project = _inscope(tmp_path)
+    result = dispatch_root(
+        monkeypatch,
+        argv,
+        lab=lab if lab is not None else _alpha_lab(),
+        projects=[project],
+        env={"COLUMNS": "400"},
+    )
+    return result, project
+
+
+def _menu_verbs(output):
+    """Return the verb names the help's Commands panel lists, in order."""
+    lines = output.splitlines()
+    start = next(i for i, line in enumerate(lines) if "─ Commands ─" in line)
+    verbs = []
+    for line in lines[start + 1 :]:
+        if line.startswith("╰"):
+            break
+        name = re.match(r"│ (\S+)\s", line)
+        if name:
+            verbs.append(name.group(1))
+    return verbs
+
+
+def _never_runs(monkeypatch):
+    """Make the unix ``exec`` verb fail the test if it is reached; return the call log."""
+    import functools
+
+    calls: list[object] = []
+
+    # Wrapped, so the stand-in keeps the verb's markers and signature.
+    @functools.wraps(UnixHost.exec)
+    async def _exec(self, *args, **kwargs):
+        calls.append(self.id)
+        raise AssertionError(f"exec reached host {self.id!r}")
+
+    monkeypatch.setattr(UnixHost, "exec", _exec)
+    return calls
+
+
+def test_host_out_of_scope_refuses_exit_1(monkeypatch, tmp_path):
+    """Fail-first: ``otto host <out-of-scope> exec`` prints the refusal and connects nowhere."""
+    calls = _never_runs(monkeypatch)
+
+    result, project = _dispatch_alpha(monkeypatch, tmp_path, ["host", "a-jump", "exec", "true"])
+
+    assert result.exit_code == 1, result.output
+    assert _refusal(project) in result.output.splitlines()
+    assert "No host with ID" not in result.output
+    assert calls == []
+
+
+@pytest.mark.parametrize("argv", [["host", "a-jump", "--help"], ["host", "a-jump"]])
+def test_host_out_of_scope_help_refuses_no_menu(monkeypatch, tmp_path, argv):
+    """Fail-first: the group's menu for an out-of-scope target is its refusal, not a menu."""
+    result, project = _dispatch_alpha(monkeypatch, tmp_path, argv)
+
+    assert result.exit_code == 1, result.output
+    assert _refusal(project) in result.output.splitlines()
+    assert "Usage" not in result.output
+    assert "Commands" not in result.output
+
+
+def test_host_out_of_scope_verb_help_refuses(monkeypatch, tmp_path):
+    """Fail-first: a scoped verb's ``--help`` on an out-of-scope target refuses."""
+    result, project = _dispatch_alpha(monkeypatch, tmp_path, ["host", "a-jump", "exec", "--help"])
+
+    assert result.exit_code == 1, result.output
+    assert _refusal(project) in result.output.splitlines()
+    assert "Usage" not in result.output
+
+
+@pytest.fixture
+def scope_free_jump():
+    """``a-jump`` is a host whose ``scope-probe`` verb opts out of scoping.
+
+    Yields ``(lab_factory, seen)``: each call of ``lab_factory`` builds lab
+    ``alpha`` with ``a-dut``, that ``a-jump`` and the built-in runner;
+    ``seen`` records ``(host id, ctx.scoped)`` for each run of the verb.
+    """
+    import otto.host.os_profile as op
+    from otto.cli.invoke import SCOPED_ATTR
+    from otto.host.factory import create_host_from_dict
+    from otto.utils import cli_exposed
+    from tests._fixtures.fleet import _lab, add_builtin_local
+
+    seen: list[object] = []
+
+    class _ScopeFreeHost(UnixHost):
+        @cli_exposed(output_dir=False)
+        async def scope_probe(self) -> str:
+            """Report the scope verdict this verb ran under."""
+            from otto.context import get_context
+
+            seen.append((self.id, get_context().scoped))
+            return "ran"
+
+        setattr(scope_probe, SCOPED_ATTR, False)
+
+    def lab_with_jump():
+        lab = _lab(("a-dut", "alpha"), component_names=["alpha"])
+        jump = create_host_from_dict(
+            {
+                "os_type": "t13-scope-free",
+                "ip": "192.0.2.9",
+                "creds": [{"login": "admin", "password": "admin"}],
+            },
+            lab_name="alpha",
+            element=Element(name="a-jump"),
+        )
+        assert type(jump) is _ScopeFreeHost
+        lab.add_host(jump)
+        return add_builtin_local(lab)
+
+    op.register_host_class("t13-scope-free", _ScopeFreeHost)
+    try:
+        yield lab_with_jump, seen
+    finally:
+        op.HOST_CLASSES.unregister(name="t13-scope-free")
+
+
+def test_opted_out_host_verb_runs_on_out_of_scope_target(monkeypatch, tmp_path, scope_free_jump):
+    """Fail-first: a host verb that opts out of scoping runs on a target outside the scope.
+
+    The verb's ``__cli_scoped__ = False`` reaches its command, so the leaf's
+    verdict replaces the probe's scoped context with an unscoped one and the
+    lookup resolves ``a-jump``. Its ``--help`` prints; the target's menu lists
+    only it; an ordinary verb on the same target still refuses.
+    """
+    lab_with_jump, seen = scope_free_jump
+    runs = itertools.count()
+
+    def _run(argv):
+        root = tmp_path / str(next(runs))
+        return _dispatch_alpha(monkeypatch, root, argv, lab=lab_with_jump())
+
+    ran, _ = _run(["host", "a-jump", "scope-probe"])
+    assert ran.exit_code == 0, ran.output
+    assert seen == [("a-jump", False)]
+
+    verb_help, _ = _run(["host", "a-jump", "scope-probe", "--help"])
+    assert verb_help.exit_code == 0, verb_help.output
+    assert "Report the scope verdict" in verb_help.output
+
+    menu, _ = _run(["host", "a-jump", "--help"])
+    assert menu.exit_code == 0, menu.output
+    assert _menu_verbs(menu.output) == ["scope-probe"], menu.output
+
+    ordinary, project = _run(["host", "a-jump", "exec", "true"])
+    assert ordinary.exit_code == 1, ordinary.output
+    assert _refusal(project) in ordinary.output.splitlines()
+    assert seen == [("a-jump", False)]
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_opted_out_verb_checks_its_out_of_scope_targets_slot(
+    monkeypatch, tmp_path, scope_free_jump, held
+):
+    """Regression: an opted-out verb's target outside the fleet needs its own slot held.
+
+    The preamble's gate covers the hosts in play (``a-dut``'s ``slot-a``);
+    ``a-jump`` is outside them, so the named-host check asks for ``slot-j``
+    before the verb runs, through the whole dispatch.
+    """
+    lab_with_jump, seen = scope_free_jump
+    lab = lab_with_jump()
+    lab.hosts["a-dut"].resources = frozenset({"slot-a"})
+    lab.hosts["a-jump"].resources = frozenset({"slot-j"})
+    slots = {"slot-a", "slot-j"} if held else {"slot-a"}
+    monkeypatch.setattr(
+        "otto.reservations.factory.build_reservation_gate", lambda **_kw: _gate(slots)
+    )
+
+    ran, _ = _dispatch_alpha(monkeypatch, tmp_path, ["host", "a-jump", "scope-probe"], lab=lab)
+
+    if held:
+        assert ran.exit_code == 0, ran.output
+        assert seen == [("a-jump", False)]
+    else:
+        assert ran.exit_code == 1, ran.output
+        assert "slot-j" in ran.output
+        assert "dana" in ran.output
+        assert seen == []
+
+
+def test_class_discovery_reads_unscoped_lab(tmp_path):
+    """Fail-first: a target's class is found whether or not the run may target it."""
+    from otto.cli.expose import host_class_for_id
+    from otto.cli.host_lookup import host_class
+    from tests._fixtures.fleet import scope_workspace
+
+    ws = scope_workspace(tmp_path)
+    assert "a-jump" not in ws.ctx.targetable_ids()
+
+    assert host_class("a-jump") is type(ws.lab.hosts["a-jump"])
+    assert host_class_for_id("a-jump") is type(ws.lab.hosts["a-jump"])
+    assert host_class("ghost") is None
+    assert host_class_for_id("ghost") is None
+
+
+def test_host_unknown_id_message_and_exit_unchanged(monkeypatch, tmp_path):
+    """Regression: an unknown target prints today's lines, listing the targetable hosts."""
+    result, _ = _dispatch_alpha(monkeypatch, tmp_path, ["host", "nope", "exec", "true"])
+
+    assert result.exit_code == 1, result.output
+    lines = result.output.splitlines()
+    assert "No host with ID 'nope'." in lines
+    assert "Available hosts:" in lines
+    listed = [line for line in lines if line.startswith("  - ")]
+    assert listed == ["  - a-dut", "  - local"]
+
+
+def test_host_no_lab_error_unchanged(monkeypatch, tmp_path):
+    """Regression: with no ``--lab`` and no ``OTTO_LAB``, a target gets the missing-lab error."""
+    from typer.testing import CliRunner
+
+    from otto.cli.main import app
+    from tests._fixtures.bootstrap_seam import install_composed, patch_bootstrap
+
+    monkeypatch.delenv("OTTO_LAB", raising=False)
+    install_composed(monkeypatch, patch_bootstrap(monkeypatch, [_inscope(tmp_path)]))
+
+    result = CliRunner().invoke(app, ["host", "a-dut", "exec", "true"])
+
+    assert result.exit_code == 2, result.output
+    assert "Missing option '--lab' / '-l' (env var: 'OTTO_LAB')" in result.output
+
+
+_HELP_PATHS = (["host", "nope", "--help"], ["host", "nope", "exec", "--help"])
+
+
+@pytest.mark.parametrize("argv", _HELP_PATHS, ids=["menu", "verb"])
+def test_host_help_unknown_id_and_no_lab_full_menu(monkeypatch, tmp_path, argv):
+    """Regression: an unknown id, or no lab at all, gets today's full help on both paths."""
+    from typer.testing import CliRunner
+
+    from otto.cli.main import app
+    from tests._fixtures.bootstrap_seam import install_composed, patch_bootstrap
+
+    unknown, _ = _dispatch_alpha(monkeypatch, tmp_path / "unknown", argv)
+
+    monkeypatch.delenv("OTTO_LAB", raising=False)
+    install_composed(monkeypatch, patch_bootstrap(monkeypatch, [_inscope(tmp_path / "nolab")]))
+    no_lab = CliRunner().invoke(app, argv)
+
+    for result in (unknown, no_lab):
+        assert result.exit_code == 0, result.output
+        assert "Usage" in result.output
+        if argv[-2] == "nope":
+            # The group's menu: every verb, since no class was found.
+            assert re.search(r"│\s+exec\s", result.output), result.output
+            assert re.search(r"│\s+reboot\s", result.output), result.output
+
+
+def test_host_help_project_load_error_falls_through(monkeypatch, tmp_path):
+    """Regression: a lookup that raises ``ProjectLoadError`` leaves help as it was."""
+    from otto.context import OttoContext
+    from otto.session.errors import ProjectLoadError
+
+    def _refuses(self, host_id, **overrides):
+        raise ProjectLoadError([])
+
+    monkeypatch.setattr(OttoContext, "get_host", _refuses)
+
+    menu, _ = _dispatch_alpha(monkeypatch, tmp_path / "menu", ["host", "a-jump", "--help"])
+    verb, _ = _dispatch_alpha(monkeypatch, tmp_path / "verb", ["host", "a-jump", "exec", "--help"])
+
+    assert menu.exit_code == 0, menu.output
+    assert re.search(r"│\s+exec\s", menu.output), menu.output
+    assert verb.exit_code == 0, verb.output
+    assert "Usage" in verb.output
+
+
+def test_exclude_typo_still_exits_2_before_scope_refusal(monkeypatch, tmp_path):
+    """Regression: a typo'd ``-E`` is reported as a typo, ahead of the target's refusal."""
+    result, _ = _dispatch_alpha(
+        monkeypatch, tmp_path, ["-E", "typo", "host", "a-jump", "exec", "true"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "typo" in result.output
+    assert "outside this run's scope" not in result.output
+
+
+def test_host_unknown_lists_targetable_only(tmp_path, capsys):
+    """Regression: the listing under an unknown target is the ids the run may target."""
+    from tests._fixtures.fleet import scope_workspace
+
+    ws = scope_workspace(tmp_path)
+
+    with pytest.raises(typer.Exit) as exc:
+        host_module._resolve_target("nope")
+
+    assert exc.value.exit_code == 1
+    listed = [line for line in capsys.readouterr().out.splitlines() if line.startswith("  - ")]
+    assert listed == [f"  - {host_id}" for host_id in ws.ctx.targetable_ids()]
+    assert "  - a-jump" not in listed
+
+
+def test_hop_out_of_scope_accepted(tmp_path):
+    """Regression: a hop needs only lab membership; an out-of-scope one is wired."""
+    from tests._fixtures.fleet import scope_workspace
+
+    scope_workspace(tmp_path)
+
+    host = host_module.resolve_cli_host(_host_ctx(None, "a-dut", hop="a-jump"))
+
+    assert host.id == "a-dut"
+    assert host.hop == "a-jump"
+
+
+def test_hop_unknown_lists_whole_lab(tmp_path, capsys):
+    """Regression: an unknown hop lists every lab host, the out-of-scope ones included."""
+    from tests._fixtures.fleet import scope_workspace
+
+    ws = scope_workspace(tmp_path)
+
+    with pytest.raises(typer.Exit) as exc:
+        host_module.resolve_cli_host(_host_ctx(None, "a-dut", hop="ghost"))
+
+    assert exc.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "No host with ID 'ghost'." in out
+    listed = [line for line in out.splitlines() if line.startswith("  - ")]
+    assert listed == [f"  - {host_id}" for host_id in ws.lab.hosts]
+    assert "  - a-jump" in listed
+
+
+def test_host_local_resolves_under_declaration(tmp_path):
+    """Regression: ``otto host local`` resolves under a declaration: the runner is targetable."""
+    from otto.host.builtin_hosts import is_runner_side
+    from tests._fixtures.fleet import scope_workspace
+
+    scope_workspace(tmp_path)
+
+    assert is_runner_side(host_module._resolve_target("local"))
+
+
+def test_dry_run_probe_rides_scoped_lookup(monkeypatch, tmp_path):
+    """Regression: ``-n --probe`` resolves its target through the scoped lookup.
+
+    An out-of-scope target is refused at that lookup, before the probe runs;
+    an in-scope target's dry run resolves.
+    """
+    probed: list[object] = []
+    monkeypatch.setattr("otto.cli.probe.run_probe", lambda refs: probed.append(refs) or [])
+
+    refused, project = _dispatch_alpha(
+        monkeypatch, tmp_path / "out", ["-n", "--probe", "host", "a-jump", "exec", "true"]
+    )
+    assert refused.exit_code == 1, refused.output
+    assert _refusal(project) in refused.output.splitlines()
+    assert probed == []
+
+    resolved, _ = _dispatch_alpha(
+        monkeypatch, tmp_path / "in", ["-n", "host", "a-dut", "exec", "true"]
+    )
+    assert resolved.exit_code == 0, resolved.output
+    assert "references resolve: host 'a-dut'" in " ".join(resolved.output.split())
+
+
+def test_typo_verb_on_refused_target_is_no_such_command(monkeypatch, tmp_path):
+    """Regression: a verb no class has is a usage error, exit 2, even on a refused target."""
+    result, _ = _dispatch_alpha(monkeypatch, tmp_path, ["host", "a-jump", "exce", "true"])
+
+    assert result.exit_code == 2, result.output
+    assert "No such command 'exce'" in result.output
+    assert "outside this run's scope" not in result.output
+
+
+def test_host_plain_keyerror_lists_targetable_ids(monkeypatch, tmp_path, capsys):
+    """A lookup that misses with a plain ``KeyError`` still prints the unknown-id lines.
+
+    ``fleet.get_host`` documents a plain ``KeyError`` for an unknown id, so a
+    substituted lookup that raises one lists the hosts the run may target.
+    """
+    from tests._fixtures.fleet import scope_workspace
+
+    ws = scope_workspace(tmp_path)
+
+    def _plain_miss(host_id, **_overrides):
+        raise KeyError(host_id)
+
+    monkeypatch.setattr("otto.fleet.get_host", _plain_miss)
+
+    with pytest.raises(typer.Exit) as exc:
+        host_module._resolve_target("nope")
+
+    assert exc.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "No host with ID 'nope'." in out
+    listed = [line for line in out.splitlines() if line.startswith("  - ")]
+    assert listed == [f"  - {host_id}" for host_id in ws.ctx.targetable_ids()]

@@ -441,24 +441,24 @@ def _host_app(monkeypatch: pytest.MonkeyPatch, host: SpyHost) -> typer.Typer:
     reference resolution is exercised rather than imitated.
     """
     import otto.host.os_profile as op
+    from otto.host.targeting import unknown_host_error
 
     known = {host.id: host}
 
     def fake_get_host(host_id: str, **_kw: Any) -> SpyHost:
         if host_id in known:
             return known[host_id]
-        raise KeyError(f"No host {host_id!r} in lab 'test'. Available: {sorted(known)}")
+        # The lookup's own miss: `otto host` lists the ids it carries.
+        raise unknown_host_error(host_id, lab_name="test", available=list(known))
 
     # Not a RemoteHost, so not registrable: the table is replaced by a
     # mapping of the one record the CLI reads.
     monkeypatch.setattr(op, "HOST_CLASSES", {"spy": _entry(SpyHost)})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda _hid: SpyHost)
     monkeypatch.setattr("otto.fleet.get_host", fake_get_host)
-    # `_resolve_host`'s "Available hosts" listing reads the active context's
-    # lab mapping directly — explicit `otto host <id>` targeting is unscoped,
-    # so it deliberately does NOT go through the fleet generator. Stubbed for
-    # the same reason its `all_hosts` predecessor was: these tests install no
-    # context, and the listing is not what they are about.
+    # The run context is stubbed with an empty lab: these tests install no
+    # context of their own, and what the seam reads off one is not what they
+    # are about.
     empty_lab = SimpleNamespace(lab=SimpleNamespace(hosts={}))
     monkeypatch.setattr("otto.run_context.get_context", lambda: empty_lab)
 

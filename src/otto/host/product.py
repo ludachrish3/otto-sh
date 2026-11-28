@@ -1680,8 +1680,10 @@ def apply_product_providers(host: "Host") -> None:
     ``host.shadowed_products`` (stamped the same way) so the listing can say so.
 
     A provider is SKIPPED — not called — when its registering project's
-    ``[project]`` declaration does not target ``(host.source_lab, host.id)``
-    (spec §5). This is the admission half of scoping: the fleet walks bound
+    ``[project]`` declaration does not target the host
+    (:func:`~otto.config.scope.host_targeted`, spec §5): a container is
+    judged by its parent, so it gets a project's products exactly when the
+    host it runs on would. This is the admission half of scoping: the fleet walks bound
     which hosts a project may reach, and without this a project declared for one lab
     still hangs its products on every host of every other lab the run happens
     to load. Skipping before the call rather than filtering the return is the
@@ -1691,21 +1693,20 @@ def apply_product_providers(host: "Host") -> None:
     Two carve-outs admit, both because a gate that cannot compute a narrowing
     must narrow nothing. An UNSTAMPED host (``source_lab == ""``) is not
     judged at all: hosts built outside the loader — direct
-    :func:`~otto.host.factory.create_host_from_dict` use, container hosts, the
-    built-in ``local`` — predate scoping and behave exactly as before. And an
+    :func:`~otto.host.factory.create_host_from_dict` use, a container whose
+    parent was unstamped, the built-in ``local`` — predate scoping and behave
+    exactly as before. And an
     owner whose declaration cannot be resolved admits, which
     :func:`~otto.declared.scope_for_project` decides and documents.
     """
-    from ..config.scope import project_targets  # function-scope: import-light seam
+    from ..config.scope import host_targeted  # function-scope: import-light seam
     from ..declared import (
         scope_for_project,
     )  # at call time: a patch of the owner reaches both seams
 
     seen = {p.name for p in host.products}
     for provider, provider_owner in registered_product_providers():
-        if host.source_lab and not project_targets(
-            scope_for_project(provider_owner), host.source_lab, host.id
-        ):
+        if host.source_lab and not host_targeted(scope_for_project(provider_owner), host):
             logger.debug(
                 "product provider: project %r does not target host %s of lab %r — not run",
                 provider_owner,

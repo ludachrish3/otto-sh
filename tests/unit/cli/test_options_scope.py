@@ -528,8 +528,15 @@ def test_a_host_starved_projects_body_has_its_flags_offered_and_is_not_built(
     A characterization of docs/cli/run/defaults.md's line: a project that takes
     part with no host in the loaded lab still offers its flags, and a value
     passed for it is accepted and unused. The real body walk runs, watched.
+    ``lib`` also applies to ``beta1`` here and targets its host, so a host is in
+    play and the run is not refused as an empty scope.
     """
     from otto.project import orchestrator
+    from tests._fixtures.scope_worlds import _scope
+
+    object.__setattr__(run_world.lib, "project_scope", _scope("gamma.*", "beta.*"))
+    object.__setattr__(run_world.b, "project_scope", _scope("beta.*", hosts=()))
+    run_world.install()
 
     real = orchestrator.project_instruction_body_options
     built: "list[list[str]]" = []
@@ -589,7 +596,15 @@ def test_an_unknown_include_name_is_reported_by_run_install_and_its_help(run_wor
 
 
 def test_three_invocations_of_otto_run_install_each_see_their_own_flags(scope_world, otto_cli):
-    """§6 item 19 on ``otto run``: in, out, in, in one process."""
+    """§6 item 19 on ``otto run``: in, out, in, in one process.
+
+    ``lib`` also applies to ``alpha1`` here, so with ``a`` switched off a host
+    is still in play and the run is not refused as an empty scope.
+    """
+    from tests._fixtures.scope_worlds import _scope
+
+    object.__setattr__(scope_world.lib, "project_scope", _scope("gamma.*", "alpha.*"))
+    scope_world.install()
     scope_world.register(ARun, ["run install"], project="a")
     scope_world.skip_install_bodies()
     seen = scope_world.install_reads(ARun)

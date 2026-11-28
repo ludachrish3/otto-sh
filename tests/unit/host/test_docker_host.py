@@ -149,6 +149,38 @@ def test_id_lowercased():
     assert h.id == "test3.project1.api"
 
 
+def test_only_container_class_has_parent():
+    """``DockerContainerHost`` is the one host class with a ``parent``.
+
+    Scope judges a host by ``getattr(host, "parent", None) or host`` (the
+    runner side and ``host_targeted`` alike), so a second class growing a
+    ``parent`` would be judged by that parent without anyone deciding it.
+    Every ``otto.host`` module is imported, so every built-in class is seen.
+    """
+    import importlib
+    import inspect
+    import pkgutil
+
+    import otto.host
+    from otto.host.host import BaseHost
+
+    for module in pkgutil.walk_packages(otto.host.__path__, "otto.host."):
+        importlib.import_module(module.name)
+
+    def _subclasses(cls):
+        for sub in cls.__subclasses__():
+            yield sub
+            yield from _subclasses(sub)
+
+    def _has_parent(cls):
+        return hasattr(cls, "parent") or any(
+            "parent" in inspect.get_annotations(klass) for klass in cls.__mro__
+        )
+
+    with_parent = {cls.__qualname__ for cls in _subclasses(BaseHost) if _has_parent(cls)}
+    assert with_parent == {"DockerContainerHost"}
+
+
 def test_is_virtual_default():
     assert _make_container().is_virtual is True
 

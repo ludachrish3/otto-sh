@@ -14,6 +14,7 @@ from otto.tunnel.manage import RemovedReport, remove_all_tunnels, remove_tunnel
 from otto.tunnel.model import Direction, Role, Tunnel, TunnelHop
 from otto.tunnel.sentinel import encode_sentinel
 from otto.utils import Status
+from tests._fixtures.fleet import DoubleLab
 from tests.conftest import active_context
 
 _LO = 49152
@@ -95,9 +96,7 @@ class FakeHost:
         raise AssertionError(f"unexpected command: {cmd!r}")
 
 
-@dataclass
-class FakeLab:
-    hosts: dict
+FakeLab = DoubleLab
 
 
 def _lab(**hosts: Any) -> FakeLab:

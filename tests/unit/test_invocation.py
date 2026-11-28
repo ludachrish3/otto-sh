@@ -147,23 +147,33 @@ def test_set_context_installs_the_run_and_reset_context_restores_it():
         assert try_get_context() is None
 
 
-def test_the_active_run_protocol_is_the_four_names_the_context_provides():
-    """``lab``, ``projects``, ``ordered_projects`` and ``admissible_ids(require_nonempty=...)``.
+def test_the_active_run_protocol_is_the_names_the_context_provides():
+    """``lab``, ``projects``, ``ordered_projects``, ``unscoped``, ``get_host``, ``admissible_ids``.
 
     The protocol a reader below the run layer may use, and each member as the
-    context defines it. ty checks the full shapes where ``set_context`` hands
-    the context to ``install_run``.
+    context defines it, plus the private ``_hosts_in_play`` the reservation
+    gate reads. ty checks the full shapes where ``set_context`` hands the
+    context to ``install_run``.
     """
-    import dataclasses
     import inspect
 
     from otto.context import OttoContext
 
     members = sorted(name for name in vars(inv.ActiveRun) if not name.startswith("_"))
-    assert members == ["admissible_ids", "lab", "ordered_projects", "projects"]
-    assert "lab" in {field.name for field in dataclasses.fields(OttoContext)}
-    for name in ["projects", "ordered_projects"]:
+    assert members == [
+        "admissible_ids",
+        "get_host",
+        "lab",
+        "ordered_projects",
+        "projects",
+        "unscoped",
+    ]
+    assert "_hosts_in_play" in vars(inv.ActiveRun)
+    assert callable(inspect.getattr_static(OttoContext, "_hosts_in_play"))
+    for name in ["lab", "projects", "ordered_projects", "unscoped"]:
         assert isinstance(inspect.getattr_static(OttoContext, name), property), name
+    unscoped = sorted(name for name in vars(inv.UnscopedRun) if not name.startswith("_"))
+    assert unscoped == ["lab", "ordered_projects", "projects"]
     protocol = inspect.signature(inv.ActiveRun.admissible_ids).parameters
     context = inspect.signature(OttoContext.admissible_ids).parameters
     assert list(protocol) == list(context) == ["self", "owner", "require_nonempty"]

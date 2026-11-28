@@ -7,7 +7,13 @@ implementation without changing this path:
 - :class:`~otto.labs.loader.Lab`, a loaded lab, and
   :func:`~otto.labs.loader.load_lab`, which builds one from lab data;
 - :func:`~otto.fleet.get_lab` and :func:`~otto.fleet.get_host`:
-  the active context's lab, and one of its hosts by id (never scoped);
+  the active context's lab, and one of the hosts this run targets, by id;
+- :class:`~otto.lab_view.LabView`, what ``get_lab()`` and ``ctx.lab``
+  return, and :class:`~otto.lab_view.ScopedLab`, the view a scoped command
+  reads: only the hosts this run targets;
+- :class:`~otto.config.scope.HostOutOfScopeError`: the :class:`KeyError`
+  ``get_host`` raises for a host that is in the lab but outside this run's
+  scope;
 - :func:`~otto.fleet.all_hosts`,
   :func:`~otto.fleet.do_for_all_hosts` and
   :func:`~otto.fleet.run_on_all_hosts`: walks over the run's fleet of
@@ -36,18 +42,23 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config.scope import EmptySelectionError as EmptySelectionError
+    from ..config.scope import HostOutOfScopeError as HostOutOfScopeError
     from ..fleet import all_hosts as all_hosts
     from ..fleet import do_for_all_hosts as do_for_all_hosts
     from ..fleet import fleet_of_interest as fleet_of_interest
     from ..fleet import get_host as get_host
     from ..fleet import get_lab as get_lab
     from ..fleet import run_on_all_hosts as run_on_all_hosts
+    from ..lab_view import LabView as LabView
+    from ..lab_view import ScopedLab as ScopedLab
     from ..labs.loader import Lab as Lab
     from ..labs.loader import load_lab as load_lab
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
     "Lab": "otto.labs.loader",
+    "LabView": "otto.lab_view",
+    "ScopedLab": "otto.lab_view",
     "load_lab": "otto.labs.loader",
     "get_lab": "otto.fleet",
     "get_host": "otto.fleet",
@@ -56,6 +67,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "run_on_all_hosts": "otto.fleet",
     "fleet_of_interest": "otto.fleet",
     "EmptySelectionError": "otto.config.scope",
+    "HostOutOfScopeError": "otto.config.scope",
 }
 
 
@@ -75,7 +87,10 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "EmptySelectionError",
+    "HostOutOfScopeError",
     "Lab",
+    "LabView",
+    "ScopedLab",
     "all_hosts",
     "do_for_all_hosts",
     "fleet_of_interest",

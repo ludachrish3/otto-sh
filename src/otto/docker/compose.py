@@ -19,8 +19,10 @@ from dataclasses import dataclass, field, replace
 from pathlib import PurePath
 from typing import TYPE_CHECKING, TypeGuard
 
+from typing_extensions import final
+
 from ..config.project import Project
-from ..config.scope import DockerCompose, declared_use_case_names
+from ..config.scope import DockerCompose, HostOutOfScopeError, declared_use_case_names
 from ..host.docker_host import (
     DockerContainerHost,
     compose_container_probe,
@@ -36,6 +38,9 @@ from ..result import CommandNotRunError, CommandResult, Result
 from ..utils import Status, WaitTimeoutError, invoking_user_label, wait_for_async
 
 if TYPE_CHECKING:
+    from ..config.scope import ScopeSelection
+    from ..host.targeting import HostScope
+    from ..lab_view import LabView
     from ..labs.loader import Lab
 
 logger = logging.getLogger(__name__)
@@ -170,7 +175,7 @@ def is_docker_capable(host: object) -> "TypeGuard[UnixHost]":
     return isinstance(host, UnixHost) and host.docker_capable
 
 
-def _project_parent_host(lab: "Lab", parent: str | None) -> UnixHost:
+def _project_parent_host(lab: "LabView", parent: str | None) -> UnixHost:
     """Pick the parent host for a project's compose stack (spec §2).
 
     Explicit *parent*, else the lab's default parent: the one rule
@@ -313,7 +318,7 @@ async def _resolve_container_id(
 async def compose_up(
     *,
     project: Project,
-    lab: "Lab",
+    lab: "LabView",
     parent: str | None = None,
     project_name: str | None = None,
     build: bool = False,
@@ -430,7 +435,7 @@ class StartedStack:
 
 
 async def roll_back(
-    lab: "Lab", started: "list[StartedStack]", *, unwinding: "BaseException | None" = None
+    lab: "LabView", started: "list[StartedStack]", *, unwinding: "BaseException | None" = None
 ) -> None:
     """Take down every stack in *started*: the one rollback for every path that starts one.
 
@@ -459,7 +464,11 @@ async def roll_back(
     """
     # Imported here, not at module scope: otto.lifecycle is only needed once a
     # compensating action actually runs (import-budget guard).
+    from ..lab_view import whole_lab
     from ..lifecycle import compensate, held_cancellation
+
+    # The whole lab, the one a start registers its containers in.
+    lab = whole_lab(lab)
 
     async def down_each() -> None:
         for stack in started:
@@ -514,7 +523,7 @@ def merge_declared_users(composes: "Iterable[DockerCompose]") -> "dict[str, str]
 
 
 async def register_stack_hosts(
-    lab: "Lab",
+    lab: "LabView",
     parent: UnixHost,
     *,
     compose_project: str,
@@ -604,16 +613,21 @@ async def register_stack_hosts(
     # service (e.g. after a container restart changed its id), so this is an
     # explicit delete-then-add (add_host would reject the duplicate id
     # outright), and a failure part-way puts back every entry it replaced.
+    # Written to the whole lab (``otto.lab_view.whole_lab``): a registration
+    # is the lab's, whatever the run's scope admits.
+    from ..lab_view import whole_lab
+
+    whole = whole_lab(lab)
     replaced: "list[tuple[str, Host | None]]" = []
     try:
         for host in hosts.values():
-            replaced.append((host.id, lab.hosts.pop(host.id, None)))
-            lab.add_host(host)
+            replaced.append((host.id, whole.hosts.pop(host.id, None)))
+            whole.add_host(host)
     except BaseException:
         for host_id, previous in reversed(replaced):
-            lab.hosts.pop(host_id, None)
+            whole.hosts.pop(host_id, None)
             if previous is not None:
-                lab.hosts[host_id] = previous
+                whole.hosts[host_id] = previous
         raise
 
     if not hosts:
@@ -634,7 +648,7 @@ async def register_stack_hosts(
 
 async def _up_and_register(
     project: Project,
-    lab: "Lab",
+    lab: "LabView",
     parent: UnixHost,
     proj: str,
     remote_file_strs: list[str],
@@ -714,7 +728,7 @@ async def _up_and_register(
 async def compose_down(
     *,
     project: Project,
-    lab: "Lab",
+    lab: "LabView",
     parent: str | None = None,
     project_name: str | None = None,
     stop_timeout: int = 1,
@@ -805,7 +819,7 @@ async def compose_down_project(
     parent: UnixHost,
     compose_project: str,
     *,
-    lab: "Lab",
+    lab: "LabView",
     remove_ids_under: "str | None",
     stop_timeout: int = 1,
     files: "Sequence[str | PurePath] | None" = None,
@@ -877,7 +891,7 @@ async def compose_down_project(
 
 
 async def unregister_container_hosts(
-    lab: "Lab", prefix: str, *, services: "list[str] | None" = None
+    lab: "LabView", prefix: str, *, services: "list[str] | None" = None
 ) -> list[str]:
     """Close and pop every container host in *lab* whose id starts with *prefix*.
 
@@ -900,10 +914,14 @@ async def unregister_container_hosts(
     than trusted: every caller builds it from ids that are already lower, so
     lowering is a no-op for them and a repair for anyone who forgets.
     """
+    from ..lab_view import whole_lab
+
+    # The whole lab: the sweep removes what a start registered there.
+    whole = whole_lab(lab)
     prefix = prefix.lower()
     wanted = None if services is None else {f"{prefix}{s}".lower() for s in services}
     drop = [
-        hid for hid in lab.hosts if hid.startswith(prefix) and (wanted is None or hid in wanted)
+        hid for hid in whole.hosts if hid.startswith(prefix) and (wanted is None or hid in wanted)
     ]
     for hid in drop:
         # `pop(..., None)` and the None check are not paranoia about our own
@@ -913,7 +931,7 @@ async def unregister_container_hosts(
         # our turn. Popping it again then returns None, and closing None
         # would replace a benign race with an AttributeError inside a
         # best-effort sweep.
-        host = lab.hosts.pop(hid, None)
+        host = whole.hosts.pop(hid, None)
         if host is not None:
             try:
                 await host.close()
@@ -926,7 +944,7 @@ async def unregister_container_hosts(
 async def composed(
     *,
     project: Project,
-    lab: "Lab",
+    lab: "LabView",
     parent: str | None = None,
     project_name: str | None = None,
     own: bool = False,
@@ -1007,13 +1025,14 @@ async def composed(
         await tear_down(None)
 
 
-def _default_parent_or_none(lab: "Lab") -> UnixHost | None:
+def _default_parent_or_none(lab: "LabView") -> UnixHost | None:
     """Return the lab's default docker parent by the one rule, or ``None`` when it refuses.
 
     The placeholder walks run at the start of every otto invocation, long
     before a caller names a use-case, so a lab with no unambiguous parent
     (a tie, or no docker-capable host) is normal there: they register
-    nothing and say nothing (spec §7).
+    nothing and say nothing (spec §7). *lab* is the placement's view of the
+    lab, so the rule picks among the hosts the run may target.
     """
     # Function-scope: a bare `otto docker --help` must not pay observe.py's
     # import cost (import budget); both modules are fully loaded by the time
@@ -1026,7 +1045,87 @@ def _default_parent_or_none(lab: "Lab") -> UnixHost | None:
         return None
 
 
-def register_declared_container_hosts(lab: "Lab", projects: list[Project]) -> int:
+def placement_selection(
+    selection: "ScopeSelection | None", *, component_names: Sequence[str]
+) -> "ScopeSelection":
+    """Return the switches a lab build places declared containers by: the one normalization.
+
+    The labs are the lab being placed, *component_names*, whatever labs
+    *selection* names: placement judges the lab it builds. Its ``-I`` / ``-E``
+    switches are *selection*'s; with no *selection* there are none, so only
+    the lab axis decides which projects take part.
+
+    Args:
+        selection: The build's switches, or ``None`` for a build with none.
+        component_names: The built lab's component lab names.
+
+    Returns:
+        The selection placement judges participation and scope by.
+    """
+    from ..config.scope import ScopeSelection
+
+    if selection is None:
+        return ScopeSelection(labs=tuple(component_names), include=(), exclude=())
+    return ScopeSelection(
+        labs=tuple(component_names),
+        include=tuple(selection.include),
+        exclude=tuple(selection.exclude),
+    )
+
+
+@final
+class PlacementSource:
+    """The scope a lab build places declared containers by, before any run context exists.
+
+    The build-time twin of a run context as the source a
+    :class:`~otto.lab_view.ScopedLab` reads: it holds the canonical lab and
+    builds the run's one scope judge (``otto.host.targeting.HostScope``)
+    over it. The projects' scope verdicts are resolved once, here; the judge
+    reads the lab live, so a host registered later is judged when it is read.
+    It judges nothing itself.
+
+    Args:
+        lab: The canonical lab being built.
+        projects: Every project the build reads, taking part or not, so the
+            files a refusal names are the ones a run's refusal names.
+        selection: The build's switches, from :func:`placement_selection`.
+    """
+
+    __slots__ = ("_lab", "_verdicts")
+
+    def __init__(
+        self, lab: "Lab", projects: "Sequence[Project]", *, selection: "ScopeSelection"
+    ) -> None:
+        from ..host.builtin_hosts import lab_scopes
+        from ..host.targeting import ScopeVerdicts
+
+        self._lab = lab
+        self._verdicts = ScopeVerdicts(
+            scopes=lab_scopes(projects, component_names=lab.component_names, hosts=lab.hosts),
+            exclude_projects=selection.exclude,
+        )
+
+    def _host_scope(self) -> "HostScope":
+        """Build the scope judge over the lab as it stands and the verdicts resolved once."""
+        from ..host.targeting import HostScope
+
+        verdicts = self._verdicts
+        return HostScope(lab=self._lab, scoped=True, verdicts=lambda: verdicts, empty_refusal=None)
+
+
+def _declares_docker(project: Project) -> bool:
+    """Report whether *project* declares docker services: use-case fragments or composes."""
+    settings = project.docker_settings
+    return bool(settings.use_cases or settings.composes)
+
+
+def register_declared_container_hosts(
+    lab: "Lab",
+    projects: "Sequence[Project]",
+    *,
+    selection: "ScopeSelection | None" = None,
+    unscoped: bool = False,
+) -> int:
     """Pre-register *placeholder* container hosts in *lab* for every declared service triple.
 
     The placeholders carry an empty ``container_id`` so that any operation
@@ -1044,27 +1143,44 @@ def register_declared_container_hosts(lab: "Lab", projects: list[Project]) -> in
     container host's not-running error shows. A project with no ``use_cases``
     keeps today's per-project ids unchanged.
 
-    Both branches register under the ONE parent the lab's default rule names
-    (:func:`~otto.docker.observe.default_docker_parent`) and under none when
+    Only the projects that take part under the build's switches get
+    placeholders (:func:`~otto.config.scope.participating`, over
+    :func:`placement_selection`'s answer). Both branches register under the
+    ONE parent the lab's default rule names
+    (:func:`~otto.docker.observe.default_docker_parent`), chosen among the
+    hosts the run may target (:class:`PlacementSource`), and under none when
     the rule refuses — a lab with no unambiguous parent is normal at this
     point (this walk runs at the start of every otto invocation), not an error.
+    *unscoped* chooses among every lab host instead, for a caller that checks
+    the lab as configured rather than a run's slice of it.
 
     Returns the number of placeholders registered.
     """
+    # A lab none of whose projects declares docker never pays the scope
+    # resolution, the rule or observe.py's import on the every-invocation
+    # preamble this walk runs in.
+    declaring = [project for project in projects if _declares_docker(project)]
+    if not declaring:
+        return 0
+    from ..config.scope import participating
+
+    normalized = placement_selection(selection, component_names=lab.component_names)
+    walk = participating(declaring, selection=normalized).kept
+    if not walk:
+        return 0
+    if unscoped:
+        parent = _default_parent_or_none(lab)
+    else:
+        from ..lab_view import ScopedLab
+
+        parent = _default_parent_or_none(
+            ScopedLab(PlacementSource(lab, projects, selection=normalized))
+        )
+    if parent is None:
+        return 0  # the rule refuses: no project gets a placeholder
     count = 0
-    parent: UnixHost | None = None
-    resolved = False
-    for project in projects:
+    for project in walk:
         settings = project.docker_settings
-        if not (settings.use_cases or settings.composes):
-            continue
-        # Resolved once, lazily: a lab none of whose projects declares docker
-        # never pays the rule (or observe.py's import) on the every-invocation
-        # preamble this walk runs in.
-        if not resolved:
-            parent, resolved = _default_parent_or_none(lab), True
-        if parent is None:
-            break  # the rule refuses: no project gets a placeholder
         if settings.use_cases:
             count += _register_use_case_placeholders(lab, project, parent)
             continue
@@ -1077,9 +1193,11 @@ def register_declared_container_hosts(lab: "Lab", projects: list[Project]) -> in
         # One gate, one answer, both paths.
         users = merge_declared_users(settings.composes)
         for compose in settings.composes:
-            # One parent, the lab's default by the one rule — the same one the
-            # use-case walk and completion use, so all three agree on which
-            # container hosts exist before the first `up`.
+            # One parent, the lab's default by the one rule, the same one the
+            # use-case walk uses, so both agree on which container hosts exist
+            # before the first `up`. The completion cache's mirror of these
+            # ids still derives the parent over the whole lab, with no
+            # switches, until completion reads the scope too.
             for service in compose.services:
                 placeholder = DockerContainerHost(
                     parent=parent,
@@ -1171,16 +1289,27 @@ def _register_use_case_placeholders(lab: "Lab", project: Project, parent: UnixHo
 
 
 def get_container_host(host_id: str) -> DockerContainerHost:
-    """Look up a registered container host by id. Raises if not present."""
+    """Look up a registered container host by id, as ``get_host`` looks hosts up.
+
+    Raises:
+        otto.lab.HostOutOfScopeError: The container is in the lab but outside
+            this run's scope (its parent is); the message names why and the fix.
+        KeyError: No container host with *host_id* is registered.
+    """
     from ..invocation import require_run
 
-    lab = require_run().lab
-    host = lab.hosts.get(host_id)
+    missing = KeyError(
+        f"No container host registered with id {host_id!r}. "
+        f"Did you call `otto docker compose up` (or `compose_up`) first?"
+    )
+    try:
+        host = require_run().get_host(host_id)
+    except HostOutOfScopeError:
+        raise
+    except KeyError:
+        raise missing from None
     if not isinstance(host, DockerContainerHost):
-        raise KeyError(
-            f"No container host registered with id {host_id!r}. "
-            f"Did you call `otto docker compose up` (or `compose_up`) first?"
-        )
+        raise missing
     return host
 
 

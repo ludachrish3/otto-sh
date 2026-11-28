@@ -27,7 +27,9 @@ the wrappers build records, and the engine applies the rules.
 The module also holds the *registering-project marker* (:func:`registering_project`,
 :func:`get_registering_project`): the context variable ``bootstrap()`` sets around
 each project's init imports, so registrations record *which project* an entry came
-from rather than only which module.
+from rather than only which module. A registration's owner is that project,
+except that otto's own modules' registrations have none; validators read it from
+``Proposed.owner`` and ``register_*`` wrappers from ``registration_owner()``.
 
 And it holds the CLI's *completion-cache snapshot* (:func:`get_completion_names`,
 :func:`set_completion_names`): on the completion fast path and for the root
@@ -285,6 +287,30 @@ _REGISTERING_PROJECT: "contextvars.ContextVar[str | None]" = contextvars.Context
 def get_registering_project() -> str | None:
     """Name of the project whose init modules are currently being imported, if any."""
     return _REGISTERING_PROJECT.get()
+
+
+def _registration_owner(registrant: str) -> str | None:
+    """Return the project a registration made by module *registrant* belongs to.
+
+    The one owner decision, for a registry entry and a subscription alike.
+    otto's own modules register their built-ins when they are first imported,
+    and that can happen inside a project's init import. Such a registration is
+    otto's, whichever project's import ran it, so it has no owner. Keyed on
+    the registrant, as the test-load refusal is.
+    """
+    return None if _is_otto_origin(registrant) else get_registering_project()
+
+
+def registration_owner() -> str | None:
+    """Return the project a registration made from here belongs to, ``None`` for otto's.
+
+    For a ``register_*`` wrapper that builds the key or record it registers:
+    called inside a :func:`registration_boundary`, it judges the wrapper's
+    caller, the registrant the entry will be stamped with, so the key and
+    the stamp name one owner. A registry's ``validate`` hook reads
+    ``Proposed.owner``, the owner the engine computed for the batch.
+    """
+    return _registration_owner(_attributed_module())
 
 
 @contextlib.contextmanager
@@ -692,10 +718,13 @@ class Capability:
 @final
 @dataclasses.dataclass(frozen=True)
 class RequireProject(Capability):
-    """Refuse a registration made outside a project's init import.
+    """Refuse a registration that no project owns.
 
-    A register or register_many made while :func:`get_registering_project` is
-    ``None`` raises :class:`RegistrationRefused`. It does not apply to
+    A register or register_many whose owner is ``None`` raises
+    :class:`RegistrationRefused`: one made outside a project's init import,
+    or one made by otto's own modules (whose registrations are otto's,
+    whichever project's import runs them). The owner is the one the entry
+    would be stored under (:meth:`Registry.project`). It does not apply to
     unregister, test restore or publish.
     """
 
@@ -798,15 +827,29 @@ class Proposed(Mapping[str, E]):
     """The stored entries with a registration's batch applied: read-only.
 
     Handed to a registry's ``validate`` hook so a rule spanning entries can
-    read the table as it would be after the write.
+    read the table as it would be after the write, and the batch's
+    :attr:`owner`.
     """
 
-    __slots__ = ("_data",)
+    __slots__ = ("_data", "_owner")
 
-    def __init__(self, stored: "Mapping[str, E]", batch: "Sequence[tuple[str, E]]") -> None:
+    def __init__(
+        self, stored: "Mapping[str, E]", batch: "Sequence[tuple[str, E]]", *, owner: str | None
+    ) -> None:
         self._data: dict[str, E] = dict(stored)
         for name, entry in batch:
             self._data[name] = entry
+        self._owner = owner
+
+    @property
+    def owner(self) -> str | None:
+        """The project the batch is registered for, ``None`` for otto's own.
+
+        The owner each entry will be stored under (:meth:`Registry.project`),
+        decided once by the engine, so a validator judging ownership agrees
+        with the stamp.
+        """
+        return self._owner
 
     @override
     def __getitem__(self, name: str) -> E:
@@ -1005,7 +1048,7 @@ class Registry(Generic[E]):
                 f"{self._kind} {batch[0][0]!r}: yielding=True from {registrant!r} is refused; "
                 "only otto's own modules may yield a name"
             )
-        project = get_registering_project()
+        project = _registration_owner(registrant)
         names = [name for name, _ in batch]
         holding_refs: set[str] = set()
         yielded: dict[str, _Stored] = {}
@@ -1039,7 +1082,7 @@ class Registry(Generic[E]):
                 collisions=lambda: yielded.update(
                     self._check_collisions(names, overwrite, registrant)
                 ),
-                validate=lambda: self._run_validate(batch),
+                validate=lambda: self._run_validate(batch, owner=project),
             )
         )
         for name, replaced in yielded.items():
@@ -1102,11 +1145,12 @@ class Registry(Generic[E]):
             )
         return yielded
 
-    def _run_validate(self, batch: "list[tuple[str, E]]") -> None:
+    def _run_validate(self, batch: "list[tuple[str, E]]", *, owner: str | None) -> None:
         """Run the registry's validate hook on the proposed table (step 7 of a registration)."""
         if self._validate is None:
             return
-        proposed = Proposed({n: cast("E", s.value) for n, s in self._entries.items()}, batch)
+        stored = {n: cast("E", s.value) for n, s in self._entries.items()}
+        proposed = Proposed(stored, batch, owner=owner)
         for name, entry in batch:
             self._validate(name, entry, proposed)
 
@@ -1471,7 +1515,7 @@ class Subscription(Generic[T]):
                 is running.
         """
         origin = _attributed_module()
-        project = get_registering_project()
+        project = _registration_owner(origin)
         occurrence = next(_OCCURRENCES)
         label = getattr(value, "__qualname__", None) or repr(value)
 

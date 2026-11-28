@@ -19,8 +19,8 @@ def check_dependencies(*, ctx: "OttoContext") -> list[str]:
     failure never reaches this check (``bootstrap()`` contained it, and
     :func:`~otto.session.check_projects` reported it). This check catches the lazy shape: an
     import inside an instruction body. The projects checked are the run's, read
-    off *ctx* (:attr:`~otto.context.OttoContext.ordered_projects`), never a
-    second read of the composition root.
+    off *ctx* (every parsed project, in dependency order: ``ctx.unscoped``),
+    never a second read of the composition root.
 
     Returns the warnings: checks the preflight could not make, then each
     inactive project's unmet requirement. Raises
@@ -30,7 +30,7 @@ def check_dependencies(*, ctx: "OttoContext") -> list[str]:
     from ..config.scope import active
     from ..env.preflight import preflight
 
-    result = preflight(ctx.ordered_projects)
+    result = preflight(ctx.unscoped.ordered_projects)
     warnings = [str(w) for w in result.warnings]
     blocking = []
     for bad in result.unsatisfied:

@@ -67,7 +67,7 @@ from .staging import (
 if TYPE_CHECKING:
     from ..config.project import Project
     from ..config.scope import DockerCompose
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
     from ..result import CommandResult
     from .resolve import SelectedFragment
 
@@ -117,7 +117,7 @@ class UseCaseStack:
 # ---------------------------------------------------------------------------
 
 
-def parent_for(lab: "Lab", host_id: str) -> UnixHost:
+def parent_for(lab: "LabView", host_id: str) -> UnixHost:
     """Return the docker-capable parent behind an acting host id, or refuse.
 
     Only called for a host :func:`acting_hosts` decided this call actually
@@ -339,7 +339,7 @@ class _HostPlan:
 def _plan_host(
     *,
     selection: Selection,
-    lab: "Lab",
+    lab: "LabView",
     host_id: str,
     frags: "list[SelectedFragment]",
     compose_project: str,
@@ -579,7 +579,7 @@ async def _build_for(units: "list[_ProjectUnit]", parent: UnixHost) -> None:
 class UseCaseResolution:
     """What :func:`resolve_use_case` decided, before any device is touched."""
 
-    lab: "Lab"
+    lab: "LabView"
     selection: Selection
     parent: UnixHost
     """The one host the use-case deploys on (spec §2)."""

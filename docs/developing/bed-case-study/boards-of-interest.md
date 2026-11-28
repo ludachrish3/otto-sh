@@ -1,8 +1,9 @@
 # Boards of interest
 
 A lab file can describe more equipment than one repository cares about. The
-bed has sixteen hosts; a BusyBox project wants five. `[project]` in
-`settings.toml` says which:
+bed has sixteen hosts in four labs; this project works on the five BusyBox
+guests, two of the Ubuntu VMs, the Python REPL host and the Zephyr boards.
+`[project]` in `settings.toml` says which:
 
 ```{literalinclude} ../../examples/getting-started/.otto/settings.toml
 :language: toml
@@ -11,8 +12,8 @@ bed has sixteen hosts; a BusyBox project wants five. `[project]` in
 ```
 
 Both are {ref}`fullmatched regexes <project-scope>` — `bb`
-would match nothing, `bb.*-qemu` matches the five guests and not `test1`,
-which is also a member of the `busybox` lab. The host id is what is matched:
+would match nothing, `bb.*-qemu` matches the five guests, and `test1` matches
+`test1` alone, not `test1-py`. The host id is what is matched:
 `bb1350-qemu`, the element name plus the board slug otto appends.
 
 What the declaration changes is the fleet every walk starts from.
@@ -47,17 +48,34 @@ os.chdir(_old_cwd)
 >>> from otto.lab import fleet_of_interest
 >>> from otto.session import build_lab
 >>> project = Project(root=Path.cwd())
->>> lab = build_lab([project], labs=["busybox"])
+>>> lab = build_lab([project], labs=["unix"])
 >>> sorted(lab.hosts)
-['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu', 'local', 'test1']
+['local', 'test1', 'test2', 'test3']
 >>> sorted(fleet_of_interest(lab, projects=[project]))
-['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu']
+['test1', 'test2']
 ```
 
-`test1` is in the lab and out of the fleet. Naming it explicitly —
-`otto host test1 …` — still works: explicit targeting is never scoped.
-Container hosts and the built-in `local` host are held out of every walk by
-default regardless of the declaration.
+Each lab narrows the same way. Here is what each of the other three leaves
+outside the fleet:
+
+```{doctest}
+>>> for name in ["busybox", "embedded", "pyrepl"]:
+...     lab = build_lab([project], labs=[name])
+...     fleet = fleet_of_interest(lab, projects=[project])
+...     print(name, "outside:", sorted(set(lab.hosts) - set(fleet) - {"local"}))
+busybox outside: []
+embedded outside: ['test4']
+pyrepl outside: []
+```
+
+`test3` and `test4` are in their labs and out of the fleet. `test4` still
+carries the Zephyr boards' connections, because a host reached as a hop needs
+only lab membership, but `otto --lab embedded host test4 …` is refused,
+naming this project's `settings.toml` to widen ({ref}`project-scope-hosts`).
+Container hosts and the built-in `local` host are held out of every **walk**
+by default regardless of the declaration.  That is a walk's choice, not the
+scope's: as a **target**, `local` always resolves (`otto host local`), and a
+container is targetable exactly when its parent is.
 
 {doc}`../../configuration/lab/project-scope` is the reference,
 including what happens when several repositories declare scopes over one

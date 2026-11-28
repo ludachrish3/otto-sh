@@ -1,4 +1,5 @@
 $ otto --lab example_lab cov report /tmp/otto-gs/xdir/quickstart-embedded/e2e --dir /tmp/otto-gs/xdir/quickstart-embedded/report
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
 INFO     unit unit/mathops: kept 1 source files of product mathops, dropped <n> others
 INFO     lcov capture ->
          /tmp/otto-gs/xdir/quickstart-embedded/report/_work/unit_unit_mathops_0.raw.info

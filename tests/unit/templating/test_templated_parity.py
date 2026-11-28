@@ -54,10 +54,10 @@ def _recording_build_lab(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]
     calls: list[dict[str, Any]] = []
     real = session_lab.build_lab
 
-    def recording(projects: Any, *, labs: Any, view: Any = None) -> Any:
+    def recording(projects: Any, *, labs: Any, view: Any = None, **kw: Any) -> Any:
         call: dict[str, Any] = {"projects": projects, "labs": labs, "view": view}
         calls.append(call)
-        call["lab"] = real(projects, labs=labs, view=view)
+        call["lab"] = real(projects, labs=labs, view=view, **kw)
         return call["lab"]
 
     monkeypatch.setattr(session_lab, "build_lab", recording)
@@ -86,9 +86,9 @@ def test_templating_rows_come_from_the_dispatch_calls(tmp_path, otto_home, monke
     loads: list[dict[str, Any]] = []
     real_build = session_lab.build_lab
 
-    def spy_build(projects: Any, *, labs: Any, view: Any = None) -> Any:
+    def spy_build(projects: Any, *, labs: Any, view: Any = None, **kw: Any) -> Any:
         loads.append({"projects": projects, "labs": labs, "view": view})
-        return real_build(projects, labs=labs, view=view)
+        return real_build(projects, labs=labs, view=view, **kw)
 
     monkeypatch.setattr(sources, "lab_listing", spy_listing)
     monkeypatch.setattr(session_lab, "build_lab", spy_build)

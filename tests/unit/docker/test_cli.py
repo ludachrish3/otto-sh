@@ -1,6 +1,7 @@
 """Unit tests for `otto.cli.docker` helpers."""
 
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -361,7 +362,7 @@ async def test_compose_build_prints_displacements_then_images():
 async def test_compose_build_with_no_declared_use_case_is_the_existing_refusal():
     """Review focus: zero declared use-cases exits 1 through _default_use_case, no traceback."""
     with (
-        patch("otto.declared.get_projects", return_value=[]),
+        _participating([]),
         pytest.raises(typer.Exit) as e,
     ):
         await docker_cli._compose_build(use_case=None, image=None, parent=None, provide=None)
@@ -431,6 +432,22 @@ def _uc(
     )
 
 
+@contextmanager
+def _participating(projects):
+    """Install a run whose participating projects are *projects*, as the docker verbs read them.
+
+    The verbs read ``ctx.projects``, which the context composes through the
+    patched root; the projects declare no ``[project]`` scope, so all take part.
+    """
+    from tests._fixtures.bootstrap_seam import fake_bootstrap_result
+
+    with (
+        active_context(),
+        patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result(projects)),
+    ):
+        yield
+
+
 def _uc_project(name: str, *fragments: DockerUseCase) -> Project:
     """A project table in the shape `declared_use_cases`/`select_fragments` read."""
     return fake_project(
@@ -439,7 +456,7 @@ def _uc_project(name: str, *fragments: DockerUseCase) -> Project:
 
 
 def test_default_use_case_returns_the_only_one_declared():
-    with patch("otto.declared.get_projects", return_value=[_uc_project("a", _uc())]):
+    with _participating([_uc_project("a", _uc())]):
         assert docker_cli._default_use_case(None) == "integration"
 
 
@@ -449,14 +466,14 @@ def test_default_use_case_passes_an_explicit_name_through_unresolved():
     Checking it twice would give one mistake two different messages depending
     on which verb the user reached it through.
     """
-    with patch("otto.declared.get_projects", return_value=[]):
+    with _participating([]):
         assert docker_cli._default_use_case("whatever") == "whatever"
 
 
 def test_default_use_case_refuses_when_two_are_declared(capsys):
     projects = [_uc_project("a", _uc("integration")), _uc_project("b", _uc("soak"))]
     with (
-        patch("otto.declared.get_projects", return_value=projects),
+        _participating(projects),
         pytest.raises(typer.Exit) as excinfo,
     ):
         docker_cli._default_use_case(None)
@@ -468,7 +485,7 @@ def test_default_use_case_refuses_when_two_are_declared(capsys):
 
 def test_default_use_case_refuses_when_none_are_declared(capsys):
     with (
-        patch("otto.declared.get_projects", return_value=[_uc_project("a")]),
+        _participating([_uc_project("a")]),
         pytest.raises(typer.Exit) as excinfo,
     ):
         docker_cli._default_use_case(None)
@@ -550,7 +567,7 @@ async def test_up_deploys_the_only_declared_use_case_when_bare():
     deploy = AsyncMock(return_value=_stub_stack())
     with (
         patch("otto.docker.deployment.deploy", deploy),
-        patch("otto.declared.get_projects", return_value=[_uc_project("a", _uc())]),
+        _participating([_uc_project("a", _uc())]),
         patch.object(docker_cli, "rprint"),
     ):
         await docker_cli._compose_up()
@@ -564,7 +581,7 @@ async def test_up_bare_refuses_when_two_use_cases_are_declared(capsys):
     projects = [_uc_project("a", _uc("integration")), _uc_project("b", _uc("soak"))]
     with (
         patch("otto.docker.deployment.deploy", deploy),
-        patch("otto.declared.get_projects", return_value=projects),
+        _participating(projects),
         pytest.raises(typer.Exit) as excinfo,
     ):
         await docker_cli._compose_up()
@@ -916,7 +933,7 @@ def test_use_cases_lists_fragments_hosts_env_keys_and_displacements(capsys):
     lab.add_host(host)
 
     with (
-        patch("otto.declared.get_projects", return_value=[winner, loser]),
+        _participating([winner, loser]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
         patch("otto.docker.resolve.scope_for_project", return_value=None),
     ):
@@ -951,7 +968,7 @@ def test_use_cases_renders_the_compose_names_literally_not_as_rich_markup(capsys
     lab = Lab(name="unix")
 
     with (
-        patch("otto.declared.get_projects", return_value=[project]),
+        _participating([project]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
         patch("otto.docker.resolve.scope_for_project", return_value=None),
     ):
@@ -974,7 +991,7 @@ def test_use_cases_prints_the_parent_rule_refusal_instead_of_a_host(capsys):
         lab.add_host(UnixHost(ip=ip, creds=[], element=Element(name=name), docker_capable=True))
 
     with (
-        patch("otto.declared.get_projects", return_value=[project]),
+        _participating([project]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
     ):
         docker_cli._use_cases()  # exit 0
@@ -1002,7 +1019,7 @@ def test_use_cases_shows_the_ranked_parent_and_no_role_column(capsys):
     )
 
     with (
-        patch("otto.declared.get_projects", return_value=[project]),
+        _participating([project]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
     ):
         docker_cli._use_cases()
@@ -1031,7 +1048,7 @@ def test_use_cases_prints_a_provider_tie_refusal_instead_of_a_table_row(capsys):
     )
 
     with (
-        patch("otto.declared.get_projects", return_value=[a, b, healthy]),
+        _participating([a, b, healthy]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
         patch("otto.docker.resolve.scope_for_project", return_value=None),
     ):
@@ -1054,7 +1071,7 @@ def test_use_cases_filters_to_the_named_use_case(capsys):
     )
 
     with (
-        patch("otto.declared.get_projects", return_value=projects),
+        _participating(projects),
         patch.object(fleet_mod, "get_lab", return_value=lab),
         patch("otto.docker.resolve.scope_for_project", return_value=None),
     ):
@@ -1074,7 +1091,7 @@ def test_use_cases_filter_naming_nothing_refuses_loudly(capsys):
     "you have no use-cases".
     """
     with (
-        patch("otto.declared.get_projects", return_value=[_uc_project("project1", _uc())]),
+        _participating([_uc_project("project1", _uc())]),
         patch.object(fleet_mod, "get_lab", return_value=Lab(name="unix")),
         pytest.raises(typer.Exit) as excinfo,
     ):
@@ -1088,7 +1105,7 @@ def test_use_cases_filter_naming_nothing_refuses_loudly(capsys):
 
 def test_use_cases_says_so_when_nothing_is_declared(capsys):
     with (
-        patch("otto.declared.get_projects", return_value=[_uc_project("project1")]),
+        _participating([_uc_project("project1")]),
         patch.object(fleet_mod, "get_lab", return_value=Lab(name="unix")),
     ):
         docker_cli._use_cases()  # exit 0 — an empty inventory is an answer
@@ -1125,7 +1142,7 @@ def test_use_cases_prints_the_same_under_dry_run(argv):
 
     def run(*, dry_run: bool):
         with (
-            patch("otto.declared.get_projects", return_value=[winner, loser]),
+            _participating([winner, loser]),
             patch.object(fleet_mod, "get_lab", return_value=lab),
             patch("otto.docker.resolve.scope_for_project", return_value=None),
             patch.object(UnixHost, "exec", dialled),
@@ -1180,7 +1197,7 @@ def test_use_cases_runs_through_the_production_dispatch():
     from tests._fixtures.dispatch import DispatchRunner
 
     with (
-        patch("otto.declared.get_projects", return_value=[_uc_project("project1", _uc())]),
+        _participating([_uc_project("project1", _uc())]),
         patch.object(fleet_mod, "get_lab", return_value=Lab(name="unix")),
     ):
         result = DispatchRunner().invoke(docker_app, ["use-cases"], spec_name="docker")

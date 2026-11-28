@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
     from .config.project import Project
     from .host.host import Host
+    from .lab_view import LabView
     from .labs.loader import Lab
 
 T = TypeVar("T")
@@ -52,6 +53,24 @@ def check_variant(value: object) -> Variant:
         if value == variant:
             return variant
     raise ValueError(f"variant must be 'debug' or 'field', got {value!r}")
+
+
+LIBRARY_LAB_NAME = "<library>"
+"""Sentinel ``Lab.name`` for the minimal, host-less context a library caller
+gets for free.
+
+``otto.suite.run._session_context`` installs ``OttoContext(lab=Lab(name=LIBRARY_LAB_NAME))``
+around a session when no context is already active (e.g. ``run_tests()``
+called outside ``async with otto.open_context(...)``). That
+Lab carries no hosts, so any ``get_host()`` call inside such a run fails loud;
+the unknown-id message (``otto.host.targeting.unknown_host_error``) checks
+this constant to append a hint pointing at ``open_context`` ONLY for that
+sentinel lab. A real, lab-backed unknown-host error is untouched.
+
+Lives in this leaf because both sides read it: the run context, which builds
+the sentinel lab and special-cases it, and the host layer's unknown-id
+message, which may import this module and never the run context.
+"""
 
 
 @dataclass
@@ -220,6 +239,29 @@ def reset_binding(binding: ContextBinding) -> None:
 # ---------------------------------------------------------------------------
 
 
+class UnscopedRun(Protocol):
+    """What a reader below the run layer may ask of the run's whole universe.
+
+    :class:`otto.context.UnscopedView` satisfies it: the run's lab and every
+    parsed project, read past any project scope.
+    """
+
+    @property
+    def lab(self) -> "Lab":
+        """The run's canonical lab."""
+        ...
+
+    @property
+    def projects(self) -> "list[Project]":
+        """Every project the run parsed, a fresh list on every read."""
+        ...
+
+    @property
+    def ordered_projects(self) -> "list[Project]":
+        """The parsed projects in dependency order, a fresh list on every read."""
+        ...
+
+
 class ActiveRun(Protocol):
     """What a reader below the run layer may ask of the installed run.
 
@@ -232,24 +274,41 @@ class ActiveRun(Protocol):
     """
 
     @property
-    def lab(self) -> "Lab":
-        """The run's lab."""
+    def lab(self) -> "LabView":
+        """The run's lab as its command reads it, scoped when scoped (``OttoContext.lab``)."""
         ...
 
     @property
     def projects(self) -> "list[Project]":
-        """Every project the run parsed, a fresh list on every read."""
+        """The projects taking part in the run, a fresh list each read (``ctx.projects``)."""
         ...
 
     @property
     def ordered_projects(self) -> "list[Project]":
-        """The projects a fleet-wide walk visits, in dependency order."""
+        """The projects taking part, in dependency order (``OttoContext.ordered_projects``)."""
+        ...
+
+    @property
+    def unscoped(self) -> UnscopedRun:
+        """The run's whole universe, read past any project scope (``OttoContext.unscoped``)."""
         ...
 
     def admissible_ids(
         self, *, owner: "str | None" = None, require_nonempty: bool = True
     ) -> "set[str]":
         """Return the host ids the run's fleet walks may reach (``OttoContext.admissible_ids``)."""
+        ...
+
+    def get_host(self, host_id: str) -> "Host":
+        """Return the run's host *host_id* (``OttoContext.get_host``); ``KeyError`` if none."""
+        ...
+
+    def _hosts_in_play(self) -> "set[str]":
+        """Return the run's hosts in play, the hosts a reservation requirement covers.
+
+        Private, so it stays out of the public API; ``otto.reservations.check``
+        is its one reader.
+        """
         ...
 
     def _recorded_options(self) -> Any:

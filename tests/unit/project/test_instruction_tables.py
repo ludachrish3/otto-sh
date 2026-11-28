@@ -385,7 +385,15 @@ async def test_run_instruction_refuses_an_inactive_owner_through_the_view_s_proj
     with registering_project("acme"):
         instruction(name="tables-blink")(tables_blink)
     assert INSTRUCTIONS.project(name="tables-blink") == "acme"
-    ctx = OttoContext(lab=Lab(name="t"), exclude_projects=("acme",))
+    from tests._fixtures.bootstrap_seam import fake_bootstrap_result
+    from tests._fixtures.fake_project import fake_project
+
+    # The owner is judged as one of the parsed projects, so the context holds it.
+    ctx = OttoContext(
+        lab=Lab(name="t"),
+        exclude_projects=("acme",),
+        bootstrap=fake_bootstrap_result([fake_project("acme")]),
+    )
     ctx.scopes = {}
     with pytest.raises(InstructionInactiveError):
         await run_instruction(ctx, name="tables-blink")

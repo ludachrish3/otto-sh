@@ -143,6 +143,22 @@ class TestStandaloneConflict:
             _declare("b", "deploy", None)
         assert INSTRUCTIONS.get("deploy").handler is deploy
 
+    def test_an_otto_registration_in_a_projects_import_is_judged_as_otto_s(self) -> None:
+        """Fail-first: the validator names the owner the entry would be stored under.
+
+        An otto module registering inside project ``acme``'s init import is
+        otto's registration, so the clash names otto, never ``acme``.
+        """
+        scope = {"__name__": "otto.fake_builtins", "instruction": instruction}
+        code = "async def install() -> None: ...\ninstruction()(install)\n"
+        with (
+            registering_project("acme"),
+            pytest.raises(
+                ProjectInstructionError, match=r"standalone instruction registered by otto"
+            ),
+        ):
+            exec(compile(code, "<otto.fake_builtins>", "exec"), scope)  # noqa: S102 — an otto caller
+
 
 def test_the_instructions_view_derives_a_data_entry():
     _declare("a")

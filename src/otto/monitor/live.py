@@ -85,12 +85,13 @@ def _enforce_driving_project_scope() -> None:
     project's own "this lab is not my world" verdict would go unread and the
     dashboard would quietly monitor the dependency's machines.
 
-    THE DRIVING PROJECT IS ``ctx.projects[0]`` -- the first ``OTTOPATH``
+    THE DRIVING PROJECT IS ``ctx.unscoped.projects[0]`` -- the first ``OTTOPATH``
     entry -- and NOT the head of ``ctx.ordered_projects``, which is a
     topological reorder whose first element is a dependency. Gating on that one
     would let a dependency's declaration veto this project's run, which is
-    exactly the asymmetry D3 exists to prevent (see
-    :func:`otto.project.orchestrator._enforce_current_scope`, the same reading).
+    exactly the asymmetry D3 exists to prevent. The reading is
+    :func:`otto.config.scope.require_driving_scope`'s, which the project
+    orchestrator calls too.
 
     THE ONLY WORLD THE GUARD SKIPS IS THE ONE WITH NO CONTEXT. A library caller
     that installed no context has nothing to enforce D3 against, so
@@ -98,8 +99,8 @@ def _enforce_driving_project_scope() -> None:
     read unguarded, the verdicts first: a project that failed to load refuses
     through :func:`~otto.config.scope.scopes_of`, whichever project broke,
     rather than skipping the check. A checkout with no ``OTTOPATH`` needs
-    no guard at all: the context's :attr:`~otto.context.OttoContext.projects` is
-    ``[]`` there, so there is no current project to enforce.
+    no guard at all: the context's ``unscoped.projects`` is ``[]`` there, so
+    there is no current project to enforce.
 
     Raises:
         otto.bootstrap.ProjectScopeError: The driving project declared a
@@ -108,7 +109,7 @@ def _enforce_driving_project_scope() -> None:
         otto.session.ProjectLoadError: A project failed to load in a way that stops
             a run, so the verdicts cannot be known.
     """
-    from ..config.scope import require_current_scope, scopes_of
+    from ..config.scope import require_driving_scope
     from ..run_context import get_context
 
     try:
@@ -116,10 +117,7 @@ def _enforce_driving_project_scope() -> None:
     except RuntimeError:  # no context: a library lab, nothing to enforce D3 against
         logger.debug("monitor: no active context; not enforcing D3")
         return
-    scopes = scopes_of(ctx)  # a refusal propagates, whichever project broke
-    projects = ctx.projects
-    if projects:
-        require_current_scope(scopes, projects[0].name)
+    require_driving_scope(ctx)  # a refusal propagates, whichever project broke
 
 
 async def run_live(
@@ -145,8 +143,9 @@ async def run_live(
         NoMonitorableHostsError: nothing selected can be sampled.
         MonitorTlsError: the projects' declared TLS cannot be served.
     """
-    from ..declared import current_projects
+    from ..declared import unscoped_projects
     from ..fleet import get_lab
+    from ..run_context import get_context
     from ..tunnel.records import discover_tunnel_records
     from .server import MonitorServer
     from .session import MonitorSession
@@ -158,7 +157,7 @@ async def run_live(
         raise MonitorInputError(str(exc), field="interval") from exc
     _enforce_driving_project_scope()
     selected = select_monitor_hosts(pattern=hosts)
-    tls = resolve_monitor_tls(projects=current_projects())
+    tls = resolve_monitor_tls(projects=unscoped_projects())
     active_lab = get_lab()
     session = MonitorSession.build(
         hosts=selected,
@@ -167,9 +166,11 @@ async def run_live(
         label=label,
         note=note,
         declared=active_lab.links,
-        # The WHOLE lab, not the selection: tunnels traverse hosts that metric
-        # collection was never pointed at.
-        tunnel_source=lambda: discover_tunnel_records(active_lab),
+        # The WHOLE lab, past the selection and the run's scope alike: tunnels
+        # traverse hosts that metric collection was never pointed at, and hosts
+        # no project targets. Read when the collector asks, from the context
+        # the collection runs under.
+        tunnel_source=lambda: discover_tunnel_records(get_context().unscoped.lab),
         owns_hosts=True,
     )
     server = MonitorServer(

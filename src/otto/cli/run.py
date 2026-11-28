@@ -17,7 +17,7 @@ from ..instruction_catalog import (
 
 # Re-export: the documented import is otto.instructions; this spelling predates it.
 from ..instruction_catalog import instruction as instruction  # noqa: PLC0414 — explicit re-export
-from .invoke import make_registry_group, prepare_command_target
+from .invoke import EMPTY_SCOPE_ATTR, make_registry_group, prepare_command_target
 
 if TYPE_CHECKING:
     from rich.panel import Panel
@@ -160,7 +160,9 @@ def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
 
     app = typer.Typer()
     if entry.project is not None:
-        app.command(entry.name, help=instruction_help(entry))(_project_leaf(entry.project))
+        leaf = _project_leaf(entry.project)
+        setattr(leaf, EMPTY_SCOPE_ATTR, entry.project.spec.allows_empty_scope)
+        app.command(entry.name, help=instruction_help(entry))(leaf)
         return app
     if entry.handler is None:  # unreachable: __post_init__ requires handler xor project
         raise ValueError(f"instruction {entry.name!r} has neither handler nor project set")

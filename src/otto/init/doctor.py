@@ -1106,7 +1106,9 @@ def _load_problem(projects: "list[Project]", *, name: str, view: "InventoryView"
     from ..session.lab import LabBuildError, build_lab
 
     try:
-        build_lab(projects, labs=[name], view=view)
+        # Placed over the whole lab: the doctor checks the lab as configured,
+        # not one run's slice of it.
+        build_lab(projects, labs=[name], view=view, _unscoped_placement=True)
     except Exception as e:  # any backend's error is a row, never a traceback
         if is_timeout(e):
             raise  # the operation was given up on: never a row

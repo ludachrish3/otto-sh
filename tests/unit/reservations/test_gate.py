@@ -331,6 +331,38 @@ def test_the_gate_still_enforces_a_lab_declared_local_host():
         gate.evaluate()
 
 
+def test_in_play_follows_parent(tmp_path):
+    """A container is in play exactly when its parent is, and never on the runner.
+
+    ``pinned`` admits ``h1`` exactly and every container on ``h2`` by its id,
+    but not ``h2``: judged by its own id, each container would land on the
+    wrong side. Each one carries a slot, so the requirement shows the set.
+    """
+    from otto.fleet import get_hosts_in_play
+    from otto.host.docker_host import DockerContainerHost
+
+    lab = add_builtin_local(fleet_lab(("h1", "a"), ("h2", "a")))
+    pinned = _project(tmp_path, "pinned", labs=["a"], hosts=["h1", r"h2\..*"])
+    install_scoped_context(lab, [pinned])
+    for parent_id in ("h1", "h2", "local"):
+        container = DockerContainerHost(
+            parent=lab.hosts[parent_id],
+            container_id=f"cid-{parent_id}",
+            project="r1",
+            service="api",
+            compose_project="otto-r1",
+        )
+        container.source_lab = "a"
+        container.resources = frozenset({f"slot-{parent_id}"})
+        lab.add_host(container)
+
+    assert get_hosts_in_play() == {"h1", "h1.r1.api"}
+    gate = ReservationGate(
+        skip_check=True, identity=ResolvedIdentity(username="alice", source="$USER")
+    )
+    assert "Required resources: ['slot-h1']" in gate.evaluate().warning
+
+
 def test_the_builtin_local_host_is_left_out_of_the_derived_set_but_kept_when_named():
     """Only the DERIVED host set leaves the built-in ``local`` out; given ids are used as given.
 
@@ -733,6 +765,47 @@ class TestGateReportAndHosts:
         with pytest.raises(MissingReservationError):
             gate.check_hosts(lab=own, hosts=[own.hosts["local"]])
 
+        # A container on the lab's own `local` follows that ordinary parent: not skipped.
+        from otto.host.docker_host import DockerContainerHost
+
+        on_own = DockerContainerHost(
+            parent=own.hosts["local"],
+            container_id="cid-api",
+            project="r1",
+            service="api",
+            compose_project="otto-r1",
+        )
+        on_own.resources = frozenset({"slot-api"})
+        own.add_host(on_own)
+        with pytest.raises(MissingReservationError) as exc:
+            gate.check_hosts(lab=own, hosts=[on_own])
+        assert [m.resource for m in exc.value.report.missing] == ["slot-api"]
+
+    def test_check_hosts_skips_a_container_on_the_builtin_runner(self):
+        """A named container on the runner is judged like the runner: never a slot to hold.
+
+        It is never in play, so the exemption for a named host must use the same
+        runner-side rule, or the container's own slot is checked while the
+        derived set leaves it out.
+        """
+        from otto.host.docker_host import DockerContainerHost
+
+        lab = add_builtin_local(Lab(name="test_lab"))
+        container = DockerContainerHost(
+            parent=lab.hosts["local"],
+            container_id="cid-api",
+            project="r1",
+            service="api",
+            compose_project="otto-r1",
+        )
+        container.resources = frozenset({"slot-api"})
+        lab.add_host(container)
+        lab.resources = {"rack1"}  # a real requirement, so a stray query reaches the backend
+        install_scoped_context(lab, [])
+        gate, backend = self._gate({})
+        assert gate.check_hosts(lab=lab, hosts=[container]) is None
+        assert backend.fetches == 0
+
     def test_check_hosts_is_a_no_op_under_skip(self):
         lab = fleet_lab(("h-a", "a"))
         lab.hosts["h-a"].resources = frozenset({"x"})
@@ -766,3 +839,30 @@ class TestGateReportAndHosts:
             gate.evaluate()
             gate.check_hosts(lab=lab, hosts=[lab.hosts["h-out"]])
         assert sum("'rack1'" in r.message for r in caplog.records) == 1
+
+
+def test_hosts_in_play_one_method(tmp_path, monkeypatch):
+    """The gate, ``get_hosts_in_play`` and ``check_hosts`` read the run's one in-play method.
+
+    ``h-in`` alone is really in play. ``OttoContext._hosts_in_play`` is planted
+    to answer ``h-out``, whose slot nobody holds: every reader that follows the
+    plant asks for ``slot-out``, and a reader with a copy of its own does not.
+    """
+    from otto.context import OttoContext
+    from otto.fleet import get_hosts_in_play
+
+    lab = fleet_lab(("h-in", "a"), ("h-out", "a"))
+    lab.hosts["h-out"].resources = frozenset({"slot-out"})
+    ctx = install_scoped_context(lab, [_h_in_project(tmp_path)])
+    assert ctx.admissible_ids(require_nonempty=False) == {"h-in"}  # the premise
+    monkeypatch.setattr(OttoContext, "_hosts_in_play", lambda _self: {"h-out"}, raising=False)
+    gate = ReservationGate(
+        backend=_FakeBackend(owners={}, username="alice"),
+        identity=ResolvedIdentity(username="alice", source="$USER"),
+    )
+
+    assert get_hosts_in_play() == {"h-out"}
+    with pytest.raises(MissingReservationError) as exc:
+        gate.evaluate()
+    assert [m.resource for m in exc.value.report.missing] == ["slot-out"]
+    assert gate.check_hosts(lab=lab, hosts=[lab.hosts["h-out"]]) is None

@@ -35,7 +35,14 @@ from .options import (
     UninstallOptions,
     UninstallToolsOptions,
 )
-from .orchestrator import _walk_order
+from .orchestrator import (
+    _DEBUG_LOG_SWEEP,
+    _TOOLCHAIN_REMOVAL,
+    _cleanup_scope,
+    _declined_fleet_steps,
+    _no_host_in_play_line,
+    _walk_order,
+)
 
 if TYPE_CHECKING:
     from ..config.project import Project
@@ -329,6 +336,10 @@ def _record_of(kwargs: "dict[str, Any]", recorded: "RecordedOptions | None") -> 
     return RecordedOptions.all_given(kwargs)
 
 
+_TAIL_LABELS = {_DEBUG_LOG_SWEEP: "debug logs", _TOOLCHAIN_REMOVAL: "toolchain"}
+"""The preview's label for each cleanup fleet step, as its per-host steps are labelled."""
+
+
 def plan_lab_tail(
     *,
     name: str,
@@ -345,24 +356,18 @@ def plan_lab_tail(
     host verb is named rather than guessed. Nothing here contacts a host, so
     which links are impaired and which hosts carry a tunnel stay unchecked.
     The flags are read as :func:`plan_instruction` reads them.
+
+    When no host is in play (``OttoContext.empty_scope_refusal``), the fleet
+    steps are the ones the real run declines, each named once for the lab.
     """
     if name != "cleanup":
         return []
     opts = lookup_options(CleanupOptions, _record_of(kwargs, recorded))
-    steps: list[TailStep] = []
-    for host in ctx.all_hosts():
-        if opts.debug_logs:
-            replaced = _replaced(host, "get_debug_logs")
-            if replaced is not None:
-                steps.append(TailStep("debug logs", f"{replaced}; not previewed", host.id))
-            elif host.debug_log_globs:
-                fetched = ", ".join(host.debug_log_globs)
-                steps.append(TailStep("debug logs", f"fetch {fetched}", host.id))
-        replaced = _replaced(host, "remove_toolchain_tools")
-        if replaced is not None:
-            steps.append(TailStep("toolchain", f"{replaced}; not previewed", host.id))
-        else:
-            steps += [TailStep("toolchain", line, host.id) for line in _toolchain_removals(host)]
+    declined = _declined_fleet_steps(opts, ctx.empty_scope_refusal())
+    if declined:
+        steps = [TailStep(_TAIL_LABELS[step], _no_host_in_play_line(step)) for step in declined]
+    else:
+        steps = _fleet_steps(ctx, opts)
     if opts.reset_impairments:
         steps.append(
             TailStep(
@@ -373,6 +378,26 @@ def plan_lab_tail(
         )
     if opts.remove_tunnels:
         steps.append(TailStep("tunnels", "would remove otto tunnels on every tunnel-capable host"))
+    return steps
+
+
+def _fleet_steps(ctx: "OttoContext", opts: CleanupOptions) -> list[TailStep]:
+    """Plan cleanup's per-host steps: each fleet host's debug-log sweep and toolchain removal."""
+    logs, toolchain = _TAIL_LABELS[_DEBUG_LOG_SWEEP], _TAIL_LABELS[_TOOLCHAIN_REMOVAL]
+    steps: list[TailStep] = []
+    for host in ctx.all_hosts():
+        if opts.debug_logs:
+            replaced = _replaced(host, "get_debug_logs")
+            if replaced is not None:
+                steps.append(TailStep(logs, f"{replaced}; not previewed", host.id))
+            elif host.debug_log_globs:
+                fetched = ", ".join(host.debug_log_globs)
+                steps.append(TailStep(logs, f"fetch {fetched}", host.id))
+        replaced = _replaced(host, "remove_toolchain_tools")
+        if replaced is not None:
+            steps.append(TailStep(toolchain, f"{replaced}; not previewed", host.id))
+        else:
+            steps += [TailStep(toolchain, line, host.id) for line in _toolchain_removals(host)]
     return steps
 
 
@@ -413,7 +438,12 @@ def plan_instruction(
     tools_cls = {"install-tools": InstallToolsOptions, "uninstall-tools": UninstallToolsOptions}
     tools = lookup_options(tools_cls[name], recorded) if name in tools_cls else None
     plans: list[ProjectPlan] = []
-    for project, actions, body in _walk_order(name, ctx, ctx.ordered_projects, announce=False):
+    projects = ctx.unscoped.ordered_projects
+    if cleanup is not None:
+        # The real cleanup's preflight: its driving-project refusal, and the
+        # projects it walks, an empty scope's skips included.
+        projects = _cleanup_scope(ctx).projects
+    for project, actions, body in _walk_order(name, ctx, projects, announce=False):
         project_plan = ProjectPlan(project.name)
         # The converge runs lab-wide before any body, so an overriding project is covered too.
         if install is not None and install.ensure:

@@ -9,6 +9,8 @@ from ..config.scope import PreLabReason
 from .errors import ProjectLoadError, ProjectSelectionError
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ..config.project import Project
     from ..config.scope import BootstrapError
     from ..declared import BootstrapResult
@@ -248,6 +250,26 @@ def _required_by(active: "list[Project]", projects: "list[Project]") -> dict[str
         for name in reached:
             requirers.setdefault(name, []).append(root.name)
     return requirers
+
+
+def required_by_active(
+    owner: str, *, active: "Sequence[Project]", projects: "Sequence[Project]"
+) -> bool:
+    """Report whether a project in *active* requires *owner*, directly or through a chain.
+
+    The same walk load-error classification uses: only required dependencies
+    the dependency pass found satisfied count, and an optional one never
+    does. *owner* may be spelled any way; it is PEP 503 normalised here.
+
+    The caller picks the tier's active set, and that choice is the only
+    difference between the tiers. Before the lab is built a project whose
+    ``host_patterns`` match nothing cannot be detected, so it is active and
+    its requirements count. Once the lab is built that project is inactive,
+    and what it requires no longer counts.
+    """
+    from ..models.dependencies import normalize_name
+
+    return normalize_name(owner) in _required_by(list(active), list(projects))
 
 
 def _normalised(names: list[str]) -> list[str]:

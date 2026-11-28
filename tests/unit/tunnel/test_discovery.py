@@ -20,6 +20,7 @@ from otto.tunnel.discovery import (
 from otto.tunnel.model import Direction, Role, Tunnel, TunnelHop
 from otto.tunnel.sentinel import encode_sentinel
 from otto.utils import Status
+from tests._fixtures.fleet import DoubleLab
 from tests.conftest import active_context
 
 TUNNEL = Tunnel(
@@ -68,9 +69,7 @@ class FakeHost:
         return CommandResult(status=Status.Success, value=self.ps_text, command=cmd)
 
 
-@dataclass
-class FakeLab:
-    hosts: dict
+FakeLab = DoubleLab
 
 
 class TestParsing:

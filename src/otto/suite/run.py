@@ -537,10 +537,10 @@ def prepare_run(opts: RunOptions, *, dry_run: bool = False) -> None:
         del bootstrap
         from ..config.coverage_settings import get_cov_config
         from ..coverage.tickets import load_ticket_spec
-        from ..declared import current_projects
+        from ..declared import unscoped_projects
         from ..params import OptionsValidationError
 
-        if load_ticket_spec(get_cov_config(current_projects())) is None:
+        if load_ticket_spec(get_cov_config(unscoped_projects())) is None:
             raise OptionsValidationError(
                 "cov_tickets_json requires [coverage.tickets] to be configured"
             )
@@ -1924,7 +1924,7 @@ def run_tests(
     with layer, _session_context(log_dir) as session_ctx:
         # The context first, then its projects: an inherited context's snapshot, or
         # the library sentinel's, read once (the sentinel bootstraps lazily).
-        projects = session_ctx.projects
+        projects = session_ctx.unscoped.projects
         # Where a run's files go (junit.xml vs junit_<project>.xml, per-project
         # dirs) is judged over every project with tests, before the participation
         # filter, so dropping one never flips a layout.
@@ -2170,7 +2170,7 @@ def _collect_listing(names: list[str], markers: str) -> Listing:
 
     names = [n.strip() for n in names if n.strip()]
     ctx = get_context()
-    projects = ctx.projects
+    projects = ctx.unscoped.projects
     participation = participating(projects, ctx=ctx)
     not_searched = _not_searched(participation)
     searched = _collection_candidates(participation)

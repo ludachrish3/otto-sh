@@ -132,8 +132,6 @@ def check(ctx: typer.Context) -> None:
     # refusing -- the fleet-shaped abort is a fleet WALK's, and this walks
     # nothing. The `"none"` backend answers no `held` verdict, so its rows read
     # `n/a`.
-    from ..fleet import get_lab
-
     # The group is lab_free (whoami needs no lab); check is the one subcommand
     # that does — the lab defines the required-resource list — so load it here,
     # the same loud way the preamble would. Still touches no remote host.
@@ -148,7 +146,12 @@ def check(ctx: typer.Context) -> None:
         rprint("[red]Reservation backend or identity not configured.[/red]")
         raise typer.Exit(1)
 
-    lab = get_lab()
+    from ..reservations.check import requirement_lab
+    from ..run_context import get_context
+
+    # The lab the gate itself reads: the hosts in play below already carry the
+    # scope, so the requirement is read over them without judging it again.
+    lab = requirement_lab(get_context())
 
     from rich import box
     from rich.table import Table

@@ -59,6 +59,7 @@ import functools
 from pathlib import Path
 from typing import NamedTuple
 
+from tests._fixtures.import_walk import module_of
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 SRC_ROOT = CHECKOUT_ROOT / "src" / "otto"
@@ -89,6 +90,7 @@ PROCESS_WIDE_GETTERS: dict[str, frozenset[str]] = {
             "get_projects",
             "is_bootstrapped",
             "published_result",
+            "unscoped_projects",
         }
     ),
     "otto.registry": frozenset({"get_completion_names"}),
@@ -115,10 +117,6 @@ def _source_of(module: str) -> Path:
     base = SRC_ROOT.joinpath(*module.split(".")[1:])
     plain = base.with_suffix(".py")
     return plain if plain.is_file() else base / "__init__.py"
-
-
-def _module_of(path: Path) -> str:
-    return ".".join(["otto", *path.relative_to(SRC_ROOT).with_suffix("").parts])
 
 
 def _table_literal(package: str, table: str) -> dict:
@@ -182,7 +180,7 @@ def guarded_names() -> dict[str, frozenset[str]]:
         assert not not_functions, f"PROCESS_WIDE_GETTERS: {module} defines no {not_functions}"
         guarded.setdefault(module, set()).update(names)
     sources = {
-        _module_of(path): path.read_text(encoding="utf-8")
+        module_of(path): path.read_text(encoding="utf-8")
         for path in sorted(SRC_ROOT.rglob("*.py"))
         if path.name != "__init__.py"
     }
@@ -503,7 +501,7 @@ def test_no_otto_module_binds_a_lazily_exported_function_at_import_time():
     for path in sorted(SRC_ROOT.rglob("*.py")):
         rel = path.relative_to(SRC_ROOT).as_posix()
         source = path.read_text(encoding="utf-8")
-        for line, _module, name in import_time_bindings(source, _module_of(path), guarded):
+        for line, _module, name in import_time_bindings(source, module_of(path), guarded):
             if (rel, name) in ALLOWED:
                 allowed_seen.add((rel, name))
                 continue

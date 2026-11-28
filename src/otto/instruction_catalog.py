@@ -36,7 +36,6 @@ from .registry import (
     RegistryView,
     RequireProject,
     _registering_for_otto,
-    get_registering_project,
     registration_boundary,
 )
 
@@ -145,6 +144,8 @@ class ProjectInstructionSpec:
     continue_on_failure: bool = False
     require_dependencies: bool = True
     dry_run_preview: bool = False
+    allows_empty_scope: bool = False
+    """Whether ``otto run <name>`` runs when no host is in play: otto's recovery verb only."""
     combine_results: "Callable[[dict[str, Any]], Any] | None" = None
     render: "Callable[[Any, Any], Any] | None" = None
 
@@ -333,7 +334,7 @@ def _check_tables(
     actions: "Mapping[str, ProjectActionsEntry]",
     standalone: "Mapping[str, InstructionEntry]",
     *,
-    registering_standalone: bool,
+    standalone_owner: "Callable[[str], str | None]",
 ) -> None:
     """Refuse a shape change, a foreign first-party options class, a duplicate body, a clash.
 
@@ -348,11 +349,11 @@ def _check_tables(
     empty, so the refusal never depends on whether otto has declared its
     bodies yet.
 
-    *registering_standalone* says which source is being written. A clash
-    names the standalone instruction's owner: while a standalone instruction
-    is registered, the clashing one is that registration (committed
-    standalone and project instructions never share a name), so its owner is
-    the project whose init import is running; while project actions are
+    *standalone_owner* names a clashing standalone instruction's owner, by
+    name. While a standalone instruction is registered, the clashing one is
+    that registration (committed standalone and project instructions never
+    share a name), so its owner is the registration's own
+    (``Proposed.owner``); while project actions are
     registered, it is a committed entry, whose owner the table recorded.
     """
     first: dict[str, ProjectInstructionBody] = {}
@@ -397,11 +398,7 @@ def _check_tables(
             )
     for name in sorted((set(first) | FIRST_PARTY_INSTRUCTIONS) & set(standalone)):
         body = first.get(name)
-        owner = (
-            get_registering_project()
-            if registering_standalone
-            else STANDALONE_INSTRUCTIONS.project(name=name)
-        )
+        owner = standalone_owner(name)
         declared = (
             "one of otto's first-party instructions"
             if body is None
@@ -450,11 +447,11 @@ def _check_standalone(
     # behaviour happens in ProjectActions -- which `otto run install` AND an
     # ensure("installed") marker both route through -- so shadowing the
     # instruction would move only the CLI half and let the two answer
-    # differently. Keyed on the registering-project marker, never on the name
-    # alone: otto's own registrations run outside any project's init import.
+    # differently. Keyed on the registration's owner, never on the name alone:
+    # otto's own registrations have none, even inside a project's init import.
     # FIRST_PARTY_INSTRUCTIONS is tested first, so the guard answers for the
     # seven whether or not FIRST_PARTY_ACTIONS has been filled yet.
-    project = get_registering_project()
+    project = proposed.owner
     first_party = _current_first_party()
     actions = _current_actions()
     if project is not None and (
@@ -467,7 +464,7 @@ def _check_standalone(
             "ProjectActions subclass instead, or rename the instruction. See "
             "https://otto-sh.readthedocs.io/en/stable/cli/run/defaults.html#the-four-surfaces-and-the-one-override-point"
         )
-    _check_tables(first_party, actions, proposed, registering_standalone=True)
+    _check_tables(first_party, actions, proposed, standalone_owner=lambda _name: project)
 
 
 def _check_project_actions(
@@ -484,7 +481,7 @@ def _check_project_actions(
         raise TypeError(
             f"project actions for project {name!r}: {entry.cls!r} is not a ProjectActions subclass"
         )
-    project = get_registering_project()
+    project = proposed.owner
     if name != project:
         raise ValueError(
             f"project actions are keyed by the project that registers them: {_who(project)} "
@@ -498,7 +495,10 @@ def _check_project_actions(
                 f"{entry.cls.__name__} of project {name!r}"
             )
     _check_tables(
-        _current_first_party(), proposed, _current_standalone(), registering_standalone=False
+        _current_first_party(),
+        proposed,
+        _current_standalone(),
+        standalone_owner=_committed_standalone_owner,
     )
 
 
@@ -508,9 +508,9 @@ def _check_first_party_actions(
     """``FIRST_PARTY_ACTIONS``' validate: otto's one row, keyed ``"otto"``, declaring the seven.
 
     The row is otto's, never a project's: its writer resets the registering-project
-    marker, so a write made under a project's marker went around it.
+    marker, so a write that a project owns went around it.
     """
-    project = get_registering_project()
+    project = proposed.owner
     if project is not None:
         raise ValueError(
             f"first-party actions are otto's, but {_who(project)} is registering them; "
@@ -536,7 +536,17 @@ def _check_first_party_actions(
             f"first-party actions {entry.cls.__name__} declare {sorted(declared)}; otto's "
             f"first-party instructions are {sorted(FIRST_PARTY_INSTRUCTIONS)}"
         )
-    _check_tables(proposed, _current_actions(), _current_standalone(), registering_standalone=False)
+    _check_tables(
+        proposed,
+        _current_actions(),
+        _current_standalone(),
+        standalone_owner=_committed_standalone_owner,
+    )
+
+
+def _committed_standalone_owner(name: str) -> str | None:
+    """Return the owner the standalone instruction table recorded for *name*."""
+    return STANDALONE_INSTRUCTIONS.project(name=name)
 
 
 STANDALONE_INSTRUCTIONS: Registry[InstructionEntry] = Registry(
@@ -699,6 +709,7 @@ def instruction(
     name: str | None = None,
     help: str | None = None,  # noqa: A002 -- typer's spelling, as in command(help=...)
     overwrite: bool = False,
+    _allows_empty_scope: bool | None = None,
 ) -> Callable[[_Handler[P]], _Handler[P]]:
     """Register an async function as an ``otto run`` subcommand.
 
@@ -823,6 +834,7 @@ def instruction(
                 ("continue_on_failure", continue_on_failure),
                 ("require_dependencies", require_dependencies),
                 ("dry_run_preview", dry_run_preview),
+                ("allows_empty_scope", _allows_empty_scope),
                 ("combine_results", combine_results),
                 ("render", render),
             ]

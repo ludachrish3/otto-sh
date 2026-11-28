@@ -370,6 +370,11 @@ why = "forwards positionals to the called method"
 [symbols."otto.context:RunPolicy"]
 subclass = false
 
+# returned by OttoContext.unscoped; never built by hand
+[symbols."otto.context:UnscopedView"]
+construct = false
+subclass = false
+
 [symbols."otto.context:reset_context"]
 positional = ["token"]
 
@@ -2822,10 +2827,23 @@ positional = ["host_data"]
 [symbols."otto.lab:EmptySelectionError"]
 positional = ["pattern"]
 
+[symbols."otto.lab:HostOutOfScopeError"]
+positional = ["message"]
+
 [symbols."otto.lab:Lab"]
 subclass = false
 
 [symbols."otto.lab:Lab.add_host"]
+positional = ["host"]
+
+[symbols."otto.lab:LabView.add_host"]
+positional = ["host"]
+
+[symbols."otto.lab:ScopedLab"]
+construct = false
+subclass = false
+
+[symbols."otto.lab:ScopedLab.add_host"]
 positional = ["host"]
 
 [symbols."otto.lab:do_for_all_hosts"]
@@ -3655,6 +3673,9 @@ positional = ["message"]
 
 [symbols."otto.session:RequiredProject"]
 construct = false
+subclass = false
+
+[symbols."otto.session:ScopeSelection"]
 subclass = false
 
 [symbols."otto.session:build_lab"]

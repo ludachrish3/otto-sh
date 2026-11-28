@@ -70,6 +70,11 @@ class _FakeCtx:
         self.include_projects = ()
         self.exclude_projects = ()
 
+    @property
+    def unscoped(self):
+        """The double's whole universe: its own project lists, as the context's are."""
+        return self
+
     def all_hosts(self, _scope_owner=None):
         return iter(self.hosts)
 

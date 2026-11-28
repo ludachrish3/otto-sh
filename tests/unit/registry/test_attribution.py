@@ -104,6 +104,20 @@ def test_the_project_comes_from_the_registering_project_marker():
     assert TABLE.project(name="outside") is None
 
 
+def test_an_otto_registration_inside_a_projects_init_import_has_no_owner():
+    """otto's built-ins are otto's even when a project's init import first imports them.
+
+    The marker is set (a project's init import is running), and only the
+    registrant differs: the otto module records no project, the project's
+    module records it.
+    """
+    with reg.registering_project("acme"):
+        _from_module("otto.fake_builtins", TABLE.register, name="builtin", entry=Rec(1))
+        _from_module("acme_init", TABLE.register, name="plugin", entry=Rec(2))
+    assert TABLE.project(name="builtin") is None
+    assert TABLE.project(name="plugin") == "acme"
+
+
 def test_registry_defined_in_is_the_constructing_module():
     built = _from_module(
         "tests.synthetic.tables", Registry, "x", entry=ClassEntry, register_hint="x"
@@ -131,3 +145,35 @@ def test_registry_defined_in_is_the_constructing_module():
     )
     assert backends.defined_in == "tests.synthetic.tables"
     assert TABLE.defined_in == __name__
+
+
+def test_validation_reads_the_owner_the_entry_is_stored_under():
+    """Fail-first: a ``validate`` hook and the stored stamp agree on who owns a registration.
+
+    Under the same attributed registrations (an otto module and a project's
+    module, both inside the project's init import), the hook reads
+    ``Proposed.owner`` and a wrapper reads ``registration_owner()``; each
+    answers what ``Registry.project`` records.
+    """
+    seen: "dict[str, str | None]" = {}
+    table: "Registry[Rec]" = Registry(
+        "gadget",
+        entry=Rec,
+        register_hint="register_gadget()",
+        validate=lambda name, _entry, proposed: seen.__setitem__(name, proposed.owner),
+    )
+    wrapped: "dict[str, str | None]" = {}
+
+    @registration_boundary
+    def register_gadget(name: str) -> None:
+        wrapped[name] = reg.registration_owner()
+        table.register(name=name, entry=Rec(name))
+
+    with reg.registering_project("acme"):
+        _from_module("otto.fake_builtins", register_gadget, "builtin")
+        _from_module("acme_init", register_gadget, "plugin")
+
+    stored = {name: table.project(name=name) for name in ("builtin", "plugin")}
+    assert stored == {"builtin": None, "plugin": "acme"}
+    assert seen == stored
+    assert wrapped == stored

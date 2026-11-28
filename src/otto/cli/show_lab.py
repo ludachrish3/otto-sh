@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from rich.console import Console
     from rich.tree import Tree
 
-    from ..labs.loader import Lab
+    from ..lab_view import LabView
     from ..labs.overview import HostOverview, LabOverview
 
 
@@ -66,7 +66,7 @@ def lab_tree(overview: "LabOverview", *, depth: int = 0) -> "Tree":
     return root
 
 
-def render_lab(lab: "Lab", *, depth: int = 0, console: "Console | None" = None) -> None:
+def render_lab(lab: "LabView", *, depth: int = 0, console: "Console | None" = None) -> None:
     """Print *lab* as a tree in a rounded panel, as ``otto --show-lab`` does."""
     from rich import box, get_console
     from rich.panel import Panel

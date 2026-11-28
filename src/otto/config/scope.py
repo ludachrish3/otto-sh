@@ -1,22 +1,30 @@
 """Per-project lab/host scoping: the ONE membership predicate, its config, its resolver.
 
 Every consumer — ingest gating, fleet iteration, the resolver, the status
-display — answers "does this project target this host?" by calling
-:func:`project_targets`. One predicate in one module is what makes those answers
-agree *structurally*; a second copy of the ``fullmatch``-both-axes rule would
-drift the moment one of them grew a special case. :func:`resolve_scopes` is
-held to the same rule: it computes the per-project verdicts by calling the
-predicate, never by re-deriving membership from the patterns.
+display, the docker facts — answers "does this project target this host?" by
+calling :func:`host_targeted`, which judges a container by its parent and
+applies :func:`project_targets`' ``fullmatch``-both-axes rule. One predicate in
+one module is what makes those answers agree *structurally*; a second copy of
+the rule would drift the moment one of them grew a special case.
+:func:`resolve_scopes` is held to the same rule: it computes the per-project
+verdicts by calling the predicate, never by re-deriving membership from the
+patterns. :func:`union_admits` is the same question asked of every active
+declaration at once.
 
 The resolver is PURE — no I/O, no ``bootstrap()``, no lab loading. It is handed
 the projects, the loaded lab's component names and the loaded hosts, and returns
 verdicts; the caller decides which project is "current" and when to enforce. That
 split is what lets the D3 consequences be *stored* at context creation and
-*raised* only at project-layer entry (§5), so a scoping typo never bricks an
-explicit ``otto host <id> <verb>``.
+*raised* only at project-layer entry (§5). An explicit target is judged too:
+``get_host`` resolves only the hosts this run targets, so ``otto host <id>
+<verb>`` on a host no active declaration targets refuses with
+:class:`HostOutOfScopeError`. Its message comes from :func:`host_outside`'s
+record of why the host is outside (:func:`outside_message`), and names the
+fix: the ``settings.toml`` files to widen (:func:`settings_files`) or the
+``-E`` to drop.
 
 Layering: a foundation module, so every layer may import it: the host
-layer's ingest gate needs :func:`project_targets`, and :mod:`otto.declared`
+layer's ingest gate needs :func:`host_targeted`, and :mod:`otto.declared`
 reads the declarations through it. It must never import upward. Its runtime
 imports are ``dataclasses``, ``pathlib``, ``re`` and ``otto.errors``, a zero-import leaf,
 plus ``otto.models.dependencies`` inside the functions that normalize a project
@@ -60,11 +68,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import final
 
-from ..errors import OttoError
+from ..errors import OttoError, _UnquotedKeyError
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from ..host.host import Host
     from ..models.settings import ProjectScopeSpec
@@ -385,6 +393,9 @@ class ProjectScopeConfig:
 def project_targets(scope: "ProjectScopeConfig | None", lab_name: str, host_id: str) -> bool:
     """Report whether *scope* admits the host *host_id* of lab *lab_name*.
 
+    The pattern rule alone, over a (lab, id) pair. A site that judges a HOST
+    calls :func:`host_targeted`, which brings a container to its parent first.
+
     Both axes must pass: some ``lab_patterns`` entry fullmatches *lab_name*
     **and** some ``host_patterns`` entry fullmatches *host_id*.
 
@@ -418,6 +429,58 @@ def project_targets(scope: "ProjectScopeConfig | None", lab_name: str, host_id: 
     return applies_to_lab(scope, lab_name) and any(
         p.fullmatch(host_id) for p in scope.host_patterns
     )
+
+
+def host_targeted(config: "ProjectScopeConfig | None", host: object) -> bool:
+    """Report whether the declaration *config* targets *host*, a container by its parent.
+
+    The one host-against-declaration predicate: every site that asks whether
+    a project targets a host calls it. A container is judged by its parent
+    (:func:`judged_host`), so it is in scope exactly
+    when the host it runs on is, whatever its own id; any other host is
+    judged by its own ``source_lab`` and ``id`` through :func:`project_targets`.
+
+    ``None`` (no ``[project]`` table) admits before any attribute of *host* is
+    read. That short-circuit is load-bearing, not an optimization: projects
+    are routinely visible without declaring anything, and a world with zero
+    declarations must not demand attributes (``source_lab``) that hosts built
+    before this feature never carried. Only a declaration may raise the bar.
+
+    Args:
+        config: The project's compiled ``[project]`` declaration, or ``None``.
+        host: One lab host, of any family.
+
+    Returns:
+        True when the project targets *host*.
+
+    >>> import re
+    >>> import types
+    >>> from otto.config.scope import ProjectScopeConfig, host_targeted
+    >>> config = ProjectScopeConfig([re.compile("bench")], [re.compile("sensor-1")])
+    >>> sensor = types.SimpleNamespace(id="sensor-1", source_lab="bench")
+    >>> on_sensor = types.SimpleNamespace(id="sensor-1.p.api", source_lab="bench", parent=sensor)
+    >>> host_targeted(config, sensor), host_targeted(config, on_sensor)
+    (True, True)
+    >>> host_targeted(None, object())  # undeclared: nothing is read
+    True
+    """
+    if config is None:
+        return True
+    judged = judged_host(host)
+    return project_targets(config, judged.source_lab, judged.id)
+
+
+def judged_host(host: object) -> Any:
+    """Return the host *host* is judged by, its parent for a container, else *host* itself.
+
+    The one "a container is judged by its parent" projection. Every judgment
+    of a host reads it: :func:`host_targeted` matches the judged host's lab
+    and id, :func:`host_outside` names its lab, and
+    ``otto.host.builtin_hosts.is_runner_side`` asks whether it is the built-in
+    runner. So a container is in scope, outside it, or on the runner exactly
+    when its parent is.
+    """
+    return getattr(host, "parent", None) or host
 
 
 def applies_to_lab(scope: "ProjectScopeConfig | None", lab_name: str) -> bool:
@@ -464,7 +527,7 @@ class ProjectScope:
 
     A *verdict*, not a live view: :attr:`universe` is the host set as it stood
     at resolution, used for display (``status --full``) and for the D3
-    abort/skip decision. Fleet iteration re-evaluates :func:`project_targets`
+    abort/skip decision. Fleet iteration re-evaluates :func:`host_targeted`
     instead, so a container that joins the lab after resolution is scoped
     correctly rather than frozen out.
 
@@ -490,7 +553,7 @@ class ProjectScope:
     """The project's compiled declaration — what :func:`scoped_ids` re-asks LIVE.
 
     Carried on the verdict because the verdict is what a fleet walk is handed,
-    and a walk must re-evaluate :func:`project_targets` per host rather than read
+    and a walk must re-evaluate :func:`host_targeted` per host rather than read
     :attr:`universe` (see the class docstring). Recompiling from
     :attr:`host_patterns` at every walk would work and would also put the
     "unset means undeclared" rule in a second place; the compiled object is
@@ -507,7 +570,7 @@ class ProjectScope:
     """Host ids this project targeted AT RESOLVE TIME — display and abort data only.
 
     Fleet walks must NOT iterate this snapshot; they re-evaluate
-    :func:`project_targets` live so hosts that join after resolution (docker
+    :func:`host_targeted` live so hosts that join after resolution (docker
     containers) scope correctly.
     """
 
@@ -541,25 +604,28 @@ class ProjectScope:
 def resolve_scopes(
     projects: "list[Project]",
     component_names: "list[str]",
-    hosts: "dict[str, Host]",
+    hosts: "Mapping[str, Host]",
     exclude_ids: "frozenset[str]" = frozenset(),
 ) -> "dict[str, ProjectScope]":
     """Resolve every project's fleet of interest against one loaded lab.
 
     Pure and cheap: it reads exactly three things — each project's ``name`` and
-    ``project_scope``, and each host's ``source_lab`` — and returns verdicts.
+    ``project_scope``, and what :func:`host_targeted` reads of each host (its
+    ``source_lab`` and ``id``, a container's parent's) — and returns verdicts.
+    A container already in *hosts* is in exactly the universes its parent is in.
     Nothing is raised here even when a verdict is fatal (:func:`require_current_scope`
     is where D3 fires), because resolution runs at context creation and the
     consequence belongs at project-layer entry.
 
-    *exclude_ids* is how the built-in ``local`` host stays out of every
-    universe, and the indirection is deliberate on two counts. Layering: this
-    module must not import ``otto.host``, so it cannot know the built-in id.
-    Correctness: ``local``'s ``source_lab`` is stamped with whichever component
-    the CLI happened to list first, so a membership rule that keyed on that
-    stamp would make ``-l a+b`` and ``-l b+a`` resolve differently — the
-    caller, which knows both the id and that ``local`` is not fleet, passes it
-    in. ``include_local`` remains the ambient walks' own knob (§6).
+    *exclude_ids* is how the built-in runner and the containers on it stay
+    out of every universe, and the indirection is deliberate on two counts.
+    Layering: this module must not import ``otto.host``, so it cannot tell the
+    built-in runner from a lab entry that reuses its id. Correctness: the
+    runner's ``source_lab`` is stamped with whichever component the CLI
+    happened to list first, so a membership rule that keyed on that stamp
+    would make ``-l a+b`` and ``-l b+a`` resolve differently. The one caller
+    that passes them, ``otto.host.builtin_hosts.lab_scopes``, judges them by
+    identity. ``include_local`` remains the ambient walks' own knob (§6).
 
     Args:
         projects: The projects to resolve (bootstrap's set; order is preserved in the
@@ -582,8 +648,8 @@ def resolve_scopes(
     ...     project_scope=ProjectScopeConfig([re.compile("bench")], [re.compile("sensor-.*")]),
     ... )
     >>> hosts = {
-    ...     "sensor-1": types.SimpleNamespace(source_lab="bench"),
-    ...     "gw-1": types.SimpleNamespace(source_lab="bench"),
+    ...     "sensor-1": types.SimpleNamespace(id="sensor-1", source_lab="bench"),
+    ...     "gw-1": types.SimpleNamespace(id="gw-1", source_lab="bench"),
     ... }
     >>> scope = resolve_scopes([project], ["bench"], hosts)["sensors"]
     >>> sorted(scope.universe), scope.excluded
@@ -593,18 +659,14 @@ def resolve_scopes(
     for project in projects:
         config = project.project_scope
         applicable = frozenset(name for name in component_names if applies_to_lab(config, name))
-        # An undeclared project's universe is the whole lab BY CONSTRUCTION —
-        # never per-host evaluation. The short-circuit is load-bearing, not an
-        # optimization: projects are routinely VISIBLE without declaring anything
-        # (the integration tree's session fixture leaves OTTOPATH ambient
-        # for the rest of its worker), and a world with zero declarations must
-        # not demand attributes (``source_lab``) that hosts built before this
-        # feature never carried. Only a declaration may raise the bar.
+        # An undeclared project's universe is the whole lab BY CONSTRUCTION:
+        # host_targeted admits for no declaration before reading any host
+        # attribute, which is what keeps this loop safe over hosts built
+        # before scoping (see its docstring).
         universe = frozenset(
             host_id
             for host_id, host in hosts.items()
-            if host_id not in exclude_ids
-            and (config is None or project_targets(config, host.source_lab, host_id))
+            if host_id not in exclude_ids and host_targeted(config, host)
         )
         scopes[project.name] = ProjectScope(
             project_name=project.name,
@@ -981,18 +1043,23 @@ def not_searched_line(reason: InactiveReason) -> str:
     )
 
 
-@dataclasses.dataclass(frozen=True)
+@final
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class ScopeSelection:
-    """The pre-lab selection (``-l``, ``-I``, ``-E``) a listing judges projects by."""
+    """A run's switches before its lab is loaded: the ``-l`` labs and the ``-I`` / ``-E`` projects.
+
+    A listing judges which projects take part by it, and
+    :func:`otto.session.build_lab` places the declared containers by it.
+    """
 
     labs: "tuple[str, ...]"
     """The ``-l`` lab names, already split into components."""
 
     include: "tuple[str, ...]"
-    """``-I``: the switches as given; :func:`pre_lab_inactive_reason` normalises them."""
+    """``-I``: the project names as given; they are compared PEP 503-normalized."""
 
     exclude: "tuple[str, ...]"
-    """``-E``: the switches as given; :func:`pre_lab_inactive_reason` normalises them."""
+    """``-E``: the project names as given; they are compared PEP 503-normalized."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1187,12 +1254,86 @@ def require_current_scope(scopes: "dict[str, ProjectScope]", current_project_nam
     raise ProjectScopeError(scope.root, message=_unusable_scope_message(scope))
 
 
+def require_driving_scope(ctx: "OttoContext") -> None:
+    """Enforce D3 for *ctx*'s DRIVING project: :func:`require_current_scope` on the first project.
+
+    The one answer to "which project's declaration must work for this run".
+    The driving project is the first project the run parsed
+    (``ctx.unscoped.projects[0]``, the first ``OTTOPATH`` entry), never the
+    head of the dependency-ordered walk, which is a dependency in any lab that
+    has one. The project orchestrator's entry and ``otto monitor --live``
+    both call it.
+
+    The verdicts are read first, so a project that failed to load refuses
+    through :func:`scopes_of`, whichever project broke. A run with no
+    projects has no driving project to enforce, and that is legal.
+
+    Raises:
+        ProjectScopeError: The driving project declared a ``[project]`` scope
+            that admits no host here.
+        otto.session.ProjectLoadError: A project failed to load in a way that
+            stops a run, so the verdicts cannot be known.
+    """
+    scopes = scopes_of(ctx)
+    projects = ctx.unscoped.projects
+    if projects:
+        require_current_scope(scopes, projects[0].name)
+
+
+def union_admits(
+    host: object, scopes: "dict[str, ProjectScope]", *, exclude_projects: "Sequence[str]"
+) -> bool:
+    """Report whether the declared union of *scopes* admits *host* (D7).
+
+    The union across the DECLARED projects not switched off with
+    ``--exclude-projects``, each judged by :func:`host_targeted`. It owns the
+    whole-lab fallback (§6): when no project declared ``[project]`` it admits
+    every host, before reading anything off it. "No project declared" is the
+    condition, not "some project did not": an undeclared project's own
+    verdict admits everything, so folding it into the union would silently
+    restore the whole lab the moment a product-less project shared the run.
+    Excluding every declaring project admits NOTHING: the fallback is for
+    "nothing declared", and answering a request for less with the whole lab
+    would be the widening this design refuses.
+
+    Args:
+        host: One lab host, of any family.
+        scopes: :func:`resolve_scopes`' output for this run.
+        exclude_projects: The run's ``--exclude-projects`` names, as typed;
+            compared normalized, the way :func:`active` compares them.
+
+    Returns:
+        True when some active declaration targets *host*, or none declared.
+
+    >>> import re
+    >>> import types
+    >>> from otto.config.scope import ProjectScopeConfig, resolve_scopes, union_admits
+    >>> project = types.SimpleNamespace(
+    ...     name="sensors",
+    ...     root="/projects/sensors",
+    ...     project_scope=ProjectScopeConfig([re.compile("bench")], [re.compile("sensor-.*")]),
+    ... )
+    >>> gw = types.SimpleNamespace(id="gw-1", source_lab="bench")
+    >>> scopes = resolve_scopes([project], ["bench"], {"gw-1": gw})
+    >>> union_admits(gw, scopes, exclude_projects=()), union_admits(gw, {}, exclude_projects=())
+    (False, True)
+    """
+    declared = [scope for scope in scopes.values() if scope.declared]
+    if not declared:
+        return True
+    return any(
+        host_targeted(scope.config, host)
+        for scope in _not_switched_off(declared, tuple(exclude_projects))
+    )
+
+
 def scoped_ids(
-    hosts: "dict[str, Host]",
+    hosts: "Mapping[str, Host]",
     scopes: "dict[str, ProjectScope]",
     owner: "str | None",
     *,
     exclude_projects: "tuple[str, ...]" = (),
+    runner_ids: "frozenset[str]" = frozenset(),
 ) -> "set[str]":
     """Return the host ids a fleet walk may iterate — evaluated LIVE, not read off a snapshot.
 
@@ -1200,40 +1341,33 @@ def scoped_ids(
     (:meth:`otto.context.OttoContext.all_hosts` and the module-level
     :func:`otto.fleet.all_hosts` that delegates to it) cannot disagree,
     nor can the pure query :func:`otto.fleet.fleet_of_interest`.
-    Membership is re-derived by calling :func:`project_targets` against *hosts* as
-    they stand at the call, so a docker container registered after the context
-    was created is scoped correctly instead of frozen out — which is precisely
-    what reading :attr:`ProjectScope.universe` here would do.
+    Membership is re-derived by calling :func:`host_targeted` against *hosts*
+    as they stand at the call, so a docker container registered after the
+    context was created is scoped correctly, by its parent, instead of frozen
+    out — which is precisely what reading :attr:`ProjectScope.universe` here
+    would do.
 
-    Three answers, in this order:
+    Two answers:
 
-    * **No project declared** ``[project]`` — every id in *hosts*. The whole-lab
-      fallback (§6): product-less projects and every pre-``[project]`` project
-      keep today's behavior. "No project declared" is the condition, not "this
-      project did not": an undeclared project's own verdict admits everything, so
-      folding it into the union below would silently restore the whole lab the
-      moment a product-less project shared the run.
-    * *owner* **names a declared project** — that project's admission alone. A known
-      project that declared no ``[project]`` gets the fallback for the same reason
-      as above: its own verdict admits everything. An owner that is not in
-      *scopes* AT ALL is a different thing entirely and is REFUSED — see
-      Raises.
-    * *owner* **is None** — the union across the DECLARED projects (D7), which is
+    * *owner* **names a project** — that project's admission alone
+      (:func:`host_targeted` over its declaration). A known project that
+      declared no ``[project]`` admits the whole lab: its own verdict admits
+      everything. An owner that is not in *scopes* AT ALL is a different
+      thing entirely and is REFUSED — see Raises.
+    * *owner* **is None** — :func:`union_admits` per host: the union across
+      the declared projects (D7), or the whole lab when none declared. It is
       the fleet that host-global operations (cleanup, toolchain, debug logs)
-      walk, and the hosts in play the reservation gate requires. A project
-      switched off with ``--exclude-projects`` contributes nothing to it: its
-      hosts leave play unless an active project also declares them. Excluding
-      every declaring project leaves NOTHING in play — the whole-lab fallback
-      above is for "nothing declared", and answering a request for less with
-      the whole lab would be the widening this design refuses.
+      walk. A project switched off with ``--exclude-projects`` contributes
+      nothing to it.
 
-    The built-in ``local`` host and container hosts are NOT filtered here.
-    Scoping answers "may this walk reach that host at all"; ``include_local``
-    and ``include_containers`` remain the walk's own knobs, applied after (§6)
-    — so an admin passing ``include_local=True`` still gets the runner,
-    exactly as before. ``local`` stays out of the resolver's stored
-    :attr:`ProjectScope.universe` by ``exclude_ids``, which is where the D3
-    abort reads its "this project's fleet is empty" verdict from.
+    *runner_ids* are admitted in both answers, whatever any declaration says:
+    the built-in runner and its containers are judged by identity, never by
+    patterns over the runner's stamped ``source_lab`` (the first ``-l``
+    component), so the component order cannot change a walk. This module
+    cannot tell the runner from a lab entry reusing its id, so the caller
+    names them; ``otto.host.builtin_hosts.admitted_ids`` is the one that
+    does. Whether a walk wants them stays the walk's own ``include_local``
+    and ``include_containers`` choice, applied after (§6).
 
     Args:
         hosts: The lab's live ``{id: host}`` mapping — read at call time.
@@ -1246,6 +1380,7 @@ def scoped_ids(
             compared normalized, the way :func:`active` compares them. Read by
             the union only: an owner-bound walk is that project's own, and a
             switched-off project is never walked.
+        runner_ids: Ids admitted in every answer, by identity. Defaults to none.
 
     Returns:
         The admissible ids, as a set.
@@ -1279,8 +1414,8 @@ def scoped_ids(
     ...     host_patterns=("sensor-.*",),
     ... )
     >>> hosts = {
-    ...     "sensor-1": types.SimpleNamespace(source_lab="bench"),
-    ...     "gw-1": types.SimpleNamespace(source_lab="bench"),
+    ...     "sensor-1": types.SimpleNamespace(id="sensor-1", source_lab="bench"),
+    ...     "gw-1": types.SimpleNamespace(id="gw-1", source_lab="bench"),
     ... }
     >>> sorted(scoped_ids(hosts, {"sensors": verdict}, None))
     ['sensor-1']
@@ -1288,7 +1423,7 @@ def scoped_ids(
     ['gw-1', 'sensor-1']
     """
     if owner is not None and scopes and owner not in scopes:
-        # Checked BEFORE the fallback below, so an unknown owner is refused
+        # Checked BEFORE any admission, so an unknown owner is refused
         # whether or not anything declared: the caller asked to be bounded by a
         # project that does not exist, and answering "the whole lab" to that is
         # the widening, not a degraded mode.
@@ -1296,20 +1431,17 @@ def scoped_ids(
             "",  # no project, so no settings.toml to send the reader to
             message=_UNKNOWN_OWNER.format(owner=owner, known=", ".join(sorted(scopes)) or "(none)"),
         )
-    declared = [scope for scope in scopes.values() if scope.declared]
-    if not declared:
-        return set(hosts)
-    if owner is not None:
-        owned = scopes[owner]  # present: the unknown-owner refusal above ran first
-        if not owned.declared:
-            return set(hosts)
-        declared = [owned]
-    else:
-        declared = _not_switched_off(declared, exclude_projects)
+    if owner is not None and scopes:
+        config = scopes[owner].config  # present: the unknown-owner refusal above ran first
+        return {
+            host_id
+            for host_id, host in hosts.items()
+            if host_id in runner_ids or host_targeted(config, host)
+        }
     return {
         host_id
         for host_id, host in hosts.items()
-        if any(project_targets(scope.config, host.source_lab, host_id) for scope in declared)
+        if host_id in runner_ids or union_admits(host, scopes, exclude_projects=exclude_projects)
     }
 
 
@@ -1333,7 +1465,7 @@ no host in this run belongs to any project's fleet of interest, so every fleet
 walk would be empty.
 
     loaded labs:  {loaded}
-    declared by:  {projects}
+    declared by:  {projects}{settings}
 
 Load a lab these projects apply to (otto -l <lab>), or widen [project]
 lab_patterns / host_patterns in their .otto/settings.toml.\
@@ -1341,7 +1473,13 @@ lab_patterns / host_patterns in their .otto/settings.toml.\
 """Spec §10 row 5. Deliberately fleet-shaped rather than project-shaped: the
 per-project aborts in :func:`require_current_scope` fire for the CURRENT project
 and can name one file, while this one fires when the union came out empty and
-any of the contributing declarations could be the reason."""
+any of the contributing declarations could be the reason. ``{settings}`` is
+:data:`_SETTINGS_LINE` over the files to widen, or nothing when there are none."""
+
+
+_SETTINGS_LINE = "\n    settings:     {files}"
+""":data:`_EMPTY_FLEET`'s ``settings:`` line, left out when no file would widen the scope:
+with every declaring project switched off, an empty field would read as a fault."""
 
 
 _EXCLUDED_FLEET = """\
@@ -1367,7 +1505,10 @@ def require_nonempty_fleet(
 ) -> None:
     """Refuse a fleet walk whose base set is empty while some project declared one (§10 row 5).
 
-    Call at the fleet surfaces, after :func:`scoped_ids`. The asymmetry with
+    Call at the fleet surfaces, over the walk's hosts in play: its
+    :func:`scoped_ids` answer less the built-in runner and its containers,
+    which are admitted by identity and so would make every declared scope
+    look non-empty in a lab that holds the runner. The asymmetry with
     the undeclared case is the point: an empty walk under the whole-lab
     fallback means the LAB is empty, which is not this check's to diagnose and
     has always been silent; an empty walk under a declaration means the
@@ -1385,17 +1526,20 @@ def require_nonempty_fleet(
 
     Args:
         scopes: :func:`resolve_scopes`' output for this run.
-        admissible: What :func:`scoped_ids` just returned.
+        admissible: The walk's hosts in play, for *owner* (see above).
         owner: The ``Project.name`` this walk was bound to, or ``None`` for a
             plain-context union walk. An owner that declared nothing falls
             through to the fleet-shaped message deliberately: its base set was
             the whole lab, so an empty one says the LAB is empty and says
             nothing about that project's declaration.
-        exclude_projects: The same names :func:`scoped_ids` was given, read
-            for the plain-context union only. A union emptied by ``-E`` — some
+        exclude_projects: The same names :func:`scoped_ids` was given. For
+            the plain-context union, a union emptied by ``-E`` — some
             switched-off project would have put a host in play — gets a message
             naming the switch, not a declaration that cannot work; otherwise
             the fleet-shaped message lists the projects still contributing.
+            Every fleet-shaped message's ``settings:`` line names
+            :func:`settings_files` for them, so a switched-off project's file is
+            never offered as the fix; with no file to name, the line is left out.
 
     Returns:
         None — always, when there is nothing to refuse.
@@ -1437,6 +1581,7 @@ def require_nonempty_fleet(
         # Switched-off projects that admitted nothing anyway did not empty it;
         # the declarations did, so name them all when none is left standing.
         contributing = contributing or declared
+    files = settings_files(scopes, exclude_projects=exclude_projects)
     raise ProjectScopeError(
         contributing[0].root,
         message=_EMPTY_FLEET.format(
@@ -1445,8 +1590,164 @@ def require_nonempty_fleet(
                 f"{scope.project_name} (lab_patterns: {', '.join(scope.lab_patterns) or '(none)'})"
                 for scope in contributing
             ),
+            settings=_SETTINGS_LINE.format(files=", ".join(files)) if files else "",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Why a lab host is outside this run's scope, and the refusal that says so
+# ---------------------------------------------------------------------------
+
+
+def settings_files(
+    scopes: "dict[str, ProjectScope]", *, exclude_projects: "Sequence[str]"
+) -> list[str]:
+    """Return the ``settings.toml`` files whose ``[project]`` patterns would widen this run.
+
+    The one answer to "which file do I edit to reach a host": each declaring
+    project's ``{root}/.otto/settings.toml``, in *scopes*' order, less the
+    projects ``--exclude-projects`` switched off (their declarations put no
+    host in play, so editing them would change nothing). An undeclared
+    project scopes nothing out, so it has no file here. Every message that
+    sends a reader to edit their declarations reads this list:
+    :func:`host_outside`'s record, :func:`require_nonempty_fleet`'s
+    ``settings:`` line, and the run's scope judge.
+
+    Args:
+        scopes: :func:`resolve_scopes`' output for this run.
+        exclude_projects: The run's ``--exclude-projects`` names, as typed;
+            compared normalized, the way :func:`active` compares them.
+
+    Returns:
+        The file paths, possibly empty.
+    """
+    declared = [scope for scope in scopes.values() if scope.declared]
+    return [
+        str(Path(scope.root) / TOML_SETTINGS_PATH)
+        for scope in _not_switched_off(declared, tuple(exclude_projects))
+    ]
+
+
+@final
+@dataclasses.dataclass(frozen=True)
+class HostOutside:
+    """Why one lab host is outside this run's scope: what :func:`host_outside` returns.
+
+    A record, not a message: :func:`outside_message` renders it, and the
+    fleet-of-interest log line reads its :attr:`reason`.
+    """
+
+    host_id: str
+    """The id of the host that is outside."""
+
+    lab: str
+    """The lab the host is in, its own component lab, which ``lab_patterns`` match."""
+
+    kind: Literal["out_of_scope", "switched_off"]
+    """``"switched_off"`` when only ``-E``'d projects target the host, else ``"out_of_scope"``."""
+
+    switched_off: "tuple[str, ...]"
+    """The switched-off projects that target the host, in order; empty for ``"out_of_scope"``."""
+
+    settings_files: "tuple[str, ...]"
+    """The files whose patterns would widen this run to the host (:func:`settings_files`)."""
+
+    @property
+    def reason(self) -> str:
+        """The short reason, :data:`OUT_OF_SCOPE_REASON` or :data:`SWITCHED_OFF_REASON`."""
+        return SWITCHED_OFF_REASON if self.kind == "switched_off" else OUT_OF_SCOPE_REASON
+
+
+def host_outside(
+    host: object,
+    scopes: "dict[str, ProjectScope]",
+    *,
+    lab_name: str,
+    exclude_projects: "Sequence[str]",
+) -> "HostOutside | None":
+    """Report why the declared union leaves *host* out, or ``None`` when it admits it.
+
+    Judged by :func:`union_admits`, so it answers ``None`` exactly where a
+    fleet walk's union admits the host, the whole-lab fallback included. The
+    built-in runner is admitted by identity, not by any declaration, which is
+    the caller's to know: this module cannot tell the runner from a lab
+    entry that reuses its id.
+
+    Args:
+        host: One lab host, of any family; a container is judged by its parent.
+        scopes: :func:`resolve_scopes`' output for this run.
+        lab_name: The loaded lab's name, named for a host that carries no
+            component stamp of its own.
+        exclude_projects: The run's ``--exclude-projects`` names, as typed.
+
+    Returns:
+        The record of why *host* is outside, or ``None``.
+    """
+    if union_admits(host, scopes, exclude_projects=exclude_projects):
+        return None
+    declared = [scope for scope in scopes.values() if scope.declared]
+    kept = {id(scope) for scope in _not_switched_off(declared, tuple(exclude_projects))}
+    switched = tuple(
+        scope.project_name
+        for scope in declared
+        if id(scope) not in kept and host_targeted(scope.config, host)
+    )
+    named: Any = host
+    return HostOutside(
+        host_id=named.id,
+        lab=getattr(judged_host(host), "source_lab", None) or lab_name,
+        kind="switched_off" if switched else "out_of_scope",
+        switched_off=switched,
+        settings_files=tuple(settings_files(scopes, exclude_projects=exclude_projects)),
+    )
+
+
+def outside_message(outside: HostOutside) -> str:
+    """Render *outside* as the one-line refusal a lookup of that host raises.
+
+    It names the host, its lab and why it is outside, then the fix: drop the
+    ``-E`` that switched off the projects targeting it, or add the host to a
+    declaring project's patterns, naming each file to edit.
+    """
+    head = (
+        f"host {outside.host_id!r} is in lab {outside.lab!r} "
+        f"but outside this run's scope: {outside.reason}"
+    )
+    if outside.kind == "switched_off":
+        names = ", ".join(outside.switched_off)
+        drops = " or ".join(f"-E {name}" for name in outside.switched_off)
+        return f"{head} ({names}). Drop {drops} to reach it."
+    files = ", ".join(outside.settings_files)
+    where = f" in {files}" if files else ""
+    return (
+        f"{head}. To reach it, add its id to [project] host_patterns "
+        f"(or its lab to lab_patterns){where}."
+    )
+
+
+class HostOutOfScopeError(_UnquotedKeyError):
+    """A lookup named a host that is in the lab but outside this run's scope.
+
+    Raised by ``get_host`` (the run context's, ``otto.get_host`` and
+    ``otto.lab.get_host``) for a host no active project's ``[project]``
+    declaration targets. It is an :class:`~otto.errors.OttoError` and a
+    :class:`KeyError`, as a lookup miss always was, so an existing
+    ``except KeyError`` still catches it; an id that is not in the lab at all
+    raises ``otto.host.targeting.UnknownHostError``, also a ``KeyError`` that
+    is an ``OttoError``.
+
+    ``str()`` is the message itself, without :class:`KeyError`'s quotes. It
+    names why the host is outside and the fix: the ``settings.toml`` files
+    to widen, or the ``-E`` to drop. :attr:`outside` carries the same facts
+    as a record.
+    """
+
+    def __init__(self, message: str, *, outside: "HostOutside | None" = None) -> None:
+        """Carry *message* as the error's text and *outside* as its record."""
+        super().__init__(message)
+        self.outside = outside
+        """Why the host is outside, or ``None`` when the raiser had no record."""
 
 
 # ---------------------------------------------------------------------------

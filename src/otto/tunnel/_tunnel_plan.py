@@ -7,7 +7,6 @@ the same pure resolvers ``add_tunnel``'s own dry run uses, and
 ``--dest`` would get. :mod:`otto.tunnel.check` runs the check itself.
 """
 
-from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
 
@@ -30,9 +29,8 @@ from .manage import (
     _VERIFY_RETRY_DELAY,
     EndpointSpec,
     PlannedHop,
-    ensure_dest_outside_chain,
-    planned_chain,
-    planned_hop,
+    PlannedPath,
+    planned_path,
 )
 
 NOT_CONTACTED = "no device was contacted — nothing was measured"
@@ -49,14 +47,6 @@ def runs_no_shell(host: Any) -> bool:
     return getattr(host, "has_bash", True) is False
 
 
-@dataclass(frozen=True)
-class PlannedPath:
-    """The path, and the ``--dest``, resolved as far as lab data goes."""
-
-    chain: list[PlannedHop]
-    dest: PlannedHop | None
-
-
 def validate(
     lab: Any,
     hosts: list[EndpointSpec],
@@ -69,11 +59,7 @@ def validate(
     Raises:
         ValueError: the refusal, worded as ``add_tunnel`` words it.
     """
-    planned = planned_chain(lab, hosts)
-    planned_dest = None
-    if dest is not None:
-        planned_dest = planned_hop(lab, dest)
-        ensure_dest_outside_chain(dest[0], {host_id for host_id, _ in hosts})
+    planned = planned_path(lab, hosts, dest=dest)
     carrier_obj = build_carrier(name=carrier)()
     for protocol in protocols:
         if protocol not in carrier_obj.supported_protocols:
@@ -81,7 +67,7 @@ def validate(
             raise ValueError(
                 f"carrier {carrier!r} does not support protocol {protocol!r} (use {supported})"
             )
-    return PlannedPath(planned, planned_dest)
+    return planned
 
 
 def _where(p: PlannedHop) -> str:
